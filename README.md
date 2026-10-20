@@ -95,7 +95,7 @@ NVIDIA hardware.
 
 ## Your workspace
 
-Recovery copies keep unsaved scratchpads and modified buffers between sessions.
+Just like the famous sublime text, hedit copies keep unsaved scratchpads and modified buffers between sessions.
 They are separate from your saved files. Checkpoints are periodic, so an abrupt
 kill or power loss can lose edits since the last completed checkpoint. Keep
 independent saved copies and backups for important work.
@@ -105,4 +105,6 @@ regex search, multiple cursors, and split views are planned. Read the
 [user guide](USER_GUIDE.md) for everyday use and recovery, or the
 [developer guide](DEVELOPER_GUIDE.md) for contributing and the roadmap.
 
-[MIT license](LICENSE)
+## LICENCE
+
+This project is using [MIT license](LICENSE)
