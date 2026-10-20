@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=hedit
+GenericName=Text Editor
+Comment=Keep your train of thought
+Exec=hedit %F
+Icon=hedit
+Terminal=false
+Categories=Utility;TextEditor;
+MimeType=text/plain;text/x-log;text/x-c;text/x-c++;text/x-cuda;
+StartupWMClass=hedit

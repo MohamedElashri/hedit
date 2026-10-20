@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "name": "Hedit Ink",
+  "dark": true,
+  "background": "#10161F",
+  "surface": "#161E29",
+  "panel": "#131A24",
+  "elevated": "#202B39",
+  "border": "#2B3949",
+  "text": "#DCE6F0",
+  "muted": "#8DA0B4",
+  "accent": "#64D8CB",
+  "selection": "#264E54",
+  "selection_text": "#EEFCFA",
+  "warning": "#EDBE7B",
+  "error": "#F69797",
+  "success": "#93D3A1",
+  "comment": "#859CA3",
+  "keyword": "#BEA7F4",
+  "string": "#B0D29A",
+  "number": "#EDBE7B",
+  "cuda": "#64D8CB"
+}

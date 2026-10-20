@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "name": "Nord",
+  "dark": true,
+  "background": "#2E3440",
+  "surface": "#353C4A",
+  "panel": "#303744",
+  "elevated": "#434C5E",
+  "border": "#4C566A",
+  "text": "#ECEFF4",
+  "muted": "#A3B1C6",
+  "accent": "#88C0D0",
+  "selection": "#44556D",
+  "selection_text": "#ECEFF4",
+  "warning": "#EBCB8B",
+  "error": "#E69A9E",
+  "success": "#A3BE8C",
+  "comment": "#A3B1C6",
+  "keyword": "#B48EAD",
+  "string": "#A3BE8C",
+  "number": "#EBCB8B",
+  "cuda": "#8FBCBB"
+}

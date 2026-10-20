@@ -1,0 +1,37 @@
+#!/usr/bin/env python3
+"""Package, extract, install, and check the executable in an isolated prefix."""
+import argparse
+import hashlib
+from pathlib import Path
+import subprocess
+import sys
+import tarfile
+import tempfile
+
+ROOT = Path(__file__).resolve().parents[1]
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--binary', type=Path, default=ROOT / 'target/release/hedit')
+args = parser.parse_args()
+with tempfile.TemporaryDirectory(prefix='hedit-package-smoke-') as work:
+    work = Path(work)
+    subprocess.run([sys.executable, str(ROOT / 'scripts/package-linux.py'),
+                    '--binary', str(args.binary.resolve()), '--out-dir', str(work)], check=True)
+    archive = next(work.glob('hedit-*.tar.gz'))
+    checksum = archive.with_name(archive.name + '.sha256').read_text().split()[0]
+    assert hashlib.sha256(archive.read_bytes()).hexdigest() == checksum
+    with tarfile.open(archive) as data:
+        data.extractall(work / 'unpacked', filter='data')
+    package = next((work / 'unpacked').iterdir())
+    prefix = work / 'installed'
+    subprocess.run(['sh', str(package / 'install.sh'), str(prefix)], check=True)
+    result = subprocess.run([str(prefix / 'bin/hedit'), '--version'], check=True,
+                            capture_output=True, text=True, timeout=10)
+    assert result.stdout.startswith('hedit '), result.stdout
+    for relative in ['share/applications/hedit.desktop',
+                     'share/icons/hicolor/scalable/apps/hedit.svg',
+                     'share/doc/hedit/README.md', 'share/doc/hedit/buffers.md',
+                     'share/doc/hedit/installation.md', 'share/doc/hedit/LICENSE',
+                     'share/doc/hedit/NOTICE', 'share/hedit/themes/hedit-ink.json']:
+        assert (prefix / relative).is_file(), relative
+    assert (package / 'examples/cuda/vector_add.cu').is_file()
+print('Linux package checksum, extraction, installation, and executable smoke test passed.')
