@@ -7,6 +7,7 @@ This guide covers the current Linux release.
 - [Scratchpads and files](#scratchpads-and-files)
 - [Logs and bookmarks](#logs-and-bookmarks)
 - [Editing and navigation](#editing-and-navigation)
+- [Preferences](#preferences)
 - [Appearance](#appearance)
 - [CUDA tools](#cuda-tools)
 - [Command line](#command-line)
@@ -95,9 +96,9 @@ Launch hedit from your terminal or application launcher. A first session opens
 an empty scratchpad; later sessions restore your workspace.
 
 1. Press **Ctrl+N** to start a scratchpad and type or paste some text.
-2. Optionally choose **More → Name scratchpad…** to give it a recognizable name.
+2. Optionally choose **File → Name scratchpad…** to give it a recognizable name.
 3. Check the recovery status before ending your session.
-4. Open **Appearance** to choose colors, or **Open…** to read an existing file.
+4. Open **Preferences → Settings…** to customize the editor, or **File → Open file…** to read a file.
 
 ### Uninstall
 
@@ -113,21 +114,21 @@ need your unsaved buffers again; see [Recovery](#recovery) before removing it.
 
 ### Keep text without choosing a filename
 
-Use **+ New** or **Ctrl+N** for a scratchpad. hedit keeps recovery copies so you
+Use **File → New scratchpad**, the **+** beside the tabs, or **Ctrl+N** for a scratchpad. hedit keeps recovery copies so you
 can return to it after restarting without first saving it as a normal file.
 
-Choose **More → Name scratchpad…** (**Ctrl+Shift+R**) to name it. Names can have
+Choose **File → Name scratchpad…** (**Ctrl+Shift+R**) to name it. Names can have
 up to 80 characters and stay fixed as you edit. Apply an empty name to return to
 using the first nonempty line as the tab title. Naming does not create a file.
 
 ### Open, save, and switch
 
-Use **Open…** (**Ctrl+O**), drag a file into the window, or pass its path in the
+Use **File → Open file…** (**Ctrl+O**), drag a file into the window, or pass its path in the
 terminal. **Save** (**Ctrl+S**) writes the current buffer to a file; a scratchpad
-asks for a filename. **More → Save as…** (**Ctrl+Shift+S**) chooses another path.
+asks for a filename. **File → Save as…** (**Ctrl+Shift+S**) chooses another path.
 After a scratchpad is saved to a file, its tab uses that file's name.
 
-Click a tab or a Workspace row to switch buffers. **Ctrl+P** filters open buffers
+Click a tab or an Open Files row to switch buffers. **Ctrl+P** filters open buffers
 by name. A dot on a tab indicates unsaved changes.
 
 ### Close and reopen buffers
@@ -136,9 +137,9 @@ Close a tab with **×** or **Ctrl+W** to put it on the shelf, including its text
 name, selection, and bookmarks. Closing the window keeps open tabs in the session
 rather than moving them onto the shelf.
 
-- **Ctrl+Shift+T** or **Reopen latest** restores the latest closed buffer.
-- **Browse shelf…**, also available under **More → Browse closed buffers…**, lets
-  you filter the shelf by name and reopen any entry.
+- **Ctrl+Shift+T** or **File → Reopen closed tab** restores the latest closed buffer.
+- **File → Browse closed buffers…**, also available from **Closed Buffers** in
+  the sidebar, lets you filter the shelf by name and reopen any entry.
 
 The shelf has 50 slots. A clean, saved entry may be removed to make room; unsaved
 scratchpads and modified files are never silently evicted. If all slots hold
@@ -149,7 +150,7 @@ not expire based on age.
 
 ### Read a large file
 
-Open a log with **Open…** or `hedit application.log`. Files above 2 MiB use views
+Open a log with **File → Open file…** or `hedit application.log`. Files above 2 MiB use views
 of roughly 256 KiB. **Start**, **Previous**, **Next**, and **End** navigate the
 file; the toolbar shows the current byte range.
 
@@ -158,9 +159,9 @@ line** for a line in the whole file, or **Find** to search across every page.
 
 ### Follow incoming output
 
-Enable **Follow log (read only)** on a clean, file-backed buffer to show its tail
+Enable **View → Follow log (read only)** on a clean, file-backed buffer to show its tail
 and check for new output about once per second. Disable Follow before editing.
-The checkbox is unavailable for scratchpads and modified buffers.
+The menu item is unavailable for scratchpads and modified buffers.
 
 When a log rotates, Follow reads the file currently at the original path. If that
 path disappears or the replacement is not UTF-8 text, an error is shown and the
@@ -174,7 +175,7 @@ as…** to keep your version before reopening the disk version.
 
 Press **Ctrl+F2** to toggle a bookmark at the cursor. **F2** goes to the next one;
 **Shift+F2** goes to the previous one, wrapping within the current buffer.
-**Bookmarks (n)** above the editor, or **More → Bookmarks…**, lists saved positions
+**Goto → Bookmarks…** lists saved positions
 by text label. Navigate to a bookmark and press **Ctrl+F2** again to remove it.
 
 Each buffer can hold 1,000 bookmarks. They survive restarts and moves to the
@@ -188,9 +189,9 @@ Use a single selection for clipboard operations and indentation. **Ctrl+Z**
 undoes; **Ctrl+Shift+Z** or **Ctrl+Y** redoes. Up to 256 edit steps per buffer are
 kept during the current process. Undo history is not restored after restart.
 
-Toggle wrap through **More → Word wrap** (**Ctrl+Shift+W**). Long lines scroll
-horizontally when wrap is off. **Ctrl++** and **Ctrl+-** change font size. Wrap
-and font preferences are kept between launches.
+Toggle wrap through **View → Word wrap** (**Ctrl+Shift+W**). Long lines scroll
+horizontally when wrap is off. **Ctrl++** and **Ctrl+-** change font size. Wrap, font size, line numbers, and sidebar visibility are kept between launches.
+Use **Preferences → Settings… → Editor** to manage them together.
 
 CUDA (`.cu`, `.cuh`) and C/C++ (`.c`, `.h`, `.cc`, `.cpp`, `.cxx`, `.hpp`, `.hxx`,
 `.hh`, `.inl`) files have syntax highlighting; other files currently use plain text.
@@ -200,10 +201,11 @@ line-ending conversion is not available yet.
 
 ### Find and replace
 
-1. Press **Ctrl+F** or click **Find**.
+1. Press **Ctrl+F** or choose **Find → Find…** to open the bottom search panel.
 2. Enter a literal, case-sensitive query of up to 4,096 UTF-8 bytes.
-3. Click **Next / wrap** to select the next match across the whole file.
-4. Enter replacement text and click **Replace selected** to change that occurrence.
+3. Click **Find next** to select the next match across the whole file.
+4. Enable **Replace** (or press **Ctrl+H**), enter replacement text, and click
+   **Replace selected** to change that occurrence.
 
 Search wraps at the end. Long searches can be cancelled from the status bar;
 **Esc** closes the panel. Regex, case-insensitive search, and replace-all controls
@@ -214,13 +216,35 @@ are not yet available.
 Press **Ctrl+G**, enter a positive, one-based line number, and click **Go**. This
 locates a line in the entire document, even when only a page is displayed.
 
-**Ctrl+P** filters open buffer names. Press Enter to select the first match or
-click a result. **Ctrl+Shift+P** also exposes commands below the buffer list.
+**Ctrl+P** opens the buffer switcher; **Ctrl+Shift+P** opens commands. Type a
+filter, use **Up/Down** to select a result, and press **Enter**, or click a result.
+Type `>` in the buffer switcher to search commands instead. **Esc** closes either.
+The menus show the same commands and keyboard shortcuts.
+
+## Preferences
+
+Choose **Preferences → Settings…** or press **Ctrl+,**. Settings are grouped in
+one window:
+
+| Page | Settings and actions |
+| --- | --- |
+| Editor | Word wrap, line numbers, open files sidebar, font size, restore defaults |
+| Appearance | Presets, custom colors, theme import/export, contrast feedback |
+| CUDA Tools | CUDA-GDB path and a shortcut to the tool panel |
+| Recovery | Checkpoint status, checkpoint now, closed buffers, recovery guidance |
+
+View commands provide quick toggles for the same editor settings. The status bar
+shows the cursor position, language, encoding, and recovery state; click the
+recovery status to open its preferences page. For paged files, gutter line numbers
+and **Page Ln** refer to the displayed page. The sidebar lists open buffers and
+provides a **Closed Buffers** link. Right-click a tab for its context menu, or
+middle-click its title to close it to the shelf.
 
 ## Appearance
 
-Open **Appearance**, press **Ctrl+,**, or choose **Appearance / Custom theme** in
-the command palette. Pick **Hedit Ink**, **Hedit Paper**, **Nord**, or **Ember**;
+Choose **Preferences → Color theme…**, or open **Preferences → Settings…**
+(**Ctrl+,**) and select **Appearance**. The **Color theme…** command also appears
+in the command palette. Pick **Hedit Ink**, **Hedit Paper**, **Nord**, or **Ember**;
 Paper uses light controls and the others use dark controls.
 
 Use color pickers or `#RRGGBB` fields to change the background, surfaces, text,
@@ -232,7 +256,7 @@ Text and selection contrast ratios appear below the controls. Values below
 4.5:1 are flagged without blocking your choices. **Dark controls** changes widget
 defaults without replacing your colors.
 
-**Revert changes** restores the palette that was active when the window opened.
+**Revert theme** restores the palette that was active when the window opened.
 **Done** or the close button keeps your valid changes. Preferences save
 automatically every two seconds and on normal exit.
 
@@ -259,9 +283,11 @@ files above 64 KiB are rejected. A failed import keeps your current palette.
 
 ## CUDA tools
 
-Open the **CUDA** panel. You need NVIDIA's CUDA Toolkit and a compatible driver
-for device debugging. The panel uses `cuda-gdb`, `compute-sanitizer`, and
-`nvidia-smi` from `PATH`; a custom debugger path can be entered in the panel.
+Choose **Tools → CUDA panel**. You need NVIDIA's CUDA Toolkit and a compatible
+driver for device debugging. The panel uses `cuda-gdb`, `compute-sanitizer`, and
+`nvidia-smi` from `PATH`; a custom debugger path is configured under
+**Preferences → Settings… → CUDA Tools**.
+The panel’s **Tool settings…** button opens the same preferences page.
 
 ### Debug a program
 
@@ -358,13 +384,13 @@ session if the graphical window cannot start.
 | Ctrl+W / Ctrl+Shift+T | Close to shelf / reopen latest |
 | Ctrl+Shift+R | Name the active unsaved scratchpad |
 | Ctrl+P / Ctrl+Shift+P | Buffer switcher / command palette |
-| Ctrl+F / Ctrl+G | Find / Go to line controls |
+| Ctrl+F / Ctrl+H / Ctrl+G | Find / Replace / Go to line |
 | Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y | Undo / redo |
 | Ctrl+C / Ctrl+X / Ctrl+V | Copy / cut / paste |
 | Ctrl+A | Select all in the focused text field |
 | Ctrl+Shift+W | Toggle wrap |
 | Ctrl++ or Ctrl+= / Ctrl+- | Increase / decrease editor font |
-| Ctrl+, | Appearance |
+| Ctrl+, | Preferences |
 | Ctrl+F2 | Toggle a bookmark at the cursor |
 | F2 / Shift+F2 | Next / previous bookmark |
 | Esc | Close search, the palette, or buffer-tool windows |
@@ -391,7 +417,7 @@ keeps the window open. Use **Save as…** to keep important text elsewhere if ne
 
 ### Find missing work
 
-Check open tabs, **Ctrl+P**, and **Browse shelf…**. Verify you opened the same
+Check open tabs, **Ctrl+P**, and **File → Browse closed buffers…**. Verify you opened the same
 session, especially if you used `--session-dir`. Read any startup recovery warning
 before dismissing it; a fallback checkpoint can be older than your latest work.
 

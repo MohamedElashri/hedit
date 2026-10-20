@@ -1,3 +1,8 @@
+mod chrome;
+mod commands;
+mod preferences;
+
+use commands::Command;
 use eframe::egui::{self, FontId, Key, Modifiers, RichText};
 use hedit::{
     brand,
@@ -8,6 +13,7 @@ use hedit::{
     theme::{Preset, Rgb, Role, Theme},
     workspace::{Buffer, Workspace},
 };
+use preferences::PreferencesPage;
 use std::{
     collections::VecDeque,
     path::PathBuf,
@@ -54,6 +60,16 @@ pub struct HeditApp {
     wrap: bool,
     font_size: f32,
     sidebar: bool,
+    line_numbers: bool,
+    preferences_page: PreferencesPage,
+    goto_open: bool,
+    goto_focus: bool,
+    replace_open: bool,
+    commands_only: bool,
+    palette_focus: bool,
+    palette_index: usize,
+    about_open: bool,
+    window_title: String,
     find_open: bool,
     find_focus: bool,
     query: String,
@@ -72,7 +88,7 @@ pub struct HeditApp {
     poll_at: Instant,
     focus_editor: bool,
     theme: Theme,
-    appearance_open: bool,
+    preferences_open: bool,
     appearance_original: Theme,
     theme_hex: Vec<String>,
     rename_target: Option<u64>,
@@ -121,8 +137,10 @@ impl HeditApp {
             .and_then(|s| eframe::get_value(s, "wrap"))
             .unwrap_or(false);
         let font_size = storage
-            .and_then(|s| eframe::get_value(s, "font_size"))
-            .unwrap_or(14.0);
+            .and_then(|s| eframe::get_value::<f32>(s, "font_size"))
+            .filter(|size| size.is_finite())
+            .unwrap_or(14.0)
+            .clamp(10.0, 28.0);
         Self {
             workspace,
             tx,
@@ -144,10 +162,24 @@ impl HeditApp {
             } else {
                 Some(errors.join("\n"))
             },
-            notice: "Ready. Untitled buffers stay with you.".into(),
+            notice: "Ready.".into(),
             wrap,
             font_size,
-            sidebar: true,
+            sidebar: storage
+                .and_then(|s| eframe::get_value(s, "sidebar"))
+                .unwrap_or(true),
+            line_numbers: storage
+                .and_then(|s| eframe::get_value(s, "line_numbers"))
+                .unwrap_or(true),
+            preferences_page: PreferencesPage::Editor,
+            goto_open: false,
+            goto_focus: false,
+            replace_open: false,
+            commands_only: false,
+            palette_focus: false,
+            palette_index: 0,
+            about_open: false,
+            window_title: String::new(),
             find_open: false,
             find_focus: false,
             query: String::new(),
@@ -159,14 +191,17 @@ impl HeditApp {
             debug: None,
             debug_program: String::new(),
             debug_args: "[]".into(),
-            debugger: "cuda-gdb".into(),
+            debugger: storage
+                .and_then(|s| s.get_string("debugger"))
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| "cuda-gdb".into()),
             breakpoint: String::new(),
             console: String::new(),
             sanitizer: "memcheck".into(),
             poll_at: Instant::now(),
             focus_editor: true,
             theme,
-            appearance_open: false,
+            preferences_open: false,
             appearance_original,
             theme_hex,
             rename_target: None,
@@ -572,57 +607,28 @@ impl HeditApp {
         let cmd = Modifiers::COMMAND;
         let shift = Modifiers { shift: true, ..cmd };
         let take = |m, k| ctx.input_mut(|i| i.consume_key(m, k));
-        if take(shift, Key::P) {
-            self.palette = true;
-            self.palette_query.clear();
-        }
-        if take(cmd, Key::P) {
-            self.palette = true;
-            self.palette_query.clear();
-        }
-        if take(cmd, Key::N) {
-            let r = self.workspace.new_buffer();
-            self.report(r);
-        }
-        if take(cmd, Key::O) {
-            self.open(ctx, None);
-        }
-        if take(shift, Key::S) {
-            self.save_file(ctx, true);
-        } else if take(cmd, Key::S) {
-            self.save_file(ctx, false);
-        }
-        if take(shift, Key::T) {
-            let r = self.workspace.reopen();
-            self.report(r);
-        }
-        if take(cmd, Key::W) {
-            let r = self.workspace.close(self.workspace.active);
-            self.report(r);
-        }
-        if take(cmd, Key::F2) {
-            self.toggle_bookmark();
-        }
-        if take(Modifiers::SHIFT, Key::F2) {
-            self.adjacent_bookmark(ctx, false);
-        } else if take(Modifiers::NONE, Key::F2) {
-            self.adjacent_bookmark(ctx, true);
-        }
-        if take(shift, Key::R) {
-            self.open_scratchpad_name();
-        }
-        if take(cmd, Key::Comma) {
-            self.open_appearance();
-        }
-        if take(cmd, Key::F) {
-            self.find_open = true;
-            self.find_focus = true;
-        }
-        if take(cmd, Key::G) {
-            self.find_open = true;
-        }
-        if take(shift, Key::W) {
-            self.wrap = !self.wrap;
+        for (modifiers, key, command) in [
+            (shift, Key::P, Command::Palette),
+            (cmd, Key::P, Command::Switcher),
+            (cmd, Key::N, Command::New),
+            (cmd, Key::O, Command::Open),
+            (shift, Key::S, Command::SaveAs),
+            (cmd, Key::S, Command::Save),
+            (shift, Key::T, Command::Reopen),
+            (cmd, Key::W, Command::Close),
+            (cmd, Key::F2, Command::Bookmark),
+            (Modifiers::SHIFT, Key::F2, Command::PreviousBookmark),
+            (Modifiers::NONE, Key::F2, Command::NextBookmark),
+            (shift, Key::R, Command::Rename),
+            (cmd, Key::Comma, Command::Settings),
+            (cmd, Key::F, Command::Find),
+            (cmd, Key::H, Command::Replace),
+            (cmd, Key::G, Command::Goto),
+            (shift, Key::W, Command::Wrap),
+        ] {
+            if take(modifiers, key) {
+                self.execute(ctx, command);
+            }
         }
         // Let single-line search and debugger inputs keep their own undo history.
         let editor_id = egui::Id::new((
@@ -632,9 +638,9 @@ impl HeditApp {
         ));
         if ctx.memory(|m| m.has_focus(editor_id)) {
             if take(shift, Key::Z) || take(cmd, Key::Y) {
-                self.history(ctx, true);
+                self.execute(ctx, Command::Redo);
             } else if take(cmd, Key::Z) {
-                self.history(ctx, false);
+                self.execute(ctx, Command::Undo);
             }
         }
         if take(cmd, Key::Equals) || take(cmd, Key::Plus) {
@@ -646,414 +652,13 @@ impl HeditApp {
         if take(Modifiers::NONE, Key::Escape) {
             self.palette = false;
             self.find_open = false;
+            self.goto_open = false;
+            self.preferences_open = false;
+            self.about_open = false;
             self.rename_target = None;
             self.shelf_open = false;
             self.bookmarks_open = false;
             self.focus_editor = true;
-        }
-    }
-    fn chrome(&mut self, ctx: &egui::Context) {
-        let theme = self.theme.clone();
-        egui::TopBottomPanel::top("top")
-            .frame(
-                egui::Frame::new()
-                    .fill(theme.panel.color())
-                    .inner_margin(egui::Margin::symmetric(12, 8)),
-            )
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    brand::paint(ui, 30.0, theme.accent.color(), theme.muted.color());
-                    ui.label(RichText::new("hedit").size(18.0).strong());
-                    ui.separator();
-                    ui.add_enabled_ui(!self.busy && !self.closing, |ui| {
-                        if ui
-                            .button("+ New")
-                            .on_hover_text("New scratch buffer · Ctrl+N")
-                            .clicked()
-                        {
-                            let r = self.workspace.new_buffer();
-                            self.report(r);
-                        }
-                        if ui
-                            .button("Open…")
-                            .on_hover_text("Open file · Ctrl+O")
-                            .clicked()
-                        {
-                            self.open(ctx, None);
-                        }
-                        if ui
-                            .button("Save")
-                            .on_hover_text("Save file · Ctrl+S")
-                            .clicked()
-                        {
-                            self.save_file(ctx, false);
-                        }
-                        ui.menu_button("More", |ui| {
-                            if ui
-                                .button("Save as…                  Ctrl+Shift+S")
-                                .clicked()
-                            {
-                                self.save_file(ctx, true);
-                                ui.close_menu();
-                            }
-                            if ui.button("Reopen closed buffer    Ctrl+Shift+T").clicked() {
-                                let r = self.workspace.reopen();
-                                self.report(r);
-                                ui.close_menu();
-                            }
-                            if ui.button("Command palette         Ctrl+Shift+P").clicked() {
-                                self.palette = true;
-                                ui.close_menu();
-                            }
-                            ui.separator();
-                            if ui
-                                .add_enabled(
-                                    self.active().page.info.path.is_none(),
-                                    egui::Button::new("Name scratchpad…         Ctrl+Shift+R"),
-                                )
-                                .clicked()
-                            {
-                                self.open_scratchpad_name();
-                                ui.close_menu();
-                            }
-                            if ui.button("Browse closed buffers…").clicked() {
-                                self.shelf_open = true;
-                                ui.close_menu();
-                            }
-                            if ui.button("Bookmarks…").clicked() {
-                                self.bookmarks_open = true;
-                                ui.close_menu();
-                            }
-                            ui.checkbox(&mut self.wrap, "Word wrap");
-                            ui.checkbox(&mut self.sidebar, "Show buffer sidebar");
-                        });
-                    });
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .button("Appearance")
-                            .on_hover_text("Themes and custom colors · Ctrl+,")
-                            .clicked()
-                        {
-                            self.open_appearance();
-                        }
-                        ui.toggle_value(&mut self.gpu_open, "CUDA");
-                        if ui
-                            .button("Find")
-                            .on_hover_text("Find in file · Ctrl+F")
-                            .clicked()
-                        {
-                            self.find_open = true;
-                            self.find_focus = true;
-                        }
-                    });
-                });
-                ui.add_space(6.0);
-                let mut select = None;
-                let mut close = None;
-                egui::ScrollArea::horizontal()
-                    .id_salt("tabs")
-                    .show(ui, |ui| {
-                        ui.spacing_mut().item_spacing.x = 5.0;
-                        ui.horizontal(|ui| {
-                            for (index, buffer) in self.workspace.open.iter().enumerate() {
-                                let active = index == self.workspace.active;
-                                let title: String = buffer.view.name.chars().take(28).collect();
-                                let title = if buffer.view.name.chars().count() > 28 {
-                                    format!("{title}…")
-                                } else {
-                                    title
-                                };
-                                let frame = egui::Frame::new()
-                                    .fill(if active {
-                                        theme.background.color()
-                                    } else {
-                                        theme.surface.color()
-                                    })
-                                    .corner_radius(egui::CornerRadius::same(6))
-                                    .inner_margin(egui::Margin::symmetric(10, 5));
-                                let output = frame.show(ui, |ui| {
-                                    ui.push_id(buffer.page.info.id, |ui| {
-                                        ui.horizontal(|ui| {
-                                            if buffer.page.info.dirty {
-                                                ui.label(
-                                                    RichText::new("•").color(theme.accent.color()),
-                                                );
-                                            }
-                                            if ui
-                                                .add(
-                                                    egui::Button::new(RichText::new(title).color(
-                                                        if active {
-                                                            theme.text.color()
-                                                        } else {
-                                                            theme.muted.color()
-                                                        },
-                                                    ))
-                                                    .frame(false),
-                                                )
-                                                .on_hover_text(
-                                                    buffer.page.info.path.as_deref().unwrap_or(
-                                                        "Unsaved buffer · included in recovery",
-                                                    ),
-                                                )
-                                                .clicked()
-                                            {
-                                                select = Some(index);
-                                            }
-                                            if ui
-                                                .add(
-                                                    egui::Button::new(
-                                                        RichText::new("×")
-                                                            .color(theme.muted.color()),
-                                                    )
-                                                    .frame(false),
-                                                )
-                                                .on_hover_text("Close to buffer shelf")
-                                                .clicked()
-                                            {
-                                                close = Some(index);
-                                            }
-                                        })
-                                    });
-                                });
-                                if active {
-                                    let rect = output.response.rect;
-                                    ui.painter().line_segment(
-                                        [
-                                            egui::pos2(rect.left() + 7.0, rect.bottom()),
-                                            egui::pos2(rect.right() - 7.0, rect.bottom()),
-                                        ],
-                                        egui::Stroke::new(2.0, theme.accent.color()),
-                                    );
-                                }
-                            }
-                        });
-                    });
-                if !self.busy && !self.closing {
-                    if let Some(index) = select {
-                        self.workspace.active = index;
-                        self.changed();
-                        self.focus_editor = true;
-                    }
-                    if let Some(index) = close {
-                        let r = self.workspace.close(index);
-                        self.report(r);
-                    }
-                }
-            });
-        egui::TopBottomPanel::bottom("status")
-            .frame(
-                egui::Frame::new()
-                    .fill(theme.panel.color())
-                    .inner_margin(egui::Margin::symmetric(14, 5)),
-            )
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    let label = if self.closing {
-                        "Finishing recovery…"
-                    } else if self.checkpoint_pending {
-                        "Checkpointing…"
-                    } else if self.persisted == self.generation {
-                        "● Recovery up to date"
-                    } else {
-                        "● Recovery pending"
-                    };
-                    let color = if self.persisted == self.generation {
-                        theme.success.color()
-                    } else {
-                        theme.warning.color()
-                    };
-                    let response = ui.label(RichText::new(label).size(11.0).color(color));
-                    if let Some(saved) = self.last_saved {
-                        response.on_hover_text(format!(
-                            "Last completed checkpoint: {} seconds ago",
-                            saved.elapsed().as_secs()
-                        ));
-                    }
-                    if self.busy {
-                        ui.spinner();
-                        if ui.small_button("Cancel search").clicked() {
-                            self.cancel.store(true, Ordering::Relaxed);
-                        }
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let buffer = self.active();
-                        let info = &buffer.page.info;
-                        let prefix: String =
-                            buffer.page.text.chars().take(buffer.view.head).collect();
-                        let line = prefix.bytes().filter(|b| *b == b'\n').count() + 1;
-                        let col = prefix.rsplit('\n').next().unwrap_or("").chars().count() + 1;
-                        ui.label(
-                            RichText::new(format!(
-                                "{}Ln {line}, Col {col}",
-                                if info.paged { "Page " } else { "" }
-                            ))
-                            .size(11.0)
-                            .color(theme.muted.color()),
-                        );
-                        ui.separator();
-                        ui.label(
-                            RichText::new(format!(
-                                "UTF-8{}  ·  {}",
-                                if info.bom { " BOM" } else { "" },
-                                info.eol
-                            ))
-                            .size(11.0)
-                            .color(theme.muted.color()),
-                        );
-                        ui.separator();
-                        ui.label(
-                            RichText::new(format_bytes(info.size))
-                                .size(11.0)
-                                .color(theme.muted.color()),
-                        );
-                    });
-                })
-            });
-        if self.sidebar {
-            egui::SidePanel::left("buffers")
-                .default_width(220.0)
-                .min_width(170.0)
-                .max_width(420.0)
-                .resizable(true)
-                .frame(
-                    egui::Frame::new()
-                        .fill(theme.panel.color())
-                        .inner_margin(egui::Margin::symmetric(12, 16)),
-                )
-                .show(ctx, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("WORKSPACE")
-                                .size(10.0)
-                                .strong()
-                                .color(theme.muted.color()),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(self.workspace.open.len().to_string())
-                                    .size(10.0)
-                                    .color(theme.muted.color()),
-                            );
-                        });
-                    });
-                    ui.add_space(10.0);
-                    let mut select = None;
-                    egui::ScrollArea::vertical()
-                        .id_salt("buffer-list")
-                        .max_height((ui.available_height() * 0.6).max(90.0))
-                        .show(ui, |ui| {
-                            for (index, buffer) in self.workspace.open.iter().enumerate() {
-                                let active = index == self.workspace.active;
-                                let kind = if syntax::is_cuda(&buffer.page.info.name) {
-                                    "cu"
-                                } else if buffer.page.info.path.is_none() {
-                                    "•"
-                                } else {
-                                    "txt"
-                                };
-                                let label = format!("{kind}   {}", buffer.view.name);
-                                let response = ui
-                                    .allocate_ui_with_layout(
-                                        egui::vec2(ui.available_width(), 32.0),
-                                        egui::Layout::left_to_right(egui::Align::Center),
-                                        |ui| {
-                                            ui.add(
-                                                egui::Button::new(
-                                                    RichText::new(label).size(12.0).color(
-                                                        if active {
-                                                            theme.text.color()
-                                                        } else {
-                                                            theme.muted.color()
-                                                        },
-                                                    ),
-                                                )
-                                                .min_size(egui::vec2(ui.available_width(), 32.0))
-                                                .fill(if active {
-                                                    theme.elevated.color()
-                                                } else {
-                                                    theme.panel.color()
-                                                })
-                                                .stroke(egui::Stroke::NONE)
-                                                .truncate(),
-                                            )
-                                        },
-                                    )
-                                    .inner;
-                                if active {
-                                    let rect = response.rect;
-                                    ui.painter().line_segment(
-                                        [
-                                            rect.left_top() + egui::vec2(0.0, 6.0),
-                                            rect.left_bottom() - egui::vec2(0.0, 6.0),
-                                        ],
-                                        egui::Stroke::new(2.0, theme.accent.color()),
-                                    );
-                                }
-                                if response.on_hover_text(&buffer.view.name).clicked() {
-                                    select = Some(index);
-                                }
-                            }
-                        });
-                    if !self.busy && !self.closing {
-                        if let Some(index) = select {
-                            self.workspace.active = index;
-                            self.changed();
-                            self.focus_editor = true;
-                        }
-                    }
-                    ui.add_space(22.0);
-                    egui::Frame::new()
-                        .fill(theme.surface.color())
-                        .corner_radius(6)
-                        .inner_margin(12.0)
-                        .show(ui, |ui| {
-                            ui.set_min_width((ui.available_width() - 4.0).max(0.0));
-                            ui.label(
-                                RichText::new("BUFFER SHELF")
-                                    .size(10.0)
-                                    .strong()
-                                    .color(theme.muted.color()),
-                            );
-                            ui.add_space(4.0);
-                            ui.label(
-                                RichText::new(format!(
-                                    "{} closed buffers kept",
-                                    self.workspace.closed.len()
-                                ))
-                                .size(12.0),
-                            );
-                            if ui
-                                .add_enabled(
-                                    !self.busy && !self.closing,
-                                    egui::Button::new("Reopen latest")
-                                        .min_size(egui::vec2(ui.available_width(), 26.0)),
-                                )
-                                .clicked()
-                            {
-                                let r = self.workspace.reopen();
-                                self.report(r);
-                            }
-                            if ui.button("Browse shelf…").clicked() {
-                                self.shelf_open = true;
-                            }
-                        });
-                    ui.add_space(12.0);
-                    ui.label(
-                        RichText::new(
-                            "No filename needed. Your scratch buffers come back with you.",
-                        )
-                        .size(11.0)
-                        .color(theme.muted.color()),
-                    );
-                    ui.add_space(20.0);
-                    ui.label(
-                        RichText::new(
-                            "Ctrl+P   switch buffers\nCtrl+Shift+T   reopen\nCtrl+,   appearance",
-                        )
-                        .size(10.0)
-                        .color(theme.muted.color()),
-                    );
-                });
         }
     }
     fn editor(&mut self, ctx: &egui::Context) {
@@ -1062,7 +667,7 @@ impl HeditApp {
             .frame(
                 egui::Frame::new()
                     .fill(theme.background.color())
-                    .inner_margin(egui::Margin::symmetric(18, 12)),
+                    .inner_margin(egui::Margin::symmetric(12, 10)),
             )
             .show(ctx, |ui| {
                 if let Some(error) = self.error.clone() {
@@ -1081,23 +686,6 @@ impl HeditApp {
                             });
                         });
                 }
-                let display_path = self.active().page.info.path.clone();
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(display_path.as_deref().unwrap_or("UNTITLED / SCRATCHPAD"))
-                            .small()
-                            .color(theme.muted.color()),
-                    );
-                    if ui
-                        .button(format!(
-                            "Bookmarks ({})",
-                            self.active().view.bookmarks.len()
-                        ))
-                        .clicked()
-                    {
-                        self.bookmarks_open = true;
-                    }
-                });
                 if self.active().external {
                     ui.horizontal_wrapped(|ui| {
                         ui.colored_label(
@@ -1119,58 +707,6 @@ impl HeditApp {
                         {
                             self.save_file(ctx, true);
                         }
-                    });
-                }
-                if self.find_open {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label("Find");
-                        let response = ui.add(
-                            egui::TextEdit::singleline(&mut self.query)
-                                .desired_width(210.0)
-                                .hint_text("Literal, case-sensitive"),
-                        );
-                        if self.find_focus {
-                            response.request_focus();
-                            self.find_focus = false;
-                        }
-                        let enter =
-                            response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
-                        if ui
-                            .add_enabled(!self.busy, egui::Button::new("Next / wrap"))
-                            .clicked()
-                            || enter
-                        {
-                            self.find(ctx);
-                        }
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.replacement)
-                                .desired_width(150.0)
-                                .hint_text("Replacement"),
-                        );
-                        if ui
-                            .add_enabled(
-                                !self.busy && !self.active().follow,
-                                egui::Button::new("Replace selected"),
-                            )
-                            .clicked()
-                        {
-                            self.replace_selection();
-                        }
-                    });
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label("Go to line");
-                        ui.add(egui::TextEdit::singleline(&mut self.goto).desired_width(90.0));
-                        if ui
-                            .add_enabled(!self.busy, egui::Button::new("Go"))
-                            .clicked()
-                        {
-                            self.goto_line(ctx);
-                        }
-                        ui.label(
-                            RichText::new(&self.notice)
-                                .small()
-                                .color(theme.muted.color()),
-                        );
                     });
                 }
                 if self.active().page.info.paged {
@@ -1204,35 +740,6 @@ impl HeditApp {
                         })
                     });
                 }
-                ui.horizontal(|ui| {
-                    let follow_allowed = !self.busy
-                        && !self.closing
-                        && !self.active().page.info.dirty
-                        && self.active().page.info.path.is_some();
-                    let index = self.workspace.active;
-                    if ui
-                        .add_enabled(
-                            follow_allowed,
-                            egui::Checkbox::new(
-                                &mut self.workspace.open[index].follow,
-                                "Follow log (read only)",
-                            ),
-                        )
-                        .changed()
-                        && self.active().follow
-                    {
-                        let offset = self.active().page.info.size.saturating_sub(PAGE_SIZE);
-                        self.load_page(ctx, offset, false);
-                    }
-                    if syntax::is_c_family(&self.active().page.info.name) {
-                        ui.label(
-                            RichText::new(syntax::language_label(&self.active().page.info.name))
-                                .small()
-                                .color(theme.accent.color()),
-                        );
-                    }
-                });
-                ui.separator();
                 let index = self.workspace.active;
                 let buffer = &mut self.workspace.open[index];
                 let id = egui::Id::new(("editor", buffer.page.info.id, buffer.page.start));
@@ -1272,61 +779,138 @@ impl HeditApp {
                         .horizontal_scroll_offset(buffer.view.scroll_left as f32);
                 }
                 let restore = buffer.restore_cursor;
+                let gutter = if self.line_numbers {
+                    let digits = (buffer
+                        .page
+                        .text
+                        .bytes()
+                        .filter(|&byte| byte == b'\n')
+                        .count()
+                        + 1)
+                    .to_string()
+                    .len();
+                    (digits.max(3) as f32 * font_size * 0.65 + 16.0).max(42.0)
+                } else {
+                    0.0
+                };
+                let gutter_color = self.theme.muted.color();
+                let gutter_background = self.theme.background.color();
+                let gutter_text = self.theme.text.color();
+                let current_line = buffer
+                    .page
+                    .text
+                    .chars()
+                    .take(buffer.view.head)
+                    .filter(|&c| c == '\n')
+                    .count()
+                    + 1;
                 let scroll_output = scroll.show(ui, |ui| {
-                    let mut edit = egui::TextEdit::multiline(&mut buffer.page.text)
-                        .id(id)
-                        .font(FontId::monospace(font_size))
-                        .code_editor()
-                        .lock_focus(true)
-                        .frame(false)
-                        .desired_rows(30)
-                        .desired_width(if self.wrap {
-                            ui.available_width()
-                        } else {
-                            f32::INFINITY
-                        })
-                        .layouter(&mut layouter)
-                        .interactive(
-                            !self.busy
-                                && !self.closing
-                                && !buffer.follow
-                                && !self.appearance_open
-                                && !self.palette
-                                && self.rename_target.is_none()
-                                && !self.shelf_open
-                                && !self.bookmarks_open,
-                        );
-                    if !self.wrap {
-                        edit = edit.desired_width(f32::INFINITY);
-                    }
-                    let mut output = edit.show(ui);
-                    if self.focus_editor {
-                        output.response.request_focus();
-                        self.focus_editor = false;
-                    }
-                    if restore && buffer.reveal_cursor {
+                    let gutter_rect = egui::Rect::from_min_max(
+                        ui.clip_rect().min,
+                        egui::pos2(ui.clip_rect().left() + gutter, ui.clip_rect().bottom()),
+                    );
+                    let gutter_painter = ui.painter().clone();
+                    ui.horizontal_top(|ui| {
+                        if gutter > 0.0 {
+                            ui.add_space(gutter);
+                        }
+                        ui.set_clip_rect(ui.clip_rect().intersect(egui::Rect::from_min_max(
+                            egui::pos2(gutter_rect.right(), ui.clip_rect().top()),
+                            ui.clip_rect().max,
+                        )));
+                        let mut edit = egui::TextEdit::multiline(&mut buffer.page.text)
+                            .id(id)
+                            .font(FontId::monospace(font_size))
+                            .code_editor()
+                            .lock_focus(true)
+                            .frame(false)
+                            .desired_rows(30)
+                            .desired_width(if self.wrap {
+                                ui.available_width()
+                            } else {
+                                f32::INFINITY
+                            })
+                            .layouter(&mut layouter)
+                            .interactive(
+                                !self.busy
+                                    && !self.closing
+                                    && !buffer.follow
+                                    && !self.preferences_open
+                                    && !self.palette
+                                    && self.rename_target.is_none()
+                                    && !self.shelf_open
+                                    && !self.bookmarks_open
+                                    && !self.goto_open
+                                    && !self.about_open,
+                            );
+                        if !self.wrap {
+                            edit = edit.desired_width(f32::INFINITY);
+                        }
+                        if self.focus_editor {
+                            ctx.memory_mut(|m| m.request_focus(id));
+                        }
+                        let mut output = edit.show(ui);
+                        if gutter > 0.0 {
+                            gutter_painter.rect_filled(gutter_rect, 0.0, gutter_background);
+                            let mut line = 1;
+                            let mut first_row = true;
+                            for row in &output.galley.rows {
+                                if first_row {
+                                    let position = egui::pos2(
+                                        gutter_rect.right() - 12.0,
+                                        output.galley_pos.y + row.rect.center().y,
+                                    );
+                                    if gutter_rect
+                                        .contains(egui::pos2(gutter_rect.center().x, position.y))
+                                    {
+                                        gutter_painter.text(
+                                            position,
+                                            egui::Align2::RIGHT_CENTER,
+                                            line.to_string(),
+                                            FontId::monospace(font_size - 1.0),
+                                            if line == current_line {
+                                                gutter_text
+                                            } else {
+                                                gutter_color
+                                            },
+                                        );
+                                    }
+                                }
+                                first_row = row.ends_with_newline;
+                                if row.ends_with_newline {
+                                    line += 1;
+                                }
+                            }
+                        }
+                        if self.focus_editor {
+                            output.response.request_focus();
+                            self.focus_editor = false;
+                        }
+                        if restore && buffer.reveal_cursor {
+                            if let Some(range) = output.cursor_range {
+                                let rect = output
+                                    .galley
+                                    .pos_from_cursor(&range.primary)
+                                    .translate(output.galley_pos.to_vec2());
+                                ui.scroll_to_rect(rect, Some(egui::Align::Center));
+                            }
+                        }
                         if let Some(range) = output.cursor_range {
-                            let rect = output
-                                .galley
-                                .pos_from_cursor(&range.primary)
-                                .translate(output.galley_pos.to_vec2());
-                            ui.scroll_to_rect(rect, Some(egui::Align::Center));
+                            let range = range.as_ccursor_range();
+                            let previous = (buffer.view.anchor, buffer.view.head);
+                            buffer.view.anchor = range.secondary.index;
+                            buffer.view.head = range.primary.index;
+                            if previous != (buffer.view.anchor, buffer.view.head) {
+                                self.generation = self.generation.wrapping_add(1);
+                            }
                         }
-                    }
-                    if let Some(range) = output.cursor_range {
-                        let range = range.as_ccursor_range();
-                        let previous = (buffer.view.anchor, buffer.view.head);
-                        buffer.view.anchor = range.secondary.index;
-                        buffer.view.head = range.primary.index;
-                        if previous != (buffer.view.anchor, buffer.view.head) {
-                            self.generation = self.generation.wrapping_add(1);
-                        }
-                    }
-                    // Backend history is authoritative across pages. Do not retain a
-                    // second, potentially large TextEdit undo history.
-                    output.state.clear_undoer();
-                    output.state.store(ctx, id);
-                    output.response.changed()
+                        // Backend history is authoritative across pages. Do not retain a
+                        // second, potentially large TextEdit undo history.
+                        output.state.clear_undoer();
+                        output.state.store(ctx, id);
+                        output.response.changed()
+                    })
+                    .inner
                 });
                 buffer.restore_cursor = false;
                 buffer.reveal_cursor = false;
@@ -1384,8 +968,9 @@ impl HeditApp {
                     ui.add(egui::TextEdit::singleline(&mut self.debug_args).desired_width(180.0).hint_text("[\"arg one\", \"arg2\"]"));
                 });
                 ui.horizontal_wrapped(|ui| {
-                    ui.label("Debugger");
-                    ui.add(egui::TextEdit::singleline(&mut self.debugger).desired_width(150.0));
+                    if ui.button("Tool settings…").clicked() {
+                        self.open_preferences(PreferencesPage::Tools);
+                    }
                     if ui.button("Start CUDA-GDB").clicked() {
                         let result = serde_json::from_str::<Vec<String>>(&self.debug_args).map_err(|e| format!("Arguments must be a JSON array of strings: {e}"))
                             .and_then(|args| DebugSession::launch(&self.debugger, &PathBuf::from(&self.debug_program), &args, None));
@@ -1436,10 +1021,10 @@ impl HeditApp {
         });
     }
     fn open_appearance(&mut self) {
-        if !self.appearance_open {
+        if !self.preferences_open {
             self.appearance_original = self.theme.clone();
         }
-        self.appearance_open = true;
+        self.open_preferences(PreferencesPage::Appearance);
     }
     fn set_theme(&mut self, ctx: &egui::Context, theme: Theme) {
         self.theme_hex = Role::ALL
@@ -1483,91 +1068,6 @@ impl HeditApp {
             )))
         });
     }
-    fn appearance(&mut self, ctx: &egui::Context) {
-        if !self.appearance_open {
-            return;
-        }
-        let before = self.theme.clone();
-        let mut open = true;
-        egui::Window::new("Appearance").id(egui::Id::new("appearance"))
-            .open(&mut open).default_width(500.0).default_height(580.0)
-            .min_width(360.0).resizable(true).collapsible(false)
-            .anchor(egui::Align2::CENTER_CENTER,[0.0,0.0]).show(ctx,|ui| {
-                ui.label(RichText::new("Make room for your kind of focus.").size(19.0).strong());
-                ui.label(RichText::new("Pick a palette, then make it yours. Colors preview as you edit.").small().color(self.theme.muted.color()));
-                ui.add_space(8.0);
-                ui.horizontal_wrapped(|ui| {
-                    for preset in Preset::ALL {
-                        let theme=preset.theme();
-                        let selected=self.theme==theme;
-                        let button=egui::Button::new(RichText::new(preset.name()).color(theme.text.color()))
-                            .fill(theme.background.color()).stroke(egui::Stroke::new(if selected {2.0}else{1.0},if selected {self.theme.accent.color()}else{self.theme.border.color()}));
-                        if ui.add(button).clicked() {self.set_theme(ctx,theme);}
-                    }
-                });
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    ui.label("Theme name");
-                    ui.add(egui::TextEdit::singleline(&mut self.theme.name).char_limit(80).desired_width(235.0));
-                    ui.checkbox(&mut self.theme.dark,"Dark controls");
-                });
-                ui.separator();
-                egui::ScrollArea::vertical().id_salt("theme-scroll").scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible).max_height((ctx.screen_rect().height()-350.0).clamp(110.0,330.0)).show(ui,|ui| {
-                    egui::Grid::new("theme-colors").num_columns(3).spacing([22.0,8.0]).striped(true).show(ui,|ui| {
-                        for (index,role) in Role::ALL.into_iter().enumerate() {
-                            ui.label(role.label());
-                            let color=self.theme.color_mut(role);
-                            if ui.color_edit_button_srgb(&mut color.0).changed() {
-                                self.theme_hex[index]=color.hex();
-                            }
-                            let valid=Rgb::try_from(self.theme_hex[index].clone()).is_ok();
-                            let text_color=if valid {self.theme.text.color()}else{self.theme.error.color()};
-                            let response=ui.add(egui::TextEdit::singleline(&mut self.theme_hex[index]).id_salt(("hex",index)).desired_width(90.0).font(egui::TextStyle::Monospace).char_limit(7).text_color(text_color));
-                            if response.changed() {
-                                if let Ok(color)=Rgb::try_from(self.theme_hex[index].clone()) {*self.theme.color_mut(role)=color;}
-                            }
-                            if !valid {response.on_hover_text("Use #RRGGBB. The last valid color remains active.");}
-                            ui.end_row();
-                        }
-                    });
-                });
-                ui.separator();
-                let contrast=Theme::contrast(self.theme.text,self.theme.background);
-                let selection_contrast=Theme::contrast(self.theme.selection_text,self.theme.selection);
-                let readable=contrast>=4.5 && selection_contrast>=4.5;
-                ui.label(RichText::new(format!("Text contrast {contrast:.1}:1 · Selection {selection_contrast:.1}:1{}",if readable {""}else{" · Low contrast"}))
-                    .small().color(if readable {self.theme.muted.color()}else{self.theme.warning.color()}));
-                ui.add_space(4.0);
-                egui::Frame::new().fill(self.theme.background.color()).stroke(egui::Stroke::new(1.0,self.theme.border.color())).inner_margin(12.0).show(ui,|ui| {
-                    ui.label(syntax::highlight_with_theme("__global__ void kernel() { // a little room to think\n    const int value = 42;\n}",12.0,ui.available_width(),true,&self.theme));
-                });
-                ui.add_space(8.0);
-                ui.horizontal_wrapped(|ui| {
-                    if ui.add_enabled(!self.busy,egui::Button::new("Import JSON…")).clicked() {self.import_theme(ctx);}
-                    if ui.add_enabled(!self.busy,egui::Button::new("Export JSON…")).clicked() {self.export_theme(ctx);}
-                    if ui.button("Revert changes").clicked() {self.set_theme(ctx,self.appearance_original.clone());}
-                    if ui.button("Done").clicked() {self.appearance_open=false;self.focus_editor=true;}
-                });
-                ui.label(RichText::new("Your appearance is saved automatically on this device.").small().color(self.theme.muted.color()));
-            });
-        self.appearance_open &= open;
-        if !open {
-            self.focus_editor = true;
-        }
-        if self.theme != before {
-            if (self.theme.dark != before.dark
-                || Role::ALL
-                    .into_iter()
-                    .any(|role| self.theme.color(role) != before.color(role)))
-                && Preset::ALL.into_iter().any(|p| self.theme.name == p.name())
-                && !Preset::ALL.into_iter().any(|p| self.theme == p.theme())
-            {
-                self.theme.name = "My theme".into();
-            }
-            self.theme.apply(ctx);
-        }
-    }
-
     fn open_scratchpad_name(&mut self) {
         if self.active().page.info.path.is_some() {
             self.error =
@@ -1812,88 +1312,6 @@ impl HeditApp {
             }
         }
     }
-
-    fn command_palette(&mut self, ctx: &egui::Context) {
-        if !self.palette {
-            return;
-        }
-        let mut selected = None;
-        egui::Window::new("Switch buffer / Commands")
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_TOP, [0.0, 100.0])
-            .default_width(500.0)
-            .show(ctx, |ui| {
-                let response = ui.add(
-                    egui::TextEdit::singleline(&mut self.palette_query)
-                        .desired_width(f32::INFINITY)
-                        .hint_text("Type a buffer name or command…"),
-                );
-                response.request_focus();
-                let filter = self.palette_query.to_lowercase();
-                let mut first = None;
-                for (index, buffer) in self.workspace.open.iter().enumerate() {
-                    if !buffer.view.name.to_lowercase().contains(&filter) {
-                        continue;
-                    }
-                    if first.is_none() {
-                        first = Some(index);
-                    }
-                    if ui
-                        .selectable_label(index == self.workspace.active, &buffer.view.name)
-                        .clicked()
-                    {
-                        selected = Some(index);
-                    }
-                }
-                if ui.input(|i| i.key_pressed(Key::Enter)) {
-                    selected = first;
-                }
-                ui.separator();
-                for (label, action) in [
-                    ("New buffer", 0),
-                    ("Open file…", 1),
-                    ("Reopen closed buffer", 2),
-                    ("Toggle CUDA panel", 3),
-                    ("Toggle word wrap", 4),
-                    ("Checkpoint now", 5),
-                    ("Appearance / Custom theme", 6),
-                    ("Name scratchpad", 7),
-                    ("Browse closed buffers", 8),
-                    ("Show bookmarks", 9),
-                    ("Toggle bookmark", 10),
-                ] {
-                    if label.to_lowercase().contains(&filter) && ui.button(label).clicked() {
-                        match action {
-                            0 => {
-                                let r = self.workspace.new_buffer();
-                                self.report(r);
-                            }
-                            1 => self.open(ctx, None),
-                            2 => {
-                                let r = self.workspace.reopen();
-                                self.report(r);
-                            }
-                            3 => self.gpu_open = !self.gpu_open,
-                            4 => self.wrap = !self.wrap,
-                            5 => self.checkpoint(ctx),
-                            6 => self.open_appearance(),
-                            7 => self.open_scratchpad_name(),
-                            8 => self.shelf_open = true,
-                            9 => self.bookmarks_open = true,
-                            _ => self.toggle_bookmark(),
-                        }
-                        self.palette = false;
-                    }
-                }
-            });
-        if let Some(index) = selected {
-            self.workspace.active = index;
-            self.palette = false;
-            self.changed();
-            self.focus_editor = true;
-        }
-    }
 }
 impl eframe::App for HeditApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -1907,13 +1325,27 @@ impl eframe::App for HeditApp {
             self.closing = true;
         }
         self.shortcuts(ctx);
+        let title = format!(
+            "{}{} — hedit",
+            self.active().view.name,
+            if self.active().page.info.dirty {
+                " •"
+            } else {
+                ""
+            }
+        );
+        if self.window_title != title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.window_title = title;
+        }
         self.chrome(ctx);
         self.gpu(ctx);
+        self.search_panel(ctx);
         self.editor(ctx);
         if !self.busy && !self.closing {
             self.command_palette(ctx);
         }
-        self.appearance(ctx);
+        self.preferences(ctx);
         self.buffer_tools(ctx);
         let paths: Vec<_> = ctx.input(|i| {
             i.raw
@@ -1934,6 +1366,9 @@ impl eframe::App for HeditApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, "wrap", &self.wrap);
         eframe::set_value(storage, "font_size", &self.font_size);
+        eframe::set_value(storage, "sidebar", &self.sidebar);
+        eframe::set_value(storage, "line_numbers", &self.line_numbers);
+        storage.set_string("debugger", self.debugger.clone());
         let mut theme = self.theme.clone();
         if theme.name.trim().is_empty() {
             theme.name = "My theme".into();
@@ -1970,12 +1405,21 @@ pub fn icon() -> egui::IconData {
 mod tests {
     use super::*;
 
-    fn frame(ctx: &egui::Context, app: &mut HeditApp, events: Vec<egui::Event>) {
+    fn frame(
+        ctx: &egui::Context,
+        app: &mut HeditApp,
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
+        frame_size(ctx, app, events, egui::vec2(1280.0, 820.0))
+    }
+    fn frame_size(
+        ctx: &egui::Context,
+        app: &mut HeditApp,
+        events: Vec<egui::Event>,
+        size: egui::Vec2,
+    ) -> egui::FullOutput {
         let input = egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(1280.0, 820.0),
-            )),
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
             focused: true,
             events,
             ..Default::default()
@@ -1984,12 +1428,14 @@ mod tests {
             app.shortcuts(ctx);
             app.chrome(ctx);
             app.gpu(ctx);
+            app.search_panel(ctx);
             app.editor(ctx);
             app.command_palette(ctx);
-            app.appearance(ctx);
+            app.preferences(ctx);
             app.buffer_tools(ctx);
         });
         assert!(!output.shapes.is_empty());
+        output
     }
     fn key(key: Key, modifiers: Modifiers) -> egui::Event {
         egui::Event::Key {
@@ -2114,6 +1560,292 @@ mod tests {
         frame(&ctx, &mut app, vec![]);
     }
 
+    fn text_rect(shape: &egui::Shape, label: &str) -> Option<egui::Rect> {
+        match shape {
+            egui::Shape::Text(text) if text.galley.job.text == label => {
+                Some(text.galley.rect.translate(text.pos.to_vec2()))
+            }
+            egui::Shape::Vec(shapes) => shapes.iter().find_map(|shape| text_rect(shape, label)),
+            _ => None,
+        }
+    }
+    fn click_label(ctx: &egui::Context, app: &mut HeditApp, label: &str) {
+        let output = frame(ctx, app, vec![]);
+        let rect = output
+            .shapes
+            .iter()
+            .find_map(|shape| text_rect(&shape.shape, label))
+            .unwrap_or_else(|| panic!("Missing visible label: {label}"));
+        let position = rect.center();
+        frame(
+            ctx,
+            app,
+            vec![
+                egui::Event::PointerMoved(position),
+                egui::Event::PointerButton {
+                    pos: position,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Modifiers::NONE,
+                },
+            ],
+        );
+        frame(
+            ctx,
+            app,
+            vec![egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: Modifiers::NONE,
+            }],
+        );
+    }
+    #[test]
+    fn menus_open_unified_preferences_and_keep_text_safe() {
+        let directory = tempfile::tempdir().unwrap();
+        let (workspace, _) = Workspace::restore(directory.path().into()).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        frame(&ctx, &mut app, vec![]);
+        frame(
+            &ctx,
+            &mut app,
+            vec![egui::Event::Text("keep these notes".into())],
+        );
+        click_label(&ctx, &mut app, "Preferences");
+        click_label(&ctx, &mut app, "Settings…");
+        assert!(app.preferences_open);
+        click_label(&ctx, &mut app, "Editor");
+        click_label(&ctx, &mut app, "Word wrap");
+        assert!(app.wrap);
+        click_label(&ctx, &mut app, "Appearance");
+        click_label(&ctx, &mut app, "Hedit Paper");
+        assert_eq!(app.theme, Preset::Paper.theme());
+        click_label(&ctx, &mut app, "CUDA Tools");
+        click_label(&ctx, &mut app, "Recovery");
+        assert_eq!(app.active().page.text, "keep these notes");
+        frame(&ctx, &mut app, vec![key(Key::Escape, Modifiers::NONE)]);
+        assert!(!app.preferences_open);
+    }
+    #[test]
+    fn preferences_restore_layout_and_debugger_path() {
+        let directory = tempfile::tempdir().unwrap();
+        let (workspace, _) = Workspace::restore(directory.path().into()).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        app.wrap = true;
+        app.sidebar = false;
+        app.line_numbers = false;
+        app.font_size = 19.0;
+        app.debugger = "/opt/cuda/bin/cuda-gdb".into();
+        let mut storage = MemoryStorage::default();
+        eframe::App::save(&mut app, &mut storage);
+        drop(app);
+        let (workspace, _) = Workspace::restore(directory.path().into()).unwrap();
+        let app = HeditApp::from_context(&ctx, Some(&storage), workspace, vec![], vec![]);
+        assert!(app.wrap);
+        assert!(!app.sidebar);
+        assert!(!app.line_numbers);
+        assert_eq!(app.font_size, 19.0);
+        assert_eq!(app.debugger, "/opt/cuda/bin/cuda-gdb");
+    }
+    #[test]
+    fn command_palette_accepts_typed_command_with_enter() {
+        let directory = tempfile::tempdir().unwrap();
+        let (workspace, _) = Workspace::restore(directory.path().into()).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        frame(&ctx, &mut app, vec![]);
+        frame(
+            &ctx,
+            &mut app,
+            vec![key(
+                Key::P,
+                Modifiers {
+                    shift: true,
+                    ..Modifiers::COMMAND
+                },
+            )],
+        );
+        frame(
+            &ctx,
+            &mut app,
+            vec![
+                egui::Event::Text("color theme".into()),
+                key(Key::Enter, Modifiers::NONE),
+            ],
+        );
+        assert!(!app.palette);
+        assert!(app.preferences_open);
+        assert_eq!(app.preferences_page, PreferencesPage::Appearance);
+        assert_eq!(app.active().page.text, "");
+    }
+    #[test]
+    fn menu_cut_keeps_unicode_and_backend_consistent_and_guards_follow() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut workspace, _) = Workspace::restore(directory.path().into()).unwrap();
+        workspace.open[0].page.text = "Aλ🦀Z".into();
+        workspace.edit(0, "").unwrap();
+        workspace.open[0].view.anchor = 1;
+        workspace.open[0].view.head = 3;
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        app.execute(&ctx, Command::Cut);
+        assert_eq!(app.active().page.text, "AZ");
+        let id = app.active().page.info.id;
+        assert_eq!(
+            app.workspace
+                .editor
+                .get(id)
+                .unwrap()
+                .lock()
+                .unwrap()
+                .page(0)
+                .unwrap()
+                .text,
+            "AZ"
+        );
+        app.workspace.open[0].follow = true;
+        app.execute(&ctx, Command::Cut);
+        assert!(!app.command_enabled(Command::Paste));
+        assert!(!app.command_enabled(Command::Undo));
+        assert_eq!(app.active().page.text, "AZ");
+    }
+
+    #[test]
+    fn find_and_goto_submit_with_enter_without_editing_the_document() {
+        fn finish_job(app: &mut HeditApp, ctx: &egui::Context) {
+            for _ in 0..200 {
+                app.receive(ctx);
+                if !app.busy {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            panic!("Navigation job did not complete");
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let (mut workspace, _) = Workspace::restore(directory.path().into()).unwrap();
+        let text = "first λ\nsecond\nthird";
+        workspace.open[0].page.text = text.into();
+        workspace.edit(0, "").unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        frame(&ctx, &mut app, vec![]);
+        frame(&ctx, &mut app, vec![key(Key::F, Modifiers::COMMAND)]);
+        frame(
+            &ctx,
+            &mut app,
+            vec![
+                egui::Event::Text("second".into()),
+                key(Key::Enter, Modifiers::NONE),
+            ],
+        );
+        assert!(app.busy, "Find should submit on Enter");
+        finish_job(&mut app, &ctx);
+        assert_eq!(
+            app.active()
+                .page
+                .text
+                .chars()
+                .skip(app.active().view.anchor)
+                .take(app.active().view.head - app.active().view.anchor)
+                .collect::<String>(),
+            "second"
+        );
+        frame(&ctx, &mut app, vec![key(Key::Escape, Modifiers::NONE)]);
+        frame(&ctx, &mut app, vec![key(Key::G, Modifiers::COMMAND)]);
+        frame(
+            &ctx,
+            &mut app,
+            vec![
+                egui::Event::Text("3".into()),
+                key(Key::Enter, Modifiers::NONE),
+            ],
+        );
+        assert!(app.busy, "Go to line should submit on Enter");
+        assert!(!app.goto_open);
+        finish_job(&mut app, &ctx);
+        assert_eq!(
+            app.active()
+                .page
+                .text
+                .chars()
+                .take(app.active().view.head)
+                .filter(|&c| c == '\n')
+                .count(),
+            2
+        );
+        assert_eq!(app.active().page.text, text);
+    }
+
+    #[test]
+    fn compact_preferences_keep_title_and_done_visible() {
+        let directory = tempfile::tempdir().unwrap();
+        let (workspace, _) = Workspace::restore(directory.path().into()).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        let size = egui::vec2(720.0, 480.0);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+        for preset in Preset::ALL {
+            app.set_theme(&ctx, preset.theme());
+            for page in [
+                PreferencesPage::Editor,
+                PreferencesPage::Appearance,
+                PreferencesPage::Tools,
+                PreferencesPage::Recovery,
+            ] {
+                app.open_preferences(page);
+                for _ in 0..3 {
+                    frame_size(&ctx, &mut app, vec![], size);
+                }
+                let output = frame_size(&ctx, &mut app, vec![], size);
+                for label in ["Preferences", "Done"] {
+                    let rects: Vec<_> = output
+                        .shapes
+                        .iter()
+                        .filter_map(|shape| text_rect(&shape.shape, label))
+                        .collect();
+                    assert!(!rects.is_empty());
+                    assert!(
+                        rects.iter().all(|rect| screen.contains_rect(*rect)),
+                        "Clipped {label}: {page:?}"
+                    );
+                }
+            }
+        }
+    }
+    #[test]
+    fn gutter_skips_wrap_continuations_and_stays_fixed_on_horizontal_scroll() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut workspace, _) = Workspace::restore(directory.path().into()).unwrap();
+        workspace.open[0].page.text = format!("{}\nsecond line\nthird line", "x".repeat(350));
+        workspace.edit(0, "").unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        app.wrap = true;
+        let mut output = frame(&ctx, &mut app, vec![]);
+        for _ in 0..3 {
+            output = frame(&ctx, &mut app, vec![]);
+        }
+        let position = |output: &egui::FullOutput, label| {
+            output
+                .shapes
+                .iter()
+                .find_map(|shape| text_rect(&shape.shape, label))
+                .unwrap()
+        };
+        assert!(position(&output, "2").top() - position(&output, "1").top() > app.font_size * 2.0);
+        app.wrap = false;
+        frame(&ctx, &mut app, vec![]);
+        let unscrolled = frame(&ctx, &mut app, vec![]);
+        app.workspace.open[0].view.scroll_left = 120.0;
+        app.workspace.open[0].restore_cursor = true;
+        let scrolled = frame(&ctx, &mut app, vec![]);
+        assert!((position(&unscrolled, "1").left() - position(&scrolled, "1").left()).abs() < 1.0);
+    }
+
     #[test]
     #[ignore = "writes SVG layout previews to HEDIT_PREVIEW_DIR"]
     fn export_theme_previews() {
@@ -2135,13 +1867,42 @@ mod tests {
             app.set_theme(&ctx, preset.theme());
             let slug = preset.name().to_lowercase().replace(' ', "-");
             let mut render_time = 0.0;
-            for (name, size, appearance) in [
-                ("editor", [1280.0, 820.0], false),
-                ("appearance", [1280.0, 820.0], true),
-                ("compact", [720.0, 480.0], false),
-                ("compact-appearance", [720.0, 480.0], true),
+            for (name, size, page) in [
+                ("editor", [1280.0, 820.0], None),
+                (
+                    "appearance",
+                    [1280.0, 820.0],
+                    Some(PreferencesPage::Appearance),
+                ),
+                ("compact", [720.0, 480.0], None),
+                (
+                    "compact-appearance",
+                    [720.0, 480.0],
+                    Some(PreferencesPage::Appearance),
+                ),
+                (
+                    "preferences-editor",
+                    [1280.0, 820.0],
+                    Some(PreferencesPage::Editor),
+                ),
+                (
+                    "preferences-tools",
+                    [720.0, 480.0],
+                    Some(PreferencesPage::Tools),
+                ),
+                (
+                    "preferences-recovery",
+                    [720.0, 480.0],
+                    Some(PreferencesPage::Recovery),
+                ),
+                ("search", [1280.0, 820.0], None),
+                ("cuda", [1280.0, 820.0], None),
             ] {
-                app.appearance_open = appearance;
+                app.preferences_open = page.is_some();
+                app.preferences_page = page.unwrap_or(PreferencesPage::Editor);
+                app.find_open = name == "search";
+                app.replace_open = name == "search";
+                app.gpu_open = name == "cuda";
                 // Multiple frames let egui settle sizing/scrollbar geometry.
                 let mut last = None;
                 for _ in 0..3 {
@@ -2158,8 +1919,9 @@ mod tests {
                         |ctx| {
                             app.chrome(ctx);
                             app.gpu(ctx);
+                            app.search_panel(ctx);
                             app.editor(ctx);
-                            app.appearance(ctx);
+                            app.preferences(ctx);
                         },
                     );
                     last = Some(result);

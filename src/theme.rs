@@ -333,15 +333,15 @@ impl Theme {
             w.weak_bg_fill = self.surface.color();
             w.bg_stroke = Stroke::new(1.0, self.border.color());
             w.fg_stroke = Stroke::new(1.0, self.text.color());
-            w.corner_radius = egui::CornerRadius::same(5);
+            w.corner_radius = egui::CornerRadius::same(2);
         }
         v.widgets.hovered.bg_stroke = Stroke::new(1.0, self.accent.color());
         v.widgets.active.bg_fill = self.selection.color();
         v.widgets.active.fg_stroke = Stroke::new(1.0, self.selection_text.color());
         v.text_cursor.stroke = Stroke::new(1.5, self.accent.color());
         style.visuals = v;
-        style.spacing.item_spacing = egui::vec2(8.0, 6.0);
-        style.spacing.button_padding = egui::vec2(10.0, 6.0);
+        style.spacing.item_spacing = egui::vec2(6.0, 4.0);
+        style.spacing.button_padding = egui::vec2(7.0, 4.0);
         style.spacing.scroll.bar_width = 7.0;
         ctx.set_style(style);
     }

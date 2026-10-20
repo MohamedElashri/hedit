@@ -26,7 +26,8 @@ work with CUDA source without leaving the editor.
 - **Find your way around.** Switch buffers, jump to a line, search and replace
   individual matches, and undo edits during your session.
 - **Make it comfortable.** Choose a light or dark theme, customize individual
-  colors, import or export palettes, and adjust font size and word wrap.
+  colors, import or export palettes, and adjust font size, line numbers, and word wrap.
+  Familiar menus and a single Preferences window keep settings easy to find.
 - **Work with CUDA.** Read highlighted C/C++ and CUDA source, control CUDA-GDB,
   run Compute Sanitizer, and inspect GPU information from the CUDA panel.
 
@@ -63,16 +64,18 @@ printf 'keep this snippet\n' | hedit -
 
 Inside the editor:
 
-1. Press **Ctrl+N** to start a scratchpad. Use **More → Name scratchpad…** to name it.
+1. Press **Ctrl+N** to start a scratchpad. Use **File → Name scratchpad…** to name it.
 2. Paste your notes and check that the status reads **Recovery up to date** before
    ending your session. Your workspace returns on the next launch.
-3. Open a log and enable **Follow log (read only)** to keep up with incoming output.
+3. Open a log and choose **View → Follow log (read only)** to keep up with
+   incoming output.
 4. Use **Ctrl+F2** to bookmark a position and **F2** to return to it.
-5. Open **Appearance** to choose a preset or make your own palette.
+5. Open **Preferences → Settings…** for editor options, appearance, CUDA tools,
+   and recovery in one place.
 
 Close a tab with **Ctrl+W** and reopen it with **Ctrl+Shift+T**, or use
-**Browse shelf…** to find an older closed buffer. Use **Ctrl+S** whenever you want
-a normal saved file.
+**File → Browse closed buffers…** to find an older closed buffer. Use **Ctrl+S**
+whenever you want a normal saved file.
 
 ## Everyday shortcuts
 
@@ -83,11 +86,11 @@ a normal saved file.
 | Ctrl+P / Ctrl+Shift+P | Switch buffers / open the command palette |
 | Ctrl+F / Ctrl+G | Find text / go to a line |
 | Ctrl+W / Ctrl+Shift+T | Close a tab / reopen the latest closed tab |
-| Ctrl+, | Customize appearance |
+| Ctrl+, | Open preferences |
 
 ## CUDA tools
 
-Open the **CUDA** panel, select a debug executable, and start CUDA-GDB or a
+Choose **Tools → CUDA panel**, select a debug executable, and start CUDA-GDB or a
 sanitizer run. Install NVIDIA's CUDA Toolkit and a compatible driver separately.
 See the [CUDA guide](USER_GUIDE.md#cuda-tools) for compilation flags, debugger
 controls, and tool requirements. Device debugging still needs validation on

@@ -107,7 +107,10 @@ visual checks, accessibility review, and NVIDIA hardware validation remain open.
 
 | Module | Responsibility |
 | --- | --- |
-| `src/app.rs` | Native UI, shortcuts, background jobs, checkpoint status, exit gating |
+| `src/app.rs` | Editor rendering, shortcuts, background jobs, checkpoint status, exit gating |
+| `src/app/chrome.rs` | Menus, tabs, sidebar, status bar, bottom search panel |
+| `src/app/commands.rs` | Shared menu/shortcut commands and keyboard-driven palette |
+| `src/app/preferences.rs` | Unified settings, theme controls, tool/recovery preferences, navigation dialogs |
 | `src/workspace.rs` | Open/closed buffers, names, bookmarks, UTF-8-safe edit splices |
 | `src/document.rs` | Disk-backed piece table, bounded pages, source guards, atomic saves, undo |
 | `src/session.rs` | Process lock, snapshots, manifests, fallback and preservation |
@@ -147,7 +150,7 @@ multiple selections, and folding require further editor work.
 | `session.json` | Latest committed manifest |
 | `session.previous.json` | Previous valid manifest |
 | `buffers-*/` | Recovery text or piece sources referenced by manifests |
-| `window.ron` | Window geometry and appearance preferences |
+| `window.ron` | Window geometry, theme, editor layout, font size, CUDA-GDB path |
 
 A checkpoint syncs buffer data and its directory, writes and syncs the manifest,
 retains the previous manifest, then atomically replaces the current one. Unix
@@ -235,7 +238,11 @@ paths. The launcher keeps fixed brand colors; the in-app mark uses theme colors.
 Give the document most of the space. Use quiet borders, consistent controls,
 monospace editing/tool output, and proportional UI text. Active tabs and buffer
 rows need clear markers. Recovery must always have a written status as well as a
-color cue.
+color cue. Keep preferences in the unified Editor, Appearance, CUDA Tools, and
+Recovery pages. Menus, shortcuts, and the palette should route through the same
+command dispatcher so availability and behavior stay consistent. The line-number
+gutter follows laid-out rows, skips wrap continuations, and remains fixed during
+horizontal scrolling; paged documents use page-relative line numbers.
 
 ## Packaging and CI
 
