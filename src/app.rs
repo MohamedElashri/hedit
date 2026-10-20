@@ -1,6 +1,7 @@
 mod chrome;
 mod commands;
 mod preferences;
+mod updates;
 
 use commands::Command;
 use eframe::egui::{self, FontId, Key, Modifiers, RichText};
@@ -97,6 +98,7 @@ pub struct HeditApp {
     shelf_open: bool,
     shelf_query: String,
     bookmarks_open: bool,
+    updates: updates::Updates,
 }
 impl HeditApp {
     pub fn new(
@@ -210,6 +212,11 @@ impl HeditApp {
             shelf_open: false,
             shelf_query: String::new(),
             bookmarks_open: false,
+            updates: updates::Updates::new(
+                storage
+                    .and_then(|s| eframe::get_value(s, "update_github_cli"))
+                    .unwrap_or(false),
+            ),
         }
     }
     fn changed(&mut self) {
@@ -566,7 +573,7 @@ impl HeditApp {
                 self.open(ctx, Some(path));
             }
         }
-        if self.closing && !self.busy && !self.checkpoint_pending {
+        if self.closing && !self.busy && !self.checkpoint_pending && !self.updates.installing() {
             if self.generation == self.persisted {
                 self.exit_ready = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -655,6 +662,7 @@ impl HeditApp {
             self.goto_open = false;
             self.preferences_open = false;
             self.about_open = false;
+            self.updates.open = false;
             self.rename_target = None;
             self.shelf_open = false;
             self.bookmarks_open = false;
@@ -841,7 +849,8 @@ impl HeditApp {
                                     && !self.shelf_open
                                     && !self.bookmarks_open
                                     && !self.goto_open
-                                    && !self.about_open,
+                                    && !self.about_open
+                                    && !self.updates.open,
                             );
                         if !self.wrap {
                             edit = edit.desired_width(f32::INFINITY);
@@ -1315,6 +1324,7 @@ impl HeditApp {
 }
 impl eframe::App for HeditApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.updates.poll();
         self.receive(ctx);
         if let Some(debug) = &mut self.debug {
             debug.poll();
@@ -1347,6 +1357,7 @@ impl eframe::App for HeditApp {
         }
         self.preferences(ctx);
         self.buffer_tools(ctx);
+        self.updates_window(ctx);
         let paths: Vec<_> = ctx.input(|i| {
             i.raw
                 .dropped_files
@@ -1356,7 +1367,7 @@ impl eframe::App for HeditApp {
         });
         self.pending_paths.extend(paths);
         ctx.request_repaint_after(Duration::from_millis(
-            if self.debug.is_some() || self.busy {
+            if self.debug.is_some() || self.busy || self.updates.active() {
                 50
             } else {
                 200
@@ -1369,6 +1380,7 @@ impl eframe::App for HeditApp {
         eframe::set_value(storage, "sidebar", &self.sidebar);
         eframe::set_value(storage, "line_numbers", &self.line_numbers);
         storage.set_string("debugger", self.debugger.clone());
+        eframe::set_value(storage, "update_github_cli", &self.updates.use_github_cli);
         let mut theme = self.theme.clone();
         if theme.name.trim().is_empty() {
             theme.name = "My theme".into();

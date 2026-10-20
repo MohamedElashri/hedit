@@ -39,6 +39,7 @@ pub(super) enum Command {
     ToolSettings,
     Checkpoint,
     About,
+    Updates,
 }
 impl Command {
     pub(super) const ALL: &'static [Self] = &[
@@ -77,6 +78,7 @@ impl Command {
         Self::ToolSettings,
         Self::Checkpoint,
         Self::About,
+        Self::Updates,
         Self::Quit,
     ];
     pub(super) fn label(self) -> &'static str {
@@ -118,6 +120,7 @@ impl Command {
             Self::ToolSettings => "CUDA tool settings…",
             Self::Checkpoint => "Checkpoint now",
             Self::About => "About hedit",
+            Self::Updates => "Check for updates…",
         }
     }
     pub(super) fn shortcut(self) -> &'static str {
@@ -295,6 +298,7 @@ impl HeditApp {
             Command::ToolSettings => self.open_preferences(PreferencesPage::Tools),
             Command::Checkpoint => self.checkpoint(ctx),
             Command::About => self.about_open = true,
+            Command::Updates => self.open_updates(ctx),
         }
     }
     pub(super) fn command_palette(&mut self, ctx: &egui::Context) {

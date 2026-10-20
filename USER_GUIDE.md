@@ -4,6 +4,7 @@ Keep scratchpads between sessions, inspect large logs, and work with CUDA source
 This guide covers the current Linux release.
 
 - [Installation](#installation)
+- [Updates](#updates)
 - [Scratchpads and files](#scratchpads-and-files)
 - [Logs and bookmarks](#logs-and-bookmarks)
 - [Editing and navigation](#editing-and-navigation)
@@ -109,6 +110,52 @@ For the default installation, remove `~/.local/bin/hedit`,
 
 Session data normally lives in `~/.local/share/hedit/session/`. Keep it if you may
 need your unsaved buffers again; see [Recovery](#recovery) before removing it.
+
+## Updates
+
+In-app updates are available from version **0.1.1**. Version 0.1.0 needs one
+normal installer upgrade to get this feature. Close 0.1.0, run the release
+installer again after 0.1.1 is published, and reopen hedit.
+
+### Check and install manually
+
+1. Choose **Help → Check for updates…**, or search for **Check for updates…** in
+   the command palette. This requests the latest stable release from GitHub.
+2. Review the available version, release notes, and installation location.
+3. Click **Install update** to download, verify, and install that release.
+4. When installation finishes, quit and reopen hedit when you are ready. The
+   **Quit hedit** button uses the normal recovery process before closing.
+
+There are **no background update checks, automatic installations, or automatic
+restarts**. Opening the update action checks for a release; checking alone never
+installs it. Prereleases and downgrades are not offered.
+
+You can close the dialog and continue editing during installation. The running
+editor keeps its current version until you restart. If you quit while an
+installation is in progress, closing waits for it to finish. Your session data,
+scratchpads, saved appearance, and additional theme files are kept.
+
+### Requirements and private releases
+
+Updates support Linux x86-64 and ARM64. Public downloads need `curl` and **GNU
+tar**; private releases need GNU tar and an authenticated **GitHub CLI**. For a
+private release, run `gh auth login --hostname github.com`, enable **Use GitHub
+CLI authentication**, and click **Check again**. Credentials stay with GitHub CLI.
+
+Installation must be writable and recognizable as a release package: either an
+extracted portable folder or a prefix installed by the included installer or
+`make install`. Source builds, unrecognized layouts, system-owned locations you
+cannot write, and installation paths containing resource symlinks need a manual
+upgrade. hedit does not request administrator privileges. You can still check
+versions and open the release page from those installations.
+
+The updater verifies the archive's SHA-256 checksum and checks that the new
+executable runs before changing the installation. Download, checksum, and
+compatibility failures leave the old installation in place. Installation failures
+attempt to restore the previous files. If rollback cannot finish, the error gives
+the location of retained recovery files; keep them until the installation is
+repaired. Use the [release installer](#install-from-github-releases) for a manual
+upgrade, closing hedit first.
 
 ## Scratchpads and files
 
@@ -453,6 +500,8 @@ long-term copies.
 | Open/Save dialog does not appear | Check that `xdg-desktop-portal` and your desktop's portal backend are installed and running in the same session. |
 | File is rejected | Convert a separate copy to UTF-8 if needed. UTF-16 and binary files are unsupported. |
 | Theme is rejected | Check the version, name length, hex values, and 64 KiB limit. Your current palette stays active. |
+| Update check fails | Check the connection and access method; private releases need authenticated GitHub CLI. Read the error in the update dialog. |
+| Update installation is unavailable | Use a writable release installation or upgrade manually; source builds and managed/symlink layouts cannot update in place. |
 | CUDA tool cannot start | Install it, check `PATH` or the debugger path, and read the tool's output for driver/device/permission errors. |
 
 hedit refuses to overwrite external changes. For a large source that changes

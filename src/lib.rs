@@ -6,6 +6,7 @@ pub mod folder;
 pub mod session;
 pub mod syntax;
 pub mod theme;
+pub mod update;
 pub mod workspace;
 
 use document::Document;

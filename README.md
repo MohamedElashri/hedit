@@ -52,6 +52,10 @@ Releases are built on Ubuntu 24.04 and need compatible Linux libraries, a graphi
 X11 or Wayland session, and OpenGL. NVIDIA hardware and CUDA tools are optional
 for ordinary editing.
 
+From version 0.1.1, choose **Help → Check for updates…** to review and install a
+newer release. Update checks, installations, and restarts are always manual.
+See [updating hedit](USER_GUIDE.md#updates) for requirements and upgrading 0.1.0.
+
 ## Quick start
 
 Open a log, jump to a source location, or send a snippet from your terminal:

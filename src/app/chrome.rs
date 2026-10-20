@@ -24,7 +24,7 @@ impl HeditApp {
                     ("Goto", vec![vec![Command::Switcher, Command::Goto], vec![Command::Bookmark, Command::NextBookmark, Command::PreviousBookmark, Command::Bookmarks]]),
                     ("Tools", vec![vec![Command::Palette, Command::Gpu], vec![Command::Checkpoint]]),
                     ("Preferences", vec![vec![Command::Settings, Command::Appearance, Command::ToolSettings]]),
-                    ("Help", vec![vec![Command::About]]),
+                    ("Help", vec![vec![Command::Updates, Command::About]]),
                 ] {
                     ui.menu_button(title, |ui| {
                         ui.set_min_width(230.0);

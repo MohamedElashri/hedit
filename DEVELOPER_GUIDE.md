@@ -10,6 +10,7 @@ Build, maintain, and contribute to hedit. For using the application, see the
 - [CUDA transport](#cuda-transport)
 - [Themes and branding](#themes-and-branding)
 - [Packaging and CI](#packaging-and-ci)
+- [Manual updater](#manual-updater)
 - [Contribution guidelines](#contribution-guidelines)
 - [Roadmap](#roadmap)
 - [Provenance and license](#provenance-and-license)
@@ -78,7 +79,7 @@ Use narrower targets while working:
 | `make package` | Build and package a release under `dist/` |
 | `make smoke` | Build and test a package in a temporary installation |
 | `make ci` | Full pre-commit and GitHub CI validation |
-| `make release-check RELEASE_TAG=v0.1.0` | Validate a release tag against `Cargo.toml` |
+| `make release-check RELEASE_TAG=v0.1.1` | Validate a release tag against `Cargo.toml` |
 | `make workflow-lint` | Optional workflow validation; requires `actionlint` |
 | `make clean` | Remove Cargo build artifacts |
 
@@ -110,6 +111,8 @@ visual checks, accessibility review, and NVIDIA hardware validation remain open.
 | `src/app.rs` | Editor rendering, shortcuts, background jobs, checkpoint status, exit gating |
 | `src/app/chrome.rs` | Menus, tabs, sidebar, status bar, bottom search panel |
 | `src/app/commands.rs` | Shared menu/shortcut commands and keyboard-driven palette |
+| `src/update.rs`, `src/update/install.rs` | Manual release checks, checksum verification, archive preflight, staged installation and rollback |
+| `src/app/updates.rs` | Explicit check/install actions, worker progress, restart guidance and close gating |
 | `src/app/preferences.rs` | Unified settings, theme controls, tool/recovery preferences, navigation dialogs |
 | `src/workspace.rs` | Open/closed buffers, names, bookmarks, UTF-8-safe edit splices |
 | `src/document.rs` | Disk-backed piece table, bounded pages, source guards, atomic saves, undo |
@@ -272,13 +275,13 @@ publication. GitHub generates release notes, and each release includes both
 archives, their SHA-256 files, and the root `install.sh` downloader.
 
 1. Set the version in `Cargo.toml` and run `cargo check` to update `Cargo.lock`.
-2. Run `make ci` and `make release-check RELEASE_TAG=v0.1.0`, using the new tag.
+2. Run `make ci` and `make release-check RELEASE_TAG=v0.1.1`, using the new tag.
 3. Commit the version, lockfile, and release changes, then push the commit.
 4. Create and push an annotated tag matching the version:
 
    ```sh
-   git tag -a v0.1.0 -m "hedit 0.1.0"
-   git push origin v0.1.0
+   git tag -a v0.1.1 -m "hedit 0.1.1"
+   git push origin v0.1.1
    ```
 
 The workflow uses GitHub's `GITHUB_TOKEN` with write permission only in the
@@ -298,6 +301,56 @@ Running the workflow manually on a branch produces downloadable Actions artifact
 without publishing a release. Running it on a version tag also publishes that tag.
 See GitHub's [release command documentation](https://cli.github.com/manual/gh_release_create)
 for draft and publication behavior.
+
+## Manual updater
+
+The updater is introduced in 0.1.1. Existing 0.1.0 binaries need one external
+upgrade; adding code here does not retrofit the published release.
+
+`Help → Check for updates…` starts a worker for GitHub's latest stable release
+API. Constructors, frame polling, and timers do not initiate network work. A
+separate **Install update** action is required after review. The UI never installs
+from a successful check alone and never restarts the application. Private access
+uses `gh api --hostname github.com`; public access uses curl with HTTPS-only
+redirects and bounded downloads. Both paths pin the selected tag/asset IDs.
+
+Use semantic version precedence, ignore build metadata for update ordering, and
+reject drafts, prereleases, downgrades, duplicate assets, and oversized responses.
+SHA-256 verification is against the checksum asset from the same GitHub release;
+this is transport/repository trust, not an independent signing-key mechanism.
+
+GNU tar supplies parsing and extraction. Preflight its resolved numeric-owner
+listing in the C locale, retaining absolute names for validation. Reject links,
+special files, duplicate paths, traversal, nonportable names, too many entries,
+and excessive unpacked size before extraction into a private directory. Release
+archive filenames must use ASCII letters/digits, `/`, `_`, `.`, `-`, or `+`.
+Clear `TAR_OPTIONS`; pass arguments directly without shell interpolation. Never
+execute a downloaded installer script. Run the verified new binary with
+`--version` and check its exact version before installation.
+
+Recognize prefix and extracted-package layouts from the executable location.
+Reject source builds and unwritable or symlinked resource paths. An OS file lock
+serializes installers; a captured executable identity detects outside replacement.
+Stage new resources on the destination filesystem, preserving additional custom
+files. Commit resource directories/files first, then atomically rename the new
+binary last. Linux keeps the running executable inode alive until exit. Session
+storage is never part of the installation transaction. On ordinary I/O errors,
+restore committed paths in reverse order. Preserve staging backups and report
+their location if rollback fails. This is not a power-loss journal for every
+resource directory, so do not claim a fully atomic multi-path update.
+
+The UI prevents process exit while its installation worker is active, even if
+the dialog is hidden. Once the worker finishes, normal checkpoint/close gating
+continues. Updates use no elevation and store no GitHub credentials.
+
+Tests cover version ordering, release metadata, public/private transport fixtures,
+checksum rejection, real GNU tar preflight, compatibility checks, locks, external
+replacement, symlinks, injected rollback failure paths, portable/prefix layouts,
+preservation of custom themes and session data, production packager compatibility,
+manual-only UI behavior, compact layouts, and exit gating. They run through
+`make test` and `make ci` without contacting GitHub. Runtime update requirements
+are curl or authenticated GitHub CLI, plus GNU tar; Python is only a test/build
+dependency.
 
 ## Contribution guidelines
 
