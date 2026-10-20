@@ -33,9 +33,9 @@ def main():
         stage = Path(work) / name
         stage.mkdir()
         shutil.copy2(args.binary, stage / 'hedit')
-        for filename in ['README.md', 'LICENSE', 'NOTICE', 'ROADMAP.md', 'CONTRIBUTING.md']:
+        for filename in ['README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md', 'LICENSE', 'NOTICE']:
             shutil.copy2(ROOT / filename, stage / filename)
-        for directory in ['assets', 'themes', 'docs', 'examples', 'contributor']:
+        for directory in ['assets', 'themes', 'examples']:
             shutil.copytree(ROOT / directory, stage / directory)
         shutil.copy2(ROOT / 'packaging/linux/hedit.desktop', stage / 'hedit.desktop')
         shutil.copy2(ROOT / 'packaging/linux/install.sh', stage / 'install.sh')

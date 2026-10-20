@@ -18,8 +18,8 @@ install: build
 	install -d "$(DESTDIR)$(PREFIX)/share/hedit/themes"
 	install -m644 themes/*.json "$(DESTDIR)$(PREFIX)/share/hedit/themes/"
 	install -d "$(DESTDIR)$(PREFIX)/share/doc/hedit"
-	cp -R docs/. "$(DESTDIR)$(PREFIX)/share/doc/hedit/"
-	install -m644 LICENSE NOTICE "$(DESTDIR)$(PREFIX)/share/doc/hedit/"
+	install -m644 README.md USER_GUIDE.md DEVELOPER_GUIDE.md LICENSE NOTICE "$(DESTDIR)$(PREFIX)/share/doc/hedit/"
+	cp -R assets "$(DESTDIR)$(PREFIX)/share/doc/hedit/"
 
 package: build
 	python3 scripts/package-linux.py

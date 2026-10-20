@@ -29,8 +29,9 @@ with tempfile.TemporaryDirectory(prefix='hedit-package-smoke-') as work:
     assert result.stdout.startswith('hedit '), result.stdout
     for relative in ['share/applications/hedit.desktop',
                      'share/icons/hicolor/scalable/apps/hedit.svg',
-                     'share/doc/hedit/README.md', 'share/doc/hedit/buffers.md',
-                     'share/doc/hedit/installation.md', 'share/doc/hedit/LICENSE',
+                     'share/doc/hedit/README.md', 'share/doc/hedit/USER_GUIDE.md',
+                     'share/doc/hedit/DEVELOPER_GUIDE.md', 'share/doc/hedit/LICENSE',
+                     'share/doc/hedit/assets/hedit-lockup-light.svg',
                      'share/doc/hedit/NOTICE', 'share/hedit/themes/hedit-ink.json']:
         assert (prefix / relative).is_file(), relative
     assert (package / 'examples/cuda/vector_add.cu').is_file()
