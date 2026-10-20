@@ -1,24 +1,87 @@
-name: Build Linux binary
+name: Release Linux packages
 on:
+  push:
+    tags:
+      - 'v[0-9]*'
   workflow_dispatch:
+
 permissions:
   contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    name: Linux ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Python for packaging
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Match release tag to package version
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: make release-check
+      - uses: dtolnay/rust-toolchain@1.92.0
+        with:
+          components: rustfmt, clippy
       - name: Install native build dependencies
         run: sudo apt-get update && sudo apt-get install -y pkg-config libx11-dev libxkbcommon-dev libwayland-dev libegl1-mesa-dev
-      - run: python3 scripts/check-native.py
-      - run: cargo test --locked
-      - run: cargo build --release --locked
-      - run: python3 scripts/check-docs.py
-      - run: python3 scripts/smoke-package.py
-      - name: Package binary, documentation, and identity assets
-        run: python3 scripts/package-linux.py
+      - name: Lint, test, package, and verify installation
+        run: make ci
       - uses: actions/upload-artifact@v4
         with:
-          name: hedit-linux-x86_64
-          path: dist/hedit-*-linux-x86_64.tar.gz*
+          name: hedit-linux-${{ matrix.arch }}
+          path: dist/hedit-*-linux-${{ matrix.arch }}.tar.gz*
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: hedit-linux-*
+          merge-multiple: true
+          path: dist
+      - name: Upload complete release before publishing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft > release-state; then
+            if [ "$(cat release-state)" != true ]; then
+              echo 'This release is already published. Use a new version tag for changes.' >&2
+              exit 1
+            fi
+            gh release upload "$RELEASE_TAG" dist/*.tar.gz dist/*.sha256 install.sh --clobber
+          else
+            gh release create "$RELEASE_TAG" dist/*.tar.gz dist/*.sha256 install.sh \
+              --verify-tag --draft --generate-notes --title "hedit $RELEASE_TAG"
+          fi
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false
+          else
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease=false --latest
+          fi

@@ -32,7 +32,7 @@ with tempfile.TemporaryDirectory(prefix='hedit-package-smoke-') as work:
                      'share/doc/hedit/README.md', 'share/doc/hedit/USER_GUIDE.md',
                      'share/doc/hedit/DEVELOPER_GUIDE.md', 'share/doc/hedit/LICENSE',
                      'share/doc/hedit/assets/hedit-lockup-light.svg',
-                     'share/doc/hedit/NOTICE', 'share/hedit/themes/hedit-ink.json']:
+                     'share/hedit/themes/hedit-ink.json']:
         assert (prefix / relative).is_file(), relative
     assert (package / 'examples/cuda/vector_add.cu').is_file()
 print('Linux package checksum, extraction, installation, and executable smoke test passed.')

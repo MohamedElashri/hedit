@@ -13,7 +13,7 @@ install -Dm644 "$package_dir/hedit.desktop" "$install_prefix/share/applications/
 install -d "$install_prefix/share/hedit/themes" "$install_prefix/share/doc/hedit"
 install -m644 "$package_dir"/themes/*.json "$install_prefix/share/hedit/themes/"
 install -m644 "$package_dir/README.md" "$package_dir/USER_GUIDE.md" \
-    "$package_dir/DEVELOPER_GUIDE.md" "$package_dir/LICENSE" "$package_dir/NOTICE" \
+    "$package_dir/DEVELOPER_GUIDE.md" "$package_dir/LICENSE" \
     "$install_prefix/share/doc/hedit/"
 cp -R "$package_dir/assets" "$install_prefix/share/doc/hedit/"
 printf 'Installed hedit in %s\n' "$install_prefix"

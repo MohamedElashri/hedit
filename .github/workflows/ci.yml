@@ -9,15 +9,13 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.92.0
         with:
           components: rustfmt, clippy
       - name: Install native build dependencies
         run: sudo apt-get update && sudo apt-get install -y pkg-config libx11-dev libxkbcommon-dev libwayland-dev libegl1-mesa-dev
-      - run: python3 scripts/check-native.py
-      - run: python3 scripts/check-docs.py
-      - run: cargo fmt --check
-      - run: cargo clippy --locked --all-targets -- -D warnings
-      - run: cargo test --locked
-      - run: cargo build --release --locked
-      - run: python3 scripts/smoke-package.py
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Lint, test, package, and verify installation
+        run: make ci

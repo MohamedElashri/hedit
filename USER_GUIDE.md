@@ -19,10 +19,57 @@ This guide covers the current Linux release.
 You need a graphical Linux session with X11 or Wayland and OpenGL. A GPU and CUDA
 are optional; ordinary editing works without them.
 
+### Install from GitHub Releases
+
+Install the latest stable release with:
+
+```sh
+curl -fsSL https://github.com/MohamedElashri/hedit/releases/latest/download/install.sh | sh
+```
+
+The installer selects x86-64 or ARM64, verifies the package's SHA-256 checksum,
+and installs under `~/.local`. It needs `curl`, `tar`, and standard Linux utilities;
+no compiler is required. Release binaries are built on Ubuntu 24.04 and require
+compatible system libraries. If they cannot run on your system, install from source.
+CUDA tools are installed separately.
+
+To inspect the script first, select a version, or choose another prefix:
+
+```sh
+curl -fsSL https://github.com/MohamedElashri/hedit/releases/latest/download/install.sh -o hedit-install.sh
+sh hedit-install.sh --version v0.1.0 --prefix "$HOME/.local"
+```
+
+Omit `--version` for the latest stable release. Prereleases require their full
+tag, such as `--version v0.2.0-rc.1`. Run the installer again to upgrade. Close
+hedit before upgrading; your saved files and session data are kept.
+
+### Private repository access
+
+Private releases require an account with repository access. With GitHub CLI
+installed, sign in and download the installer through the authenticated API:
+
+```sh
+gh auth login --hostname github.com
+gh release download --repo MohamedElashri/hedit --pattern install.sh --output hedit-install.sh
+sh hedit-install.sh --github-cli
+```
+
+For a pinned version, give the same tag to both commands:
+
+```sh
+gh release download v0.1.0 --repo MohamedElashri/hedit --pattern install.sh --output hedit-install.sh
+sh hedit-install.sh --github-cli --version v0.1.0
+```
+
+Use a fresh filename or remove the previous downloaded script before downloading
+again. Public `curl` URLs cannot access a private repository.
+
 ### Install a portable package
 
-If you have a Linux package, verify its checksum, extract it, and run the included
-installer. For the x86-64 package:
+Download the matching archive and `.sha256` file from
+[GitHub Releases](https://github.com/MohamedElashri/hedit/releases), verify its
+checksum, extract it, and run the included installer. For the x86-64 package:
 
 ```sh
 sha256sum -c hedit-0.1.0-linux-x86_64.tar.gz.sha256

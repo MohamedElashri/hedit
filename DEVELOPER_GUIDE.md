@@ -16,15 +16,17 @@ Build, maintain, and contribute to hedit. For using the application, see the
 
 ## Build and install
 
-Requires Rust 1.92 or newer. The application uses eframe/egui with OpenGL on Linux
+Requires Rust 1.92 or newer, GNU Make, and Python 3.11 or newer for development
+scripts. CI and release builds use Rust 1.92.0 and Python 3.12; use those versions
+for matching local checks. The application uses eframe/egui with OpenGL on Linux
 and builds through Cargo. Keep the build free of a web frontend, Node.js, and npm.
 
 On Debian/Ubuntu:
 
 ```sh
 sudo apt-get install build-essential pkg-config libx11-dev libxkbcommon-dev libwayland-dev libegl1-mesa-dev
-cargo build --locked
-cargo run --locked -- --session-dir /tmp/hedit-development
+make dev
+make run ARGS='--session-dir /tmp/hedit-development'
 ```
 
 X11 and Wayland are enabled. Native file dialogs use the desktop's XDG portal.
@@ -32,7 +34,7 @@ CUDA and NVIDIA drivers are optional external tools, not editor build dependenci
 The current validated build target is Linux; macOS and Windows remain unverified.
 
 ```sh
-cargo build --release --locked
+make build
 make install
 make package
 ```
@@ -45,20 +47,44 @@ make install DESTDIR=/tmp/hedit-stage PREFIX=/usr
 /tmp/hedit-stage/usr/bin/hedit --version
 ```
 
-Packaging and check scripts use Python 3.11 or newer and the standard library;
-the installed application does not require Python.
+Development scripts use Python's standard library; the installed application
+does not require Python. Run `make` or `make help` to list the available commands.
 
 ## Checks and visual review
 
 ```sh
-make check
-python3 scripts/smoke-package.py
+make ci
 ```
 
-`make check` validates the native-only policy, Markdown links, Rust formatting,
-clippy warnings, and tests. The package smoke test requires a built release
-binary; it checks the checksum, extracts the archive, installs to a temporary
-prefix, and runs the installed executable.
+Run `make ci` **before committing**. Both the pull-request workflow and each
+release build run this exact target. It checks formatting, clippy warnings,
+the native-only policy, documentation links, Python/shell syntax, Rust tests,
+and offline installer tests. It then builds a release, creates the archive and
+checksum, and verifies package extraction, installation to a temporary prefix,
+and the installed executable. A failed command stops the check with a nonzero exit.
+
+Use narrower targets while working:
+
+| Command | Purpose |
+| --- | --- |
+| `make help` | List targets and configurable variables; also the default for `make` |
+| `make dev` / `make build` | Debug / release build |
+| `make run ARGS='--new'` | Run the editor with arguments |
+| `make fmt` / `make fmt-check` | Apply / check Rust formatting |
+| `make lint` | All static checks, including clippy with warnings denied |
+| `make docs` | Check links, images, and local headings |
+| `make test` | Rust tests and offline release-installer tests |
+| `make check` | Lint and tests without a release build |
+| `make package` | Build and package a release under `dist/` |
+| `make smoke` | Build and test a package in a temporary installation |
+| `make ci` | Full pre-commit and GitHub CI validation |
+| `make release-check RELEASE_TAG=v0.1.0` | Validate a release tag against `Cargo.toml` |
+| `make workflow-lint` | Optional workflow validation; requires `actionlint` |
+| `make clean` | Remove Cargo build artifacts |
+
+Override `CARGO` or `PYTHON` when needed. `PREFIX` and `DESTDIR` control installation;
+`ARGS` passes editor arguments. `ACTIONLINT` can point to a specific actionlint
+executable. `make clean` keeps installed files, release archives, and session data.
 
 Tests cover unsaved/closed-buffer recovery, custom names, bookmarks, old session
 metadata, process locks, corrupt manifests, failed restores/checkpoints, external
@@ -214,7 +240,7 @@ color cue.
 ## Packaging and CI
 
 `make package` writes a versioned Linux tarball and SHA-256 file under `dist/`.
-It includes the binary, three documentation entry points, license/notice, SVG
+It includes the binary, three documentation entry points, license, SVG
 assets, themes, CUDA example, desktop entry, and shell installer. The installer
 defaults to `~/.local` and accepts an absolute prefix. Architecture follows the
 build host; newer Linux builds may require newer destination libraries.
@@ -224,9 +250,47 @@ installed paths consistent. Update `scripts/smoke-package.py` when changing the
 archive or documentation layout. `scripts/check-docs.py` validates document links
 and local section anchors.
 
-Linux CI runs policy and documentation checks, formatting, clippy, tests, a
-release build, and the package smoke test. The manual packaging workflow uploads
-an archive artifact; it does not publish a release automatically.
+The normal CI workflow and the release matrix both call `make ci`; keep checks
+in the Makefile instead of duplicating their commands in workflow YAML. Workflow
+steps set up dependencies and the pinned Rust/Python versions. Offline installer tests cover public
+and authenticated downloads, version/architecture selection, checksum rejection,
+failed downloads, and preservation of an existing installation on download failure.
+
+### Publish a release
+
+The `Release Linux packages` workflow builds x86-64 and ARM64 natively on Ubuntu
+24.04. It publishes when a version tag is pushed; the tag must equal `v` followed
+by the version in `Cargo.toml`. Builds run checks and package smoke tests before
+publication. GitHub generates release notes, and each release includes both
+archives, their SHA-256 files, and the root `install.sh` downloader.
+
+1. Set the version in `Cargo.toml` and run `cargo check` to update `Cargo.lock`.
+2. Run `make ci` and `make release-check RELEASE_TAG=v0.1.0`, using the new tag.
+3. Commit the version, lockfile, and release changes, then push the commit.
+4. Create and push an annotated tag matching the version:
+
+   ```sh
+   git tag -a v0.1.0 -m "hedit 0.1.0"
+   git push origin v0.1.0
+   ```
+
+The workflow uses GitHub's `GITHUB_TOKEN` with write permission only in the
+publication job; no personal token secret is needed. Actions must be enabled and
+repository/organization policy must permit that permission. A private repository
+keeps its releases private; installation uses the authenticated steps in the
+[user guide](USER_GUIDE.md#private-repository-access).
+
+Assets are uploaded to a draft before it is published. If upload/publication
+fails, rerun the failed workflow jobs to finish the draft. Published releases are
+left intact; use a new version tag for subsequent changes. Tags containing a
+hyphen, such as `v0.2.0-rc.1`, publish as prereleases and do not become Latest.
+Stable tags become Latest. The default installer selects Latest; `--version`
+selects a specific stable or prerelease tag.
+
+Running the workflow manually on a branch produces downloadable Actions artifacts
+without publishing a release. Running it on a version tag also publishes that tag.
+See GitHub's [release command documentation](https://cli.github.com/manual/gh_release_create)
+for draft and publication behavior.
 
 ## Contribution guidelines
 
@@ -236,7 +300,8 @@ branding, and roadmap details. Avoid creating separate topic guides that scatter
 these subjects again.
 
 Test changes that can lose buffers, overwrite external edits, or invalidate
-recovery references. Keep tests isolated in temporary directories. Preserve
+recovery references. Keep tests isolated in temporary directories. Run `make ci`
+before committing, and fix any failed checks. Preserve
 upstream license notices and state actual limits rather than presenting planned
 features as available.
 
@@ -273,4 +338,4 @@ The file engine, session foundation, and folder utilities derive from
 [rsedit](https://github.com/goodappsstore/rsedit), based on commit
 `63a9ee4966d3fe1cfcd7d4af70e963e10aa297ff`. hedit's native UI, workspace layer,
 branding, and development direction are independent work. Preserve the original
-MIT notices and attribution in [LICENSE](LICENSE) and [NOTICE](NOTICE).
+MIT notices and attribution in [LICENSE](LICENSE).
