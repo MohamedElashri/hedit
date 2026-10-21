@@ -116,10 +116,7 @@ impl Workspace {
                     open.push(Buffer::new(page, Some(tab.view)));
                 }
                 Err(e) => {
-                    errors.push(format!(
-                        "{}: {e}. Retained in closed buffers.",
-                        tab.view.name
-                    ));
+                    errors.push(format!("{}: {e}. Retained in closed files.", tab.view.name));
                     failed.push(tab.view);
                 }
             }
@@ -180,7 +177,7 @@ impl Workspace {
                     .unwrap_or(false)
             });
             let Some(clean) = clean else {
-                return Err("Closed-buffer shelf is full of unsaved text. Reopen and save a buffer before closing more.".into());
+                return Err("The closed-files shelf is full of unsaved text. Reopen and save a file before closing more.".into());
             };
             let removed = self.closed.remove(clean);
             self.editor.remove(removed.id)?;
@@ -207,7 +204,7 @@ impl Workspace {
             .closed
             .get(index)
             .cloned()
-            .ok_or("That buffer is no longer on the shelf.")?;
+            .ok_or("That file is no longer on the shelf.")?;
         let page = self
             .editor
             .get(view.id)?
@@ -223,9 +220,12 @@ impl Workspace {
         let buffer = self
             .open
             .get_mut(index)
-            .ok_or("That buffer is no longer open.")?;
+            .ok_or("That file is no longer open.")?;
         if buffer.page.info.path.is_some() {
-            return Err("Only unsaved scratchpads can be named. Use Save As for files.".into());
+            return Err(
+                "Only unsaved files can be named. Use Save As to save a copy of a saved file."
+                    .into(),
+            );
         }
         let name = name.trim();
         if name.chars().count() > 80 || name.chars().any(char::is_control) {
@@ -243,7 +243,7 @@ impl Workspace {
         let buffer = self
             .open
             .get_mut(index)
-            .ok_or("That buffer is no longer open.")?;
+            .ok_or("That file is no longer open.")?;
         let offset = buffer.cursor_offset();
         if let Some(index) = buffer
             .view
@@ -255,7 +255,7 @@ impl Workspace {
             return Ok(false);
         }
         if buffer.view.bookmarks.len() >= 1000 {
-            return Err("This buffer already has 1,000 bookmarks.".into());
+            return Err("This file already has 1,000 bookmarks.".into());
         }
         let local = (offset - buffer.page.start) as usize;
         let before = &buffer.page.text[..local];

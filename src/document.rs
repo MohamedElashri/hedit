@@ -554,7 +554,7 @@ impl Document {
     }
     fn remember_edit(&mut self, offset: u64) {
         self.undo.push(self.edit_state(offset));
-        // Bound history for scratch buffers that stay open for days.
+        // Bound history for unsaved files that stay open for days.
         if self.undo.len() > 256 {
             self.undo.remove(0);
         }

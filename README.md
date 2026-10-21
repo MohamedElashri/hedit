@@ -14,16 +14,16 @@
 
 hedit is a text editor for Linux, built for the work you leave open: logs to
 inspect, snippets to revisit, and notes that do not need a filename yet. Keep a
-workspace of scratchpads between sessions, find your place in large logs, and
+workspace of files between sessions, find your place in large logs, and
 work with CUDA source without leaving the editor.
 
 ## What you can do
 
-- **Keep notes for later.** Start a scratchpad without choosing a file, give it a
-  name, and return to it after restarting. Browse the shelf to reopen closed tabs.
+- **Keep notes for later.** Create a new file without choosing a path, name its
+  tab, and return to it after restarting. Browse the shelf to reopen closed files.
 - **Inspect large logs.** Read files in manageable pages, follow new output, search
   across the file, and bookmark positions you want to revisit.
-- **Find your way around.** Switch buffers, jump to a line, search and replace
+- **Find your way around.** Switch files, jump to a line, search and replace
   individual matches, and undo edits during your session.
 - **Read code in color.** Syntax is selected from the filename. Choose a language
   from the searchable bottom-bar menu for unsaved snippets, or switch to plain
@@ -72,7 +72,7 @@ printf 'keep this snippet\n' | hedit -
 
 Inside the editor:
 
-1. Press **Ctrl+N** to start a scratchpad. Use **File → Name scratchpad…** to name it.
+1. Press **Ctrl+N** to create a file. Use **File → Name unsaved file…** to name its tab.
 2. Paste your notes and check that the status reads **Recovery up to date** before
    ending your session. Your workspace returns on the next launch.
 3. Open a log and choose **View → Follow log (read only)** to keep up with
@@ -82,16 +82,16 @@ Inside the editor:
    and recovery in one place.
 
 Close a tab with **Ctrl+W** and reopen it with **Ctrl+Shift+T**, or use
-**File → Browse closed buffers…** to find an older closed buffer. Use **Ctrl+S**
+**File → Browse closed files…** to find an older closed file. Use **Ctrl+S**
 whenever you want a normal saved file.
 
 ## Everyday shortcuts
 
 | Shortcut | Action |
 | --- | --- |
-| Ctrl+N / Ctrl+O | New scratchpad / open a file |
+| Ctrl+N / Ctrl+O | New file / open a file |
 | Ctrl+S | Save to a file |
-| Ctrl+P / Ctrl+Shift+P | Switch buffers / open the command palette |
+| Ctrl+P / Ctrl+Shift+P | Switch files / open the command palette |
 | Ctrl+F / Ctrl+G | Find text / go to a line |
 | Ctrl+W / Ctrl+Shift+T | Close a tab / reopen the latest closed tab |
 | Ctrl+, | Open preferences |
@@ -106,8 +106,8 @@ NVIDIA hardware.
 
 ## Your workspace
 
-Just like the famous sublime text, hedit copies keep unsaved scratchpads and modified buffers between sessions.
-They are separate from your saved files. Checkpoints are periodic, so an abrupt
+hedit keeps recovery copies of unsaved files and edits between sessions. These
+copies are separate from files you save to disk. Checkpoints are periodic, so an abrupt
 kill or power loss can lose edits since the last completed checkpoint. Keep
 independent saved copies and backups for important work.
 

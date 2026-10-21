@@ -7,7 +7,7 @@ import sys
 from urllib.parse import unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
-files = [ROOT / name for name in ['README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md']]
+files = [ROOT / name for name in ['README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md', 'CHANGELOG.md']]
 
 
 class HTMLLinks(HTMLParser):

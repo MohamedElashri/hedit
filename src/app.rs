@@ -1,5 +1,6 @@
 mod chrome;
 mod commands;
+mod editor_layout;
 mod preferences;
 mod updates;
 
@@ -79,6 +80,9 @@ pub struct HeditApp {
     palette_query: String,
     syntax_query: String,
     syntax_focus: bool,
+    syntax_matches: Vec<syntax::Language>,
+    syntax_last_query: String,
+    editor_layout: editor_layout::LayoutCache,
     goto: String,
     gpu_open: bool,
     debug: Option<DebugSession>,
@@ -95,8 +99,8 @@ pub struct HeditApp {
     appearance_original: Theme,
     theme_hex: Vec<String>,
     rename_target: Option<u64>,
-    scratchpad_name: String,
-    scratchpad_name_focus: bool,
+    unsaved_file_name: String,
+    unsaved_file_name_focus: bool,
     shelf_open: bool,
     shelf_query: String,
     bookmarks_open: bool,
@@ -206,13 +210,16 @@ impl HeditApp {
             focus_editor: true,
             syntax_query: String::new(),
             syntax_focus: true,
+            syntax_matches: syntax::Language::ALL.to_vec(),
+            syntax_last_query: String::new(),
+            editor_layout: editor_layout::LayoutCache::default(),
             theme,
             preferences_open: false,
             appearance_original,
             theme_hex,
             rename_target: None,
-            scratchpad_name: String::new(),
-            scratchpad_name_focus: false,
+            unsaved_file_name: String::new(),
+            unsaved_file_name_focus: false,
             shelf_open: false,
             shelf_query: String::new(),
             bookmarks_open: false,
@@ -329,15 +336,16 @@ impl HeditApp {
         let id = self.active().page.info.id;
         let path = self.active().page.info.path.clone();
         if reload && self.active().page.info.dirty {
-            self.error =
-                Some("This buffer has edits. Save As first to keep them before reloading.".into());
+            self.error = Some(
+                "This file has unsaved changes. Use Save As to keep them before reloading.".into(),
+            );
             return;
         }
         self.job(ctx, move || {
             let shared = editor.get(id)?;
             let mut doc = shared.lock().map_err(|e| e.to_string())?;
             if reload {
-                let path = path.ok_or("Untitled buffers have no file to reload.")?;
+                let path = path.ok_or("This unsaved file has no disk copy to reload.")?;
                 let replacement = Document::open(id, &PathBuf::from(path))?;
                 *doc = replacement;
             }
@@ -363,7 +371,7 @@ impl HeditApp {
         self.job(ctx, move || {
             let target = if choose {
                 match rfd::FileDialog::new()
-                    .set_title("Save buffer — hedit")
+                    .set_title("Save file — hedit")
                     .set_file_name(name)
                     .save_file()
                 {
@@ -567,7 +575,7 @@ impl HeditApp {
                     self.last_saved = Some(Instant::now());
                 }
                 Err(error) => {
-                    self.error = Some(format!("RECOVERY CHECKPOINT FAILED\n{error}\nKeep hedit open and save your buffers to files."));
+                    self.error = Some(format!("RECOVERY CHECKPOINT FAILED\n{error}\nKeep hedit open and save your files to disk."));
                     self.closing = false;
                 }
             }
@@ -703,7 +711,7 @@ impl HeditApp {
                     ui.horizontal_wrapped(|ui| {
                         ui.colored_label(
                             theme.warning.color(),
-                            "File changed outside hedit. Your buffer has been kept.",
+                            "File changed outside hedit. Your open text has been kept.",
                         );
                         if ui
                             .add_enabled(
@@ -715,7 +723,7 @@ impl HeditApp {
                             self.load_page(ctx, self.active().page.start, true);
                         }
                         if ui
-                            .add_enabled(!self.busy, egui::Button::new("Save buffer as…"))
+                            .add_enabled(!self.busy, egui::Button::new("Save file as…"))
                             .clicked()
                         {
                             self.save_file(ctx, true);
@@ -771,16 +779,16 @@ impl HeditApp {
                 let language = buffer.language();
                 let font_size = self.font_size;
                 let wrap = self.wrap;
+                let layout_cache = &mut self.editor_layout;
                 let mut layouter = move |ui: &egui::Ui, text: &str, wrap_width: f32| {
-                    ui.fonts(|fonts| {
-                        fonts.layout_job(syntax::highlight_language(
-                            text,
-                            font_size,
-                            if wrap { wrap_width } else { f32::INFINITY },
-                            language,
-                            &theme,
-                        ))
-                    })
+                    layout_cache.layout(
+                        ui,
+                        text,
+                        language,
+                        font_size,
+                        if wrap { wrap_width } else { f32::INFINITY },
+                        &theme,
+                    )
                 };
                 let mut scroll = egui::ScrollArea::both()
                     .id_salt(("page-scroll", buffer.page.info.id, buffer.page.start))
@@ -940,7 +948,7 @@ impl HeditApp {
                         Ok(()) => self.changed(),
                         Err(error) => {
                             // If an external writer invalidates a paged source, keep
-                            // the user's edited view in a new independent scratchpad.
+                            // the user's edited view in a new independent unsaved file.
                             let text = self.workspace.open[index].page.text.clone();
                             self.workspace.open[index].page.text = old;
                             let result = (|| {
@@ -951,7 +959,7 @@ impl HeditApp {
                             })();
                             self.report(result);
                             self.error = Some(format!(
-                                "{error}\nThe edited page has been kept in a new scratch buffer."
+                                "{error}\nThe edited page has been kept in a new unsaved file."
                             ));
                         }
                     }
@@ -1082,15 +1090,17 @@ impl HeditApp {
             )))
         });
     }
-    fn open_scratchpad_name(&mut self) {
+    fn open_unsaved_file_name(&mut self) {
         if self.active().page.info.path.is_some() {
-            self.error =
-                Some("Only unsaved scratchpads can be named. Use Save As for files.".into());
+            self.error = Some(
+                "Only unsaved files can be named. Use Save As to save a copy of a saved file."
+                    .into(),
+            );
             return;
         }
         self.rename_target = Some(self.active().page.info.id);
-        self.scratchpad_name = self.active().view.custom_name.clone().unwrap_or_default();
-        self.scratchpad_name_focus = true;
+        self.unsaved_file_name = self.active().view.custom_name.clone().unwrap_or_default();
+        self.unsaved_file_name_focus = true;
     }
     fn toggle_bookmark(&mut self) {
         let result = self.workspace.toggle_bookmark(self.workspace.active);
@@ -1114,7 +1124,7 @@ impl HeditApp {
         {
             self.go_to_offset(ctx, offset);
         } else {
-            self.notice = "No bookmarks in this buffer.".into();
+            self.notice = "No bookmarks in this file.".into();
         }
     }
     fn go_to_offset(&mut self, ctx: &egui::Context, offset: u64) {
@@ -1139,24 +1149,26 @@ impl HeditApp {
         if let Some(id) = self.rename_target {
             let mut open = true;
             let mut apply = false;
-            egui::Window::new("Name scratchpad")
-                .id(egui::Id::new("scratchpad-name"))
+            egui::Window::new("Name unsaved file")
+                .id(egui::Id::new("unsaved-file-name"))
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(false)
                 .default_width(360.0)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(ctx, |ui| {
-                    ui.label("Give this buffer a name without creating a file.");
+                    ui.label(
+                        "Choose a tab name for this unsaved file. This does not save it to disk.",
+                    );
                     let response = ui.add(
-                        egui::TextEdit::singleline(&mut self.scratchpad_name)
+                        egui::TextEdit::singleline(&mut self.unsaved_file_name)
                             .char_limit(80)
                             .desired_width(f32::INFINITY)
                             .hint_text("Investigation notes"),
                     );
-                    if self.scratchpad_name_focus {
+                    if self.unsaved_file_name_focus {
                         response.request_focus();
-                        self.scratchpad_name_focus = false;
+                        self.unsaved_file_name_focus = false;
                     }
                     let enter = response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
                     ui.label(
@@ -1176,7 +1188,9 @@ impl HeditApp {
                     .iter()
                     .position(|b| b.page.info.id == id)
                 {
-                    let result = self.workspace.name_scratchpad(index, &self.scratchpad_name);
+                    let result = self
+                        .workspace
+                        .name_scratchpad(index, &self.unsaved_file_name);
                     if result.is_ok() {
                         self.rename_target = None;
                     }
@@ -1193,16 +1207,16 @@ impl HeditApp {
         if self.shelf_open {
             let mut open = true;
             let mut restore = None;
-            egui::Window::new("Buffer shelf")
+            egui::Window::new("Closed files")
                 .open(&mut open)
                 .default_width(480.0)
                 .collapsible(false)
                 .show(ctx, |ui| {
-                    ui.label("Closed buffers keep their text, names, and bookmarks.");
+                    ui.label("Closed files keep their text, names, and bookmarks.");
                     ui.add(
                         egui::TextEdit::singleline(&mut self.shelf_query)
                             .desired_width(f32::INFINITY)
-                            .hint_text("Filter closed buffers…"),
+                            .hint_text("Filter closed files…"),
                     );
                     if self.workspace.closed.is_empty() {
                         ui.label("The shelf is empty. Close a tab to keep it here.");
@@ -1244,7 +1258,7 @@ impl HeditApp {
                             }
                         });
                     if matches == 0 && !self.workspace.closed.is_empty() {
-                        ui.label("No closed buffers match that name.");
+                        ui.label("No closed files match that name.");
                     }
                     ui.separator();
                     ui.label(
@@ -1647,7 +1661,7 @@ mod tests {
             );
             assert!(!dismissed.shapes.iter().any(|shape| text_rect(
                 &shape.shape,
-                "Syntax for this buffer"
+                "Syntax for this file"
             )
             .is_some()));
             assert_eq!(app.generation, generation);
@@ -1662,7 +1676,7 @@ mod tests {
             assert_eq!(app.syntax_query, "python");
             assert_eq!(app.active().page.text, "print('keep λ')");
             let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
-            for label in ["Syntax for this buffer", "Automatic (Plain text)", "Python"] {
+            for label in ["Syntax for this file", "Automatic (Plain text)", "Python"] {
                 let rect = output
                     .shapes
                     .iter()
@@ -1735,6 +1749,74 @@ mod tests {
             assert_eq!(app.active().language(), syntax::Language::Cpp);
             assert_eq!(app.active().page.text, "print('keep λ') # more");
         }
+    }
+    #[test]
+    fn syntax_picker_hover_and_filter_reuse_editor_layout_and_keep_popup_geometry() {
+        fn editor_galley(shape: &egui::Shape, source: &str) -> Option<Arc<egui::Galley>> {
+            match shape {
+                egui::Shape::Text(text) if text.galley.job.text == source => {
+                    Some(Arc::clone(&text.galley))
+                }
+                egui::Shape::Vec(shapes) => {
+                    shapes.iter().find_map(|shape| editor_galley(shape, source))
+                }
+                _ => None,
+            }
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let (mut workspace, _) = Workspace::restore(directory.path().into()).unwrap();
+        let source = "__global__ void kernel() { int n = 42; } // λ\n".repeat(4000);
+        workspace.open[0].page.text.clone_from(&source);
+        workspace.edit(0, "").unwrap();
+        workspace.open[0].set_language(Some(syntax::Language::Cuda));
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        let size = egui::vec2(720.0, 480.0);
+        frame_size(&ctx, &mut app, vec![], size);
+        let first = frame_size(&ctx, &mut app, vec![], size);
+        let galley = first
+            .shapes
+            .iter()
+            .find_map(|shape| editor_galley(&shape.shape, &source))
+            .unwrap();
+        click_label_sized(&ctx, &mut app, "CUDA ▾", size);
+        for _ in 0..3 {
+            frame_size(&ctx, &mut app, vec![], size);
+        }
+        let popup_id = egui::Id::new("syntax-popup");
+        let rect = ctx.memory(|memory| memory.area_rect(popup_id)).unwrap();
+        assert!(egui::Rect::from_min_size(egui::Pos2::ZERO, size).contains_rect(rect));
+        for event in [
+            egui::Event::PointerMoved(rect.center()),
+            egui::Event::Text("python".into()),
+        ] {
+            let frame = frame_size(&ctx, &mut app, vec![event], size);
+            let current = frame
+                .shapes
+                .iter()
+                .find_map(|shape| editor_galley(&shape.shape, &source))
+                .unwrap();
+            assert!(
+                Arc::ptr_eq(&galley, &current),
+                "Menu interaction rebuilt unchanged editor layout"
+            );
+            let current_rect = ctx.memory(|memory| memory.area_rect(popup_id)).unwrap();
+            assert!((current_rect.min - rect.min).length() < 0.5);
+            assert!((current_rect.size() - rect.size()).length() < 0.5);
+        }
+        assert_eq!(app.syntax_matches, [syntax::Language::Python]);
+        let selected = frame_size(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)], size);
+        let changed = selected
+            .shapes
+            .iter()
+            .find_map(|shape| editor_galley(&shape.shape, &source))
+            .unwrap();
+        assert!(
+            !Arc::ptr_eq(&galley, &changed),
+            "Changing syntax did not invalidate the editor layout"
+        );
+        assert_eq!(app.active().language(), syntax::Language::Python);
+        assert_eq!(app.active().page.text, source);
     }
     #[test]
     fn menus_open_unified_preferences_and_keep_text_safe() {
@@ -1982,6 +2064,37 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "manual headless CPU timing for syntax picker with a large file"]
+    fn profile_syntax_picker() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut workspace, _) = Workspace::restore(directory.path().into()).unwrap();
+        let source =
+            "__global__ void kernel(float* out) { out[threadIdx.x] = 42.0f; } // notes λ\n"
+                .repeat(3000);
+        workspace.open[0].page.text.clone_from(&source);
+        workspace.edit(0, "").unwrap();
+        workspace.open[0].set_language(Some(syntax::Language::Cuda));
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        for _ in 0..3 {
+            frame(&ctx, &mut app, vec![]);
+        }
+        click_label(&ctx, &mut app, "CUDA ▾");
+        let start = Instant::now();
+        for _ in 0..20 {
+            frame(
+                &ctx,
+                &mut app,
+                vec![egui::Event::PointerMoved(egui::pos2(1100.0, 600.0))],
+            );
+        }
+        eprintln!(
+            "Syntax picker with {} bytes: {:.2} ms/frame (20 hover frames)",
+            source.len(),
+            start.elapsed().as_secs_f64() * 1000.0 / 20.0
+        );
+    }
+    #[test]
     #[ignore = "writes SVG layout previews to HEDIT_PREVIEW_DIR"]
     fn export_theme_previews() {
         let output =
@@ -2097,9 +2210,9 @@ mod tests {
         app.bookmarks_open = true;
         frame(&ctx, &mut app, vec![]);
         app.bookmarks_open = false;
-        app.open_scratchpad_name();
+        app.open_unsaved_file_name();
         frame(&ctx, &mut app, vec![]);
-        assert_eq!(app.scratchpad_name, "Named notes");
+        assert_eq!(app.unsaved_file_name, "Named notes");
         assert_eq!(app.active().view.bookmarks.len(), 1);
     }
 }

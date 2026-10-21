@@ -83,14 +83,14 @@ impl Command {
     ];
     pub(super) fn label(self) -> &'static str {
         match self {
-            Self::New => "New scratchpad",
+            Self::New => "New file",
             Self::Open => "Open file…",
             Self::Save => "Save",
             Self::SaveAs => "Save as…",
             Self::Close => "Close tab",
             Self::Reopen => "Reopen closed tab",
-            Self::Shelf => "Browse closed buffers…",
-            Self::Rename => "Name scratchpad…",
+            Self::Shelf => "Browse closed files…",
+            Self::Rename => "Name unsaved file…",
             Self::Quit => "Quit hedit",
             Self::Undo => "Undo",
             Self::Redo => "Redo",
@@ -101,7 +101,7 @@ impl Command {
             Self::Find => "Find…",
             Self::Replace => "Replace…",
             Self::Goto => "Go to line…",
-            Self::Switcher => "Switch buffer…",
+            Self::Switcher => "Switch file…",
             Self::Palette => "Command palette…",
             Self::Sidebar => "Show sidebar",
             Self::Wrap => "Word wrap",
@@ -202,7 +202,7 @@ impl HeditApp {
                 self.report(r);
             }
             Command::Shelf => self.shelf_open = true,
-            Command::Rename => self.open_scratchpad_name(),
+            Command::Rename => self.open_unsaved_file_name(),
             Command::Quit => {
                 self.closing = true;
                 self.checkpoint(ctx);
@@ -318,7 +318,7 @@ impl HeditApp {
         egui::Window::new(if commands {
             "Command palette"
         } else {
-            "Switch buffer"
+            "Switch file"
         })
         .id(egui::Id::new("command-palette"))
         .collapsible(false)
@@ -332,7 +332,7 @@ impl HeditApp {
                     .hint_text(if commands {
                         "Type a command…"
                     } else {
-                        "Type a buffer name, or > for commands…"
+                        "Type a file name, or > for commands…"
                     }),
             );
             if self.palette_focus {
@@ -364,7 +364,7 @@ impl HeditApp {
             } else {
                 for (index, buffer) in self.workspace.open.iter().enumerate() {
                     if buffer.view.name.to_lowercase().contains(&filter) {
-                        items.push((buffer.view.name.clone(), "buffer", Item::Buffer(index)));
+                        items.push((buffer.view.name.clone(), "file", Item::Buffer(index)));
                     }
                 }
             }

@@ -103,7 +103,7 @@ impl HeditApp {
                                                     )
                                                     .on_hover_text(
                                                         buffer.page.info.path.as_deref().unwrap_or(
-                                                            "Scratchpad · included in recovery",
+                                                            "Unsaved file · included in recovery",
                                                         ),
                                                     );
                                                 if response.clicked() {
@@ -118,12 +118,12 @@ impl HeditApp {
                                                         close = Some(index);
                                                         ui.close_menu();
                                                     }
-                                                    if ui.button("Name scratchpad…").clicked() {
+                                                    if ui.button("Name unsaved file…").clicked() {
                                                         select = Some(index);
                                                         action = Some(Command::Rename);
                                                         ui.close_menu();
                                                     }
-                                                    if ui.button("Browse closed buffers…").clicked()
+                                                    if ui.button("Browse closed files…").clicked()
                                                     {
                                                         action = Some(Command::Shelf);
                                                         ui.close_menu();
@@ -171,7 +171,7 @@ impl HeditApp {
                                     !self.busy && !self.closing,
                                     egui::Button::new("+").frame(false),
                                 )
-                                .on_hover_text("New scratchpad · Ctrl+N")
+                                .on_hover_text("New file · Ctrl+N")
                                 .clicked()
                             {
                                 action = Some(Command::New);
@@ -272,11 +272,11 @@ impl HeditApp {
         let language = buffer.language();
         let detected = syntax::Language::detect(&buffer.page.info.name);
         let selected = buffer.language_override();
-        let mut choice = None;
-        let mut menu_open = false;
-        let first_frame = self.syntax_focus;
-        let response = egui::menu::menu_custom_button(
-            ui,
+        let popup_id = egui::Id::new("syntax-popup");
+        if ui.input(|input| input.key_pressed(Key::Escape)) {
+            ui.memory_mut(|memory| memory.close_popup());
+        }
+        let response = ui.add(
             egui::Button::new(
                 RichText::new(format!("{} ▾", language.label()))
                     .size(14.0)
@@ -289,97 +289,128 @@ impl HeditApp {
                         .color(),
                     ),
             )
-            .min_size(egui::vec2(156.0, 28.0)),
+            .min_size(egui::vec2(156.0, 28.0))
+            .selected(ui.memory(|memory| memory.is_popup_open(popup_id))),
+        );
+        if response.clicked() {
+            ui.memory_mut(|memory| memory.toggle_popup(popup_id));
+        }
+        let first_frame = self.syntax_focus;
+        let mut choice = None;
+        let height =
+            (response.rect.top() - ui.ctx().screen_rect().top() - 150.0).clamp(80.0, 480.0);
+        egui::popup::popup_above_or_below_widget(
+            ui,
+            popup_id,
+            &response,
+            egui::AboveOrBelow::Above,
+            egui::popup::PopupCloseBehavior::CloseOnClickOutside,
             |ui| {
-                menu_open = true;
-                // The status bar uses a right-to-left layout; menu content reads normally.
-                ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
-                    let width = (ui.ctx().screen_rect().width() - 40.0).clamp(240.0, 380.0);
-                    ui.set_width(width);
-                    ui.spacing_mut().interact_size.y = 28.0;
-                    ui.style_mut()
-                        .text_styles
-                        .insert(egui::TextStyle::Button, egui::FontId::proportional(15.0));
-                    ui.label(RichText::new("Syntax for this buffer").size(16.0).strong());
-                    let search = ui.add_sized(
-                        [width, 30.0],
-                        egui::TextEdit::singleline(&mut self.syntax_query)
-                            .id(egui::Id::new("syntax-filter"))
-                            .hint_text("Filter by language or extension…")
-                            .font(egui::FontId::proportional(14.0)),
-                    );
-                    if first_frame && !ui.is_sizing_pass() {
-                        search.request_focus();
-                        self.syntax_focus = false;
-                    }
-                    let matches: Vec<_> = syntax::Language::ALL
+                let width = (ui.ctx().screen_rect().width() - 40.0).clamp(240.0, 380.0);
+                ui.set_width(width);
+                ui.spacing_mut().interact_size.y = 28.0;
+                ui.style_mut()
+                    .text_styles
+                    .insert(egui::TextStyle::Button, egui::FontId::proportional(15.0));
+                ui.label(RichText::new("Syntax for this file").size(16.0).strong());
+                let search = ui.add_sized(
+                    [width, 30.0],
+                    egui::TextEdit::singleline(&mut self.syntax_query)
+                        .id(egui::Id::new("syntax-filter"))
+                        .hint_text("Filter by language or extension…")
+                        .font(egui::FontId::proportional(14.0)),
+                );
+                if first_frame && !ui.is_sizing_pass() {
+                    search.request_focus();
+                    self.syntax_focus = false;
+                }
+                let query_changed = self.syntax_query != self.syntax_last_query;
+                if query_changed {
+                    self.syntax_matches = syntax::Language::ALL
                         .into_iter()
                         .filter(|language| language.matches_query(&self.syntax_query))
                         .collect();
-                    if search.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter)) {
-                        // Do not let the same Enter reach the editor after focus returns.
-                        ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Enter));
-                        if matches.len() == 1 {
-                            choice = Some(Some(matches[0]));
-                            ui.close_menu();
-                        } else {
-                            search.request_focus();
+                    self.syntax_last_query.clone_from(&self.syntax_query);
+                }
+                let matches = &self.syntax_matches;
+                if search.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter)) {
+                    ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Enter));
+                    if matches.len() == 1 {
+                        choice = Some(Some(matches[0]));
+                    } else {
+                        search.request_focus();
+                    }
+                }
+                if ui
+                    .selectable_label(
+                        selected.is_none(),
+                        format!("Automatic ({})", detected.label()),
+                    )
+                    .clicked()
+                {
+                    choice = Some(None);
+                }
+                ui.separator();
+                let row_height = 28.0;
+                let mut scroll = egui::ScrollArea::vertical()
+                    .id_salt("syntax-choices")
+                    .max_height(height)
+                    .auto_shrink([false, false]);
+                if first_frame || query_changed {
+                    let offset = if first_frame && self.syntax_query.is_empty() {
+                        let index = matches
+                            .iter()
+                            .position(|&language| language == selected.unwrap_or(detected))
+                            .unwrap_or(0);
+                        (index as f32 * (row_height + ui.spacing().item_spacing.y) - height / 2.0)
+                            .max(0.0)
+                    } else {
+                        0.0
+                    };
+                    scroll = scroll.vertical_scroll_offset(offset);
+                }
+                if matches.is_empty() {
+                    scroll.show(ui, |ui| {
+                        ui.label("No matching syntax");
+                    });
+                } else {
+                    scroll.show_rows(ui, row_height, matches.len(), |ui, visible| {
+                        for &language in &matches[visible] {
+                            let row = ui
+                                .push_id(language.id(), |ui| {
+                                    ui.selectable_label(
+                                        selected == Some(language),
+                                        language.label(),
+                                    )
+                                })
+                                .inner;
+                            if row.clicked() {
+                                choice = Some(Some(language));
+                            }
                         }
-                    }
-                    if ui
-                        .selectable_label(
-                            selected.is_none(),
-                            format!("Automatic ({})", detected.label()),
-                        )
-                        .clicked()
-                    {
-                        choice = Some(None);
-                        ui.close_menu();
-                    }
-                    ui.separator();
-                    egui::ScrollArea::vertical()
-                        .id_salt(("syntax-choices", &self.syntax_query))
-                        .max_height((ui.ctx().screen_rect().height() - 180.0).clamp(100.0, 480.0))
-                        .auto_shrink([false, true])
-                        .show(ui, |ui| {
-                            if matches.is_empty() {
-                                ui.label("No matching syntax");
-                            }
-                            for language in matches {
-                                let row = ui.add(egui::SelectableLabel::new(
-                                    selected == Some(language),
-                                    language.label(),
-                                ));
-                                if first_frame && language == selected.unwrap_or(detected) {
-                                    row.scroll_to_me(Some(egui::Align::Center));
-                                }
-                                if row.clicked() {
-                                    choice = Some(Some(language));
-                                    ui.close_menu();
-                                }
-                            }
-                        });
-                });
+                    });
+                }
             },
         );
-        if !menu_open {
+        if let Some(language) = choice {
+            ui.memory_mut(|memory| memory.close_popup());
+            if self.workspace.open[self.workspace.active].set_language(language) {
+                self.changed();
+            }
+            self.focus_editor = true;
+        }
+        if !ui.memory(|memory| memory.is_popup_open(popup_id)) {
             self.syntax_query.clear();
             self.syntax_focus = true;
         }
-        response.response.on_hover_text(format!(
-            "Change syntax · {}\nApplies only to this buffer and is kept in recovery.",
+        response.on_hover_text(format!(
+            "Change syntax · {}\nApplies only to this file and is kept in recovery.",
             if selected.is_some() {
                 "manually selected"
             } else {
                 "detected from filename"
             },
         ));
-        if let Some(language) = choice {
-            if self.workspace.open[self.workspace.active].set_language(language) {
-                self.changed();
-            }
-            self.focus_editor = true;
-        }
     }
     fn buffer_sidebar(&mut self, ctx: &egui::Context) {
         if !self.sidebar {
@@ -435,12 +466,7 @@ impl HeditApp {
                                     .truncate(),
                                 )
                                 .on_hover_text(
-                                    buffer
-                                        .page
-                                        .info
-                                        .path
-                                        .as_deref()
-                                        .unwrap_or("Unsaved scratchpad"),
+                                    buffer.page.info.path.as_deref().unwrap_or("Unsaved file"),
                                 );
                             if response.clicked() {
                                 select = Some(index);
@@ -453,7 +479,7 @@ impl HeditApp {
                     .add(
                         egui::Button::new(
                             RichText::new(format!(
-                                "CLOSED BUFFERS    {}",
+                                "CLOSED FILES    {}",
                                 self.workspace.closed.len()
                             ))
                             .size(10.0)
@@ -461,7 +487,7 @@ impl HeditApp {
                         )
                         .frame(false),
                     )
-                    .on_hover_text("Browse and reopen closed buffers")
+                    .on_hover_text("Browse and reopen closed files")
                     .clicked()
                 {
                     self.shelf_open = true;

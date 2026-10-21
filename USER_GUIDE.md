@@ -1,11 +1,11 @@
 # hedit user guide
 
-Keep scratchpads between sessions, inspect large logs, and work with CUDA source.
+Keep unsaved files between sessions, inspect large logs, and work with CUDA source.
 This guide covers the current Linux release.
 
 - [Installation](#installation)
 - [Updates](#updates)
-- [Scratchpads and files](#scratchpads-and-files)
+- [Files and unsaved changes](#files-and-unsaved-changes)
 - [Logs and bookmarks](#logs-and-bookmarks)
 - [Editing and navigation](#editing-and-navigation)
 - [Preferences](#preferences)
@@ -94,10 +94,10 @@ and documentation under `~/.local`.
 ### First session
 
 Launch hedit from your terminal or application launcher. A first session opens
-an empty scratchpad; later sessions restore your workspace.
+an empty unsaved file; later sessions restore your workspace.
 
-1. Press **Ctrl+N** to start a scratchpad and type or paste some text.
-2. Optionally choose **File → Name scratchpad…** to give it a recognizable name.
+1. Press **Ctrl+N** to create a file and type or paste some text.
+2. Optionally choose **File → Name unsaved file…** to give it a recognizable name.
 3. Check the recovery status before ending your session.
 4. Open **Preferences → Settings…** to customize the editor, or **File → Open file…** to read a file.
 
@@ -109,7 +109,7 @@ For the default installation, remove `~/.local/bin/hedit`,
 `~/.local/share/hedit/themes/`, and `~/.local/share/doc/hedit/`.
 
 Session data normally lives in `~/.local/share/hedit/session/`. Keep it if you may
-need your unsaved buffers again; see [Recovery](#recovery) before removing it.
+need your unsaved files again; see [Recovery](#recovery) before removing it.
 
 ## Updates
 
@@ -133,7 +133,7 @@ installs it. Prereleases and downgrades are not offered.
 You can close the dialog and continue editing during installation. The running
 editor keeps its current version until you restart. If you quit while an
 installation is in progress, closing waits for it to finish. Your session data,
-scratchpads, saved appearance, and additional theme files are kept.
+unsaved files, saved appearance, and additional theme files are kept.
 
 ### Requirements and private releases
 
@@ -157,39 +157,41 @@ the location of retained recovery files; keep them until the installation is
 repaired. Use the [release installer](#install-from-github-releases) for a manual
 upgrade, closing hedit first.
 
-## Scratchpads and files
+## Files and unsaved changes
 
 ### Keep text without choosing a filename
 
-Use **File → New scratchpad**, the **+** beside the tabs, or **Ctrl+N** for a scratchpad. hedit keeps recovery copies so you
-can return to it after restarting without first saving it as a normal file.
+Use **File → New file**, the **+** beside the tabs, or **Ctrl+N** to create a file.
+hedit keeps recovery copies of your text so you can return after restarting,
+even before choosing where to save it on disk.
 
-Choose **File → Name scratchpad…** (**Ctrl+Shift+R**) to name it. Names can have
+Choose **File → Name unsaved file…** (**Ctrl+Shift+R**) to name it. Names can have
 up to 80 characters and stay fixed as you edit. Apply an empty name to return to
-using the first nonempty line as the tab title. Naming does not create a file.
+using the first nonempty line as the tab title. This changes the tab name;
+**Save** chooses a path and writes the file to disk.
 
 ### Open, save, and switch
 
 Use **File → Open file…** (**Ctrl+O**), drag a file into the window, or pass its path in the
-terminal. **Save** (**Ctrl+S**) writes the current buffer to a file; a scratchpad
-asks for a filename. **File → Save as…** (**Ctrl+Shift+S**) chooses another path.
-After a scratchpad is saved to a file, its tab uses that file's name.
+terminal. **Save** (**Ctrl+S**) writes the current file to disk, asking for a path
+if it has never been saved. **File → Save as…** (**Ctrl+Shift+S**) chooses another
+path. After saving, the tab uses the filename from disk.
 
-Click a tab or an Open Files row to switch buffers. **Ctrl+P** filters open buffers
+Click a tab or an Open Files row to switch files. **Ctrl+P** filters open files
 by name. A dot on a tab indicates unsaved changes.
 
-### Close and reopen buffers
+### Close and reopen files
 
 Close a tab with **×** or **Ctrl+W** to put it on the shelf, including its text,
 name, selection, and bookmarks. Closing the window keeps open tabs in the session
 rather than moving them onto the shelf.
 
-- **Ctrl+Shift+T** or **File → Reopen closed tab** restores the latest closed buffer.
-- **File → Browse closed buffers…**, also available from **Closed Buffers** in
+- **Ctrl+Shift+T** or **File → Reopen closed tab** restores the latest closed file.
+- **File → Browse closed files…**, also available from **Closed Files** in
   the sidebar, lets you filter the shelf by name and reopen any entry.
 
 The shelf has 50 slots. A clean, saved entry may be removed to make room; unsaved
-scratchpads and modified files are never silently evicted. If all slots hold
+files and modified files are never silently evicted. If all slots hold
 unsaved work, reopen and save some of it before closing more tabs. Entries do
 not expire based on age.
 
@@ -206,26 +208,26 @@ line** for a line in the whole file, or **Find** to search across every page.
 
 ### Follow incoming output
 
-Enable **View → Follow log (read only)** on a clean, file-backed buffer to show its tail
+Enable **View → Follow log (read only)** on a clean, saved file to show its tail
 and check for new output about once per second. Disable Follow before editing.
-The menu item is unavailable for scratchpads and modified buffers.
+The menu item is unavailable for unsaved files and modified files.
 
 When a log rotates, Follow reads the file currently at the original path. If that
 path disappears or the replacement is not UTF-8 text, an error is shown and the
-visible buffer remains.
+visible file remains.
 
-Outside Follow mode, hedit flags external changes when the buffer becomes active.
-A clean buffer offers **Reload file**. For a modified buffer, use **Save buffer
+Outside Follow mode, hedit flags external changes when the file becomes active.
+A clean file offers **Reload file**. For a modified file, use **Save file
 as…** to keep your version before reopening the disk version.
 
 ### Bookmark a position
 
 Press **Ctrl+F2** to toggle a bookmark at the cursor. **F2** goes to the next one;
-**Shift+F2** goes to the previous one, wrapping within the current buffer.
+**Shift+F2** goes to the previous one, wrapping within the current file.
 **Goto → Bookmarks…** lists saved positions
 by text label. Navigate to a bookmark and press **Ctrl+F2** again to remove it.
 
-Each buffer can hold 1,000 bookmarks. They survive restarts and moves to the
+Each file can hold 1,000 bookmarks. They survive restarts and moves to the
 shelf. Labels are captured when added. Bookmarks store byte positions and adjust
 for ordinary edits; undo/redo or an external replacement can change which text
 sits at a saved position.
@@ -233,7 +235,7 @@ sits at a saved position.
 ## Editing and navigation
 
 Use a single selection for clipboard operations and indentation. **Ctrl+Z**
-undoes; **Ctrl+Shift+Z** or **Ctrl+Y** redoes. Up to 256 edit steps per buffer are
+undoes; **Ctrl+Shift+Z** or **Ctrl+Y** redoes. Up to 256 edit steps per file are
 kept during the current process. Undo history is not restored after restart.
 
 Toggle wrap through **View → Word wrap** (**Ctrl+Shift+W**). Long lines scroll
@@ -248,16 +250,16 @@ line-ending conversion is not available yet.
 
 hedit selects syntax from the filename when you open or save a file. Click the
 language name at the bottom right, such as **Plain text ▾** or **Python ▾**, to
-choose a different syntax for the current buffer. The larger menu has a search
+choose a different syntax for the current file. The larger menu has a search
 field: type a language name, extension such as `.hpp`, or filename such as
 `Makefile`. Press **Enter** when the filter leaves one result, or click a row.
-This also works for unsaved scratchpads: paste a snippet, then choose its language without saving it.
+This also works for unsaved files: paste a snippet, then choose its language without saving it.
 
 Choose **Automatic (…)** to return to filename detection, or **Plain text** to
-turn off highlighting for that buffer. A manual choice stays with the buffer
-through Save As, page navigation, recovery, and reopening from the closed-buffer
-shelf. It does not change the text or the choices in other tabs. Scratchpad
-titles do not determine syntax; new scratchpads start as plain text.
+turn off highlighting for that file. A manual choice stays with the file
+through Save As, page navigation, recovery, and reopening from the closed-file
+shelf. It does not change the text or the choices in other tabs. Unsaved file
+titles do not determine syntax; new files start as plain text.
 
 | Syntax | Automatically recognized filenames |
 | --- | --- |
@@ -349,14 +351,14 @@ Search wraps at the end. Long searches can be cancelled from the status bar;
 **Esc** closes the panel. Regex, case-insensitive search, and replace-all controls
 are not yet available.
 
-### Go to a line or switch buffers
+### Go to a line or switch files
 
 Press **Ctrl+G**, enter a positive, one-based line number, and click **Go**. This
 locates a line in the entire document, even when only a page is displayed.
 
-**Ctrl+P** opens the buffer switcher; **Ctrl+Shift+P** opens commands. Type a
+**Ctrl+P** opens the file switcher; **Ctrl+Shift+P** opens commands. Type a
 filter, use **Up/Down** to select a result, and press **Enter**, or click a result.
-Type `>` in the buffer switcher to search commands instead. **Esc** closes either.
+Type `>` in the file switcher to search commands instead. **Esc** closes either.
 The menus show the same commands and keyboard shortcuts.
 
 ## Preferences
@@ -369,14 +371,14 @@ one window:
 | Editor | Word wrap, line numbers, open files sidebar, font size, restore defaults |
 | Appearance | Presets, custom colors, theme import/export, contrast feedback |
 | CUDA Tools | CUDA-GDB path and a shortcut to the tool panel |
-| Recovery | Checkpoint status, checkpoint now, closed buffers, recovery guidance |
+| Recovery | Checkpoint status, checkpoint now, closed files, recovery guidance |
 
 View commands provide quick toggles for the same editor settings. The status bar
 shows the cursor position, language, encoding, and recovery state; click the
 language to select syntax or the recovery status to open its preferences page.
 For paged files, gutter line numbers
-and **Page Ln** refer to the displayed page. The sidebar lists open buffers and
-provides a **Closed Buffers** link. Right-click a tab for its context menu, or
+and **Page Ln** refer to the displayed page. The sidebar lists open files and
+provides a **Closed Files** link. Right-click a tab for its context menu, or
 middle-click its title to close it to the shelf.
 
 ## Appearance
@@ -485,10 +487,10 @@ hedit [--session-dir DIR] [--new] [FILE[:LINE[:COLUMN]] ...] [-]
 
 | Argument | Effect |
 | --- | --- |
-| `FILE` | Open a file or start a named file buffer |
+| `FILE` | Open a file or start a named file |
 | `FILE:LINE[:COLUMN]` | Open at a one-based location |
-| `-` | Read UTF-8 stdin until EOF into an unsaved buffer |
-| `--new` | Add an empty scratchpad to the restored session |
+| `-` | Read UTF-8 stdin until EOF into an unsaved file |
+| `--new` | Add an empty unsaved file to the restored session |
 | `--session-dir DIR` | Use an independent session |
 | `--` | Treat remaining arguments as filenames |
 | `-h`, `--help` | Show help |
@@ -518,10 +520,10 @@ session if the graphical window cannot start.
 
 | Shortcut | Action |
 | --- | --- |
-| Ctrl+N / Ctrl+O | New scratchpad / open file |
+| Ctrl+N / Ctrl+O | New file / open file |
 | Ctrl+S / Ctrl+Shift+S | Save / Save As |
 | Ctrl+W / Ctrl+Shift+T | Close to shelf / reopen latest |
-| Ctrl+Shift+R | Name the active unsaved scratchpad |
+| Ctrl+Shift+R | Name the active unsaved file |
 | Ctrl+P / Ctrl+Shift+P | Buffer switcher / command palette |
 | Ctrl+F / Ctrl+H / Ctrl+G | Find / Replace / Go to line |
 | Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y | Undo / redo |
@@ -532,10 +534,10 @@ session if the graphical window cannot start.
 | Ctrl+, | Preferences |
 | Ctrl+F2 | Toggle a bookmark at the cursor |
 | F2 / Shift+F2 | Next / previous bookmark |
-| Esc | Close search, the palette, or buffer-tool windows |
+| Esc | Close search, the palette, or file-tool windows |
 
 Undo in a search or debugger input edits that input; in the editor it uses the
-buffer's history.
+file's history.
 
 ## Recovery
 
@@ -556,21 +558,21 @@ keeps the window open. Use **Save as…** to keep important text elsewhere if ne
 
 ### Find missing work
 
-Check open tabs, **Ctrl+P**, and **File → Browse closed buffers…**. Verify you opened the same
+Check open tabs, **Ctrl+P**, and **File → Browse closed files…**. Verify you opened the same
 session, especially if you used `--session-dir`. Read any startup recovery warning
 before dismissing it; a fallback checkpoint can be older than your latest work.
 
 If the latest manifest cannot be read, hedit tries the previous checkpoint and
 retains recovery generations. If neither works, old data is archived under
-`preserved-*` and a fresh session starts. Failed buffer restores retain their
+`preserved-*` and a fresh session starts. Failed file restores retain their
 recovery references for another attempt.
 
 ### Back up or rescue a session
 
 The default is `$XDG_DATA_HOME/hedit/session`, normally
 `~/.local/share/hedit/session`. Close hedit and copy the **whole session directory**
-before inspecting or modifying it. Small buffers are UTF-8 files in `buffers-*`;
-`session.json` and `session.previous.json` identify their tabs. Large buffers can
+before inspecting or modifying it. Small files are UTF-8 files in `buffers-*`;
+`session.json` and `session.previous.json` identify their tabs. Large files can
 reference several ranges, so one source file may not contain the full document.
 
 Keep `preserved-*` archives until you rescue the needed text. After a fallback,
@@ -588,7 +590,7 @@ long-term copies.
 | No window opens | Run inside a graphical X11/Wayland session with OpenGL; inspect the terminal error. Reopen the same session to recover consumed stdin. |
 | Session is locked | Return to the running window, or use a different `--session-dir`. A stale lock file alone does not hold a process lock. |
 | Recovery fails | Check disk space and permissions, keep hedit open, and use **Retry checkpoint** after fixing the cause. |
-| Save reports an external change | Use **Save as…** to keep your version. A clean buffer can reload the file. |
+| Save reports an external change | Use **Save as…** to keep your version. A clean file can reload the file. |
 | Open/Save dialog does not appear | Check that `xdg-desktop-portal` and your desktop's portal backend are installed and running in the same session. |
 | File is rejected | Convert a separate copy to UTF-8 if needed. UTF-16 and binary files are unsupported. |
 | Theme is rejected | Check the version, name length, hex values, and 64 KiB limit. Your current palette stays active. |
@@ -598,5 +600,5 @@ long-term copies.
 
 hedit refuses to overwrite external changes. For a large source that changes
 before a recovery copy completes, unseen bytes may be unavailable. If an edit
-cannot be applied, the edited visible page is kept in a new scratchpad and an
+cannot be applied, the edited visible page is kept in a new file and an
 error explains the result.

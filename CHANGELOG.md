@@ -1,0 +1,67 @@
+# Changelog
+
+## [0.1.1] - 2026-10-21
+
+### Added
+
+- Manual updates through **Help → Check for updates…**, with release notes,
+  checksum verification, and installation for Linux x86-64 and ARM64. Checks,
+  installations, and restarts happen only when requested.
+- Authenticated update downloads through GitHub CLI for private repositories.
+- Automatic filename detection for 57 syntax modes covering programming, web,
+  scientific, configuration, build, and text files.
+- A larger bottom-bar syntax selector with a searchable, scrollable menu. Filter
+  by language, extension, or filename, and press Enter to choose a single match.
+- Per-file syntax choices for saved files and unsaved snippets, including
+  **Automatic** and **Plain text**. Choices survive recovery, page navigation,
+  and reopening closed files, and use the active theme's syntax colors.
+
+### Changed
+
+- Split C and C++ into separate syntax modes. `.c` and `.h` default to C;
+  uppercase `.C` and `.H` use C++.
+- Renamed the **CUDA C++** syntax label to **CUDA**.
+- Use **New file**, **Name unsaved file…**, and **Closed files** consistently in
+  the interface and guides.
+- Reduced highlighting overhead by combining adjacent tokens with the same color.
+
+### Fixed
+
+- Escape now dismisses open menus as well as editor dialogs.
+- Selecting syntax with Enter no longer inserts a newline into the open file.
+- Syntax-picker redraws reuse unchanged editor layouts and filtered results,
+  draw only visible choices, and keep the popup's position and size stable.
+
+To upgrade from **0.1.0**, run the release installer again or install the new
+package. In-app updating becomes available after installing **0.1.1**. See the
+[update instructions](USER_GUIDE.md#updates) and the
+[supported syntax modes](USER_GUIDE.md#syntax-highlighting).
+
+## [0.1.0] - 2026-10-21
+
+Initial release of hedit.
+
+### Added
+
+- Native Linux text editor with its own SVG branding, without Node.js or npm.
+- Named unsaved files, session recovery checkpoints, fallback recovery, and a
+  searchable shelf for closed files, including unsaved text.
+- Guarded atomic saves and UTF-8 editing, with preservation of existing BOM and
+  LF/CRLF bytes when saving unchanged content.
+- Paged large-file editing, read-only log following, literal search and individual
+  replacements, bookmarks, and go-to-line navigation.
+- Clipboard commands, indentation, process-local undo/redo, command-line file
+  locations, and snippets piped through standard input.
+- Menus, tabs, an open-files sidebar, line numbers, a command palette, and unified
+  preferences for editing, appearance, CUDA tools, and recovery.
+- Light and dark themes, custom colors, theme import/export, font sizing, and
+  word wrap.
+- C/C++ and CUDA highlighting, a CUDA-GDB control panel, Compute Sanitizer runs,
+  and NVIDIA GPU information tools.
+- Linux x86-64 and ARM64 release packages, checksum-verified installation scripts,
+  desktop integration, and tagged GitHub Actions releases.
+- User and developer guides, plus Makefile commands for formatting, linting,
+  tests, packaging, and CI validation.
+
+[0.1.1]: https://github.com/MohamedElashri/hedit/releases/tag/v0.1.1
+[0.1.0]: https://github.com/MohamedElashri/hedit/releases/tag/v0.1.0

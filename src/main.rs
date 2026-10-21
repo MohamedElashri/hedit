@@ -6,7 +6,7 @@ mod preview;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let options = hedit::cli::Options::parse(std::env::args_os().skip(1))?;
     if options.help {
-        println!("hedit — keep your train of thought\n\nUsage: hedit [--session-dir DIR] [--new] [FILE[:LINE[:COLUMN]] ...] [-]\n\n  -                 Read UTF-8 stdin into an unsaved buffer\n  --new             Add an untitled buffer\n  --session-dir DIR Use an isolated session (one process per session)\n  --                Treat remaining arguments as filenames\n  -h, --help        Show help\n  -V, --version     Show version\n\nBuild and run with Cargo. CUDA tools are optional.");
+        println!("hedit — keep your train of thought\n\nUsage: hedit [--session-dir DIR] [--new] [FILE[:LINE[:COLUMN]] ...] [-]\n\n  -                 Read UTF-8 stdin into an unsaved file\n  --new             Add a new file\n  --session-dir DIR Use an isolated session (one process per session)\n  --                Treat remaining arguments as filenames\n  -h, --help        Show help\n  -V, --version     Show version\n\nBuild and run with Cargo. CUDA tools are optional.");
         return Ok(());
     }
     if options.version {

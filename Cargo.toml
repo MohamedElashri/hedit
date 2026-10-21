@@ -3,7 +3,7 @@ name = "hedit"
 version = "0.1.1"
 edition = "2021"
 rust-version = "1.92"
-description = "A native scratchpad and log editor with durable buffers and CUDA debugging"
+description = "A native text and log editor with durable unsaved files and CUDA debugging"
 license = "MIT"
 
 [dependencies]

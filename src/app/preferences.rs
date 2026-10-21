@@ -308,7 +308,7 @@ impl HeditApp {
         }
     }
     fn recovery_preferences(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        ui.label("Scratchpads and modified files are checkpointed every two seconds while work changes, and on normal exit.");
+        ui.label("Unsaved and modified files are checkpointed every two seconds while work changes, and on normal exit.");
         ui.add_space(12.0);
         ui.label(if self.checkpoint_pending {
             "Checkpoint in progress…"
@@ -333,8 +333,8 @@ impl HeditApp {
             self.checkpoint(ctx);
         }
         ui.add_space(12.0);
-        ui.label("Closed buffers stay on the shelf. Unsaved entries are never silently evicted; the shelf holds up to 50 buffers.");
-        if ui.button("Browse closed buffers…").clicked() {
+        ui.label("Closed files stay on the shelf. Unsaved entries are never silently evicted; the shelf holds up to 50 files.");
+        if ui.button("Browse closed files…").clicked() {
             self.shelf_open = true;
         }
         ui.add_space(12.0);

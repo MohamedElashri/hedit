@@ -100,7 +100,7 @@ impl Language {
                 .any(|name| name.to_ascii_lowercase().contains(&query))
     }
 
-    /// Use the actual filename, not a scratchpad's first line/title.
+    /// Use the actual filename, not an unsaved file's first line/title.
     pub fn detect(name: &str) -> Self {
         let name = name.rsplit(['/', '\\']).next().unwrap_or(name);
         // Unix C++ conventions: uppercase .C/.H differ from C's .c/.h.

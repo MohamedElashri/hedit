@@ -104,12 +104,18 @@ These SVG exports preserve egui layout and colors but substitute system fonts
 and omit some GPU meshes/effects. They complement desktop testing. X11/Wayland
 visual checks, accessibility review, and NVIDIA hardware validation remain open.
 
+For a repeatable CPU timing check, run
+`cargo test --locked --bin hedit profile_syntax_picker -- --ignored --nocapture`.
+This opens the picker over a 231 KB CUDA document and reports the mean time for
+20 hover frames. It measures headless rendering work, not desktop input latency.
+
 ## Architecture
 
 | Module | Responsibility |
 | --- | --- |
 | `src/app.rs` | Editor rendering, shortcuts, background jobs, checkpoint status, exit gating |
 | `src/app/chrome.rs` | Menus, tabs, sidebar, status bar, bottom search panel |
+| `src/app/editor_layout.rs` | One-entry cache of the displayed page's highlighted text layout |
 | `src/app/commands.rs` | Shared menu/shortcut commands and keyboard-driven palette |
 | `src/update.rs`, `src/update/install.rs` | Manual release checks, checksum verification, archive preflight, staged installation and rollback |
 | `src/app/updates.rs` | Explicit check/install actions, worker progress, restart guidance and close gating |
@@ -140,7 +146,7 @@ Files above 2 MiB use approximately 256 KiB views. Unchanged bytes stay on disk;
 dirty paged snapshots copy source pieces into private recovery storage. Completed
 copies can protect live pieces and history from later source changes. Before a
 copy completes, unseen externally changed bytes cannot be reconstructed; a failed
-visible edit is rescued into an independent scratchpad.
+visible edit is rescued into an independent unsaved file.
 
 The renderer is a bounded standard text widget. Continuous document layout,
 multiple selections, and folding require further editor work.
@@ -149,11 +155,18 @@ multiple selections, and folding require further editor work.
 in one catalog. It includes separate C, C++, and CUDA modes. The status-bar menu
 filters the catalog by name, extension, or special filename, and scales its
 scrolling list to the available window height.
+The picker is anchored above its status-bar button. Filtered results are cached
+until the query changes, and a stable scroll area draws only visible rows.
 `Buffer::language()` resolves a recognized `TabView.language_override` first,
 then the current filename; unknown IDs fall back to detection. A syntax change
 only updates view metadata and the checkpoint generation, preserving text,
 selection, scroll position, and undo history. No session schema change is needed.
 The status-bar menu and editor renderer use the same resolved language.
+
+The editor retains one highlighted layout and checks the exact text, syntax,
+font size, wrap width, theme, display scale, and font atlas before reusing it. This avoids
+lexing and hashing a large layout again during menu hovers. The cache holds only
+the displayed page and invalidates immediately on edits or visual changes.
 
 Sorted keyword tables provide language-specific lookup, including case-insensitive
 keywords where appropriate, without allocations. Lexers work on the displayed
@@ -185,7 +198,7 @@ The previous committed manifest stays authoritative until replacement. Failed
 restores keep their references, and failed checkpoints preserve earlier recovery
 data. Dirty and unnamed buffers are snapshotted. Clean named files reopen from
 disk; missing clean files can be dropped. Externally growing clean logs must not
-prevent unrelated scratchpads from checkpointing.
+prevent unrelated unsaved files from checkpointing.
 
 When the newest manifest fails, try the previous one. Archive the corrupt
 manifest under `preserved-manifests/` and disable generation cleanup while that
@@ -391,7 +404,7 @@ features as available.
 ### Delivered
 
 Native editor and Cargo build; periodic recovery with fallback/preservation;
-named scratchpads and a searchable shelf; guarded atomic saves; bounded large-file
+named unsaved files and a searchable shelf; guarded atomic saves; bounded large-file
 pages, log following, literal search, and bookmarks; process-local undo; automatic
 syntax detection and persistent per-buffer syntax selection; customizable themes
 and SVG identity; CUDA tools; Linux packaging
