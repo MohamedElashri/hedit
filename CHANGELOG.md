@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.1.2] - 2026-10-22
+
+### Added
+
+- Open project folders through **File → Open folder…** (**Ctrl+Shift+O**),
+  the command line (`hedit .`), or drag and drop. Browse a lazy folder tree,
+  create files and subfolders, add or remove roots, and close folders independently
+  of open tabs. Restore roots, expanded directories, and collapsed states after restart.
+- Hide or show the folder section independently with **Ctrl+Alt+B**, its header
+  close button, or **View → Show folder sidebar**. Toggle the entire sidebar with
+  **Ctrl+B**.
+- Native vector icons distinguish open/closed folders and document files.
+- **Ctrl+P** fuzzy path search across files in all open folders, with background
+  scanning, relative-path results, and keyboard navigation.
+
+### Fixed
+
+- Keep the file tab strip above the editor region, with the sidebar extending
+  directly below the menu bar. Tabs resize with the editor when the sidebar is
+  shown, hidden, or resized.
+- Opening an existing tab preserves its cursor and edits. Opening a file from
+  the closed shelf restores its recovery text instead of making a duplicate.
+
 ## [0.1.1] - 2026-10-21
 
 ### Added
@@ -63,5 +86,6 @@ Initial release of hedit.
 - User and developer guides, plus Makefile commands for formatting, linting,
   tests, packaging, and CI validation.
 
+[0.1.2]: https://github.com/MohamedElashri/hedit/releases/tag/v0.1.2
 [0.1.1]: https://github.com/MohamedElashri/hedit/releases/tag/v0.1.1
 [0.1.0]: https://github.com/MohamedElashri/hedit/releases/tag/v0.1.0

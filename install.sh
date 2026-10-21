@@ -65,7 +65,7 @@ HELP
     fi
     case "$version" in
         v[0-9]*) ;;
-        *) fail 'Expected a release tag such as v0.1.0.' ;;
+        *) fail 'Expected a release tag such as v0.1.2.' ;;
     esac
     case "$version" in *[!a-zA-Z0-9.+-]*) fail 'Invalid release tag.' ;; esac
 

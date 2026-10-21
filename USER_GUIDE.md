@@ -1,7 +1,7 @@
 # hedit user guide
 
 Keep unsaved files between sessions, inspect large logs, and work with CUDA source.
-This guide covers the current Linux release.
+This guide covers hedit 0.1.2 on Linux.
 
 - [Installation](#installation)
 - [Updates](#updates)
@@ -39,7 +39,7 @@ To inspect the script first, select a version, or choose another prefix:
 
 ```sh
 curl -fsSL https://github.com/MohamedElashri/hedit/releases/latest/download/install.sh -o hedit-install.sh
-sh hedit-install.sh --version v0.1.0 --prefix "$HOME/.local"
+sh hedit-install.sh --version v0.1.2 --prefix "$HOME/.local"
 ```
 
 Omit `--version` for the latest stable release. Prereleases require their full
@@ -60,8 +60,8 @@ sh hedit-install.sh --github-cli
 For a pinned version, give the same tag to both commands:
 
 ```sh
-gh release download v0.1.0 --repo MohamedElashri/hedit --pattern install.sh --output hedit-install.sh
-sh hedit-install.sh --github-cli --version v0.1.0
+gh release download v0.1.2 --repo MohamedElashri/hedit --pattern install.sh --output hedit-install.sh
+sh hedit-install.sh --github-cli --version v0.1.2
 ```
 
 Use a fresh filename or remove the previous downloaded script before downloading
@@ -74,9 +74,9 @@ Download the matching archive and `.sha256` file from
 checksum, extract it, and run the included installer. For the x86-64 package:
 
 ```sh
-sha256sum -c hedit-0.1.0-linux-x86_64.tar.gz.sha256
-tar -xzf hedit-0.1.0-linux-x86_64.tar.gz
-cd hedit-0.1.0-linux-x86_64
+sha256sum -c hedit-0.1.2-linux-x86_64.tar.gz.sha256
+tar -xzf hedit-0.1.2-linux-x86_64.tar.gz
+cd hedit-0.1.2-linux-x86_64
 sh install.sh
 ```
 
@@ -115,7 +115,7 @@ need your unsaved files again; see [Recovery](#recovery) before removing it.
 
 In-app updates are available from version **0.1.1**. Version 0.1.0 needs one
 normal installer upgrade to get this feature. Close 0.1.0, run the release
-installer again after 0.1.1 is published, and reopen hedit.
+installer again to install 0.1.2, and reopen hedit.
 
 ### Check and install manually
 
@@ -177,8 +177,56 @@ terminal. **Save** (**Ctrl+S**) writes the current file to disk, asking for a pa
 if it has never been saved. **File → Save as…** (**Ctrl+Shift+S**) chooses another
 path. After saving, the tab uses the filename from disk.
 
-Click a tab or an Open Files row to switch files. **Ctrl+P** filters open files
-by name. A dot on a tab indicates unsaved changes.
+Click a tab or an Open Files row to switch files. **Ctrl+P** finds open files
+and files in all open folders. A dot on a tab indicates unsaved changes.
+
+### Open a folder of code
+
+Choose **File → Open folder…** (**Ctrl+Shift+O**), drag a folder into the window,
+or run `hedit .` or `hedit /path/to/client /path/to/server`. You can select
+several folders in the dialog or add more later with the **+** beside FOLDERS.
+Opening another folder adds a root to the workspace and keeps your open tabs
+and unsaved text. Reopening an existing root refreshes it without adding a duplicate.
+
+File tabs sit above the editor region. The sidebar starts below the menu bar
+and shows Open Files above the folder trees. Amber folder icons and
+outlined document icons distinguish directories from files. Click a chevron or folder name
+to expand or collapse it; click a file to open it in a tab. Directories load as
+you expand them, with folders listed first and hidden files included. Opening
+an already open file keeps its selection and unsaved edits. A file on the closed
+shelf is reopened with its recovery text.
+
+Right-click a folder for **New file…**, **New folder…**, **Copy path**, and
+**Refresh folder**. Creation refuses to overwrite an existing entry. **Save as…**
+starts in the folder containing the current file, or the first root for an unsaved
+file. After changes made outside hedit, use **File → Refresh folders** or the **↻**
+button to reload the tree and clear cached quick-open results.
+
+**Ctrl+P** searches paths across all roots, including unopened files, even when
+the folder sidebar is hidden. With multiple roots, result paths include the root
+name; roots with the same name use full paths to distinguish them.
+Letters can be nonconsecutive: `srcprj` can find `src/project.rs`. Open files
+appear first; folder results show paths so matching filenames are distinguishable.
+Use **Up/Down** and **Enter**, or click a result. Search skips `.git`, `.hg`,
+`.svn`, `node_modules`, `target`, `.venv`, and `__pycache__`, and does not follow
+directory symlinks. These directories remain available in the tree.
+
+Folder paths, expanded directories, collapsed roots, and folder-sidebar visibility
+survive restart. If a folder is moved or unavailable, its tree shows an error
+while recovered buffers and the other roots remain usable. Right-click a root
+and choose **Remove folder from workspace** to remove just that root, or choose
+**File → Close all folders** to remove all trees. Both actions keep tabs open
+and leave files on disk untouched.
+
+Click **×** beside FOLDERS or use **View → Show folder sidebar** (**Ctrl+Alt+B**)
+to hide or reveal the folder section independently of Open Files. **View → Show
+sidebar** (**Ctrl+B**) toggles the entire sidebar. Both options are also in
+**Preferences → Settings… → Editor**.
+
+Directory listings show at most 2,000 entries per directory. Quick open returns
+up to 80 folder matches, scanning at most 50,000 entries or about one second.
+The UI reports incomplete scans and unreadable folders. These limits keep
+large source trees manageable; they do not limit the files you can open directly.
 
 ### Close and reopen files
 
@@ -356,7 +404,7 @@ are not yet available.
 Press **Ctrl+G**, enter a positive, one-based line number, and click **Go**. This
 locates a line in the entire document, even when only a page is displayed.
 
-**Ctrl+P** opens the file switcher; **Ctrl+Shift+P** opens commands. Type a
+**Ctrl+P** opens Go to file, including all open folders; **Ctrl+Shift+P** opens commands. Type a
 filter, use **Up/Down** to select a result, and press **Enter**, or click a result.
 Type `>` in the file switcher to search commands instead. **Esc** closes either.
 The menus show the same commands and keyboard shortcuts.
@@ -497,6 +545,7 @@ hedit [--session-dir DIR] [--new] [FILE[:LINE[:COLUMN]] ...] [-]
 | `-V`, `--version` | Show the version |
 
 ```sh
+hedit .
 hedit application.log
 hedit kernel.cu:42:8
 hedit "notes for today.txt"
@@ -524,7 +573,9 @@ session if the graphical window cannot start.
 | Ctrl+S / Ctrl+Shift+S | Save / Save As |
 | Ctrl+W / Ctrl+Shift+T | Close to shelf / reopen latest |
 | Ctrl+Shift+R | Name the active unsaved file |
-| Ctrl+P / Ctrl+Shift+P | Buffer switcher / command palette |
+| Ctrl+Shift+O | Add one or more folders |
+| Ctrl+B / Ctrl+Alt+B | Toggle entire sidebar / folder section |
+| Ctrl+P / Ctrl+Shift+P | Find files / command palette |
 | Ctrl+F / Ctrl+H / Ctrl+G | Find / Replace / Go to line |
 | Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y | Undo / redo |
 | Ctrl+C / Ctrl+X / Ctrl+V | Copy / cut / paste |

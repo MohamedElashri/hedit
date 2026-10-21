@@ -2,6 +2,8 @@ mod chrome;
 mod commands;
 mod editor_layout;
 mod preferences;
+mod project;
+mod tree_row;
 mod updates;
 
 use commands::Command;
@@ -30,6 +32,11 @@ use std::{
 
 enum Action {
     Add(Document, Page, usize),
+    Activate(u64),
+    Reopen(u64, Option<(Page, usize)>),
+    Folder(hedit::folder::FolderListing),
+    Folders(Vec<hedit::folder::FolderListing>),
+    Created(String, bool),
     Page(u64, Page, Option<(usize, usize)>),
     Saved(u64, Info),
     ThemeImported(Theme),
@@ -43,6 +50,7 @@ struct Checkpoint {
 
 pub struct HeditApp {
     workspace: Workspace,
+    project: project::ProjectBrowser,
     tx: Sender<Result<Action, String>>,
     rx: Receiver<Result<Action, String>>,
     checkpoint_tx: Sender<Checkpoint>,
@@ -62,6 +70,7 @@ pub struct HeditApp {
     wrap: bool,
     font_size: f32,
     sidebar: bool,
+    folder_sidebar: bool,
     line_numbers: bool,
     preferences_page: PreferencesPage,
     goto_open: bool,
@@ -149,7 +158,18 @@ impl HeditApp {
             .filter(|size| size.is_finite())
             .unwrap_or(14.0)
             .clamp(10.0, 28.0);
+        let project = project::ProjectBrowser::new(&workspace.folders);
+        let sidebar = storage
+            .and_then(|s| eframe::get_value(s, "sidebar"))
+            .unwrap_or(true);
+        let folder_sidebar = workspace
+            .folders
+            .first()
+            .map(|f| f.visible)
+            .or_else(|| storage.and_then(|s| eframe::get_value(s, "folder_sidebar")))
+            .unwrap_or(true);
         Self {
+            project,
             workspace,
             tx,
             rx,
@@ -173,9 +193,8 @@ impl HeditApp {
             notice: "Ready.".into(),
             wrap,
             font_size,
-            sidebar: storage
-                .and_then(|s| eframe::get_value(s, "sidebar"))
-                .unwrap_or(true),
+            sidebar,
+            folder_sidebar,
             line_numbers: storage
                 .and_then(|s| eframe::get_value(s, "line_numbers"))
                 .unwrap_or(true),
@@ -281,6 +300,16 @@ impl HeditApp {
     }
     fn open(&mut self, ctx: &egui::Context, path: Option<PathBuf>) {
         let editor = Arc::clone(&self.workspace.editor);
+        let closed_paths: Vec<_> = self
+            .workspace
+            .closed
+            .iter()
+            .filter_map(|view| {
+                let doc = self.workspace.editor.get(view.id).ok()?;
+                let path = doc.lock().ok()?.info().path?;
+                Some((path, view.id))
+            })
+            .collect();
         let open_paths: Vec<_> = self
             .workspace
             .open
@@ -298,7 +327,12 @@ impl HeditApp {
                     None => return Ok(Action::Nothing),
                 },
             };
-            let (path, line, col) = hedit::cli::location(&path);
+            if path.is_dir() {
+                return hedit::folder::read_directory(path).map(Action::Folder);
+            }
+            let (file, line, col) = hedit::cli::location(&path);
+            let plain_path = file == path;
+            let path = file;
             let path = if path.is_absolute() {
                 path
             } else {
@@ -314,6 +348,9 @@ impl HeditApp {
                 .iter()
                 .find(|(p, _)| p.as_deref() == Some(&canonical))
             {
+                if plain_path {
+                    return Ok(Action::Activate(*id));
+                }
                 let shared = editor.get(*id)?;
                 let mut doc = shared.lock().map_err(|e| e.to_string())?;
                 let offset = doc.location_offset(line, col)?;
@@ -323,6 +360,19 @@ impl HeditApp {
                     .chars()
                     .count();
                 return Ok(Action::Page(*id, page, Some((cursor, cursor))));
+            }
+            if let Some((_, id)) = closed_paths.iter().find(|(p, _)| p == &canonical) {
+                let location = if plain_path {
+                    None
+                } else {
+                    let shared = editor.get(*id)?;
+                    let mut doc = shared.lock().map_err(|e| e.to_string())?;
+                    let offset = doc.location_offset(line, col)?;
+                    let page = doc.page(offset.saturating_sub(4096))?;
+                    let cursor = page.text[..(offset - page.start) as usize].chars().count();
+                    Some((page, cursor))
+                };
+                return Ok(Action::Reopen(*id, location));
             }
             let mut doc = Document::open_or_new(editor.id(), &path)?;
             let offset = doc.location_offset(line, col)?;
@@ -368,9 +418,27 @@ impl HeditApp {
             .unwrap_or_else(|| self.active().page.info.name.clone());
         let choose = save_as || self.active().page.info.path.is_none();
         let editor = Arc::clone(&self.workspace.editor);
+        let directory = self
+            .workspace
+            .folders
+            .iter()
+            .find(|f| {
+                self.active()
+                    .page
+                    .info
+                    .path
+                    .as_ref()
+                    .is_some_and(|path| std::path::Path::new(path).starts_with(&f.path))
+            })
+            .or_else(|| self.workspace.folders.first())
+            .map(|f| f.path.clone());
         self.job(ctx, move || {
             let target = if choose {
-                match rfd::FileDialog::new()
+                let mut dialog = rfd::FileDialog::new();
+                if let Some(directory) = directory {
+                    dialog = dialog.set_directory(directory);
+                }
+                match dialog
                     .set_title("Save file — hedit")
                     .set_file_name(name)
                     .save_file()
@@ -506,6 +574,48 @@ impl HeditApp {
         while let Ok(event) = self.rx.try_recv() {
             self.busy = false;
             match event {
+                Ok(Action::Activate(id)) => {
+                    if let Some(index) = self
+                        .workspace
+                        .open
+                        .iter()
+                        .position(|b| b.page.info.id == id)
+                    {
+                        self.workspace.active = index;
+                        self.changed();
+                        self.focus_editor = true;
+                    }
+                }
+                Ok(Action::Reopen(id, location)) => {
+                    if let Some(index) = self.workspace.closed.iter().position(|v| v.id == id) {
+                        let result = self.workspace.reopen_at(index);
+                        if result.is_ok() {
+                            if let Some((page, cursor)) = location {
+                                let buffer = &mut self.workspace.open[self.workspace.active];
+                                buffer.set_page(page);
+                                buffer.view.anchor = cursor;
+                                buffer.view.head = cursor;
+                                buffer.reveal_cursor = true;
+                            }
+                        }
+                        self.report(result);
+                    }
+                }
+                Ok(Action::Folder(listing)) => self.set_folder(listing),
+                Ok(Action::Folders(listings)) => {
+                    for listing in listings {
+                        self.set_folder(listing);
+                    }
+                }
+                Ok(Action::Created(path, directory)) => {
+                    self.refresh_folder();
+                    if directory {
+                        self.project.expanded.insert(path);
+                        self.sync_folder_view();
+                    } else {
+                        self.pending_paths.push_back(path.into());
+                    }
+                }
                 Ok(Action::Add(doc, page, cursor)) => {
                     let result = self.workspace.add(doc, page);
                     if result.is_ok() {
@@ -552,6 +662,7 @@ impl HeditApp {
                         buffer.refresh_name();
                         buffer.external = false;
                     }
+                    self.refresh_folder();
                     self.notice = "File saved.".into();
                     self.changed();
                 }
@@ -629,7 +740,14 @@ impl HeditApp {
         for (modifiers, key, command) in [
             (shift, Key::P, Command::Palette),
             (cmd, Key::P, Command::Switcher),
+            (
+                Modifiers { alt: true, ..cmd },
+                Key::B,
+                Command::FolderSidebar,
+            ),
+            (cmd, Key::B, Command::Sidebar),
             (cmd, Key::N, Command::New),
+            (shift, Key::O, Command::OpenFolder),
             (cmd, Key::O, Command::Open),
             (shift, Key::S, Command::SaveAs),
             (cmd, Key::S, Command::Save),
@@ -679,6 +797,7 @@ impl HeditApp {
             self.rename_target = None;
             self.shelf_open = false;
             self.bookmarks_open = false;
+            self.project.create = None;
             self.focus_editor = true;
         }
     }
@@ -1345,6 +1464,7 @@ impl eframe::App for HeditApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.updates.poll();
         self.receive(ctx);
+        self.project.poll();
         if let Some(debug) = &mut self.debug {
             debug.poll();
         }
@@ -1355,12 +1475,23 @@ impl eframe::App for HeditApp {
         }
         self.shortcuts(ctx);
         let title = format!(
-            "{}{} — hedit",
+            "{}{}{} — hedit",
             self.active().view.name,
             if self.active().page.info.dirty {
                 " •"
             } else {
                 ""
+            },
+            match self.workspace.folders.as_slice() {
+                [] => String::new(),
+                [folder] => format!(
+                    " — {}",
+                    std::path::Path::new(&folder.path)
+                        .file_name()
+                        .unwrap_or_else(|| std::ffi::OsStr::new(&folder.path))
+                        .to_string_lossy()
+                ),
+                folders => format!(" — {} folders", folders.len()),
             }
         );
         if self.window_title != title {
@@ -1376,6 +1507,7 @@ impl eframe::App for HeditApp {
         }
         self.preferences(ctx);
         self.buffer_tools(ctx);
+        self.folder_dialog(ctx);
         self.updates_window(ctx);
         let paths: Vec<_> = ctx.input(|i| {
             i.raw
@@ -1397,6 +1529,7 @@ impl eframe::App for HeditApp {
         eframe::set_value(storage, "wrap", &self.wrap);
         eframe::set_value(storage, "font_size", &self.font_size);
         eframe::set_value(storage, "sidebar", &self.sidebar);
+        eframe::set_value(storage, "folder_sidebar", &self.folder_sidebar);
         eframe::set_value(storage, "line_numbers", &self.line_numbers);
         storage.set_string("debugger", self.debugger.clone());
         eframe::set_value(storage, "update_github_cli", &self.updates.use_github_cli);
@@ -1464,6 +1597,7 @@ mod tests {
             app.command_palette(ctx);
             app.preferences(ctx);
             app.buffer_tools(ctx);
+            app.folder_dialog(ctx);
         });
         assert!(!output.shapes.is_empty());
         output
@@ -1478,6 +1612,323 @@ mod tests {
         }
     }
 
+    fn finish_app_job(app: &mut HeditApp, ctx: &egui::Context) {
+        let started = Instant::now();
+        while app.busy || !app.pending_paths.is_empty() {
+            assert!(
+                started.elapsed() < Duration::from_secs(5),
+                "background job timed out"
+            );
+            app.receive(ctx);
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(app.error.is_none(), "{:?}", app.error);
+    }
+
+    #[test]
+    fn folder_tree_opens_nested_files_and_preserves_edits_and_cursor() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("project");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        let path = root.join("src/main.rs");
+        std::fs::write(&path, "fn main() {}\n").unwrap();
+        let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        app.open(&ctx, Some(root.clone()));
+        finish_app_job(&mut app, &ctx);
+        assert_eq!(app.workspace.folders[0].path, root.to_str().unwrap());
+        frame(&ctx, &mut app, vec![]);
+        click_label(&ctx, &mut app, "src");
+        let started = Instant::now();
+        loop {
+            let output = frame(&ctx, &mut app, vec![]);
+            if output
+                .shapes
+                .iter()
+                .any(|s| text_rect(&s.shape, "main.rs").is_some())
+            {
+                break;
+            }
+            assert!(started.elapsed() < Duration::from_secs(5));
+            thread::sleep(Duration::from_millis(5));
+        }
+        click_label(&ctx, &mut app, "main.rs");
+        finish_app_job(&mut app, &ctx);
+        assert_eq!(app.active().page.text, "fn main() {}\n");
+        let id = app.active().page.info.id;
+        let index = app.workspace.active;
+        let old = app.active().page.text.clone();
+        app.workspace.open[index].page.text = "// unsaved λ\nfn main() {}\n".into();
+        app.workspace.edit(index, &old).unwrap();
+        app.workspace.open[index].view.head = 5;
+        app.open(&ctx, Some(path.clone()));
+        finish_app_job(&mut app, &ctx);
+        assert_eq!(app.active().page.info.id, id);
+        assert_eq!(app.active().view.head, 5);
+        assert_eq!(app.workspace.open.len(), 2);
+        app.workspace.close(index).unwrap();
+        app.open(&ctx, Some(path));
+        finish_app_job(&mut app, &ctx);
+        assert_eq!(app.active().page.info.id, id);
+        assert!(app.active().page.text.starts_with("// unsaved λ"));
+        assert_eq!(app.active().view.head, 5);
+        app.execute(&ctx, Command::CloseFolder);
+        assert!(app.workspace.folders.is_empty());
+        assert_eq!(app.active().page.info.id, id);
+        assert!(app.active().page.info.dirty);
+    }
+
+    #[test]
+    fn folder_palette_finds_unopened_file_and_accepts_enter() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("project");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/unique.rs"), "// found").unwrap();
+        let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        app.open(&ctx, Some(root));
+        finish_app_job(&mut app, &ctx);
+        app.execute(&ctx, Command::Switcher);
+        app.palette_query = "srcunq".into();
+        let started = Instant::now();
+        loop {
+            frame(&ctx, &mut app, vec![]);
+            if app.project.search.is_some() {
+                break;
+            }
+            assert!(started.elapsed() < Duration::from_secs(5));
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            app.project
+                .search
+                .as_ref()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .entries[0]
+                .name,
+            "src/unique.rs"
+        );
+        frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)]);
+        finish_app_job(&mut app, &ctx);
+        assert!(!app.palette);
+        assert_eq!(app.active().page.text, "// found");
+        let id = app.active().page.info.id;
+        let count = app.workspace.open.len();
+        app.execute(&ctx, Command::Switcher);
+        app.palette_query = "srcunq".into();
+        frame(&ctx, &mut app, vec![]);
+        frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)]);
+        assert!(
+            !app.palette,
+            "fuzzy matches must also select already open files"
+        );
+        assert_eq!(app.active().page.info.id, id);
+        assert_eq!(app.workspace.open.len(), count);
+    }
+
+    #[test]
+    fn tabs_stay_above_the_editor_and_leave_the_sidebar_full_height() {
+        let directory = tempfile::tempdir().unwrap();
+        let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        for size in [egui::vec2(1280.0, 820.0), egui::vec2(720.0, 480.0)] {
+            for sidebar in [true, false] {
+                app.sidebar = sidebar;
+                for _ in 0..3 {
+                    frame_size(&ctx, &mut app, vec![], size);
+                }
+                let panel = |name| {
+                    egui::containers::panel::PanelState::load(&ctx, egui::Id::new(name))
+                        .unwrap()
+                        .rect
+                };
+                let tabs = panel("tabs");
+                let menu = panel("menu-bar");
+                let status = panel("status");
+                assert!((tabs.top() - menu.bottom()).abs() <= 1.0);
+                assert!((tabs.right() - size.x).abs() <= 1.0);
+                assert_eq!(status.left(), 0.0, "status bar remains full width");
+                if sidebar {
+                    let side = panel("buffers");
+                    assert!(
+                        (tabs.left() - side.right()).abs() <= 1.0,
+                        "tabs must begin at the editor's left edge"
+                    );
+                    assert!(
+                        (side.top() - menu.bottom()).abs() <= 1.0,
+                        "sidebar starts directly below the menu"
+                    );
+                    assert!((side.bottom() - status.top()).abs() <= 1.0);
+                    assert!(!tabs.intersect(side).is_positive());
+                } else {
+                    assert_eq!(tabs.left(), 0.0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn folder_sidebar_toggles_independently_and_restores_with_multiple_roots() {
+        let directory = tempfile::tempdir().unwrap();
+        let roots: Vec<_> = ["client", "server"]
+            .iter()
+            .map(|name| directory.path().join(name))
+            .collect();
+        for root in &roots {
+            std::fs::create_dir(root).unwrap();
+        }
+        let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], roots.clone());
+        finish_app_job(&mut app, &ctx);
+        assert_eq!(app.workspace.folders.len(), 2);
+        app.open(&ctx, Some(roots[0].clone()));
+        finish_app_job(&mut app, &ctx);
+        assert_eq!(
+            app.workspace.folders.len(),
+            2,
+            "reopening a root must not duplicate it"
+        );
+        let output = frame(&ctx, &mut app, vec![]);
+        assert!(output
+            .shapes
+            .iter()
+            .any(|s| text_rect(&s.shape, "client").is_some()));
+        click_label(&ctx, &mut app, "client");
+        assert!(app.workspace.folders[0].collapsed);
+        frame(
+            &ctx,
+            &mut app,
+            vec![key(
+                Key::B,
+                Modifiers {
+                    alt: true,
+                    ..Modifiers::COMMAND
+                },
+            )],
+        );
+        assert!(app.sidebar, "hiding folders keeps the open-files sidebar");
+        assert!(!app.folder_sidebar);
+        let output = frame(&ctx, &mut app, vec![]);
+        assert!(!output
+            .shapes
+            .iter()
+            .any(|s| text_rect(&s.shape, "client").is_some()));
+        assert!(output
+            .shapes
+            .iter()
+            .any(|s| text_rect(&s.shape, "OPEN FILES").is_some()));
+        let started = Instant::now();
+        while app.checkpoint_pending {
+            app.receive(&ctx);
+            assert!(started.elapsed() < Duration::from_secs(5));
+            thread::sleep(Duration::from_millis(5));
+        }
+        app.workspace.checkpoint().unwrap();
+        let mut storage = MemoryStorage::default();
+        eframe::App::save(&mut app, &mut storage);
+        drop(app);
+        let (workspace, errors) = Workspace::restore(directory.path().join("session")).unwrap();
+        assert!(errors.is_empty());
+        let mut app = HeditApp::from_context(&ctx, Some(&storage), workspace, vec![], vec![]);
+        assert!(!app.folder_sidebar);
+        assert_eq!(app.workspace.folders.len(), 2);
+        assert!(app.workspace.folders[0].collapsed);
+        frame(
+            &ctx,
+            &mut app,
+            vec![key(
+                Key::B,
+                Modifiers {
+                    alt: true,
+                    ..Modifiers::COMMAND
+                },
+            )],
+        );
+        assert!(app.folder_sidebar);
+        frame(&ctx, &mut app, vec![key(Key::B, Modifiers::COMMAND)]);
+        assert!(!app.sidebar);
+        frame(
+            &ctx,
+            &mut app,
+            vec![key(
+                Key::B,
+                Modifiers {
+                    alt: true,
+                    ..Modifiers::COMMAND
+                },
+            )],
+        );
+        assert!(
+            app.sidebar && app.folder_sidebar,
+            "folder toggle can reveal a hidden sidebar"
+        );
+    }
+
+    #[test]
+    fn quick_open_searches_a_second_root_when_the_folder_sidebar_is_hidden() {
+        let directory = tempfile::tempdir().unwrap();
+        let roots: Vec<_> = ["client", "server"]
+            .iter()
+            .map(|name| directory.path().join(name))
+            .collect();
+        for root in &roots {
+            std::fs::create_dir(root).unwrap();
+            std::fs::write(
+                root.join("main.rs"),
+                root.file_name().unwrap().to_str().unwrap(),
+            )
+            .unwrap();
+        }
+        let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], roots);
+        finish_app_job(&mut app, &ctx);
+        app.execute(&ctx, Command::FolderSidebar);
+        app.execute(&ctx, Command::Switcher);
+        app.palette_query = "server/main".into();
+        let started = Instant::now();
+        while app.project.search.is_none() {
+            frame(&ctx, &mut app, vec![]);
+            assert!(started.elapsed() < Duration::from_secs(5));
+            thread::sleep(Duration::from_millis(10));
+        }
+        frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)]);
+        finish_app_job(&mut app, &ctx);
+        assert_eq!(app.active().page.text, "server");
+        assert!(!app.folder_sidebar);
+    }
+
+    #[test]
+    fn missing_restored_folder_renders_error_without_losing_unsaved_text() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+        workspace.folders = vec![hedit::session::FolderView {
+            path: directory
+                .path()
+                .join("missing")
+                .to_string_lossy()
+                .into_owned(),
+            visible: true,
+            expanded: vec![],
+            collapsed: false,
+        }];
+        workspace.open[0].page.text = "keep me".into();
+        workspace.edit(0, "").unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        frame_size(&ctx, &mut app, vec![], egui::vec2(720.0, 480.0));
+        thread::sleep(Duration::from_millis(20));
+        frame_size(&ctx, &mut app, vec![], egui::vec2(720.0, 480.0));
+        app.execute(&ctx, Command::RefreshFolder);
+        app.execute(&ctx, Command::CloseFolder);
+        assert_eq!(app.active().page.text, "keep me");
+    }
     #[test]
     fn native_ui_accepts_text_and_renders_search_palette_and_cuda_panels() {
         let directory = tempfile::tempdir().unwrap();
@@ -2061,6 +2512,77 @@ mod tests {
         app.workspace.open[0].restore_cursor = true;
         let scrolled = frame(&ctx, &mut app, vec![]);
         assert!((position(&unscrolled, "1").left() - position(&scrolled, "1").left()).abs() < 1.0);
+    }
+
+    #[test]
+    #[ignore = "writes folder SVG previews to HEDIT_PREVIEW_DIR"]
+    fn export_folder_previews() {
+        let output =
+            PathBuf::from(std::env::var_os("HEDIT_PREVIEW_DIR").expect("set HEDIT_PREVIEW_DIR"));
+        std::fs::create_dir_all(&output).unwrap();
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        for (slug, preset) in [("ink", Preset::Ink), ("paper", Preset::Paper)] {
+            let directory = tempfile::tempdir().unwrap();
+            let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+            let ctx = egui::Context::default();
+            let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+            app.set_theme(&ctx, preset.theme());
+            app.open(&ctx, Some(root.clone()));
+            finish_app_job(&mut app, &ctx);
+            app.open(&ctx, Some(root.join("examples/cuda/vector_add.cu")));
+            finish_app_job(&mut app, &ctx);
+            for path in ["src", "src/app", "examples", "examples/cuda"] {
+                app.project
+                    .expanded
+                    .insert(root.join(path).to_string_lossy().into_owned());
+            }
+            for (name, size) in [
+                ("tree", [1280.0, 820.0]),
+                ("compact", [720.0, 480.0]),
+                ("quick-open", [1280.0, 820.0]),
+                ("multiple-roots", [1280.0, 820.0]),
+                ("hidden-folders", [720.0, 480.0]),
+            ] {
+                if name == "quick-open" {
+                    app.execute(&ctx, Command::Switcher);
+                    app.palette_query = "app".into();
+                }
+                if name == "multiple-roots" {
+                    app.palette = false;
+                    let other = directory.path().join("another-project");
+                    std::fs::create_dir_all(other.join("src")).unwrap();
+                    std::fs::write(other.join("src/main.rs"), "fn main() {}\n").unwrap();
+                    app.open(&ctx, Some(other.clone()));
+                    finish_app_job(&mut app, &ctx);
+                    app.workspace.folders[0].collapsed = true;
+                    app.project
+                        .expanded
+                        .insert(other.join("src").to_string_lossy().into_owned());
+                }
+                if name == "hidden-folders" {
+                    app.execute(&ctx, Command::FolderSidebar);
+                }
+                let mut last = None;
+                for _ in 0..40 {
+                    last = Some(frame_size(
+                        &ctx,
+                        &mut app,
+                        vec![],
+                        egui::vec2(size[0], size[1]),
+                    ));
+                    thread::sleep(Duration::from_millis(10));
+                }
+                std::fs::write(
+                    output.join(format!("folder-{slug}-{name}.svg")),
+                    crate::preview::export(
+                        &last.unwrap().shapes,
+                        size,
+                        app.theme.background.color(),
+                    ),
+                )
+                .unwrap();
+            }
+        }
     }
 
     #[test]

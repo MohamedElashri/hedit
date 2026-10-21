@@ -17,7 +17,15 @@ inspect, snippets to revisit, and notes that do not need a filename yet. Keep a
 workspace of files between sessions, find your place in large logs, and
 work with CUDA source without leaving the editor.
 
+Version **0.1.2** adds folder workspaces and search across multiple project roots.
+See the [release changes](CHANGELOG.md#012---2026-10-22).
+
 ## What you can do
+
+- **Edit folders of code.** Open several project folders, browse their trees,
+  create files and subfolders, and search across roots with **Ctrl+P**. Folder
+  icons distinguish directories from documents. Hide the tree with **Ctrl+Alt+B**;
+  your folders, expanded directories, and visibility return after restarting.
 
 - **Keep notes for later.** Create a new file without choosing a path, name its
   tab, and return to it after restarting. Browse the shelf to reopen closed files.
@@ -56,7 +64,7 @@ Releases are built on Ubuntu 24.04 and need compatible Linux libraries, a graphi
 X11 or Wayland session, and OpenGL. NVIDIA hardware and CUDA tools are optional
 for ordinary editing.
 
-From version 0.1.1, choose **Help → Check for updates…** to review and install a
+Choose **Help → Check for updates…** to review and install a
 newer release. Update checks, installations, and restarts are always manual.
 See [updating hedit](USER_GUIDE.md#updates) for requirements and upgrading 0.1.0.
 
@@ -65,6 +73,7 @@ See [updating hedit](USER_GUIDE.md#updates) for requirements and upgrading 0.1.0
 Open a log, jump to a source location, or send a snippet from your terminal:
 
 ```sh
+hedit .
 hedit application.log
 hedit kernel.cu:42:8
 printf 'keep this snippet\n' | hedit -
@@ -90,8 +99,10 @@ whenever you want a normal saved file.
 | Shortcut | Action |
 | --- | --- |
 | Ctrl+N / Ctrl+O | New file / open a file |
+| Ctrl+Shift+O | Add one or more folders |
+| Ctrl+B / Ctrl+Alt+B | Toggle sidebar / folder section |
 | Ctrl+S | Save to a file |
-| Ctrl+P / Ctrl+Shift+P | Switch files / open the command palette |
+| Ctrl+P / Ctrl+Shift+P | Find files / open the command palette |
 | Ctrl+F / Ctrl+G | Find text / go to a line |
 | Ctrl+W / Ctrl+Shift+T | Close a tab / reopen the latest closed tab |
 | Ctrl+, | Open preferences |

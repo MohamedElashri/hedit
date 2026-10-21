@@ -1,7 +1,7 @@
 //! UI-independent buffer ownership and session views.
 use crate::{
     document::{Document, Page},
-    session::{Bookmark, SessionStore, SessionView, TabView},
+    session::{Bookmark, FolderView, SessionStore, SessionView, TabView},
     syntax::Language,
     Editor,
 };
@@ -92,6 +92,7 @@ pub struct Workspace {
     pub open: Vec<Buffer>,
     pub closed: Vec<TabView>,
     pub active: usize,
+    pub folders: Vec<FolderView>,
 }
 impl Workspace {
     pub fn restore(directory: PathBuf) -> Result<(Self, Vec<String>), String> {
@@ -129,6 +130,11 @@ impl Workspace {
             open,
             closed,
             active,
+            folders: if restored.folders.is_empty() {
+                restored.folder.into_iter().collect()
+            } else {
+                restored.folders
+            },
         };
         if workspace.open.is_empty() {
             workspace.new_buffer()?;
@@ -152,7 +158,8 @@ impl Workspace {
             closed: self.closed.clone(),
             active: self.open.get(self.active).map(|b| b.page.info.id),
             secondary: None,
-            folder: None,
+            folder: self.folders.first().cloned(),
+            folders: self.folders.clone(),
         }
     }
     pub fn checkpoint(&self) -> Result<(), String> {

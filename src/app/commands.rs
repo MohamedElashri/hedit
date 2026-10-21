@@ -4,6 +4,9 @@ use super::*;
 pub(super) enum Command {
     New,
     Open,
+    OpenFolder,
+    CloseFolder,
+    RefreshFolder,
     Save,
     SaveAs,
     Close,
@@ -23,6 +26,7 @@ pub(super) enum Command {
     Switcher,
     Palette,
     Sidebar,
+    FolderSidebar,
     Wrap,
     LineNumbers,
     ZoomIn,
@@ -45,6 +49,9 @@ impl Command {
     pub(super) const ALL: &'static [Self] = &[
         Self::New,
         Self::Open,
+        Self::OpenFolder,
+        Self::CloseFolder,
+        Self::RefreshFolder,
         Self::Save,
         Self::SaveAs,
         Self::Close,
@@ -62,6 +69,7 @@ impl Command {
         Self::Goto,
         Self::Switcher,
         Self::Sidebar,
+        Self::FolderSidebar,
         Self::Wrap,
         Self::LineNumbers,
         Self::ZoomIn,
@@ -85,6 +93,9 @@ impl Command {
         match self {
             Self::New => "New file",
             Self::Open => "Open file…",
+            Self::OpenFolder => "Open folder…",
+            Self::CloseFolder => "Close all folders",
+            Self::RefreshFolder => "Refresh folders",
             Self::Save => "Save",
             Self::SaveAs => "Save as…",
             Self::Close => "Close tab",
@@ -101,9 +112,10 @@ impl Command {
             Self::Find => "Find…",
             Self::Replace => "Replace…",
             Self::Goto => "Go to line…",
-            Self::Switcher => "Switch file…",
+            Self::Switcher => "Go to file…",
             Self::Palette => "Command palette…",
             Self::Sidebar => "Show sidebar",
+            Self::FolderSidebar => "Show folder sidebar",
             Self::Wrap => "Word wrap",
             Self::LineNumbers => "Show line numbers",
             Self::ZoomIn => "Increase font size",
@@ -127,6 +139,9 @@ impl Command {
         match self {
             Self::New => "Ctrl+N",
             Self::Open => "Ctrl+O",
+            Self::OpenFolder => "Ctrl+Shift+O",
+            Self::Sidebar => "Ctrl+B",
+            Self::FolderSidebar => "Ctrl+Alt+B",
             Self::Save => "Ctrl+S",
             Self::SaveAs => "Ctrl+Shift+S",
             Self::Close => "Ctrl+W",
@@ -160,6 +175,7 @@ impl HeditApp {
             return false;
         }
         match command {
+            Command::CloseFolder | Command::RefreshFolder => !self.workspace.folders.is_empty(),
             Command::Rename => self.active().page.info.path.is_none(),
             Command::Reopen => !self.workspace.closed.is_empty(),
             Command::Follow => {
@@ -174,6 +190,7 @@ impl HeditApp {
     pub(super) fn command_selected(&self, command: Command) -> bool {
         match command {
             Command::Sidebar => self.sidebar,
+            Command::FolderSidebar => self.sidebar && self.folder_sidebar,
             Command::Wrap => self.wrap,
             Command::LineNumbers => self.line_numbers,
             Command::Follow => self.active().follow,
@@ -191,6 +208,9 @@ impl HeditApp {
                 self.report(r);
             }
             Command::Open => self.open(ctx, None),
+            Command::OpenFolder => self.open_folder(ctx),
+            Command::CloseFolder => self.close_folder(),
+            Command::RefreshFolder => self.refresh_folder(),
             Command::Save => self.save_file(ctx, false),
             Command::SaveAs => self.save_file(ctx, true),
             Command::Close => {
@@ -276,6 +296,13 @@ impl HeditApp {
                 self.palette_index = 0;
             }
             Command::Sidebar => self.sidebar = !self.sidebar,
+            Command::FolderSidebar => {
+                self.folder_sidebar = !(self.sidebar && self.folder_sidebar);
+                if self.folder_sidebar {
+                    self.sidebar = true;
+                }
+                self.sync_folder_view();
+            }
             Command::Wrap => self.wrap = !self.wrap,
             Command::LineNumbers => self.line_numbers = !self.line_numbers,
             Command::ZoomIn => self.font_size = (self.font_size + 1.0).min(28.0),
@@ -305,9 +332,10 @@ impl HeditApp {
         if !self.palette {
             return;
         }
-        #[derive(Clone, Copy)]
+        #[derive(Clone)]
         enum Item {
             Buffer(usize),
+            File(String),
             Command(Command),
         }
         let commands = self.commands_only || self.palette_query.starts_with('>');
@@ -318,7 +346,7 @@ impl HeditApp {
         egui::Window::new(if commands {
             "Command palette"
         } else {
-            "Switch file"
+            "Go to file"
         })
         .id(egui::Id::new("command-palette"))
         .collapsible(false)
@@ -348,6 +376,10 @@ impl HeditApp {
                 .trim_start_matches('>')
                 .trim()
                 .to_lowercase();
+            if !commands && !self.workspace.folders.is_empty() {
+                let roots: Vec<_> = self.workspace.folders.iter().map(|f| PathBuf::from(&f.path)).collect();
+                self.project.search(ctx, &roots, &filter);
+            }
             let mut items = Vec::new();
             if commands {
                 for &command in Command::ALL {
@@ -363,8 +395,51 @@ impl HeditApp {
                 }
             } else {
                 for (index, buffer) in self.workspace.open.iter().enumerate() {
-                    if buffer.view.name.to_lowercase().contains(&filter) {
-                        items.push((buffer.view.name.clone(), "file", Item::Buffer(index)));
+                    if buffer.view.name.to_lowercase().contains(&filter)
+                        || buffer
+                            .page
+                            .info
+                            .path
+                            .as_ref()
+                            .is_some_and(|path| path.to_lowercase().contains(&filter))
+                    {
+                        let roots: Vec<_> = self.workspace.folders.iter().map(|f| PathBuf::from(&f.path)).collect();
+                        let label = buffer.page.info.path.as_ref().map(|path| hedit::folder::display_path(&roots, std::path::Path::new(path))).unwrap_or_else(|| buffer.view.name.clone());
+                        items.push((label, "open", Item::Buffer(index)));
+                    }
+                }
+            }
+            if !commands && !self.workspace.folders.is_empty() {
+                match &self.project.search {
+                    Some(Ok(results)) => {
+                        for entry in &results.entries {
+                            if let Some(index) = self.workspace.open.iter().position(|b| b.page.info.path.as_deref() == Some(&entry.path)) {
+                                if !items.iter().any(|(_, _, item)| matches!(item, Item::Buffer(prior) if *prior == index)) {
+                                    items.push((entry.name.clone(), "open", Item::Buffer(index)));
+                                }
+                            } else {
+                                items.push((entry.name.clone(), "folder", Item::File(entry.path.clone())));
+                            }
+                        }
+                        items.sort_by_key(|(_, _, item)| !matches!(item, Item::Buffer(_)));
+                        if results.truncated {
+                            ui.weak("Search limit reached; results may be incomplete.");
+                        }
+                        if results.skipped_directories > 0 {
+                            ui.weak(format!(
+                                "{} folders could not be read.",
+                                results.skipped_directories
+                            ));
+                        }
+                    }
+                    Some(Err(error)) => {
+                        ui.colored_label(self.theme.warning.color(), error);
+                    }
+                    None => {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.weak("Searching folders…");
+                        });
                     }
                 }
             }
@@ -391,7 +466,7 @@ impl HeditApp {
                             response.scroll_to_me(None);
                         }
                         if response.clicked() {
-                            chosen = Some(*item);
+                            chosen = Some(item.clone());
                         }
                     }
                 });
@@ -399,7 +474,9 @@ impl HeditApp {
                 ui.label("No matching results.");
             }
             if enter {
-                chosen = items.get(self.palette_index).map(|(_, _, item)| *item);
+                chosen = items
+                    .get(self.palette_index)
+                    .map(|(_, _, item)| item.clone());
             }
             ui.separator();
             ui.weak("↑ ↓ navigate    Enter select    Esc close");
@@ -412,6 +489,7 @@ impl HeditApp {
                     self.workspace.active = index;
                     self.changed();
                 }
+                Item::File(path) => self.open(ctx, Some(path.into())),
                 Item::Command(command) => self.execute(ctx, command),
             }
         }

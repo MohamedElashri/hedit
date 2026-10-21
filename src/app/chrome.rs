@@ -17,10 +17,10 @@ impl HeditApp {
             .inner_margin(egui::Margin::symmetric(8, 3))).show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 for (title, groups) in [
-                    ("File", vec![vec![Command::New, Command::Open], vec![Command::Save, Command::SaveAs, Command::Rename], vec![Command::Close, Command::Reopen, Command::Shelf], vec![Command::Quit]]),
+                    ("File", vec![vec![Command::New, Command::Open, Command::OpenFolder], vec![Command::RefreshFolder, Command::CloseFolder], vec![Command::Save, Command::SaveAs, Command::Rename], vec![Command::Close, Command::Reopen, Command::Shelf], vec![Command::Quit]]),
                     ("Edit", vec![vec![Command::Undo, Command::Redo], vec![Command::Cut, Command::Copy, Command::Paste, Command::SelectAll]]),
                     ("Find", vec![vec![Command::Find, Command::Replace]]),
-                    ("View", vec![vec![Command::Sidebar, Command::LineNumbers, Command::Wrap], vec![Command::Follow], vec![Command::ZoomIn, Command::ZoomOut, Command::ResetZoom]]),
+                    ("View", vec![vec![Command::Sidebar, Command::FolderSidebar, Command::LineNumbers, Command::Wrap], vec![Command::Follow], vec![Command::ZoomIn, Command::ZoomOut, Command::ResetZoom]]),
                     ("Goto", vec![vec![Command::Switcher, Command::Goto], vec![Command::Bookmark, Command::NextBookmark, Command::PreviousBookmark, Command::Bookmarks]]),
                     ("Tools", vec![vec![Command::Palette, Command::Gpu], vec![Command::Checkpoint]]),
                     ("Preferences", vec![vec![Command::Settings, Command::Appearance, Command::ToolSettings]]),
@@ -48,9 +48,9 @@ impl HeditApp {
         if let Some(command) = action {
             self.execute(ctx, command);
         }
-        self.tabs(ctx);
         self.status_bar(ctx);
         self.buffer_sidebar(ctx);
+        self.tabs(ctx);
     }
     fn tabs(&mut self, ctx: &egui::Context) {
         let theme = self.theme.clone();
@@ -437,7 +437,13 @@ impl HeditApp {
                 ui.add_space(7.0);
                 egui::ScrollArea::vertical()
                     .id_salt("buffer-list")
-                    .max_height((ui.available_height() - 75.0).max(60.0))
+                    .max_height(
+                        if !self.workspace.folders.is_empty() && self.folder_sidebar {
+                            (ui.available_height() * 0.28).clamp(60.0, 180.0)
+                        } else {
+                            (ui.available_height() - 115.0).max(60.0)
+                        },
+                    )
                     .show(ui, |ui| {
                         for (index, buffer) in self.workspace.open.iter().enumerate() {
                             let active = index == self.workspace.active;
@@ -492,6 +498,7 @@ impl HeditApp {
                 {
                     self.shelf_open = true;
                 }
+                ui.add_enabled_ui(!self.busy && !self.closing, |ui| self.folder_tree(ui));
             });
         if !self.busy && !self.closing {
             if let Some(index) = select {

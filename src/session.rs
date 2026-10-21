@@ -49,11 +49,17 @@ pub struct SessionView {
     pub secondary: Option<u64>,
     #[serde(default)]
     pub folder: Option<FolderView>,
+    #[serde(default)]
+    pub folders: Vec<FolderView>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct FolderView {
     pub path: String,
     pub visible: bool,
+    #[serde(default)]
+    pub expanded: Vec<String>,
+    #[serde(default)]
+    pub collapsed: bool,
 }
 #[derive(Serialize)]
 pub struct RestoredTab {
@@ -68,6 +74,7 @@ pub struct RestoredSession {
     pub active_index: usize,
     pub secondary_index: Option<usize>,
     pub folder: Option<FolderView>,
+    pub folders: Vec<FolderView>,
     pub errors: Vec<String>,
 }
 #[derive(Clone, Serialize, Deserialize)]
@@ -86,6 +93,8 @@ struct SavedSession {
     secondary_index: Option<usize>,
     #[serde(default)]
     folder: Option<FolderView>,
+    #[serde(default)]
+    folders: Vec<FolderView>,
 }
 #[derive(Default)]
 enum LoadState {
@@ -269,6 +278,7 @@ impl SessionStore {
                         active_index: 0,
                         secondary_index: None,
                         folder: None,
+                        folders: vec![],
                     }
                 }
                 Err(_) => {
@@ -279,6 +289,7 @@ impl SessionStore {
         };
         let mut restored = RestoredSession {
             folder: saved.folder,
+            folders: saved.folders,
             errors: warnings,
             ..RestoredSession::default()
         };
@@ -383,6 +394,7 @@ impl SessionStore {
             active_index,
             secondary_index,
             folder: view.folder,
+            folders: view.folders,
         };
         let mut sources = state.sources.clone();
         let mut snapshots = std::collections::HashMap::new();

@@ -11,7 +11,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-TAG = 'v0.1.0'
+TAG = 'v0.1.2'
 MOCK = '''#!/usr/bin/env python3
 import json
 import os
@@ -32,18 +32,18 @@ fixtures = Path(os.environ['MOCK_FIXTURES'])
 if tool == 'curl':
     url = args[-1]
     if url.endswith('/releases/latest'):
-        print('https://github.com/MohamedElashri/hedit/releases/tag/v0.1.0', end='')
+        print('https://github.com/MohamedElashri/hedit/releases/tag/v0.1.2', end='')
     else:
-        if '/releases/download/v0.1.0/' not in url:
+        if '/releases/download/v0.1.2/' not in url:
             sys.exit(22)
         shutil.copyfile(fixtures / url.rsplit('/', 1)[1], args[args.index('--output') + 1])
 elif tool == 'gh':
     if args[:2] == ['auth', 'status']:
         sys.exit(1 if os.environ.get('MOCK_FAIL') == 'auth' else 0)
     elif args[:2] == ['release', 'view']:
-        print('v0.1.0')
+        print('v0.1.2')
     elif args[:2] == ['release', 'download']:
-        if args[2] != 'v0.1.0':
+        if args[2] != 'v0.1.2':
             sys.exit(1)
         destination = Path(args[args.index('--dir') + 1])
         for i, value in enumerate(args):
@@ -75,11 +75,11 @@ class ReleaseInstaller(unittest.TestCase):
         for key in ['MOCK_OS', 'MOCK_ARCH', 'MOCK_FAIL']:
             self.environment.pop(key, None)
         for arch in ['x86_64', 'aarch64']:
-            name = f'hedit-0.1.0-linux-{arch}'
+            name = f'hedit-0.1.2-linux-{arch}'
             stage = self.work / name
             stage.mkdir()
             binary = stage / 'hedit'
-            binary.write_text('#!/bin/sh\nprintf "hedit 0.1.0\\n"\n')
+            binary.write_text('#!/bin/sh\nprintf "hedit 0.1.2\\n"\n')
             binary.chmod(0o755)
             shutil.copy2(ROOT / 'packaging/linux/install.sh', stage / 'install.sh')
             shutil.copy2(ROOT / 'packaging/linux/hedit.desktop', stage / 'hedit.desktop')
@@ -126,7 +126,7 @@ class ReleaseInstaller(unittest.TestCase):
         self.assertFalse(any(request[0] == 'curl' for request in self.requests()))
 
     def test_corrupt_archive_preserves_existing_installation(self):
-        archive = self.fixtures / 'hedit-0.1.0-linux-x86_64.tar.gz'
+        archive = self.fixtures / 'hedit-0.1.2-linux-x86_64.tar.gz'
         archive.write_bytes(b'corrupt download')
         self.prefix.mkdir()
         sentinel = self.prefix / 'existing-work'
@@ -137,7 +137,7 @@ class ReleaseInstaller(unittest.TestCase):
         self.assertFalse((self.prefix / 'bin').exists())
 
     def test_checksum_with_unexpected_path_is_rejected(self):
-        checksum = self.fixtures / 'hedit-0.1.0-linux-x86_64.tar.gz.sha256'
+        checksum = self.fixtures / 'hedit-0.1.2-linux-x86_64.tar.gz.sha256'
         checksum.write_text('0' * 64 + '  ../../other-file\n')
         self.run_installer(succeeds=False)
         self.assertFalse(self.prefix.exists())
@@ -168,7 +168,7 @@ class ReleaseInstaller(unittest.TestCase):
         self.assertFalse(any(request[0] in {'gh', 'curl'} for request in self.requests()))
 
     def test_incompatible_binary_preserves_existing_binary(self):
-        name = 'hedit-0.1.0-linux-x86_64'
+        name = 'hedit-0.1.2-linux-x86_64'
         stage = self.work / name
         (stage / 'hedit').write_text('#!/bin/sh\nexit 1\n')
         archive = self.fixtures / f'{name}.tar.gz'

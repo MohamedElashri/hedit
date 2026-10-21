@@ -146,7 +146,13 @@ impl HeditApp {
         ui.add_space(12.0);
         ui.checkbox(&mut self.wrap, "Word wrap");
         ui.checkbox(&mut self.line_numbers, "Show line numbers");
-        ui.checkbox(&mut self.sidebar, "Show open files sidebar");
+        ui.checkbox(&mut self.sidebar, "Show sidebar");
+        if ui
+            .checkbox(&mut self.folder_sidebar, "Show folders in sidebar")
+            .changed()
+        {
+            self.sync_folder_view();
+        }
         ui.add_space(14.0);
         ui.label("Editor font size");
         ui.add(
@@ -160,7 +166,9 @@ impl HeditApp {
             self.wrap = false;
             self.line_numbers = true;
             self.sidebar = true;
+            self.folder_sidebar = true;
             self.font_size = 14.0;
+            self.sync_folder_view();
         }
     }
     fn theme_preferences(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {

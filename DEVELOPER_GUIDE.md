@@ -79,7 +79,7 @@ Use narrower targets while working:
 | `make package` | Build and package a release under `dist/` |
 | `make smoke` | Build and test a package in a temporary installation |
 | `make ci` | Full pre-commit and GitHub CI validation |
-| `make release-check RELEASE_TAG=v0.1.1` | Validate a release tag against `Cargo.toml` |
+| `make release-check RELEASE_TAG=v0.1.2` | Validate a release tag against `Cargo.toml` |
 | `make workflow-lint` | Optional workflow validation; requires `actionlint` |
 | `make clean` | Remove Cargo build artifacts |
 
@@ -128,12 +128,24 @@ This opens the picker over a 231 KB CUDA document and reports the mean time for
 | `src/theme.rs` | Validated RGB palettes, native styling, JSON theme files |
 | `src/brand.rs` | Native mark and antialiased launcher icon |
 | `src/cli.rs` | Arguments and file locations |
-| `src/folder.rs` | Retained bounded folder utilities, not yet connected to the UI |
+| `src/folder.rs` | Bounded directory listings, fuzzy path search, safe file/folder creation |
+| `src/app/project.rs` | Multiple folder roots, lazy trees, background listings/search, creation dialog |
+| `src/app/tree_row.rs` | Native tree rows with vector folder/document icons |
 | `src/preview.rs` | Test-only headless SVG export |
 
 Documents live behind shared mutexes. The UI applies minimal UTF-8-safe splices;
 opening, saving, searching, and paging run on workers with conflicting edits
-disabled. One foreground I/O job and one checkpoint can run at a time. Search
+disabled. One foreground I/O job and one checkpoint can run at a time. Folder listings
+and quick-open scans use separate workers so they leave editing available.
+Generation tags discard stale results after adding/removing a root or refreshing. Directory
+listing concurrency is capped at eight; quick open runs one scan at a time with
+a 120 ms typing debounce. Quick open shares a 50,000-entry, one-second and
+80-result budget across roots, and deduplicates overlapping paths.
+`Workspace.folders` persists root paths, expanded paths, collapsed roots and
+folder-section visibility. The legacy optional `folder` metadata migrates into
+the new `folders` collection and remains in checkpoints for compatibility.
+Whole-sidebar visibility is an independent window preference. Tree icons use
+native vector shapes instead of font glyphs. Search
 cancellation is checked between bounded batches.
 
 Checkpoint workers capture immutable piece references and stream data outside
@@ -309,13 +321,13 @@ publication. GitHub generates release notes, and each release includes both
 archives, their SHA-256 files, and the root `install.sh` downloader.
 
 1. Set the version in `Cargo.toml` and run `cargo check` to update `Cargo.lock`.
-2. Run `make ci` and `make release-check RELEASE_TAG=v0.1.1`, using the new tag.
+2. Run `make ci` and `make release-check RELEASE_TAG=v0.1.2`, using the new tag.
 3. Commit the version, lockfile, and release changes, then push the commit.
 4. Create and push an annotated tag matching the version:
 
    ```sh
-   git tag -a v0.1.1 -m "hedit 0.1.1"
-   git push origin v0.1.1
+   git tag -a v0.1.2 -m "hedit 0.1.2"
+   git push origin v0.1.2
    ```
 
 The workflow uses GitHub's `GITHUB_TOKEN` with write permission only in the
@@ -407,7 +419,8 @@ Native editor and Cargo build; periodic recovery with fallback/preservation;
 named unsaved files and a searchable shelf; guarded atomic saves; bounded large-file
 pages, log following, literal search, and bookmarks; process-local undo; automatic
 syntax detection and persistent per-buffer syntax selection; customizable themes
-and SVG identity; CUDA tools; Linux packaging
+and SVG identity; persistent folder trees with multiple roots, file/subfolder creation, and fuzzy
+quick open; CUDA tools; Linux packaging
 and consolidated user/developer guides.
 
 ### Reliability and daily use
@@ -415,7 +428,7 @@ and consolidated user/developer guides.
 - Durable edit journal, recovery checksums, filesystem fault injection, and soak tests.
 - Persistent undo and bookmark anchors that follow undo/external changes.
 - Explicit line-ending conversion and broader encoding support.
-- Single-instance CLI forwarding, folder tree, and fuzzy file finder.
+- Single-instance CLI forwarding and search across files.
 - Continuous large-file scrolling, global line indexes, and log filtering.
 - X11/Wayland visual validation, accessibility, DEB/RPM packages, and release checks.
 

@@ -2,23 +2,23 @@ use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[derive(Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FolderEntry {
-    name: String,
-    path: String,
-    is_directory: bool,
-    is_symlink: bool,
+    pub name: String,
+    pub path: String,
+    pub is_directory: bool,
+    pub is_symlink: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FolderListing {
-    name: String,
-    path: String,
-    entries: Vec<FolderEntry>,
-    truncated: bool,
-    unsupported_names: bool,
+    pub name: String,
+    pub path: String,
+    pub entries: Vec<FolderEntry>,
+    pub truncated: bool,
+    pub unsupported_names: bool,
 }
 
 pub fn read_directory(path: PathBuf) -> Result<FolderListing, String> {
@@ -33,7 +33,7 @@ pub fn read_directory(path: PathBuf) -> Result<FolderListing, String> {
             break;
         }
         let entry = entry.map_err(|e| e.to_string())?;
-        // IPC paths are UTF-8. Never expose a lossy path that could name a
+        // Folder paths are UTF-8. Never expose a lossy path that could name a
         // different file (for example a literal Unicode replacement character).
         if entry.file_name().to_str().is_none() {
             unsupported_names = true;
@@ -72,12 +72,12 @@ pub fn read_directory(path: PathBuf) -> Result<FolderListing, String> {
     })
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QuickOpen {
-    entries: Vec<FolderEntry>,
-    truncated: bool,
-    skipped_directories: u64,
+    pub entries: Vec<FolderEntry>,
+    pub truncated: bool,
+    pub skipped_directories: u64,
 }
 
 fn fuzzy_score(path: &str, query: &str) -> Option<i64> {
@@ -109,14 +109,67 @@ fn fuzzy_score(path: &str, query: &str) -> Option<i64> {
 pub fn quick_open(root: PathBuf, query: &str) -> Result<QuickOpen, String> {
     let root = fs::canonicalize(root).map_err(|e| e.to_string())?;
     path_string(&root)?;
+    if !root.is_dir() {
+        return Err("Choose a folder to search.".into());
+    }
+    quick_open_roots(&[root], query)
+}
+
+/// Label paths with their root when several folders are open. Equal root names
+/// use full paths so results from unrelated projects remain distinguishable.
+pub fn display_path(roots: &[PathBuf], path: &Path) -> String {
+    let Some(root) = roots
+        .iter()
+        .filter(|root| path.starts_with(root))
+        .max_by_key(|root| root.components().count())
+    else {
+        return path.to_string_lossy().into_owned();
+    };
+    let relative = path.strip_prefix(root).unwrap_or(path).to_string_lossy();
+    if roots.len() == 1 {
+        return relative.into_owned();
+    }
+    let leaf = root.file_name().unwrap_or(root.as_os_str());
+    let unique = roots
+        .iter()
+        .filter(|other| other.file_name().unwrap_or(other.as_os_str()) == leaf)
+        .count()
+        == 1;
+    let label = if unique { leaf } else { root.as_os_str() }.to_string_lossy();
+    format!("{label}/{relative}")
+}
+
+/// Search all roots with a shared entry, time and result budget. Traversal is
+/// breadth-first so a large first root does not immediately starve later roots.
+pub fn quick_open_roots(roots: &[PathBuf], query: &str) -> Result<QuickOpen, String> {
     let query = query.to_lowercase().replace('\\', "/");
-    let mut directories = vec![root.clone()];
+    let mut skipped_directories = 0;
+    let mut unique_roots = std::collections::HashSet::new();
+    let roots: Vec<_> = roots
+        .iter()
+        .filter_map(|root| {
+            let root = fs::canonicalize(root).unwrap_or_else(|_| root.clone());
+            if root.to_str().is_none() {
+                skipped_directories += 1;
+                None
+            } else if unique_roots.insert(root.clone()) {
+                Some(root)
+            } else {
+                None
+            }
+        })
+        .collect();
+    let mut directories: std::collections::VecDeque<_> = roots.iter().cloned().collect();
+    let mut visited_directories = std::collections::HashSet::new();
+    let mut visited_files = std::collections::HashSet::new();
     let mut best: Vec<(i64, FolderEntry)> = Vec::new();
     let mut visited = 0;
-    let mut skipped_directories = 0;
     let started = std::time::Instant::now();
     let mut truncated = false;
-    'scan: while let Some(directory) = directories.pop() {
+    'scan: while let Some(directory) = directories.pop_front() {
+        if !visited_directories.insert(directory.clone()) {
+            continue;
+        }
         let entries = match fs::read_dir(directory) {
             Ok(entries) => entries,
             Err(_) => {
@@ -145,16 +198,27 @@ pub fn quick_open(root: PathBuf, query: &str) -> Result<QuickOpen, String> {
             if kind.is_dir() {
                 if matches!(
                     entry.file_name().to_str(),
-                    Some(".git" | "node_modules" | "target")
+                    Some(
+                        ".git"
+                            | ".hg"
+                            | ".svn"
+                            | "node_modules"
+                            | "target"
+                            | ".venv"
+                            | "__pycache__"
+                    )
                 ) {
                     continue;
                 }
-                directories.push(path);
+                directories.push_back(path);
             } else if kind.is_file() || (kind.is_symlink() && path.is_file()) {
-                let relative = path.strip_prefix(&root).unwrap_or(&path).to_string_lossy();
+                if !visited_files.insert(path.clone()) {
+                    continue;
+                }
+                let relative = display_path(&roots, &path);
                 if let Some(score) = fuzzy_score(&relative, &query) {
                     let entry = FolderEntry {
-                        name: relative.into_owned(),
+                        name: relative,
                         path: path.to_string_lossy().into_owned(),
                         is_directory: false,
                         is_symlink: kind.is_symlink(),

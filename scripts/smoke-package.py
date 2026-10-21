@@ -7,8 +7,10 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
+VERSION = tomllib.loads((ROOT / 'Cargo.toml').read_text())['package']['version']
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--binary', type=Path, default=ROOT / 'target/release/hedit')
 args = parser.parse_args()
@@ -26,7 +28,7 @@ with tempfile.TemporaryDirectory(prefix='hedit-package-smoke-') as work:
     subprocess.run(['sh', str(package / 'install.sh'), str(prefix)], check=True)
     result = subprocess.run([str(prefix / 'bin/hedit'), '--version'], check=True,
                             capture_output=True, text=True, timeout=10)
-    assert result.stdout.startswith('hedit '), result.stdout
+    assert result.stdout.strip() == f'hedit {VERSION}', result.stdout
     for relative in ['share/applications/hedit.desktop',
                      'share/icons/hicolor/scalable/apps/hedit.svg',
                      'share/doc/hedit/README.md', 'share/doc/hedit/USER_GUIDE.md',

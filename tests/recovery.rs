@@ -326,7 +326,8 @@ fn save_before_restore_is_rejected() {
                 closed: vec![],
                 active: None,
                 secondary: None,
-                folder: None
+                folder: None,
+                folders: vec![]
             }
         )
         .is_err());
