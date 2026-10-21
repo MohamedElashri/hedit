@@ -2,6 +2,7 @@
 use crate::{
     document::{Document, Page},
     session::{Bookmark, SessionStore, SessionView, TabView},
+    syntax::Language,
     Editor,
 };
 use std::{path::PathBuf, sync::Arc};
@@ -15,6 +16,25 @@ pub struct Buffer {
     pub reveal_cursor: bool,
 }
 impl Buffer {
+    pub fn language_override(&self) -> Option<Language> {
+        self.view
+            .language_override
+            .as_deref()
+            .and_then(Language::from_id)
+    }
+    pub fn language(&self) -> Language {
+        self.language_override()
+            .unwrap_or_else(|| Language::detect(&self.page.info.name))
+    }
+    /// Syntax is view metadata: it never edits text or creates an undo step.
+    pub fn set_language(&mut self, language: Option<Language>) -> bool {
+        let id = language.map(|language| language.id().to_owned());
+        if self.view.language_override == id {
+            return false;
+        }
+        self.view.language_override = id;
+        true
+    }
     pub fn new(page: Page, view: Option<TabView>) -> Self {
         let view = view.unwrap_or(TabView {
             id: page.info.id,

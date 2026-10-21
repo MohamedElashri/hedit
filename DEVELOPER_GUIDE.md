@@ -118,7 +118,7 @@ visual checks, accessibility review, and NVIDIA hardware validation remain open.
 | `src/document.rs` | Disk-backed piece table, bounded pages, source guards, atomic saves, undo |
 | `src/session.rs` | Process lock, snapshots, manifests, fallback and preservation |
 | `src/debugger.rs` | CUDA-GDB/MI and bounded NVIDIA tool subprocess output |
-| `src/syntax.rs` | C/CUDA lexical highlighting with active theme colors |
+| `src/syntax.rs`, `src/syntax/lexer.rs`, `src/syntax/keywords.rs` | Syntax catalog, filename detection, and bounded lexical highlighting with active theme colors |
 | `src/theme.rs` | Validated RGB palettes, native styling, JSON theme files |
 | `src/brand.rs` | Native mark and antialiased launcher icon |
 | `src/cli.rs` | Arguments and file locations |
@@ -144,6 +144,27 @@ visible edit is rescued into an independent scratchpad.
 
 The renderer is a bounded standard text widget. Continuous document layout,
 multiple selections, and folding require further editor work.
+
+`Language` defines stable syntax IDs, display names, and filename associations
+in one catalog. It includes separate C, C++, and CUDA modes. The status-bar menu
+filters the catalog by name, extension, or special filename, and scales its
+scrolling list to the available window height.
+`Buffer::language()` resolves a recognized `TabView.language_override` first,
+then the current filename; unknown IDs fall back to detection. A syntax change
+only updates view metadata and the checkpoint generation, preserving text,
+selection, scroll position, and undo history. No session schema change is needed.
+The status-bar menu and editor renderer use the same resolved language.
+
+Sorted keyword tables provide language-specific lookup, including case-insensitive
+keywords where appropriate, without allocations. Lexers work on the displayed
+page, merge adjacent equal-color tokens, and use the active theme's syntax roles (plus severity colors for logs). They preserve
+source bytes and operate without plugins or runtime downloads. They are lexical
+approximations, not full language grammars: embedded languages and multiline
+state across page boundaries remain future work. Add syntax IDs, associations,
+token-color tests, and recovery tests together when extending support.
+Every registered extension and special filename is checked against detection;
+format samples, Unicode fragments, manual syntax persistence, filtered selection,
+and compact-menu geometry are covered by tests.
 
 ## Recovery and compatibility
 
@@ -371,8 +392,9 @@ features as available.
 
 Native editor and Cargo build; periodic recovery with fallback/preservation;
 named scratchpads and a searchable shelf; guarded atomic saves; bounded large-file
-pages, log following, literal search, and bookmarks; process-local undo; C/CUDA
-highlighting; customizable themes and SVG identity; CUDA tools; Linux packaging
+pages, log following, literal search, and bookmarks; process-local undo; automatic
+syntax detection and persistent per-buffer syntax selection; customizable themes
+and SVG identity; CUDA tools; Linux packaging
 and consolidated user/developer guides.
 
 ### Reliability and daily use

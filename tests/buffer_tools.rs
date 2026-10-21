@@ -159,6 +159,6 @@ fn cpp_and_cuda_extensions_share_the_native_lexer() {
         assert!(hedit::syntax::is_c_family(name), "{name}");
     }
     assert!(!hedit::syntax::is_c_family("output.log"));
-    assert_eq!(hedit::syntax::language_label("main.cpp"), "C / C++");
-    assert_eq!(hedit::syntax::language_label("kernel.cu"), "CUDA C++");
+    assert_eq!(hedit::syntax::language_label("main.cpp"), "C++");
+    assert_eq!(hedit::syntax::language_label("kernel.cu"), "CUDA");
 }

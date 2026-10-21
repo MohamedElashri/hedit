@@ -251,12 +251,8 @@ impl HeditApp {
                             self.open_preferences(PreferencesPage::Recovery);
                         }
                         ui.separator();
+                        self.language_menu(ui);
                         let info = &self.active().page.info;
-                        ui.label(
-                            RichText::new(syntax::language_label(&info.name))
-                                .size(11.0)
-                                .color(theme.muted.color()),
-                        );
                         ui.label(
                             RichText::new(format!(
                                 "UTF-8{} · {} · {}",
@@ -270,6 +266,120 @@ impl HeditApp {
                     });
                 });
             });
+    }
+    fn language_menu(&mut self, ui: &mut egui::Ui) {
+        let buffer = self.active();
+        let language = buffer.language();
+        let detected = syntax::Language::detect(&buffer.page.info.name);
+        let selected = buffer.language_override();
+        let mut choice = None;
+        let mut menu_open = false;
+        let first_frame = self.syntax_focus;
+        let response = egui::menu::menu_custom_button(
+            ui,
+            egui::Button::new(
+                RichText::new(format!("{} ▾", language.label()))
+                    .size(14.0)
+                    .color(
+                        if selected.is_some() {
+                            self.theme.accent
+                        } else {
+                            self.theme.muted
+                        }
+                        .color(),
+                    ),
+            )
+            .min_size(egui::vec2(156.0, 28.0)),
+            |ui| {
+                menu_open = true;
+                // The status bar uses a right-to-left layout; menu content reads normally.
+                ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
+                    let width = (ui.ctx().screen_rect().width() - 40.0).clamp(240.0, 380.0);
+                    ui.set_width(width);
+                    ui.spacing_mut().interact_size.y = 28.0;
+                    ui.style_mut()
+                        .text_styles
+                        .insert(egui::TextStyle::Button, egui::FontId::proportional(15.0));
+                    ui.label(RichText::new("Syntax for this buffer").size(16.0).strong());
+                    let search = ui.add_sized(
+                        [width, 30.0],
+                        egui::TextEdit::singleline(&mut self.syntax_query)
+                            .id(egui::Id::new("syntax-filter"))
+                            .hint_text("Filter by language or extension…")
+                            .font(egui::FontId::proportional(14.0)),
+                    );
+                    if first_frame && !ui.is_sizing_pass() {
+                        search.request_focus();
+                        self.syntax_focus = false;
+                    }
+                    let matches: Vec<_> = syntax::Language::ALL
+                        .into_iter()
+                        .filter(|language| language.matches_query(&self.syntax_query))
+                        .collect();
+                    if search.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter)) {
+                        // Do not let the same Enter reach the editor after focus returns.
+                        ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Enter));
+                        if matches.len() == 1 {
+                            choice = Some(Some(matches[0]));
+                            ui.close_menu();
+                        } else {
+                            search.request_focus();
+                        }
+                    }
+                    if ui
+                        .selectable_label(
+                            selected.is_none(),
+                            format!("Automatic ({})", detected.label()),
+                        )
+                        .clicked()
+                    {
+                        choice = Some(None);
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    egui::ScrollArea::vertical()
+                        .id_salt(("syntax-choices", &self.syntax_query))
+                        .max_height((ui.ctx().screen_rect().height() - 180.0).clamp(100.0, 480.0))
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| {
+                            if matches.is_empty() {
+                                ui.label("No matching syntax");
+                            }
+                            for language in matches {
+                                let row = ui.add(egui::SelectableLabel::new(
+                                    selected == Some(language),
+                                    language.label(),
+                                ));
+                                if first_frame && language == selected.unwrap_or(detected) {
+                                    row.scroll_to_me(Some(egui::Align::Center));
+                                }
+                                if row.clicked() {
+                                    choice = Some(Some(language));
+                                    ui.close_menu();
+                                }
+                            }
+                        });
+                });
+            },
+        );
+        if !menu_open {
+            self.syntax_query.clear();
+            self.syntax_focus = true;
+        }
+        response.response.on_hover_text(format!(
+            "Change syntax · {}\nApplies only to this buffer and is kept in recovery.",
+            if selected.is_some() {
+                "manually selected"
+            } else {
+                "detected from filename"
+            },
+        ));
+        if let Some(language) = choice {
+            if self.workspace.open[self.workspace.active].set_language(language) {
+                self.changed();
+            }
+            self.focus_editor = true;
+        }
     }
     fn buffer_sidebar(&mut self, ctx: &egui::Context) {
         if !self.sidebar {

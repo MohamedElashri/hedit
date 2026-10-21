@@ -240,11 +240,102 @@ Toggle wrap through **View → Word wrap** (**Ctrl+Shift+W**). Long lines scroll
 horizontally when wrap is off. **Ctrl++** and **Ctrl+-** change font size. Wrap, font size, line numbers, and sidebar visibility are kept between launches.
 Use **Preferences → Settings… → Editor** to manage them together.
 
-CUDA (`.cu`, `.cuh`) and C/C++ (`.c`, `.h`, `.cc`, `.cpp`, `.cxx`, `.hpp`, `.hxx`,
-`.hh`, `.inl`) files have syntax highlighting; other files currently use plain text.
 UTF-8 text is supported, including an existing BOM and LF/CRLF bytes. UTF-16 and
 binary files are rejected. Edits can introduce LF breaks into CRLF files;
 line-ending conversion is not available yet.
+
+### Syntax highlighting
+
+hedit selects syntax from the filename when you open or save a file. Click the
+language name at the bottom right, such as **Plain text ▾** or **Python ▾**, to
+choose a different syntax for the current buffer. The larger menu has a search
+field: type a language name, extension such as `.hpp`, or filename such as
+`Makefile`. Press **Enter** when the filter leaves one result, or click a row.
+This also works for unsaved scratchpads: paste a snippet, then choose its language without saving it.
+
+Choose **Automatic (…)** to return to filename detection, or **Plain text** to
+turn off highlighting for that buffer. A manual choice stays with the buffer
+through Save As, page navigation, recovery, and reopening from the closed-buffer
+shelf. It does not change the text or the choices in other tabs. Scratchpad
+titles do not determine syntax; new scratchpads start as plain text.
+
+| Syntax | Automatically recognized filenames |
+| --- | --- |
+| Assembly | `.asm`, `.s`, `.inc` |
+| Batch | `.bat`, `.cmd` |
+| C | `.c`, `.h`, `.i` |
+| C++ | `.cc`, `.cpp`, `.cxx`, `.c++`, `.hpp`, `.hxx`, `.hh`, `.h++`, `.inl`, `.ipp`, `.tpp`, `.ii` |
+| C# | `.cs`, `.csx` |
+| CMake | `.cmake`, `CMakeLists.txt`, `CMakeCache.txt` |
+| CSS | `.css` |
+| CSV / TSV | `.csv`, `.tsv` |
+| CUDA | `.cu`, `.cuh` |
+| Dart | `.dart` |
+| Diff / Patch | `.diff`, `.patch` |
+| Dockerfile | `.dockerfile`, `.containerfile`, `Dockerfile`, `Containerfile` |
+| Elixir | `.ex`, `.exs` |
+| Erlang | `.erl`, `.hrl` |
+| Fortran | `.f`, `.for`, `.f77`, `.f90`, `.f95`, `.f03`, `.f08` |
+| Go | `.go` |
+| GraphQL | `.graphql`, `.gql` |
+| Groovy | `.groovy`, `.gradle`, `Jenkinsfile` |
+| Haskell | `.hs`, `.lhs` |
+| HCL / Terraform | `.hcl`, `.tf`, `.tfvars` |
+| HTML | `.html`, `.htm`, `.xhtml`, `.shtml` |
+| INI / Config | `.ini`, `.cfg`, `.conf`, `.properties`, `.env`, `.editorconfig`, `.gitconfig`, `.gitignore`, `.gitattributes`, `.npmrc`, `.npmignore` |
+| Java | `.java` |
+| JavaScript | `.js`, `.jsx`, `.mjs`, `.cjs` |
+| JSON | `.json`, `.jsonl`, `.ndjson`, `.ipynb`, `.geojson` |
+| Julia | `.jl` |
+| Kotlin | `.kt`, `.kts` |
+| LaTeX | `.tex`, `.sty`, `.cls`, `.bib` |
+| Less | `.less` |
+| Log | `.log` |
+| Lua | `.lua` |
+| Makefile | `.mk`, `.mak`, `Makefile`, `GNUmakefile`, `BSDmakefile` |
+| Markdown | `.md`, `.markdown`, `.mdown` |
+| MATLAB / Octave | `.m` |
+| Nix | `.nix` |
+| Objective-C | `.mm` |
+| Perl | `.pl`, `.pm`, `.t` |
+| PHP | `.php`, `.phtml`, `.php3`, `.php4`, `.php5`, `.phps` |
+| PowerShell | `.ps1`, `.psm1`, `.psd1` |
+| Protocol Buffers | `.proto` |
+| Python | `.py`, `.pyi`, `.pyw`, `.pyx`, `.pxd`, `SConstruct`, `SConscript` |
+| R | `.r`, `.rmd`, `.rprofile`, `.Rprofile` |
+| Ruby | `.rb`, `.rake`, `.gemspec`, `.ru`, `Gemfile`, `Rakefile`, `Guardfile`, `Vagrantfile`, `Brewfile`, `.irbrc` |
+| Rust | `.rs` |
+| Scala | `.scala`, `.sc`, `.sbt` |
+| SCSS / Sass | `.scss`, `.sass` |
+| Shell | `.sh`, `.bash`, `.zsh`, `.ksh`, `.fish`, `.bashrc`, `.bash_profile`, `.profile`, `.zshrc`, `.zprofile`, `.zshenv`, `.bash_aliases` |
+| SQL | `.sql` |
+| Swift | `.swift` |
+| TOML | `.toml`, `Cargo.lock`, `uv.lock`, `poetry.lock`, `Pipfile` |
+| TypeScript | `.ts`, `.tsx`, `.mts`, `.cts` |
+| Verilog / SystemVerilog | `.v`, `.vh`, `.sv`, `.svh` |
+| VHDL | `.vhd`, `.vhdl` |
+| Visual Basic | `.vb`, `.vbs`, `.bas` |
+| XML | `.xml`, `.xsd`, `.xsl`, `.xslt`, `.svg`, `.plist`, `.csproj`, `.fsproj`, `.vbproj`, `.props`, `.targets`, `.ui`, `.qrc`, `.rss`, `.atom` |
+| YAML | `.yaml`, `.yml` |
+| Zig | `.zig`, `.zon` |
+
+C (`.c`, `.h`) and C++ have separate syntax modes. Uppercase `.C` and `.H` use
+C++; other extensions and special filenames are matched case-insensitively.
+`.M` uses Objective-C; `.m` defaults to MATLAB / Octave, and you can choose
+Objective-C manually for those files. `Dockerfile.*`, `Containerfile.*`, and
+`.env.*` variants are also recognized. Unrecognized filenames use plain text.
+
+These 57 syntax modes cover common code, web, scientific, configuration, build,
+and text files. Highlighting covers keywords, strings, numbers, and comments;
+HTML/XML tags and attributes, CSS properties, CSV separators, and diff additions
+and deletions have format-specific colors. Log mode colors common severity
+words. Markdown highlights headings, quotes, and code.
+
+These are basic syntax modes: embedded languages, JSX/TSX markup, language
+validation, and complete language grammars are not supported. Multiline
+highlighting can reset at page boundaries in large files. Customize colors in
+**Preferences → Settings… → Appearance**. The menu scrolls to the current syntax
+when opened and adapts its height to smaller windows.
 
 ### Find and replace
 
@@ -282,7 +373,8 @@ one window:
 
 View commands provide quick toggles for the same editor settings. The status bar
 shows the cursor position, language, encoding, and recovery state; click the
-recovery status to open its preferences page. For paged files, gutter line numbers
+language to select syntax or the recovery status to open its preferences page.
+For paged files, gutter line numbers
 and **Page Ln** refer to the displayed page. The sidebar lists open buffers and
 provides a **Closed Buffers** link. Right-click a tab for its context menu, or
 middle-click its title to close it to the shelf.

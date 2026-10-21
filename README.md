@@ -25,6 +25,10 @@ work with CUDA source without leaving the editor.
   across the file, and bookmark positions you want to revisit.
 - **Find your way around.** Switch buffers, jump to a line, search and replace
   individual matches, and undo edits during your session.
+- **Read code in color.** Syntax is selected from the filename. Choose a language
+  from the searchable bottom-bar menu for unsaved snippets, or switch to plain
+  text. Common programming, web, configuration, build, and scientific formats
+  are included.
 - **Make it comfortable.** Choose a light or dark theme, customize individual
   colors, import or export palettes, and adjust font size, line numbers, and word wrap.
   Familiar menus and a single Preferences window keep settings easy to find.

@@ -77,6 +77,8 @@ pub struct HeditApp {
     replacement: String,
     palette: bool,
     palette_query: String,
+    syntax_query: String,
+    syntax_focus: bool,
     goto: String,
     gpu_open: bool,
     debug: Option<DebugSession>,
@@ -202,6 +204,8 @@ impl HeditApp {
             sanitizer: "memcheck".into(),
             poll_at: Instant::now(),
             focus_editor: true,
+            syntax_query: String::new(),
+            syntax_focus: true,
             theme,
             preferences_open: false,
             appearance_original,
@@ -656,7 +660,8 @@ impl HeditApp {
         if take(cmd, Key::Minus) {
             self.font_size = (self.font_size - 1.0).max(10.0);
         }
-        if take(Modifiers::NONE, Key::Escape) {
+        // Leave Escape visible to egui so open menus can dismiss themselves too.
+        if ctx.input(|input| input.key_pressed(Key::Escape)) {
             self.palette = false;
             self.find_open = false;
             self.goto_open = false;
@@ -763,16 +768,16 @@ impl HeditApp {
                     state.store(ctx, id);
                 }
                 let old = buffer.page.text.clone();
-                let cuda = syntax::is_c_family(&buffer.page.info.name);
+                let language = buffer.language();
                 let font_size = self.font_size;
                 let wrap = self.wrap;
                 let mut layouter = move |ui: &egui::Ui, text: &str, wrap_width: f32| {
                     ui.fonts(|fonts| {
-                        fonts.layout_job(syntax::highlight_with_theme(
+                        fonts.layout_job(syntax::highlight_language(
                             text,
                             font_size,
                             if wrap { wrap_width } else { f32::INFINITY },
-                            cuda,
+                            language,
                             &theme,
                         ))
                     })
@@ -1582,14 +1587,17 @@ mod tests {
         }
     }
     fn click_label(ctx: &egui::Context, app: &mut HeditApp, label: &str) {
-        let output = frame(ctx, app, vec![]);
+        click_label_sized(ctx, app, label, egui::vec2(1280.0, 820.0));
+    }
+    fn click_label_sized(ctx: &egui::Context, app: &mut HeditApp, label: &str, size: egui::Vec2) {
+        let output = frame_size(ctx, app, vec![], size);
         let rect = output
             .shapes
             .iter()
             .find_map(|shape| text_rect(&shape.shape, label))
             .unwrap_or_else(|| panic!("Missing visible label: {label}"));
         let position = rect.center();
-        frame(
+        frame_size(
             ctx,
             app,
             vec![
@@ -1601,8 +1609,9 @@ mod tests {
                     modifiers: Modifiers::NONE,
                 },
             ],
+            size,
         );
-        frame(
+        frame_size(
             ctx,
             app,
             vec![egui::Event::PointerButton {
@@ -1611,7 +1620,121 @@ mod tests {
                 pressed: false,
                 modifiers: Modifiers::NONE,
             }],
+            size,
         );
+    }
+    #[test]
+    fn status_bar_selects_syntax_and_returns_to_automatic_without_editing_text() {
+        for size in [egui::vec2(1280.0, 820.0), egui::vec2(720.0, 480.0)] {
+            let directory = tempfile::tempdir().unwrap();
+            let (workspace, _) = Workspace::restore(directory.path().into()).unwrap();
+            let ctx = egui::Context::default();
+            let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+            frame_size(&ctx, &mut app, vec![], size);
+            frame_size(
+                &ctx,
+                &mut app,
+                vec![egui::Event::Text("print('keep λ')".into())],
+                size,
+            );
+            let generation = app.generation;
+            click_label_sized(&ctx, &mut app, "Plain text ▾", size);
+            let dismissed = frame_size(
+                &ctx,
+                &mut app,
+                vec![key(Key::Escape, Modifiers::NONE)],
+                size,
+            );
+            assert!(!dismissed.shapes.iter().any(|shape| text_rect(
+                &shape.shape,
+                "Syntax for this buffer"
+            )
+            .is_some()));
+            assert_eq!(app.generation, generation);
+            assert!(app.active().view.language_override.is_none());
+            click_label_sized(&ctx, &mut app, "Plain text ▾", size);
+            let output = frame_size(
+                &ctx,
+                &mut app,
+                vec![egui::Event::Text("python".into())],
+                size,
+            );
+            assert_eq!(app.syntax_query, "python");
+            assert_eq!(app.active().page.text, "print('keep λ')");
+            let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+            for label in ["Syntax for this buffer", "Automatic (Plain text)", "Python"] {
+                let rect = output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| text_rect(&shape.shape, label))
+                    .unwrap_or_else(|| panic!("Missing syntax menu label: {label}"));
+                assert!(
+                    screen.contains_rect(rect),
+                    "Clipped syntax menu label: {label}"
+                );
+            }
+            click_label_sized(&ctx, &mut app, "Python", size);
+            assert_eq!(app.active().language(), syntax::Language::Python);
+            assert_eq!(
+                app.active().view.language_override.as_deref(),
+                Some("python")
+            );
+            assert!(app.generation > generation);
+            assert_eq!(app.active().page.text, "print('keep λ')");
+            let output = frame_size(&ctx, &mut app, vec![], size);
+            assert!(
+                output.shapes.iter().any(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.job.text == "print('keep λ')" => {
+                        text.galley
+                            .job
+                            .sections
+                            .iter()
+                            .any(|section| section.format.color == app.theme.string.color())
+                    }
+                    _ => false,
+                }),
+                "Editor did not apply the selected syntax"
+            );
+            // Syntax selection restores typing focus without modifying text.
+            frame_size(
+                &ctx,
+                &mut app,
+                vec![egui::Event::Text(" # more".into())],
+                size,
+            );
+            assert_eq!(app.active().page.text, "print('keep λ') # more");
+            click_label_sized(&ctx, &mut app, "Python ▾", size);
+            click_label_sized(&ctx, &mut app, "Automatic (Plain text)", size);
+            assert_eq!(app.active().language(), syntax::Language::PlainText);
+            assert!(app.active().view.language_override.is_none());
+            assert_eq!(app.active().page.text, "print('keep λ') # more");
+            click_label_sized(&ctx, &mut app, "Plain text ▾", size);
+            let output = frame_size(
+                &ctx,
+                &mut app,
+                vec![egui::Event::Text("no-such-syntax".into())],
+                size,
+            );
+            assert!(output.shapes.iter().any(|shape| text_rect(
+                &shape.shape,
+                "No matching syntax"
+            )
+            .is_some()));
+            frame_size(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)], size);
+            assert_eq!(app.active().page.text, "print('keep λ') # more");
+            assert!(app.active().view.language_override.is_none());
+            frame_size(
+                &ctx,
+                &mut app,
+                vec![key(Key::Escape, Modifiers::NONE)],
+                size,
+            );
+            click_label_sized(&ctx, &mut app, "Plain text ▾", size);
+            frame_size(&ctx, &mut app, vec![egui::Event::Text(".hpp".into())], size);
+            frame_size(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)], size);
+            assert_eq!(app.active().language(), syntax::Language::Cpp);
+            assert_eq!(app.active().page.text, "print('keep λ') # more");
+        }
     }
     #[test]
     fn menus_open_unified_preferences_and_keep_text_safe() {
@@ -1881,6 +2004,8 @@ mod tests {
             let mut render_time = 0.0;
             for (name, size, page) in [
                 ("editor", [1280.0, 820.0], None),
+                ("syntax", [1280.0, 820.0], None),
+                ("compact-syntax", [720.0, 480.0], None),
                 (
                     "appearance",
                     [1280.0, 820.0],
@@ -1910,11 +2035,15 @@ mod tests {
                 ("search", [1280.0, 820.0], None),
                 ("cuda", [1280.0, 820.0], None),
             ] {
+                frame(&ctx, &mut app, vec![key(Key::Escape, Modifiers::NONE)]);
                 app.preferences_open = page.is_some();
                 app.preferences_page = page.unwrap_or(PreferencesPage::Editor);
                 app.find_open = name == "search";
                 app.replace_open = name == "search";
                 app.gpu_open = name == "cuda";
+                if name.ends_with("syntax") {
+                    click_label_sized(&ctx, &mut app, "CUDA ▾", egui::vec2(size[0], size[1]));
+                }
                 // Multiple frames let egui settle sizing/scrollbar geometry.
                 let mut last = None;
                 for _ in 0..3 {
