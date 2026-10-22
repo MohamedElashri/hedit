@@ -52,7 +52,7 @@ See the [changelog](CHANGELOG.md) for what each release adds.
 Install the latest stable release:
 
 ```sh
-curl -fsSL https://github.com/MohamedElashri/hedit/releases/latest/download/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/MohamedElashri/hedit/main/install.sh | sh
 ```
 
 The installer verifies the download's checksum and selects the right package for your

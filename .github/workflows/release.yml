@@ -79,9 +79,9 @@ jobs:
               echo 'This release is already published. Use a new version tag for changes.' >&2
               exit 1
             fi
-            gh release upload "$RELEASE_TAG" dist/*.tar.gz dist/*.zip dist/*.sha256 install.sh --clobber
+            gh release upload "$RELEASE_TAG" dist/*.tar.gz dist/*.zip dist/*.sha256 --clobber
           else
-            gh release create "$RELEASE_TAG" dist/*.tar.gz dist/*.zip dist/*.sha256 install.sh \
+            gh release create "$RELEASE_TAG" dist/*.tar.gz dist/*.zip dist/*.sha256 \
               --verify-tag --draft --generate-notes --title "hedit $RELEASE_TAG"
           fi
           if [[ "$RELEASE_TAG" == *-* ]]; then

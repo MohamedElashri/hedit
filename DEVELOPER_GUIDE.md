@@ -403,8 +403,10 @@ The `Release packages` workflow builds Linux x86-64 and ARM64 natively on Ubuntu
 24.04 and one universal macOS app through its reusable Mac workflow. It publishes when a version tag is pushed; the tag must equal `v` followed
 by the version in `Cargo.toml`. Builds run checks and package smoke tests before
 publication. GitHub generates release notes, and each release includes two Linux
-tarballs, one universal macOS ZIP, their SHA-256 files, and the Linux `install.sh`
-downloader. The publish job waits for all three packages.
+tarballs, one universal macOS ZIP, and their SHA-256 files. The publish job waits
+for all three packages. The `install.sh` downloader is not a release asset: users
+fetch it from the root of `main`, and it resolves the latest release itself, so keep
+it compatible with the asset names of published releases.
 
 1. Set the version in `Cargo.toml` and run `cargo check` to update `Cargo.lock`.
 2. Run `make ci` and `make release-check RELEASE_TAG=vX.Y.Z`, using the new tag.

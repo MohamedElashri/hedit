@@ -25,10 +25,11 @@ are optional; ordinary editing works without them.
 
 ### Install from GitHub Releases
 
-Install the latest stable release with:
+The installer script lives in the repository root and always downloads the
+latest stable release. Install it with:
 
 ```sh
-curl -fsSL https://github.com/MohamedElashri/hedit/releases/latest/download/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/MohamedElashri/hedit/main/install.sh | sh
 ```
 
 On Linux, the installer selects x86-64 or ARM64, verifies the package's SHA-256 checksum,
@@ -41,7 +42,7 @@ CUDA tools are installed separately.
 To inspect the script first, select a version, or choose another prefix:
 
 ```sh
-curl -fsSL https://github.com/MohamedElashri/hedit/releases/latest/download/install.sh -o hedit-install.sh
+curl -fsSL https://raw.githubusercontent.com/MohamedElashri/hedit/main/install.sh -o hedit-install.sh
 sh hedit-install.sh --version vX.Y.Z --prefix "$HOME/.local"
 ```
 
@@ -56,19 +57,13 @@ installed, sign in and download the installer through the authenticated API:
 
 ```sh
 gh auth login --hostname github.com
-gh release download --repo MohamedElashri/hedit --pattern install.sh --output hedit-install.sh
+gh api -H 'Accept: application/vnd.github.raw' repos/MohamedElashri/hedit/contents/install.sh > hedit-install.sh
 sh hedit-install.sh --github-cli
 ```
 
-For a pinned version, give the same tag to both commands:
+Add `--version vX.Y.Z` to the second command for a pinned version.
 
-```sh
-gh release download vX.Y.Z --repo MohamedElashri/hedit --pattern install.sh --output hedit-install.sh
-sh hedit-install.sh --github-cli --version vX.Y.Z
-```
-
-Use a fresh filename or remove the previous downloaded script before downloading
-again. Public `curl` URLs cannot access a private repository.
+Public `curl` URLs cannot access a private repository.
 
 ### Install a portable package
 
