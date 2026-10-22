@@ -44,7 +44,7 @@ def package(arm64, intel, output, identity='-'):
     for binary, architecture in [(arm64, 'arm64'), (intel, 'x86_64')]:
         if not binary.is_file():
             raise ValueError(f'Build the {architecture} executable first: {binary}')
-        subprocess.run(['lipo', '-verify_arch', architecture, str(binary)], check=True)
+        subprocess.run(['lipo', str(binary), '-verify_arch', architecture], check=True)
     version = tomllib.loads((ROOT / 'Cargo.toml').read_text())['package']['version']
     output.mkdir(parents=True, exist_ok=True)
     name = f'hedit-{version}-macos-universal.zip'
@@ -58,7 +58,7 @@ def package(arm64, intel, output, identity='-'):
         resources.mkdir()
         subprocess.run(['lipo', '-create', str(arm64), str(intel), '-output', str(executable)], check=True)
         executable.chmod(0o755)
-        subprocess.run(['lipo', '-verify_arch', 'arm64', 'x86_64', str(executable)], check=True)
+        subprocess.run(['lipo', str(executable), '-verify_arch', 'arm64', 'x86_64'], check=True)
         with (contents / 'Info.plist').open('wb') as stream:
             plistlib.dump({'CFBundleName': 'hedit', 'CFBundleDisplayName': 'hedit',
                            'CFBundleIdentifier': 'hedit.hedit', 'CFBundleExecutable': 'hedit',

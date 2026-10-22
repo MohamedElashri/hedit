@@ -65,7 +65,9 @@ class MacPackage(unittest.TestCase):
                 self.assertIn('hedit.app/Contents/Resources/themes/hedit-ink.json', bundle.namelist())
             digest = hashlib.sha256(archive.read_bytes()).hexdigest()
             self.assertEqual(archive.with_name(archive.name + '.sha256').read_text(), f'{digest}  {archive.name}\n')
-            self.assertTrue(any(call[:4] == ['lipo', '-verify_arch', 'arm64', 'x86_64'] for call in calls))
+            self.assertIn(['lipo', str(arm), '-verify_arch', 'arm64'], calls)
+            self.assertIn(['lipo', str(intel), '-verify_arch', 'x86_64'], calls)
+            self.assertTrue(any(call[:1] == ['lipo'] and call[2:] == ['-verify_arch', 'arm64', 'x86_64'] for call in calls))
             self.assertTrue(any(call[:4] == ['codesign', '--force', '--sign', '-'] for call in calls))
             self.assertTrue(any(call[:4] == ['codesign', '--verify', '--deep', '--strict'] for call in calls))
 
