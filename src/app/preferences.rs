@@ -20,7 +20,7 @@ impl PreferencesPage {
 impl HeditApp {
     pub(super) fn open_preferences(&mut self, page: PreferencesPage) {
         if !self.preferences_open {
-            self.appearance_original = self.theme.clone();
+            self.appearance.original = self.theme.clone();
         }
         self.preferences_page =
             if page == PreferencesPage::Tools && !hedit::debugger::LOCAL_TOOLS_SUPPORTED {
@@ -35,8 +35,8 @@ impl HeditApp {
         if self.preferences_open {
             let before = self.theme.clone();
             let mut open = true;
-            let body_height = (ctx.screen_rect().height() - 190.0).clamp(190.0, 420.0);
-            let width = (ctx.screen_rect().width() - 64.0).clamp(540.0, 700.0);
+            let body_height = (ctx.screen_rect().height() - 190.0).clamp(190.0, 520.0);
+            let width = (ctx.screen_rect().width() - 64.0).clamp(540.0, 780.0);
             egui::Window::new("Preferences")
                 .id(egui::Id::new("preferences"))
                 .open(&mut open)
@@ -105,16 +105,7 @@ impl HeditApp {
                 self.focus_editor = true;
             }
             if self.theme != before {
-                if (self.theme.dark != before.dark
-                    || Role::ALL
-                        .into_iter()
-                        .any(|role| self.theme.color(role) != before.color(role)))
-                    && Preset::ALL.into_iter().any(|p| self.theme.name == p.name())
-                    && !Preset::ALL.into_iter().any(|p| self.theme == p.theme())
-                {
-                    self.theme.name = "My theme".into();
-                }
-                self.theme.apply(ctx);
+                self.theme_edited(ctx, &before);
             }
         }
         self.navigation_dialog(ctx);
@@ -253,125 +244,6 @@ impl HeditApp {
             self.font_size = 14.0;
             self.sync_folder_view();
         }
-    }
-    fn theme_preferences(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        ui.weak("Choose a palette, then customize its colors. Changes preview live.");
-        ui.add_space(8.0);
-        ui.horizontal_wrapped(|ui| {
-            for preset in Preset::ALL {
-                let theme = preset.theme();
-                if ui
-                    .add(
-                        egui::Button::new(RichText::new(preset.name()).color(theme.text.color()))
-                            .fill(theme.background.color())
-                            .stroke(egui::Stroke::new(
-                                if self.theme == theme { 2.0 } else { 1.0 },
-                                if self.theme == theme {
-                                    self.theme.accent.color()
-                                } else {
-                                    self.theme.border.color()
-                                },
-                            )),
-                    )
-                    .clicked()
-                {
-                    self.set_theme(ctx, theme);
-                }
-            }
-        });
-        ui.add_space(10.0);
-        ui.horizontal(|ui| {
-            ui.label("Name");
-            ui.add(
-                egui::TextEdit::singleline(&mut self.theme.name)
-                    .char_limit(80)
-                    .desired_width(175.0),
-            );
-            ui.checkbox(&mut self.theme.dark, "Dark controls");
-        });
-        ui.add_space(10.0);
-        egui::Grid::new("theme-colors")
-            .num_columns(3)
-            .spacing([14.0, 6.0])
-            .show(ui, |ui| {
-                for (index, role) in Role::ALL.into_iter().enumerate() {
-                    ui.label(role.label());
-                    let color = self.theme.color_mut(role);
-                    if ui.color_edit_button_srgb(&mut color.0).changed() {
-                        self.theme_hex[index] = color.hex();
-                    }
-                    let valid = Rgb::try_from(self.theme_hex[index].clone()).is_ok();
-                    let response = ui.add(
-                        egui::TextEdit::singleline(&mut self.theme_hex[index])
-                            .id_salt(("hex", index))
-                            .desired_width(85.0)
-                            .font(egui::TextStyle::Monospace)
-                            .char_limit(7)
-                            .text_color(if valid {
-                                self.theme.text.color()
-                            } else {
-                                self.theme.error.color()
-                            }),
-                    );
-                    if response.changed() {
-                        if let Ok(color) = Rgb::try_from(self.theme_hex[index].clone()) {
-                            *self.theme.color_mut(role) = color;
-                        }
-                    }
-                    if !valid {
-                        response.on_hover_text("Use #RRGGBB. Your last valid color stays active.");
-                    }
-                    ui.end_row();
-                }
-            });
-        ui.add_space(10.0);
-        let contrast = Theme::contrast(self.theme.text, self.theme.background);
-        let selection = Theme::contrast(self.theme.selection_text, self.theme.selection);
-        ui.colored_label(
-            if contrast >= 4.5 && selection >= 4.5 {
-                self.theme.muted.color()
-            } else {
-                self.theme.warning.color()
-            },
-            format!(
-                "Text {contrast:.1}:1 · Selection {selection:.1}:1{}",
-                if contrast < 4.5 || selection < 4.5 {
-                    " · Low contrast"
-                } else {
-                    ""
-                }
-            ),
-        );
-        egui::Frame::new()
-            .fill(self.theme.background.color())
-            .inner_margin(10.0)
-            .show(ui, |ui| {
-                ui.label(syntax::highlight_with_theme(
-                    "__global__ void kernel() {\n    const int value = 42; // preview\n}",
-                    12.0,
-                    ui.available_width(),
-                    true,
-                    &self.theme,
-                ));
-            });
-        ui.add_space(8.0);
-        ui.horizontal_wrapped(|ui| {
-            if ui
-                .add_enabled(!self.busy, egui::Button::new("Import JSON…"))
-                .clicked()
-            {
-                self.import_theme(ctx);
-            }
-            if ui
-                .add_enabled(!self.busy, egui::Button::new("Export JSON…"))
-                .clicked()
-            {
-                self.export_theme(ctx);
-            }
-            if ui.button("Revert theme").clicked() {
-                self.set_theme(ctx, self.appearance_original.clone());
-            }
-        });
     }
     fn tool_preferences(&mut self, ui: &mut egui::Ui) {
         if !hedit::debugger::LOCAL_TOOLS_SUPPORTED {

@@ -10,6 +10,7 @@ mod quality;
 #[cfg(test)]
 mod quality_tests;
 mod quality_windows;
+mod themes;
 mod tree_row;
 mod updates;
 
@@ -21,7 +22,7 @@ use hedit::{
     document::{Document, Info, Page, PAGE_SIZE},
     session::SessionStore,
     syntax,
-    theme::{Preset, Rgb, Role, Theme},
+    theme::{Rgb, Role, Theme},
     workspace::{Buffer, Workspace},
 };
 use preferences::PreferencesPage;
@@ -135,8 +136,7 @@ pub struct HeditApp {
     focus_editor: bool,
     theme: Theme,
     preferences_open: bool,
-    appearance_original: Theme,
-    theme_hex: Vec<String>,
+    appearance: themes::Appearance,
     rename_target: Option<u64>,
     unsaved_file_name: String,
     unsaved_file_name_focus: bool,
@@ -173,11 +173,7 @@ impl HeditApp {
             None => Theme::default(),
         };
         theme.apply(ctx);
-        let appearance_original = theme.clone();
-        let theme_hex = Role::ALL
-            .into_iter()
-            .map(|r| theme.color(r).hex())
-            .collect();
+        let appearance = themes::Appearance::load(storage, &theme);
         let (tx, rx) = mpsc::channel();
         let (checkpoint_tx, checkpoint_rx) = mpsc::channel();
         let wrap = storage
@@ -313,8 +309,7 @@ impl HeditApp {
             editor_layout: editor_layout::LayoutCache::default(),
             theme,
             preferences_open: false,
-            appearance_original,
-            theme_hex,
+            appearance,
             rename_target: None,
             unsaved_file_name: String::new(),
             unsaved_file_name_focus: false,
@@ -824,10 +819,7 @@ impl HeditApp {
                     self.notice = "File saved.".into();
                     self.changed();
                 }
-                Ok(Action::ThemeImported(theme)) => {
-                    self.set_theme(ctx, theme);
-                    self.notice = "Theme imported.".into();
-                }
+                Ok(Action::ThemeImported(theme)) => self.add_imported_theme(ctx, theme),
                 Ok(Action::Notice(message)) => self.notice = message,
                 Ok(Action::Nothing) => (),
                 Err(error) => {
@@ -1025,6 +1017,7 @@ impl HeditApp {
             let b = &mut self.workspace.open[self.workspace.active];
             b.view.selections.clear();
             b.restore_cursor = true;
+            self.cancel_theme_palette(ctx);
             self.palette = false;
             self.find_open = false;
             self.goto_open = false;
@@ -1870,17 +1863,9 @@ impl HeditApp {
     }
     fn open_appearance(&mut self) {
         if !self.preferences_open {
-            self.appearance_original = self.theme.clone();
+            self.appearance.original = self.theme.clone();
         }
         self.open_preferences(PreferencesPage::Appearance);
-    }
-    fn set_theme(&mut self, ctx: &egui::Context, theme: Theme) {
-        self.theme_hex = Role::ALL
-            .into_iter()
-            .map(|r| theme.color(r).hex())
-            .collect();
-        self.theme = theme;
-        self.theme.apply(ctx);
     }
     fn import_theme(&mut self, ctx: &egui::Context) {
         self.job(ctx, || {
@@ -2199,6 +2184,7 @@ impl eframe::App for HeditApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.closing = true;
         }
+        self.sync_appearance(ctx);
         self.shortcuts(ctx);
         let title = format!(
             "{}{}{} — hedit",
@@ -2282,6 +2268,7 @@ impl eframe::App for HeditApp {
         if let Ok(json) = theme.to_json() {
             storage.set_string("theme", json);
         }
+        self.appearance.save(storage);
     }
     fn auto_save_interval(&self) -> Duration {
         Duration::from_secs(2)
@@ -3240,12 +3227,61 @@ mod tests {
         assert_eq!(Command::Open.shortcut(), "Cmd+O");
     }
     #[test]
+    fn appearance_follows_system_and_saves_custom_themes() {
+        let directory = tempfile::tempdir().unwrap();
+        let (workspace, _) = Workspace::restore(directory.path().into()).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        let dark = hedit::theme::builtin("Dracula").unwrap();
+        let light = hedit::theme::builtin("GitHub Light").unwrap();
+        app.choose_theme(&ctx, dark.clone());
+        app.set_follow_system(&ctx, true);
+        app.appearance.light = light.clone();
+        let system = |app: &mut HeditApp, theme| {
+            let input = egui::RawInput {
+                system_theme: Some(theme),
+                ..Default::default()
+            };
+            let _ = ctx.run(input, |ctx| app.sync_appearance(ctx));
+        };
+        system(&mut app, egui::Theme::Light);
+        assert_eq!(app.theme, light);
+        assert!(!ctx.style().visuals.dark_mode);
+        system(&mut app, egui::Theme::Dark);
+        assert_eq!(app.theme, dark);
+        // Editing a built-in marks it modified and updates the displayed slot.
+        let before = app.theme.clone();
+        app.theme.accent = Rgb::new(1, 2, 3);
+        app.theme_edited(&ctx, &before);
+        assert_eq!(app.theme.name, "Dracula (modified)");
+        assert_eq!(app.appearance.dark, app.theme);
+        let library = directory.path().join("themes");
+        app.appearance.dir = Some(library.clone());
+        app.save_theme(&ctx, "Midnight".into(), None);
+        assert_eq!(app.error, None);
+        assert_eq!(app.appearance.library.len(), 1);
+        assert_eq!(app.theme.name, "Midnight");
+        assert!(library.join("midnight.json").is_file());
+        // Reusing a saved name is refused rather than overwriting.
+        app.save_theme(&ctx, "midnight".into(), None);
+        assert!(app.error.take().unwrap().contains("already named"));
+        let mut storage = MemoryStorage::default();
+        eframe::App::save(&mut app, &mut storage);
+        let saved = app.theme.clone();
+        drop(app);
+        let (workspace, _) = Workspace::restore(directory.path().into()).unwrap();
+        let app = HeditApp::from_context(&ctx, Some(&storage), workspace, vec![], vec![]);
+        assert!(app.appearance.follow_system);
+        assert_eq!(app.appearance.dark, saved);
+        assert_eq!(app.appearance.light, light);
+    }
+    #[test]
     fn custom_appearance_survives_preferences_restart() {
         let directory = tempfile::tempdir().unwrap();
         let (workspace, _) = Workspace::restore(directory.path().into()).unwrap();
         let ctx = egui::Context::default();
         let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
-        let mut custom = Preset::Paper.theme();
+        let mut custom = Theme::paper();
         custom.name = "My paper".into();
         custom.accent = Rgb::new(109, 65, 180);
         app.set_theme(&ctx, custom.clone());
@@ -3522,8 +3558,9 @@ mod tests {
         click_label(&ctx, &mut app, "Word wrap");
         assert!(app.wrap);
         click_label(&ctx, &mut app, "Appearance");
+        app.appearance.query = "paper".into();
         click_label(&ctx, &mut app, "Hedit Paper");
-        assert_eq!(app.theme, Preset::Paper.theme());
+        assert_eq!(app.theme, Theme::paper());
         if hedit::debugger::LOCAL_TOOLS_SUPPORTED {
             click_label(&ctx, &mut app, "CUDA Tools");
         }
@@ -3580,9 +3617,29 @@ mod tests {
                 key(Key::Enter, Modifiers::NONE),
             ],
         );
+        // The command opens the quick theme switcher, which previews as you move.
+        assert!(app.palette);
+        let original = app.theme.clone();
+        frame(&ctx, &mut app, vec![]);
+        frame(&ctx, &mut app, vec![key(Key::ArrowDown, Modifiers::NONE)]);
+        let previewed = app.theme.clone();
+        assert_ne!(previewed, original);
+        assert_eq!(&previewed, &hedit::theme::builtins()[1]);
+        frame(&ctx, &mut app, vec![key(Key::Escape, Modifiers::NONE)]);
         assert!(!app.palette);
-        assert!(app.preferences_open);
-        assert_eq!(app.preferences_page, PreferencesPage::Appearance);
+        assert_eq!(app.theme, original);
+        // Typing filters, and Enter keeps the highlighted theme.
+        app.execute(&ctx, Command::Appearance);
+        frame(&ctx, &mut app, vec![]);
+        frame(
+            &ctx,
+            &mut app,
+            vec![egui::Event::Text("solarized light".into())],
+        );
+        frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)]);
+        assert!(!app.palette);
+        assert_eq!(app.theme.name, "Solarized Light");
+        assert!(!app.theme.dark);
         assert_eq!(app.active().page.text, "");
     }
     #[test]
@@ -3692,8 +3749,8 @@ mod tests {
         let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
         let size = egui::vec2(720.0, 480.0);
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
-        for preset in Preset::ALL {
-            app.set_theme(&ctx, preset.theme());
+        for preset in hedit::theme::builtins() {
+            app.set_theme(&ctx, preset.clone());
             for page in [
                 PreferencesPage::Editor,
                 PreferencesPage::Appearance,
@@ -3800,7 +3857,7 @@ mod tests {
         let output =
             PathBuf::from(std::env::var_os("HEDIT_PREVIEW_DIR").expect("set HEDIT_PREVIEW_DIR"));
         std::fs::create_dir_all(&output).unwrap();
-        for (slug, preset) in [("ink", Preset::Ink), ("paper", Preset::Paper)] {
+        for (slug, preset) in [("ink", Theme::default()), ("paper", Theme::paper())] {
             for (name, menu, submenu) in [
                 ("line", "Edit", "Line"),
                 ("indentation", "Edit", "Indentation"),
@@ -3822,7 +3879,7 @@ mod tests {
                 workspace.open[0].set_language(Some(syntax::Language::Rust));
                 let ctx = egui::Context::default();
                 let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
-                app.set_theme(&ctx, preset.theme());
+                app.set_theme(&ctx, preset.clone());
                 app.show_whitespace = true;
                 if name == "split" {
                     app.execute(&ctx, Command::SplitColumns);
@@ -3889,12 +3946,12 @@ mod tests {
             PathBuf::from(std::env::var_os("HEDIT_PREVIEW_DIR").expect("set HEDIT_PREVIEW_DIR"));
         std::fs::create_dir_all(&output).unwrap();
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        for (slug, preset) in [("ink", Preset::Ink), ("paper", Preset::Paper)] {
+        for (slug, preset) in [("ink", Theme::default()), ("paper", Theme::paper())] {
             let directory = tempfile::tempdir().unwrap();
             let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
             let ctx = egui::Context::default();
             let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
-            app.set_theme(&ctx, preset.theme());
+            app.set_theme(&ctx, preset.clone());
             app.open(&ctx, Some(root.clone()));
             finish_app_job(&mut app, &ctx);
             app.open(&ctx, Some(root.join("examples/cuda/vector_add.cu")));
@@ -3990,7 +4047,7 @@ mod tests {
         let output =
             PathBuf::from(std::env::var_os("HEDIT_PREVIEW_DIR").expect("set HEDIT_PREVIEW_DIR"));
         std::fs::create_dir_all(&output).unwrap();
-        for preset in Preset::ALL {
+        for preset in hedit::theme::builtins() {
             let directory = tempfile::tempdir().unwrap();
             let (mut workspace, _) = Workspace::restore(directory.path().into()).unwrap();
             let mut doc = Document::open(
@@ -4002,8 +4059,8 @@ mod tests {
             workspace.add(doc, page).unwrap();
             let ctx = egui::Context::default();
             let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
-            app.set_theme(&ctx, preset.theme());
-            let slug = preset.name().to_lowercase().replace(' ', "-");
+            app.set_theme(&ctx, preset.clone());
+            let slug = preset.name.to_lowercase().replace(' ', "-");
             let mut render_time = 0.0;
             for (name, size, page) in [
                 ("editor", [1280.0, 820.0], None),
@@ -4020,6 +4077,12 @@ mod tests {
                     [720.0, 480.0],
                     Some(PreferencesPage::Appearance),
                 ),
+                (
+                    "customize",
+                    [1280.0, 820.0],
+                    Some(PreferencesPage::Appearance),
+                ),
+                ("switcher", [1280.0, 820.0], None),
                 (
                     "preferences-editor",
                     [1280.0, 820.0],
@@ -4044,6 +4107,10 @@ mod tests {
                 app.find_open = name == "search";
                 app.replace_open = name == "search";
                 app.gpu_open = name == "cuda";
+                app.appearance.customizing = name == "customize";
+                if name == "switcher" {
+                    app.open_theme_palette();
+                }
                 if name.ends_with("syntax") {
                     click_label_sized(&ctx, &mut app, "CUDA ▾", egui::vec2(size[0], size[1]));
                 }
@@ -4065,6 +4132,7 @@ mod tests {
                             app.gpu(ctx);
                             app.search_panel(ctx);
                             app.editor(ctx);
+                            app.command_palette(ctx);
                             app.preferences(ctx);
                         },
                     );

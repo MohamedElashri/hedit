@@ -1,8 +1,10 @@
 {
-  "version": 1,
+  "version": 2,
   "name": "Violet Ink",
+  "base": "Hedit Ink",
   "accent": "#B4A0F5",
   "selection": "#413657",
   "selection_text": "#F2ECFF",
-  "cuda": "#B4A0F5"
+  "cuda": "#B4A0F5",
+  "function": "#D4C6FA"
 }

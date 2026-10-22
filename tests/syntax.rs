@@ -372,7 +372,7 @@ fn each_lexer_highlights_using_theme_roles_without_altering_text() {
         ),
         (
             Json,
-            "{\"λ\": true, \"count\": 42}",
+            "{\"flag\": true, \"count\": 42, \"name\": \"λ\"}",
             "true",
             "\"λ\"",
             "42",

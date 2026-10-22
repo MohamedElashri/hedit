@@ -302,8 +302,8 @@ mod tests {
         app.updates.open = true;
         app.updates.release = Some(release());
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(720.0, 480.0));
-        for preset in Preset::ALL {
-            app.set_theme(&ctx, preset.theme());
+        for preset in hedit::theme::builtins() {
+            app.set_theme(&ctx, preset.clone());
             let mut output = None;
             for _ in 0..4 {
                 output = Some(ctx.run(
@@ -331,12 +331,12 @@ mod tests {
         let output =
             PathBuf::from(std::env::var_os("HEDIT_PREVIEW_DIR").expect("set HEDIT_PREVIEW_DIR"));
         std::fs::create_dir_all(&output).unwrap();
-        for (preset, name) in [(Preset::Ink, "ink"), (Preset::Paper, "paper")] {
+        for (preset, name) in [(Theme::default(), "ink"), (Theme::paper(), "paper")] {
             let directory = tempfile::tempdir().unwrap();
             let (workspace, _) = Workspace::restore(directory.path().into()).unwrap();
             let ctx = egui::Context::default();
             let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
-            app.set_theme(&ctx, preset.theme());
+            app.set_theme(&ctx, preset.clone());
             app.updates.open = true;
             app.updates.release = Some(release());
             app.updates.message = "hedit 9.4.0 is available.".into();

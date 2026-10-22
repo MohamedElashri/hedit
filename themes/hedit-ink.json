@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "name": "Hedit Ink",
   "dark": true,
   "background": "#10161F",
@@ -19,5 +19,11 @@
   "keyword": "#BEA7F4",
   "string": "#B0D29A",
   "number": "#EDBE7B",
-  "cuda": "#64D8CB"
+  "cuda": "#64D8CB",
+  "function": "#DCE6F0",
+  "type": "#DCE6F0",
+  "constant": "#EDBE7B",
+  "operator": "#DCE6F0",
+  "property": "#BEA7F4",
+  "preprocessor": "#BEA7F4"
 }

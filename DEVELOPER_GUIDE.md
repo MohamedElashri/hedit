@@ -198,7 +198,8 @@ editing, and line-comment commands remain available. NVIDIA identifies CUDA
 | `src/ipc.rs`, `src/launcher.rs` | Per-session request mailbox, startup acknowledgements and terminal detachment |
 | `src/update.rs`, `src/update/install.rs` | Manual release checks, checksum verification, archive preflight, staged installation and rollback |
 | `src/app/updates.rs` | Explicit check/install actions, worker progress, restart guidance and close gating |
-| `src/app/preferences.rs` | Unified settings, theme controls, tool/recovery preferences, navigation dialogs |
+| `src/app/preferences.rs` | Unified settings, tool/recovery preferences, navigation dialogs |
+| `src/app/themes.rs` | Theme gallery, color editor, quick switcher, saved themes, system light/dark switching |
 | `src/workspace.rs` | Open/closed buffers, names, bookmarks, UTF-8-safe edit splices |
 | `src/document.rs` | Disk-backed piece table, bounded pages, source guards, atomic saves, undo |
 | `src/session.rs` | Process lock, snapshots, manifests, fallback and preservation |
@@ -209,7 +210,7 @@ editing, and line-comment commands remain available. NVIDIA identifies CUDA
 | `src/app/edit_actions.rs` | Apply transformations through backend undo/recovery |
 | `src/debugger.rs` | CUDA-GDB/MI and bounded NVIDIA tool subprocess output |
 | `src/syntax.rs`, `src/syntax/lexer.rs`, `src/syntax/keywords.rs` | Syntax catalog, filename detection, and bounded lexical highlighting with active theme colors |
-| `src/theme.rs` | Validated RGB palettes, native styling, JSON theme files |
+| `src/theme.rs` | Theme roles, built-in catalog, native styling, JSON theme files, user theme folder |
 | `src/brand.rs` | Native mark and antialiased launcher icon |
 | `src/cli.rs` | Arguments and file locations |
 | `src/folder.rs` | Bounded directory listings, fuzzy path search, safe file/folder creation |
@@ -333,10 +334,32 @@ NVIDIA behavior still requires hardware testing.
 ## Themes and branding
 
 Theme files contain a version, name, dark-controls flag, and opaque RGB roles.
-Missing roles inherit Hedit Ink. Validate names, color strings, unknown fields,
-versions, and the 64 KiB input limit before applying imports. Export through a
-synced temporary file and atomic replacement. See the [user guide](USER_GUIDE.md#appearance)
-for the format and controls, and `themes/` for complete presets.
+`src/theme.rs` declares every role once in the `roles!` table, which generates the
+`Theme` fields, `Role` enum, JSON keys, labels, and groups. The built-in catalog
+lives in the same file as one color row per theme in role order.
+
+Missing roles come from the optional `base` built-in, or Hedit Ink. Roles added in
+version 2 derive from a version-1 role when a file sets that role, so older themes
+render unchanged. Validate names, color strings, unknown fields, bases, versions,
+and the 64 KiB input limit before applying imports. Export through a synced
+temporary file and atomic replacement. Theme files written by hedit are always
+complete and at the current version.
+
+To add a role, add a `roles!` row and a color to every built-in, then add a
+`DERIVED` fallback if older files need one. To add a built-in theme, add its row
+and regenerate the bundled files:
+
+```sh
+HEDIT_WRITE_THEMES=1 cargo test --locked --test themes
+```
+
+The `themes` tests require readable text and selection contrast, a dark flag that
+matches the background, and a `themes/` directory identical to the catalog.
+
+`src/app/themes.rs` holds the gallery, color editor, quick switcher, user theme
+folder, and system light/dark switching. `Theme::apply` pins egui's own light/dark
+mode, so a system appearance change never swaps in egui's default style. See the
+[user guide](USER_GUIDE.md#appearance) for the format and controls.
 
 ### Identity assets
 

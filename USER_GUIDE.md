@@ -527,7 +527,9 @@ words. Markdown highlights headings, quotes, and code.
 
 These are basic syntax modes: embedded languages, JSX/TSX markup, language
 validation, and complete language grammars are not supported. Multiline
-highlighting can reset at page boundaries in large files. Customize colors in
+highlighting can reset at page boundaries in large files. Functions, types, and
+constants are recognized by form (a following `(`, a capital letter, or all
+capitals), not by analyzing your code. Customize colors in
 **Preferences → Settings… → Appearance**. The menu scrolls to the current syntax
 when opened and adapts its height to smaller windows.
 
@@ -650,7 +652,7 @@ one window:
 | Page | Settings and actions |
 | --- | --- |
 | Editor | Wrap, line numbers, sidebar/folders, tabs, status bar, current line, whitespace, font size, restore defaults |
-| Appearance | Presets, custom colors, theme import/export, contrast feedback |
+| Appearance | Theme gallery, system light/dark switching, custom colors, saved themes, import/export |
 | CUDA Tools (Linux) | CUDA-GDB path and a shortcut to the tool panel |
 | Recovery | Checkpoint status, checkpoint now, closed files, recovery guidance |
 
@@ -664,44 +666,96 @@ middle-click its title to close it to the shelf.
 
 ## Appearance
 
-Choose **Preferences → Color theme…**, or open **Preferences → Settings…**
-(**Ctrl+,**) and select **Appearance**. The **Color theme…** command also appears
-in the command palette. Pick **Hedit Ink**, **Hedit Paper**, **Nord**, or **Ember**;
-Paper uses light controls and the others use dark controls.
+### Switch themes quickly
 
-Use color pickers or `#RRGGBB` fields to change the background, surfaces, text,
-accent/cursor, selection, recovery indicators, and syntax colors. Scroll the list
-for syntax roles. Valid changes preview immediately; invalid hex input keeps
-the last valid color. Editing a preset creates **My theme**, which you can rename.
+Choose **Preferences → Color theme…**, or run **Color theme…** from the command
+palette. The list shows every theme with a strip of its colors. Use **↑**/**↓**
+to preview themes in the editor as you move, type to filter by name or by
+“dark”/“light”, press **Enter** to keep the highlighted theme, or press **Esc** to
+return to the theme you had. **Customize…** opens the full Appearance page.
 
-Text and selection contrast ratios appear below the controls. Values below
-4.5:1 are flagged without blocking your choices. **Dark controls** changes widget
-defaults without replacing your colors.
+### Browse the gallery
 
-**Revert theme** restores the palette that was active when the window opened.
-**Done** or the close button keeps your valid changes. Preferences save
-automatically every two seconds and on normal exit.
+Open **Preferences → Settings…** (**Ctrl+,**) and select **Appearance**. The
+**Themes** tab shows each theme as a miniature editor, grouped into dark themes,
+light themes, and **Your themes**. Click a card to use it; filter the gallery with
+the search field.
 
-### Share or keep another palette
+hedit includes these themes:
 
-Use **Import JSON…** and **Export JSON…**. The bundled `themes/` directory contains
-complete presets and a custom example. A partial theme inherits omitted colors
-from Hedit Ink:
+| Dark | Light |
+| --- | --- |
+| Hedit Ink (default), One Dark, Dracula, Monokai, Nord, Gruvbox Dark, Solarized Dark, Tokyo Night, Catppuccin Mocha, GitHub Dark, Rosé Pine | Hedit Paper, One Light, GitHub Light, Solarized Light, Gruvbox Light, Catppuccin Latte, Rosé Pine Dawn |
+
+### Follow the system appearance
+
+Select **Match the system light or dark appearance** to switch themes when your
+desktop changes between light and dark. Choose **When dark** or **When light**,
+then pick or customize the theme for that appearance. While the Appearance page is
+open, the editor shows the appearance you are editing.
+
+### Customize colors
+
+Select the **Customize colors** tab. A live sample shows the result as you change
+colors with the color pickers or `#RRGGBB` fields. Colors are grouped:
+
+- **Interface:** backgrounds, sidebar, controls, borders, text, accent/cursor, and selection.
+- **Syntax:** comments, keywords, strings, numbers, CUDA qualifiers, functions,
+  types, constants, operators, properties/keys, and preprocessor
+  directives/attributes.
+- **Status:** warning, error, and success colors.
+
+Invalid hex input keeps the last valid color. Changing a built-in theme renames it
+to “*name* (modified)”; **↺** beside a color, or **Reset all**, restores the
+original value. Text and selection contrast ratios appear below the colors, and
+values below 4.5:1 are flagged without blocking your choices. **Dark controls**
+switches menus, scroll bars, and other native controls between light and dark styles.
+
+To keep your changes, choose **Save as new theme…**, enter a name, and press
+**Save**. Saved themes appear under **Your themes** and in the quick switcher.
+When you edit a saved theme, **Save changes** updates it. Right-click a saved
+theme to export it or move it to the trash.
+
+**Revert to** *name* restores the theme that was active when Preferences opened.
+Preferences save automatically every two seconds and on normal exit.
+
+### Theme files
+
+Saved and imported themes are JSON files in your theme folder:
+`~/.config/hedit/themes/` on Linux, or
+`~/Library/Application Support/hedit.hedit/themes/` on macOS. Set
+`HEDIT_THEMES_DIR` to use another folder. hedit reads the folder when it starts.
+
+**Import…** copies a theme file into the folder and selects it; a name that
+matches an existing theme gets a number. **Export…** saves the current colors
+anywhere you choose. The bundled `themes/` directory has every built-in theme as
+a complete file, plus a custom example.
+
+A theme can name a built-in `base` and set only the colors that differ:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "name": "Violet Ink",
+  "base": "Hedit Ink",
   "accent": "#B4A0F5",
   "selection": "#413657",
   "selection_text": "#F2ECFF",
-  "cuda": "#B4A0F5"
+  "function": "#D4C6FA"
 }
 ```
 
+Without `base`, omitted colors come from Hedit Ink. Color keys are
+`background`, `surface`, `panel`, `elevated`, `border`, `text`, `muted`, `accent`,
+`selection`, `selection_text`, `warning`, `error`, `success`, `comment`,
+`keyword`, `string`, `number`, `cuda`, `function`, `type`, `constant`,
+`operator`, `property`, and `preprocessor`. Version 1 files still load: their
+functions, types, and operators use `text`, constants use `number`, and
+properties and preprocessor directives use `keyword`, so they look as before.
+
 Theme names need 1–80 characters. Colors are opaque, six-digit RGB values; a
-leading `#` is optional on input. Unsupported versions, unknown fields, and
-files above 64 KiB are rejected. A failed import keeps your current palette.
+leading `#` is optional on input. Unsupported versions, unknown fields or bases,
+and files above 64 KiB are rejected. A failed import keeps your current theme.
 
 ## CUDA tools
 

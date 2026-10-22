@@ -41,8 +41,10 @@ See the [changelog](CHANGELOG.md) for what each release adds.
   from the searchable bottom-bar menu for unsaved snippets, or switch to plain
   text. Common programming, web, configuration, build, and scientific formats
   are included.
-- **Make it comfortable.** Choose a light or dark theme, customize individual
-  colors, import or export palettes, and adjust font size, line numbers, and word wrap.
+- **Make it comfortable.** Pick from popular editor themes such as One Dark,
+  Dracula, Solarized, Gruvbox, Nord, Tokyo Night, Catppuccin, and GitHub, preview
+  them live, follow the system's light or dark mode, and save your own color
+  variations. Adjust font size, line numbers, and word wrap.
   Familiar menus and a single Preferences window keep settings easy to find.
 - **Work with CUDA.** Read highlighted C/C++ and CUDA source, control CUDA-GDB,
   run Compute Sanitizer, and inspect GPU information from the CUDA panel.

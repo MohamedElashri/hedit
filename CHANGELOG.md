@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.1.4] - Unreleased
+
+### Added
+
+- Eighteen built-in themes, including One Dark, One Light, Dracula, Monokai, Nord,
+  Gruvbox, Solarized, Tokyo Night, Catppuccin, GitHub, and Rosé Pine, alongside
+  Hedit Ink and Hedit Paper.
+- A quick theme switcher (**Preferences → Color theme…**) that previews themes as
+  you move through the list and restores the previous theme on Esc.
+- A theme gallery with live miniature previews, grouped into dark, light, and
+  saved themes, with filtering.
+- Optional switching between a dark and a light theme with the system appearance.
+- Saved themes in a theme folder: save customized colors as a new theme, update or
+  remove saved themes, and keep imported themes available.
+- Syntax colors for functions, types, constants, operators, properties and keys,
+  and preprocessor directives, attributes, and decorators.
+- Partial theme files can start from a built-in theme with `base`.
+
+### Changed
+
+- The Appearance page separates the theme gallery from color customization,
+  groups colors into interface, syntax, and status, and offers per-color resets.
+- Editing a built-in theme names the result “*name* (modified)” instead of
+  “My theme”.
+- Theme files are now version 2. Version 1 files still load and look the same.
+
+### Removed
+
+- The Ember theme. A saved Ember appearance keeps its colors.
+
 ## [0.1.3] - 2026-10-22
 
 ### Added

@@ -781,6 +781,7 @@ impl HeditApp {
                 self.goto_focus = true;
             }
             Command::Switcher | Command::Palette => {
+                self.cancel_theme_palette(ctx);
                 self.palette = true;
                 self.commands_only = command == Command::Palette;
                 self.palette_query.clear();
@@ -859,7 +860,7 @@ impl HeditApp {
             }
             Command::Gpu => self.gpu_open = !self.gpu_open,
             Command::Settings => self.open_preferences(self.preferences_page),
-            Command::Appearance => self.open_appearance(),
+            Command::Appearance => self.open_theme_palette(),
             Command::ToolSettings => self.open_preferences(PreferencesPage::Tools),
             Command::Checkpoint => self.checkpoint(ctx),
             Command::About => self.about_open = true,
@@ -874,6 +875,9 @@ impl HeditApp {
     pub(super) fn command_palette(&mut self, ctx: &egui::Context) {
         if !self.palette {
             return;
+        }
+        if self.appearance.preview.is_some() {
+            return self.theme_palette(ctx);
         }
         #[derive(Clone)]
         enum Item {

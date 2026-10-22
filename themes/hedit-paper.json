@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "name": "Hedit Paper",
   "dark": false,
   "background": "#FAF8F3",
@@ -19,5 +19,11 @@
   "keyword": "#7354A3",
   "string": "#426D26",
   "number": "#95552A",
-  "cuda": "#147568"
+  "cuda": "#147568",
+  "function": "#243832",
+  "type": "#243832",
+  "constant": "#95552A",
+  "operator": "#243832",
+  "property": "#7354A3",
+  "preprocessor": "#7354A3"
 }

@@ -95,7 +95,7 @@ mod tests {
                 assert!(!Arc::ptr_eq(&plain, &zoomed));
                 let wrapped = cache.layout(ui, &edited, Language::PlainText, 16.0, 120.0, &theme);
                 assert!(!Arc::ptr_eq(&zoomed, &wrapped));
-                let paper = hedit::theme::Preset::Paper.theme();
+                let paper = Theme::paper();
                 let recolored = cache.layout(ui, &edited, Language::PlainText, 16.0, 120.0, &paper);
                 assert!(!Arc::ptr_eq(&wrapped, &recolored));
                 assert_eq!(recolored.job.sections[0].format.color, paper.text.color());
