@@ -267,9 +267,9 @@ fn canonical_path(path: &str) -> Result<PathBuf, String> {
     fs::canonicalize(path).map_err(|e| e.to_string())
 }
 
-// Resolve ancestors only: a folder action must act on the named link itself.
-fn unresolved_leaf(path: &str) -> Result<PathBuf, String> {
-    let path = Path::new(path);
+/// Resolve ancestors for a folder action, keeping the named symlink itself.
+/// Use this path for buffer matching before renaming or removing the entry.
+pub fn entry_path(path: &Path) -> Result<PathBuf, String> {
     let leaf = path
         .file_name()
         .ok_or("A filesystem root cannot be changed.")?;
@@ -332,7 +332,7 @@ pub fn create_folder(parent: String, name: String) -> Result<String, String> {
 /// Rename `from` to a sibling leaf `name`. Never overwrites an existing path.
 pub fn rename_path(from: String, name: String) -> Result<String, String> {
     let leaf = leaf_name(&name)?.to_owned();
-    let from = unresolved_leaf(&from)?;
+    let from = entry_path(Path::new(&from))?;
     fs::symlink_metadata(&from).map_err(|e| e.to_string())?;
     let parent = from
         .parent()
@@ -357,7 +357,7 @@ fn rename_no_replace(from: &Path, target: &Path) -> std::io::Result<()> {
 
 /// Move within a filesystem without replacing an existing destination.
 pub fn move_path(from: &Path, target: &Path) -> Result<PathBuf, String> {
-    let from = unresolved_leaf(&from.to_string_lossy())?;
+    let from = entry_path(from)?;
     let parent = fs::canonicalize(target.parent().ok_or("Choose a destination folder.")?)
         .map_err(|e| e.to_string())?;
     let target = parent.join(target.file_name().ok_or("Choose a destination name.")?);
@@ -371,7 +371,7 @@ pub fn move_path(from: &Path, target: &Path) -> Result<PathBuf, String> {
 
 /// Duplicate regular files and directories; never follow symlinks or overwrite.
 pub fn duplicate_path(from: &Path, target: &Path) -> Result<(), String> {
-    let from = unresolved_leaf(&from.to_string_lossy())?;
+    let from = entry_path(from)?;
     let parent = fs::canonicalize(target.parent().ok_or("Choose a destination folder.")?)
         .map_err(|e| e.to_string())?;
     let target = parent.join(target.file_name().ok_or("Choose a destination name.")?);
@@ -423,7 +423,7 @@ pub fn duplicate_sibling(from: &Path, name: &str) -> Result<PathBuf, String> {
     Ok(target)
 }
 pub fn trash_path(path: &Path) -> Result<(), String> {
-    let path = unresolved_leaf(&path.to_string_lossy())?;
+    let path = entry_path(path)?;
     if path.parent().is_none() {
         return Err("Cannot trash a filesystem root.".into());
     }
@@ -455,7 +455,7 @@ fn rename_no_replace(_from: &Path, _target: &Path) -> std::io::Result<()> {
 
 /// Delete a file, symlink, or folder (recursively). The frontend confirms first.
 pub fn delete_path(path: String) -> Result<(), String> {
-    let path = unresolved_leaf(&path)?;
+    let path = entry_path(Path::new(&path))?;
     if path.parent().is_none() {
         return Err("Refusing to delete a filesystem root.".into());
     }

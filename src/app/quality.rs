@@ -1160,6 +1160,15 @@ impl HeditApp {
         let Some((path, operation)) = self.quality.file_action.take() else {
             return;
         };
+        // Documents and roots use resolved paths. Normalize the source before
+        // mutation, while its ancestors still exist (e.g. macOS /var aliases).
+        let path = match hedit::folder::entry_path(&path) {
+            Ok(path) => path,
+            Err(error) => {
+                self.error = Some(error);
+                return;
+            }
+        };
         let name = self.quality.file_name.clone();
         if operation == FileOperation::Trash {
             for view in self

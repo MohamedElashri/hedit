@@ -186,6 +186,50 @@ fn rename_retargets_open_and_closed_buffers_and_retains_external_save_guard() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn rename_through_symlinked_parent_retargets_folder_and_open_and_closed_buffers() {
+    use std::path::Path;
+
+    let directory = tempfile::tempdir().unwrap();
+    let real = directory.path().join("real");
+    let alias = directory.path().join("alias");
+    let root = real.join("src");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("open.txt"), "open text").unwrap();
+    std::fs::write(root.join("closed.txt"), "closed text").unwrap();
+    std::os::unix::fs::symlink(&real, &alias).unwrap();
+    let (ws, _) = Workspace::restore(directory.path().join("session")).unwrap();
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, ws, vec![], vec![]);
+    app.open(&ctx, Some(alias.join("src")));
+    finish_app_job(&mut app, &ctx);
+    app.open(&ctx, Some(alias.join("src/closed.txt")));
+    finish_app_job(&mut app, &ctx);
+    let closed_id = app.active().view.id;
+    app.workspace.close(app.workspace.active).unwrap();
+    app.open(&ctx, Some(alias.join("src/open.txt")));
+    finish_app_job(&mut app, &ctx);
+    app.begin_file_action(alias.join("src"), quality::FileOperation::Rename);
+    app.quality.file_name = "renamed".into();
+    app.perform_file_action(&ctx);
+    finish_app_job(&mut app, &ctx);
+
+    let renamed = real.join("renamed").canonicalize().unwrap();
+    assert_eq!(
+        app.active().page.info.path.as_deref().map(Path::new),
+        Some(renamed.join("open.txt").as_path())
+    );
+    assert_eq!(Path::new(&app.workspace.folders[0].path), renamed);
+    assert!(app.workspace.closed.iter().any(|view| view.id == closed_id));
+    let closed = app.workspace.editor.get(closed_id).unwrap();
+    assert_eq!(
+        closed.lock().unwrap().info().path.as_deref().map(Path::new),
+        Some(renamed.join("closed.txt").as_path())
+    );
+    assert!(!root.exists());
+}
+
 #[test]
 fn project_replacement_updates_open_clean_buffers_and_keeps_dirty_text() {
     let directory = tempfile::tempdir().unwrap();

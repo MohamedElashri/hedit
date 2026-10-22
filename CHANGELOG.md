@@ -63,6 +63,11 @@
   tools are disabled on macOS while CUDA source editing remains available.
 - Release automation includes the universal macOS archive alongside Linux packages.
 
+### Fixed
+
+- Keep open buffers, closed buffers, and workspace roots attached after sidebar
+  renames or moves through symlinked parent paths, including macOS `/var` aliases.
+
 ## [0.1.2] - 2026-10-22
 
 ### Added
