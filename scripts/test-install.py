@@ -9,6 +9,7 @@ import subprocess
 import tarfile
 import tempfile
 import unittest
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 TAG = 'v0.1.2'
@@ -16,8 +17,10 @@ MOCK = '''#!/usr/bin/env python3
 import json
 import os
 from pathlib import Path
+import hashlib
 import shutil
 import sys
+import zipfile
 
 args = sys.argv[1:]
 tool = Path(sys.argv[0]).name
@@ -28,6 +31,20 @@ if tool == 'uname':
     sys.exit(0)
 if os.environ.get('MOCK_FAIL') == 'download':
     sys.exit(22)
+if tool == 'shasum':
+    print(f"{hashlib.sha256(Path(args[-1]).read_bytes()).hexdigest()}  {args[-1]}")
+    sys.exit(0)
+if tool == 'codesign':
+    sys.exit(1 if os.environ.get('MOCK_FAIL') == 'codesign' else 0)
+if tool == 'ditto':
+    if args[:2] == ['-x', '-k']:
+        with zipfile.ZipFile(args[2]) as archive:
+            for member in archive.infolist():
+                path = Path(archive.extract(member, args[3]))
+                path.chmod(member.external_attr >> 16 or 0o644)
+    else:
+        shutil.copytree(args[0], args[1], symlinks=True)
+    sys.exit(0)
 fixtures = Path(os.environ['MOCK_FIXTURES'])
 if tool == 'curl':
     url = args[-1]
@@ -63,11 +80,12 @@ class ReleaseInstaller(unittest.TestCase):
         self.fixtures.mkdir()
         self.bin = self.work / 'bin'
         self.bin.mkdir()
-        for command in ['curl', 'gh', 'uname']:
+        for command in ['curl', 'gh', 'uname', 'ditto', 'shasum', 'codesign']:
             path = self.bin / command
             path.write_text(MOCK)
             path.chmod(0o755)
         self.prefix = self.work / 'installation with spaces'
+        self.app_dir = self.work / 'Applications dir'
         self.log = self.work / 'requests.jsonl'
         self.environment = dict(os.environ, PATH=f'{self.bin}:{os.environ["PATH"]}',
                                 MOCK_FIXTURES=str(self.fixtures), MOCK_LOG=str(self.log),
@@ -92,6 +110,29 @@ class ReleaseInstaller(unittest.TestCase):
                 output.add(stage, arcname=name)
             digest = hashlib.sha256(archive.read_bytes()).hexdigest()
             archive.with_name(archive.name + '.sha256').write_text(f'{digest}  {archive.name}\n')
+        self.write_macos_fixture('#!/bin/sh\nprintf "hedit 0.1.2\\n"\n')
+
+    def write_macos_fixture(self, executable):
+        name = 'hedit-0.1.2-macos-universal.zip'
+        archive = self.fixtures / name
+        with zipfile.ZipFile(archive, 'w') as output:
+            for path, text, mode in [('hedit.app/Contents/MacOS/hedit', executable, 0o755),
+                                     ('hedit.app/Contents/Info.plist', '<plist/>', 0o644)]:
+                info = zipfile.ZipInfo(path)
+                info.external_attr = mode << 16
+                output.writestr(info, text)
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        archive.with_name(name + '.sha256').write_text(f'{digest}  {name}\n')
+
+    def run_macos_installer(self, *args, succeeds=True):
+        self.environment['MOCK_OS'] = 'Darwin'
+        self.environment['MOCK_ARCH'] = 'arm64'
+        result = subprocess.run(['sh', str(ROOT / 'install.sh'), '--prefix', str(self.prefix),
+                                 '--app-dir', str(self.app_dir), *args],
+                                env=self.environment, capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode == 0, succeeds, result.stdout + result.stderr)
+        self.assertFalse(list(self.work.glob('hedit-install.*')), 'Temporary download leaked')
+        return result
 
     def run_installer(self, *args, succeeds=True, piped=False):
         invocation = ['sh', '-s', '--'] if piped else ['sh', str(ROOT / 'install.sh')]
@@ -106,6 +147,8 @@ class ReleaseInstaller(unittest.TestCase):
         return result
 
     def requests(self):
+        if not self.log.exists():
+            return []
         return [json.loads(line) for line in self.log.read_text().splitlines()]
 
     def test_latest_public_piped_install(self):
@@ -153,8 +196,46 @@ class ReleaseInstaller(unittest.TestCase):
         self.assertIn('gh auth login', result.stderr)
         self.assertFalse(self.prefix.exists())
 
+    def test_macos_installs_app_and_launcher(self):
+        self.run_macos_installer()
+        launcher = self.prefix / 'bin/hedit'
+        result = subprocess.run([str(launcher), '--version'], capture_output=True, text=True, check=True)
+        self.assertEqual(result.stdout, 'hedit 0.1.2\n')
+        self.assertTrue((self.app_dir / 'hedit.app/Contents/Info.plist').is_file())
+        self.assertTrue(any('macos-universal.zip' in request[-1] for request in self.requests()))
+
+    def test_macos_upgrade_replaces_existing_app(self):
+        old = self.app_dir / 'hedit.app/Contents/stale-file'
+        old.parent.mkdir(parents=True)
+        old.write_text('old')
+        self.run_macos_installer('--version', TAG)
+        self.assertFalse(old.exists())
+        self.assertEqual([path.name for path in self.app_dir.iterdir()], ['hedit.app'])
+
+    def test_macos_failures_preserve_existing_app(self):
+        for failure in ['checksum', 'codesign', 'binary']:
+            with self.subTest(failure=failure):
+                self.setUp()
+                sentinel = self.app_dir / 'hedit.app/Contents/existing'
+                sentinel.parent.mkdir(parents=True)
+                sentinel.write_text('keep')
+                if failure == 'checksum':
+                    (self.fixtures / 'hedit-0.1.2-macos-universal.zip').write_bytes(b'corrupt')
+                elif failure == 'codesign':
+                    self.environment['MOCK_FAIL'] = 'codesign'
+                else:
+                    self.write_macos_fixture('#!/bin/sh\nexit 1\n')
+                self.run_macos_installer(succeeds=False)
+                self.assertEqual(sentinel.read_text(), 'keep')
+                self.assertFalse((self.prefix / 'bin/hedit').exists())
+
+    def test_macos_rejects_unsafe_app_directory(self):
+        self.app_dir = self.work / 'bad"dir'
+        self.run_macos_installer(succeeds=False)
+        self.assertFalse(any(request[0] in {'gh', 'curl'} for request in self.requests()))
+
     def test_unsupported_system_does_not_download(self):
-        for setting, value in [('MOCK_OS', 'Darwin'), ('MOCK_ARCH', 'riscv64')]:
+        for setting, value in [('MOCK_OS', 'FreeBSD'), ('MOCK_ARCH', 'riscv64')]:
             with self.subTest(setting=setting):
                 self.environment[setting] = value
                 self.run_installer(succeeds=False)

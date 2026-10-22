@@ -87,7 +87,7 @@ Use narrower targets while working:
 | `make package` | Build and package a release under `dist/` |
 | `make smoke` | Build and test a package in a temporary installation |
 | `make ci` | Full pre-commit and GitHub CI validation |
-| `make release-check RELEASE_TAG=v0.1.3` | Validate a release tag against `Cargo.toml` |
+| `make release-check RELEASE_TAG=vX.Y.Z` | Validate a release tag against `Cargo.toml` |
 | `make workflow-lint` | Optional workflow validation; requires `actionlint` |
 | `make clean` | Remove Cargo build artifacts |
 
@@ -119,7 +119,7 @@ This opens the picker over a 231 KB CUDA document and reports the mean time for
 
 ## macOS builds
 
-The release workflow produces one `hedit-0.1.3-macos-universal.zip` containing
+The release workflow produces one `hedit-X.Y.Z-macos-universal.zip` containing
 `hedit.app`, with native Apple Silicon and Intel slices. The deployment target is
 macOS 11.0. On a Mac with Xcode's command-line tools and Rust installed:
 
@@ -407,13 +407,13 @@ tarballs, one universal macOS ZIP, their SHA-256 files, and the Linux `install.s
 downloader. The publish job waits for all three packages.
 
 1. Set the version in `Cargo.toml` and run `cargo check` to update `Cargo.lock`.
-2. Run `make ci` and `make release-check RELEASE_TAG=v0.1.3`, using the new tag.
+2. Run `make ci` and `make release-check RELEASE_TAG=vX.Y.Z`, using the new tag.
 3. Commit the version, lockfile, and release changes, then push the commit.
 4. Create and push an annotated tag matching the version:
 
    ```sh
-   git tag -a v0.1.3 -m "hedit 0.1.3"
-   git push origin v0.1.3
+   git tag -a vX.Y.Z -m "hedit X.Y.Z"
+   git push origin vX.Y.Z
    ```
 
 The workflow uses GitHub's `GITHUB_TOKEN` with write permission only in the
@@ -425,7 +425,7 @@ keeps its releases private; installation uses the authenticated steps in the
 Assets are uploaded to a draft before it is published. If upload/publication
 fails, rerun the failed workflow jobs to finish the draft. Published releases are
 left intact; use a new version tag for subsequent changes. Tags containing a
-hyphen, such as `v0.2.0-rc.1`, publish as prereleases and do not become Latest.
+hyphen, such as `vX.Y.Z-rc.1`, publish as prereleases and do not become Latest.
 Stable tags become Latest. The default installer selects Latest; `--version`
 selects a specific stable or prerelease tag.
 
@@ -436,8 +436,8 @@ for draft and publication behavior.
 
 ## Manual updater
 
-The updater is introduced in 0.1.1. Existing 0.1.0 binaries need one external
-upgrade; adding code here does not retrofit the published release.
+Releases that predate the updater need one external upgrade; adding code here
+does not retrofit already published releases.
 
 `Help → Check for updates…` starts a worker for GitHub's latest stable release
 API. Constructors, frame polling, and timers do not initiate network work. A
@@ -521,12 +521,12 @@ and consolidated user/developer guides.
 
 #### Edit and View comparison with Sublime Text
 
-The v0.1.3 menus cover common line operations, comments, case conversion,
+The menus cover common line operations, comments, case conversion,
 indentation conversion, LF/CRLF conversion, visibility toggles, column rulers,
 wrap columns, zoom, and focus modes. They do not establish full Sublime parity.
 The remaining controls from the comparison are now implemented as follows.
 
-| Control | v0.1.3 implementation | Current limits |
+| Control | Implementation | Current limits |
 | --- | --- | --- |
 | Multiple cursors and rectangular selection | Occurrence selection, Alt+click/Alt+Shift+drag, batch typing/clipboard/deletion, cursor undo and recovery | Up to 1,000 selections; fully loaded files |
 | Split panes | Two columns or rows, focus/move actions, independent view positions on shared documents | Two groups; paged views share their loaded page |
@@ -549,7 +549,7 @@ menus until their underlying editing behavior is implemented.
 - NVIDIA hardware/driver testing, source synchronization, gutter breakpoints,
   structured variables/watches, GPU execution views, and remote setup workflows.
 
-### Daily-use features in 0.1.3
+### Daily-use features
 
 Terminal launches always detach. A child first probes the existing recovery lock;
 when another process owns it, the child submits an atomic mailbox request under

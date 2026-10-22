@@ -1,7 +1,7 @@
 # hedit user guide
 
 Keep unsaved files between sessions, inspect large logs, and work with CUDA source.
-This guide covers the upcoming hedit 0.1.3 on Linux and its initial universal macOS build.
+This guide covers hedit on Linux and its universal macOS build.
 Shortcuts use Linux labels below; on macOS, substitute **Cmd** for **Ctrl** and
 **Option** for **Alt**. The menus display the platform's labels.
 
@@ -31,9 +31,10 @@ Install the latest stable release with:
 curl -fsSL https://github.com/MohamedElashri/hedit/releases/latest/download/install.sh | sh
 ```
 
-The installer selects x86-64 or ARM64, verifies the package's SHA-256 checksum,
+On Linux, the installer selects x86-64 or ARM64, verifies the package's SHA-256 checksum,
 and installs under `~/.local`. It needs `curl`, `tar`, and standard Linux utilities;
-no compiler is required. Release binaries are built on Ubuntu 24.04 and require
+no compiler is required. On macOS, the same command installs the universal app; see
+[macOS installation](#macos-installation). Release binaries are built on Ubuntu 24.04 and require
 compatible system libraries. If they cannot run on your system, install from source.
 CUDA tools are installed separately.
 
@@ -41,11 +42,11 @@ To inspect the script first, select a version, or choose another prefix:
 
 ```sh
 curl -fsSL https://github.com/MohamedElashri/hedit/releases/latest/download/install.sh -o hedit-install.sh
-sh hedit-install.sh --version v0.1.3 --prefix "$HOME/.local"
+sh hedit-install.sh --version vX.Y.Z --prefix "$HOME/.local"
 ```
 
 Omit `--version` for the latest stable release. Prereleases require their full
-tag, such as `--version v0.2.0-rc.1`. Run the installer again to upgrade. Close
+tag, such as `--version vX.Y.Z-rc.1`. Run the installer again to upgrade. Close
 hedit before upgrading; your saved files and session data are kept.
 
 ### Private repository access
@@ -62,8 +63,8 @@ sh hedit-install.sh --github-cli
 For a pinned version, give the same tag to both commands:
 
 ```sh
-gh release download v0.1.3 --repo MohamedElashri/hedit --pattern install.sh --output hedit-install.sh
-sh hedit-install.sh --github-cli --version v0.1.3
+gh release download vX.Y.Z --repo MohamedElashri/hedit --pattern install.sh --output hedit-install.sh
+sh hedit-install.sh --github-cli --version vX.Y.Z
 ```
 
 Use a fresh filename or remove the previous downloaded script before downloading
@@ -73,12 +74,13 @@ again. Public `curl` URLs cannot access a private repository.
 
 Download the matching archive and `.sha256` file from
 [GitHub Releases](https://github.com/MohamedElashri/hedit/releases), verify its
-checksum, extract it, and run the included installer. For the x86-64 package:
+checksum, extract it, and run the included installer. For the x86-64 package,
+replacing `X.Y.Z` with the release version:
 
 ```sh
-sha256sum -c hedit-0.1.3-linux-x86_64.tar.gz.sha256
-tar -xzf hedit-0.1.3-linux-x86_64.tar.gz
-cd hedit-0.1.3-linux-x86_64
+sha256sum -c hedit-X.Y.Z-linux-x86_64.tar.gz.sha256
+tar -xzf hedit-X.Y.Z-linux-x86_64.tar.gz
+cd hedit-X.Y.Z-linux-x86_64
 sh install.sh
 ```
 
@@ -96,19 +98,24 @@ and documentation under `~/.local`.
 ### macOS installation
 
 The macOS package targets macOS 11 or newer and contains both Apple Silicon and
-Intel code in one app, starting with v0.1.3. Once released, download `hedit-0.1.3-macos-universal.zip` and its `.sha256`
+Intel code in one app. Download `hedit-X.Y.Z-macos-universal.zip` and its `.sha256`
 file from [GitHub Releases](https://github.com/MohamedElashri/hedit/releases).
 In the download directory, verify and extract it:
 
 ```sh
-shasum -a 256 -c hedit-0.1.3-macos-universal.zip.sha256
-ditto -x -k hedit-0.1.3-macos-universal.zip .
+shasum -a 256 -c hedit-X.Y.Z-macos-universal.zip.sha256
+ditto -x -k hedit-X.Y.Z-macos-universal.zip .
 ```
 
 Move **hedit.app** into Applications and open it. For command-line use, invoke
 `/Applications/hedit.app/Contents/MacOS/hedit` with the same arguments as on Linux.
-The shell installer and in-app updater support Linux; upgrade the Mac app by
-quitting hedit and replacing the bundle with the newly downloaded version.
+
+The shell installer from [Install from GitHub Releases](#install-from-github-releases)
+also works on macOS. It verifies the checksum and the app signature, installs
+**hedit.app** in `~/Applications`, and creates a `hedit` command in `~/.local/bin`.
+Use `--app-dir /Applications` to install for all users, and `--prefix` to place
+the command elsewhere. Quit hedit, then run the installer again to upgrade. The in-app
+updater supports Linux only.
 
 Initial bundles have an ad-hoc development signature, with no Developer ID or
 notarization ticket. Gatekeeper may block a downloaded app; use macOS's explicit
@@ -141,9 +148,9 @@ need your unsaved files again; see [Recovery](#recovery) before removing it.
 
 ## Updates
 
-On Linux, in-app updates are available from version **0.1.1**. Version 0.1.0 needs one
-normal installer upgrade to get this feature. Close 0.1.0, run the release
-installer again to install 0.1.3, and reopen hedit.
+In-app updates are available on Linux. If your hedit has no **Check for updates…**
+item, it predates the updater: close hedit, run the release installer again to
+install the latest release, and reopen hedit.
 
 ### Check and install manually
 

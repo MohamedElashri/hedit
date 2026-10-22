@@ -59,6 +59,15 @@ for path in files:
         elif parsed.fragment and resolved.suffix == '.md':
             if unquote(parsed.fragment) not in anchors(resolved):
                 errors.append(f'{path.relative_to(ROOT)}: missing section {target}')
+# Release versions go stale; only the changelog may name them. Toolchain pins are allowed.
+for path in files:
+    if path.name == 'CHANGELOG.md' or not path.is_file():
+        continue
+    for number, line in enumerate(path.read_text().splitlines(), 1):
+        for match in re.finditer(r'(?<![\w.])v?\d+\.\d+\.\d+', line):
+            if not re.search(r'(Rust|Python) $', line[:match.start()]):
+                errors.append(f'{path.name}:{number}: hard-coded version {match.group()}; '
+                              'use X.Y.Z or link to CHANGELOG.md')
 if errors:
     print('\n'.join(errors), file=sys.stderr)
     sys.exit(1)

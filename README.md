@@ -12,14 +12,12 @@
   <a href="DEVELOPER_GUIDE.md">Developer guide</a>
 </p>
 
-hedit is a text editor for Linux, built for the work you leave open: logs to
+hedit is a native text editor for Linux and macOS, built for the work you leave open: logs to
 inspect, snippets to revisit, and notes that do not need a filename yet. Keep a
 workspace of files between sessions, find your place in large logs, and
 work with CUDA source without leaving the editor.
 
-The upcoming **0.1.3** adds project search, saved projects, richer editing and
-navigation, persistent undo, encoding conversion, and a universal macOS app for
-Apple Silicon and Intel. See the [release changes](CHANGELOG.md#013---unreleased).
+See the [changelog](CHANGELOG.md) for what each release adds.
 
 ## What you can do
 
@@ -57,8 +55,10 @@ Install the latest stable release:
 curl -fsSL https://github.com/MohamedElashri/hedit/releases/latest/download/install.sh | sh
 ```
 
-The installer chooses Linux x86-64 or ARM64, verifies the download's checksum,
-and installs the application, launcher, themes, and guides under `~/.local`.
+The installer verifies the download's checksum and selects the right package for your
+system. On Linux it picks the x86-64 or ARM64 build and installs the application,
+launcher, themes, and guides under `~/.local`. On macOS it installs the universal
+**hedit.app** in `~/Applications` and adds a `hedit` command in `~/.local/bin`.
 Ensure `~/.local/bin` is on your `PATH`, then launch `hedit`.
 
 Prefer a manual download? Get an archive and its checksum from
@@ -70,16 +70,17 @@ Linux releases are built on Ubuntu 24.04 and need compatible Linux libraries, a 
 X11 or Wayland session, and OpenGL. NVIDIA hardware and CUDA tools are optional
 for ordinary editing.
 
-The upcoming v0.1.3 will include `hedit-0.1.3-macos-universal.zip` and its checksum
-for macOS 11 or newer. Once released, verify it with `shasum -a 256 -c`, then unzip and move
-**hedit.app** to Applications. The same app contains Apple Silicon and Intel
-code. Initial packages use an ad-hoc development signature; Developer ID signing
+The macOS app needs macOS 11 or newer and contains both Apple Silicon and Intel code.
+To install it by hand, download `hedit-<version>-macos-universal.zip` and its checksum,
+verify it with `shasum -a 256 -c`, then unzip it and move **hedit.app** to Applications.
+Initial packages use an ad-hoc development signature; Developer ID signing
 and notarization are pending. Native GUI validation is also pending. See
 [macOS installation](USER_GUIDE.md#macos-installation) for details.
 
 Choose **Help → Check for updates…** to review and install a
 newer Linux release. Update checks, installations, and restarts are always manual.
-See [updating hedit](USER_GUIDE.md#updates) for requirements and upgrading 0.1.0.
+See [updating hedit](USER_GUIDE.md#updates) for requirements and upgrading
+releases that predate the updater.
 
 ## Quick start
 
