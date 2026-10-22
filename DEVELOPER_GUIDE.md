@@ -31,6 +31,12 @@ make dev
 make run ARGS='--session-dir /tmp/hedit-development'
 ```
 
+All editor launches, including `make run`, re-exec in an independent OS session, disconnect terminal
+streams, and return after native window initialization. The child alone acquires
+the recovery lock; stdin is handed off through a private temporary spool and
+checkpointed before window creation. Startup failures return to the launcher;
+later stderr diagnostics append to `hedit.log` in the session directory.
+
 X11 and Wayland are enabled. Native file dialogs use the desktop's XDG portal.
 CUDA and NVIDIA drivers are optional external tools, not editor build dependencies.
 Linux is runtime-validated. Universal macOS packaging is configured, with native

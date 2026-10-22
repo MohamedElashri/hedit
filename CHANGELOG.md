@@ -4,6 +4,10 @@
 
 ### Added
 
+- Terminal launches return the prompt after window startup and keep running when
+  the terminal closes. This behavior is automatic for every editor launch.
+  Startup errors remain visible, stdin retains recovery protection, and background
+  diagnostics are saved in the session directory's `hedit.log`.
 - One universal macOS `.app` ZIP for Apple Silicon and Intel, including an ICNS
   icon, bundled guides/themes, checksum, and ad-hoc signing. Native CI builds
   both slices and checks the merged app; Developer ID notarization is pending.

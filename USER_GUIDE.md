@@ -663,7 +663,7 @@ Device debugging has not yet been validated on NVIDIA hardware in this project.
 ## Command line
 
 ```text
-hedit [--session-dir DIR] [--new] [FILE[:LINE[:COLUMN]] ...] [-]
+hedit [--session-dir DIR] [--new] [FILE[:LINE[:COLUMN]] | FOLDER ...] [-]
 ```
 
 | Argument | Effect |
@@ -687,6 +687,11 @@ hedit --session-dir /tmp/hedit-investigation --new
 hedit -- -notes.txt
 ```
 
+hedit always returns the terminal prompt after the window starts. Closing
+the terminal leaves the editor running. Help, version, and
+startup errors still appear in the invoking terminal; background diagnostics
+are appended to `hedit.log` in the session directory.
+
 An existing literal filename takes precedence over location syntax. CLI columns
 use UTF-16 units; out-of-range locations clamp to the document or line end. A
 missing file opens only if its parent exists and is created on **Save**.
@@ -695,8 +700,9 @@ One process can use a session directory at a time. A second launch does not
 forward files to the current window; open them there or use `--session-dir`.
 `HEDIT_SESSION_DIR` changes the default directory; the CLI option takes precedence.
 
-Stdin is checkpointed before window creation, so consumed text remains in the
-session if the graphical window cannot start.
+With `-`, hedit reads until EOF before releasing the terminal. Stdin is
+checkpointed before window creation, so consumed text remains in the session if
+the graphical window cannot start.
 
 ## Keyboard shortcuts
 

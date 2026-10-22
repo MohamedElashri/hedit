@@ -87,6 +87,9 @@ hedit kernel.cu:42:8
 printf 'keep this snippet\n' | hedit -
 ```
 
+The terminal prompt returns after the window starts; closing the terminal leaves
+hedit running.
+
 Inside the editor:
 
 1. Press **Ctrl+N** to create a file. Use **File → Name unsaved file…** to name its tab.

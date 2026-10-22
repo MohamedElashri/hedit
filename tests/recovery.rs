@@ -413,7 +413,7 @@ fn stdin_is_preserved_when_native_window_startup_fails() {
         .env_remove("WAYLAND_DISPLAY")
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .unwrap();
     child
@@ -422,7 +422,12 @@ fn stdin_is_preserved_when_native_window_startup_fails() {
         .unwrap()
         .write_all(b"stdin must survive a display error\n")
         .unwrap();
-    assert!(!child.wait().unwrap().success());
+    let output = child.wait_with_output().unwrap();
+    assert!(!output.status.success());
+    assert!(
+        !output.stderr.is_empty(),
+        "startup errors must reach the terminal"
+    );
     let (ws, errors) = Workspace::restore(directory.path().into()).unwrap();
     assert!(errors.is_empty());
     assert_eq!(

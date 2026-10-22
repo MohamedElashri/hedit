@@ -1,12 +1,26 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod app;
+mod launcher;
 #[cfg(test)]
 mod preview;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let options = hedit::cli::Options::parse(std::env::args_os().skip(1))?;
+    let mut args: Vec<_> = std::env::args_os().skip(1).collect();
+    let mut startup = launcher::Startup::take_from_args(&mut args)?;
+    let result = run(args, &mut startup);
+    if let Err(error) = &result {
+        startup.failed(error.to_string());
+    }
+    result
+}
+
+fn run(
+    args: Vec<std::ffi::OsString>,
+    startup: &mut launcher::Startup,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let options = hedit::cli::Options::parse(args.clone())?;
     if options.help {
-        println!("hedit — keep your train of thought\n\nUsage: hedit [--session-dir DIR] [--new] [FILE[:LINE[:COLUMN]] | FOLDER ...] [-]\n\n  -                 Read UTF-8 stdin into an unsaved file\n  --new             Add a new file\n  --session-dir DIR Use an isolated session (one process per session)\n  --                Treat remaining arguments as paths\n  -h, --help        Show help\n  -V, --version     Show version\n\nBuild and run with Cargo. CUDA tools are optional.");
+        println!("hedit — keep your train of thought\n\nUsage: hedit [--session-dir DIR] [--new] [FILE[:LINE[:COLUMN]] | FOLDER ...] [-]\n\n  -                 Read UTF-8 stdin into an unsaved file\n  --new             Add a new file\n  --session-dir DIR Use an isolated session (one process per session)\n  --                Treat remaining arguments as paths\n  -h, --help        Show help\n  -V, --version     Show version\n\nhedit releases the terminal after the window starts.\nBuild and run with Cargo. CUDA tools are optional.");
         return Ok(());
     }
     if options.version {
@@ -22,6 +36,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .map(|d| d.data_local_dir().join("session"))
         })
         .ok_or("Cannot determine session directory; pass --session-dir.")?;
+    if !startup.is_child() {
+        return launcher::launch(&args, &directory, options.stdin);
+    }
     let native_options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([1280.0, 820.0])
@@ -38,11 +55,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         workspace.new_buffer()?;
     }
     if options.stdin {
-        use std::io::Write;
-        let mut spool = tempfile::Builder::new().prefix("hedit-stdin-").tempfile()?;
-        std::io::copy(&mut std::io::stdin().lock(), &mut spool)?;
-        spool.flush()?;
-        let mut doc = hedit::document::Document::from_stdin(workspace.editor.id(), spool.path())?;
+        let spool = startup.stdin_path().ok_or("Missing stdin handoff file.")?;
+        let mut doc = hedit::document::Document::from_stdin(workspace.editor.id(), spool)?;
         let page = doc.page(0)?;
         workspace.add(doc, page)?;
     }
@@ -53,12 +67,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "hedit",
         native_options,
         Box::new(move |cc| {
-            Ok(Box::new(app::HeditApp::new(
-                cc,
-                workspace,
-                errors,
-                options.files,
-            )))
+            let app = app::HeditApp::new(cc, workspace, errors, options.files);
+            startup.ready()?;
+            Ok(Box::new(app))
         }),
     )?;
     Ok(())
