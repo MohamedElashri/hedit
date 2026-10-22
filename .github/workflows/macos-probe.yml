@@ -1,0 +1,62 @@
+name: Universal macOS build
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  universal:
+    name: Universal macOS app
+    runs-on: macos-15
+    timeout-minutes: 40
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.92.0
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          components: rustfmt, clippy
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Static checks
+        run: |
+          make fmt-check policy docs scripts-check
+          python3 scripts/test-macos-package.py
+      - name: Check and lint both architecture slices
+        run: |
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            cargo check --locked --all-targets --target "$target"
+            cargo clippy --locked --all-targets --target "$target" -- -D warnings
+          done
+      - name: Native editor and recovery tests
+        run: >-
+          cargo test --locked --bin hedit --test buffer_tools --test debugger
+          --test folders --test recovery --test syntax --test themes --test editing --test advanced
+      - name: Build architecture slices and assemble universal app
+        run: |
+          cargo build --release --locked --target aarch64-apple-darwin
+          cargo build --release --locked --target x86_64-apple-darwin
+          python3 scripts/package-macos.py
+      - name: Verify the distributed app
+        shell: bash
+        run: |
+          work=$(mktemp -d)
+          ditto -x -k dist/hedit-*-macos-universal.zip "$work"
+          binary="$work/hedit.app/Contents/MacOS/hedit"
+          lipo -verify_arch arm64 x86_64 "$binary"
+          codesign --verify --deep --strict "$work/hedit.app"
+          expected=$(python3 -c 'import tomllib; print("hedit " + tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
+          test "$("$binary" --version)" = "$expected"
+          "$binary" --help
+          if arch -x86_64 /usr/bin/true 2>/dev/null; then
+            test "$(arch -x86_64 "$binary" --version)" = "$expected"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hedit-macos-universal
+          path: dist/hedit-*-macos-universal.zip*
+          if-no-files-found: error

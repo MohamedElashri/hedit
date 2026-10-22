@@ -13,7 +13,17 @@ use std::{
 };
 
 pub const OUTPUT_LIMIT: usize = 512 * 1024;
+/// CUDA source editing is independent of local NVIDIA tool availability.
+pub const LOCAL_TOOLS_SUPPORTED: bool = !cfg!(target_os = "macos");
 const RECORD_LIMIT: usize = 64 * 1024;
+
+fn require_local_tools() -> Result<(), String> {
+    if LOCAL_TOOLS_SUPPORTED {
+        Ok(())
+    } else {
+        Err("Local CUDA debugging and NVIDIA tools are disabled on macOS. CUDA source editing is available.".into())
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum State {
@@ -49,6 +59,7 @@ impl DebugSession {
         args: &[String],
         cwd: Option<&Path>,
     ) -> Result<Self, String> {
+        require_local_tools()?;
         if !executable.is_file() {
             return Err("Choose an existing CUDA executable (compile with nvcc -g -G).".into());
         }
@@ -67,6 +78,7 @@ impl DebugSession {
         Ok(session)
     }
     pub fn sanitizer(executable: &Path, args: &[String], tool: &str) -> Result<Self, String> {
+        require_local_tools()?;
         if !matches!(tool, "memcheck" | "racecheck" | "initcheck" | "synccheck") {
             return Err("Unknown Compute Sanitizer tool.".into());
         }
@@ -81,6 +93,7 @@ impl DebugSession {
         Self::spawn(command, false)
     }
     pub fn gpu_info() -> Result<Self, String> {
+        require_local_tools()?;
         let mut command = Command::new("nvidia-smi");
         command.args([
             "--query-gpu=name,driver_version,memory.used,memory.total,temperature.gpu",

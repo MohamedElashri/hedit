@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.1.3] - Unreleased
+
+### Added
+
+- One universal macOS `.app` ZIP for Apple Silicon and Intel, including an ICNS
+  icon, bundled guides/themes, checksum, and ad-hoc signing. Native CI builds
+  both slices and checks the merged app; Developer ID notarization is pending.
+- Edit submenus for selection, line operations, text transformations, and
+  indentation. Duplicate, delete, move, join, sort, or reverse lines; change case,
+  trim trailing whitespace, convert indentation, and toggle line comments.
+- Insert an indented line before/after the cursor (**Ctrl+Shift+Enter** /
+  **Ctrl+Enter**) and remove duplicate lines while preserving their order.
+- Explicit whole-file LF/CRLF conversion with cursor mapping, undo/redo,
+  recovery metadata, and CRLF-aware Enter input.
+- Per-file spaces/tabs indentation policy and 2/4/8-space indentation steps.
+- View submenus for sidebar, editor, and font controls, with persistent tabs/status
+  visibility, current-line highlighting, whitespace markers, full screen (**F11**),
+  and distraction-free mode (**Shift+F11**).
+- Persistent 80/100/120-column rulers and word-wrap columns, plus window-width
+  wrapping. Display wrapping leaves file bytes unchanged.
+- Multiple cursors with next/all occurrence selection, Alt+click, rectangular
+  selection, batch typing/clipboard/deletion, cursor undo/redo, and recovery.
+- Two-column/two-row split panes with independent view positions, group focus,
+  file selection, and a shared document/edit history.
+- Automatic indentation detection, smart Enter, soft indentation Backspace,
+  and per-file tab rendering at the selected indentation width.
+- Indentation/selection folding with fold/unfold-all controls, original source
+  line numbers, indentation guides, and a sampled clickable minimap.
+- Centered distraction-free text with restoration of the previous full-screen state.
+
+### Changed
+
+- macOS menus display Command/Option shortcuts. Local CUDA debugging and NVIDIA
+  tools are disabled on macOS while CUDA source editing remains available.
+- Release automation includes the universal macOS archive alongside Linux packages.
+
 ## [0.1.2] - 2026-10-22
 
 ### Added
@@ -86,6 +122,7 @@ Initial release of hedit.
 - User and developer guides, plus Makefile commands for formatting, linting,
   tests, packaging, and CI validation.
 
+[0.1.3]: https://github.com/MohamedElashri/hedit/compare/v0.1.2...HEAD
 [0.1.2]: https://github.com/MohamedElashri/hedit/releases/tag/v0.1.2
 [0.1.1]: https://github.com/MohamedElashri/hedit/releases/tag/v0.1.1
 [0.1.0]: https://github.com/MohamedElashri/hedit/releases/tag/v0.1.0

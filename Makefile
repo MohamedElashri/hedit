@@ -6,7 +6,7 @@ ACTIONLINT ?= actionlint
 PREFIX ?= $(HOME)/.local
 export RELEASE_TAG
 
-.PHONY: help dev build run fmt fmt-check policy docs scripts-check lint test check ci smoke package install release-check workflow-lint clean
+.PHONY: help dev build run fmt fmt-check policy docs scripts-check lint test check ci smoke package install release-check workflow-lint macos clean
 
 help: ## Show available commands and configuration
 	@printf 'hedit development commands\n\n'
@@ -47,6 +47,7 @@ lint: fmt-check policy docs scripts-check ## Run all static checks, including cl
 test: ## Run Rust tests and offline release-installer tests
 	$(CARGO) test --locked
 	$(PYTHON) scripts/test-install.py
+	$(PYTHON) scripts/test-macos-package.py
 
 check: lint test ## Run static checks and tests without a release build
 
@@ -76,3 +77,8 @@ workflow-lint: ## Validate GitHub Actions workflows (requires actionlint)
 
 clean: ## Remove Cargo build artifacts; keep installed files and session data
 	$(CARGO) clean
+
+macos: ## Build and package one universal macOS app (requires macOS and Xcode)
+	MACOSX_DEPLOYMENT_TARGET=11.0 $(CARGO) build --release --locked --target aarch64-apple-darwin
+	MACOSX_DEPLOYMENT_TARGET=11.0 $(CARGO) build --release --locked --target x86_64-apple-darwin
+	$(PYTHON) scripts/package-macos.py

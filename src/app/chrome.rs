@@ -1,6 +1,11 @@
 use super::*;
 
 fn menu_item(ui: &mut egui::Ui, app: &HeditApp, command: Command) -> bool {
+    if matches!(command, Command::Gpu | Command::ToolSettings)
+        && !hedit::debugger::LOCAL_TOOLS_SUPPORTED
+    {
+        return false;
+    }
     ui.add_enabled(
         app.command_enabled(command),
         egui::Button::new(command.label())
@@ -18,16 +23,18 @@ impl HeditApp {
             egui::menu::bar(ui, |ui| {
                 for (title, groups) in [
                     ("File", vec![vec![Command::New, Command::Open, Command::OpenFolder], vec![Command::RefreshFolder, Command::CloseFolder], vec![Command::Save, Command::SaveAs, Command::Rename], vec![Command::Close, Command::Reopen, Command::Shelf], vec![Command::Quit]]),
-                    ("Edit", vec![vec![Command::Undo, Command::Redo], vec![Command::Cut, Command::Copy, Command::Paste, Command::SelectAll]]),
+                    ("Edit", vec![]),
                     ("Find", vec![vec![Command::Find, Command::Replace]]),
-                    ("View", vec![vec![Command::Sidebar, Command::FolderSidebar, Command::LineNumbers, Command::Wrap], vec![Command::Follow], vec![Command::ZoomIn, Command::ZoomOut, Command::ResetZoom]]),
+                    ("View", vec![]),
                     ("Goto", vec![vec![Command::Switcher, Command::Goto], vec![Command::Bookmark, Command::NextBookmark, Command::PreviousBookmark, Command::Bookmarks]]),
                     ("Tools", vec![vec![Command::Palette, Command::Gpu], vec![Command::Checkpoint]]),
                     ("Preferences", vec![vec![Command::Settings, Command::Appearance, Command::ToolSettings]]),
                     ("Help", vec![vec![Command::Updates, Command::About]]),
                 ] {
                     ui.menu_button(title, |ui| {
-                        ui.set_min_width(230.0);
+                        ui.set_min_width(245.0);
+                        if title == "Edit" { self.edit_menu(ui, &mut action); return; }
+                        if title == "View" { self.view_menu(ui, &mut action); return; }
                         for (index, group) in groups.iter().enumerate() {
                             if index > 0 { ui.separator(); }
                             for &command in group {
@@ -53,6 +60,9 @@ impl HeditApp {
         self.tabs(ctx);
     }
     fn tabs(&mut self, ctx: &egui::Context) {
+        if !self.show_tabs || self.distraction_free {
+            return;
+        }
         let theme = self.theme.clone();
         let mut select = None;
         let mut close = None;
@@ -171,7 +181,7 @@ impl HeditApp {
                                     !self.busy && !self.closing,
                                     egui::Button::new("+").frame(false),
                                 )
-                                .on_hover_text("New file · Ctrl+N")
+                                .on_hover_text(format!("New file · {}", Command::New.shortcut()))
                                 .clicked()
                             {
                                 action = Some(Command::New);
@@ -195,6 +205,9 @@ impl HeditApp {
         }
     }
     fn status_bar(&mut self, ctx: &egui::Context) {
+        if !self.show_status || self.distraction_free {
+            return;
+        }
         let theme = self.theme.clone();
         egui::TopBottomPanel::bottom("status")
             .frame(
@@ -205,9 +218,12 @@ impl HeditApp {
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     let buffer = self.active();
-                    let prefix: String = buffer.page.text.chars().take(buffer.view.head).collect();
-                    let line = prefix.bytes().filter(|&b| b == b'\n').count() + 1;
-                    let col = prefix.rsplit('\n').next().unwrap_or("").chars().count() + 1;
+                    let (line, col) = hedit::advanced::line_column(
+                        &buffer.page.text,
+                        buffer.view.head,
+                        buffer.view.tab_size.unwrap_or(4) as usize,
+                    );
+                    let (line, col) = (line + 1, col + 1);
                     ui.label(
                         RichText::new(format!(
                             "{}Ln {line}, Col {col}",
@@ -215,6 +231,13 @@ impl HeditApp {
                         ))
                         .size(11.0),
                     );
+                    if !buffer.view.selections.is_empty() {
+                        ui.label(
+                            RichText::new(format!("{} cursors", buffer.view.selections.len() + 1))
+                                .size(10.0)
+                                .color(theme.accent.color()),
+                        );
+                    }
                     if buffer.follow {
                         ui.label(
                             RichText::new("READ ONLY · FOLLOWING")
@@ -413,7 +436,7 @@ impl HeditApp {
         ));
     }
     fn buffer_sidebar(&mut self, ctx: &egui::Context) {
-        if !self.sidebar {
+        if !self.sidebar || self.distraction_free {
             return;
         }
         let theme = self.theme.clone();
@@ -572,5 +595,215 @@ impl HeditApp {
                         .color(self.theme.muted.color()),
                 );
             });
+    }
+}
+
+fn command_group(
+    ui: &mut egui::Ui,
+    app: &HeditApp,
+    title: &str,
+    commands: &[Command],
+    action: &mut Option<Command>,
+) {
+    ui.menu_button(title, |ui| {
+        ui.set_min_width(250.0);
+        for &command in commands {
+            if menu_item(ui, app, command) {
+                *action = Some(command);
+                ui.close_menu();
+            }
+        }
+    });
+}
+impl HeditApp {
+    fn edit_menu(&self, ui: &mut egui::Ui, action: &mut Option<Command>) {
+        for command in [Command::Undo, Command::Redo] {
+            if menu_item(ui, self, command) {
+                *action = Some(command);
+                ui.close_menu();
+            }
+        }
+        ui.separator();
+        for command in [Command::Cut, Command::Copy, Command::Paste] {
+            if menu_item(ui, self, command) {
+                *action = Some(command);
+                ui.close_menu();
+            }
+        }
+        ui.separator();
+        command_group(
+            ui,
+            self,
+            "Selection",
+            &[
+                Command::SelectAll,
+                Command::SelectLine,
+                Command::NextOccurrence,
+                Command::AllOccurrences,
+                Command::Rectangle,
+                Command::SingleSelection,
+            ],
+            action,
+        );
+        command_group(
+            ui,
+            self,
+            "Line",
+            &[
+                Command::Duplicate,
+                Command::DeleteLine,
+                Command::InsertBefore,
+                Command::InsertAfter,
+                Command::MoveUp,
+                Command::MoveDown,
+                Command::JoinLines,
+                Command::SortLines,
+                Command::ReverseLines,
+                Command::UniqueLines,
+            ],
+            action,
+        );
+        command_group(
+            ui,
+            self,
+            "Text",
+            &[
+                Command::Uppercase,
+                Command::Lowercase,
+                Command::TrimWhitespace,
+            ],
+            action,
+        );
+        command_group(
+            ui,
+            self,
+            "Line endings",
+            &[Command::ToLf, Command::ToCrlf],
+            action,
+        );
+        ui.menu_button("Indentation", |ui| {
+            egui::ScrollArea::vertical()
+                .id_salt("indent-menu-scroll")
+                .max_height((ui.ctx().screen_rect().height() - 70.0).max(140.0))
+                .show(ui, |ui| {
+                    for commands in [
+                        &[Command::Indent, Command::Unindent][..],
+                        &[Command::IndentSpaces, Command::IndentTabs][..],
+                        &[Command::Indent2, Command::Indent4, Command::Indent8][..],
+                        &[Command::ToSpaces, Command::ToTabs][..],
+                        &[
+                            Command::AutoIndent,
+                            Command::SmartIndent,
+                            Command::SoftTabs,
+                            Command::DetectIndent,
+                        ][..],
+                    ] {
+                        for &command in commands {
+                            if menu_item(ui, self, command) {
+                                *action = Some(command);
+                                ui.close_menu();
+                            }
+                        }
+                        ui.separator();
+                    }
+                });
+        });
+        ui.separator();
+        if menu_item(ui, self, Command::ToggleComment) {
+            *action = Some(Command::ToggleComment);
+            ui.close_menu();
+        }
+    }
+    fn view_menu(&self, ui: &mut egui::Ui, action: &mut Option<Command>) {
+        command_group(
+            ui,
+            self,
+            "Layout",
+            &[
+                Command::SinglePane,
+                Command::SplitColumns,
+                Command::SplitRows,
+                Command::FocusPane,
+                Command::MovePane,
+            ],
+            action,
+        );
+        command_group(
+            ui,
+            self,
+            "Code folding",
+            &[
+                Command::Fold,
+                Command::Unfold,
+                Command::FoldAll,
+                Command::UnfoldAll,
+            ],
+            action,
+        );
+        command_group(
+            ui,
+            self,
+            "Side bar",
+            &[Command::Sidebar, Command::FolderSidebar],
+            action,
+        );
+        command_group(
+            ui,
+            self,
+            "Editor",
+            &[
+                Command::Tabs,
+                Command::StatusBar,
+                Command::LineNumbers,
+                Command::CurrentLine,
+                Command::Whitespace,
+                Command::IndentGuides,
+                Command::Minimap,
+                Command::Wrap,
+            ],
+            action,
+        );
+        command_group(
+            ui,
+            self,
+            "Font size",
+            &[Command::ZoomIn, Command::ZoomOut, Command::ResetZoom],
+            action,
+        );
+        command_group(
+            ui,
+            self,
+            "Ruler",
+            &[
+                Command::RulerNone,
+                Command::Ruler80,
+                Command::Ruler100,
+                Command::Ruler120,
+            ],
+            action,
+        );
+        command_group(
+            ui,
+            self,
+            "Word wrap column",
+            &[
+                Command::WrapWindow,
+                Command::Wrap80,
+                Command::Wrap100,
+                Command::Wrap120,
+            ],
+            action,
+        );
+        ui.separator();
+        for command in [
+            Command::Fullscreen,
+            Command::DistractionFree,
+            Command::Follow,
+        ] {
+            if menu_item(ui, self, command) {
+                *action = Some(command);
+                ui.close_menu();
+            }
+        }
     }
 }

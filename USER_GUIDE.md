@@ -1,7 +1,9 @@
 # hedit user guide
 
 Keep unsaved files between sessions, inspect large logs, and work with CUDA source.
-This guide covers hedit 0.1.2 on Linux.
+This guide covers the upcoming hedit 0.1.3 on Linux and its initial universal macOS build.
+Shortcuts use Linux labels below; on macOS, substitute **Cmd** for **Ctrl** and
+**Option** for **Alt**. The menus display the platform's labels.
 
 - [Installation](#installation)
 - [Updates](#updates)
@@ -18,7 +20,7 @@ This guide covers hedit 0.1.2 on Linux.
 
 ## Installation
 
-You need a graphical Linux session with X11 or Wayland and OpenGL. A GPU and CUDA
+On Linux, you need a graphical session with X11 or Wayland and OpenGL. A GPU and CUDA
 are optional; ordinary editing works without them.
 
 ### Install from GitHub Releases
@@ -39,7 +41,7 @@ To inspect the script first, select a version, or choose another prefix:
 
 ```sh
 curl -fsSL https://github.com/MohamedElashri/hedit/releases/latest/download/install.sh -o hedit-install.sh
-sh hedit-install.sh --version v0.1.2 --prefix "$HOME/.local"
+sh hedit-install.sh --version v0.1.3 --prefix "$HOME/.local"
 ```
 
 Omit `--version` for the latest stable release. Prereleases require their full
@@ -60,8 +62,8 @@ sh hedit-install.sh --github-cli
 For a pinned version, give the same tag to both commands:
 
 ```sh
-gh release download v0.1.2 --repo MohamedElashri/hedit --pattern install.sh --output hedit-install.sh
-sh hedit-install.sh --github-cli --version v0.1.2
+gh release download v0.1.3 --repo MohamedElashri/hedit --pattern install.sh --output hedit-install.sh
+sh hedit-install.sh --github-cli --version v0.1.3
 ```
 
 Use a fresh filename or remove the previous downloaded script before downloading
@@ -74,9 +76,9 @@ Download the matching archive and `.sha256` file from
 checksum, extract it, and run the included installer. For the x86-64 package:
 
 ```sh
-sha256sum -c hedit-0.1.2-linux-x86_64.tar.gz.sha256
-tar -xzf hedit-0.1.2-linux-x86_64.tar.gz
-cd hedit-0.1.2-linux-x86_64
+sha256sum -c hedit-0.1.3-linux-x86_64.tar.gz.sha256
+tar -xzf hedit-0.1.3-linux-x86_64.tar.gz
+cd hedit-0.1.3-linux-x86_64
 sh install.sh
 ```
 
@@ -90,6 +92,32 @@ Packages must match your processor and require compatible Linux system libraries
 If you have a source checkout, follow the [build instructions](DEVELOPER_GUIDE.md#build-and-install),
 then use `make install`. It installs the application, desktop entry, icon, themes,
 and documentation under `~/.local`.
+
+### macOS installation
+
+The macOS package targets macOS 11 or newer and contains both Apple Silicon and
+Intel code in one app, starting with v0.1.3. Once released, download `hedit-0.1.3-macos-universal.zip` and its `.sha256`
+file from [GitHub Releases](https://github.com/MohamedElashri/hedit/releases).
+In the download directory, verify and extract it:
+
+```sh
+shasum -a 256 -c hedit-0.1.3-macos-universal.zip.sha256
+ditto -x -k hedit-0.1.3-macos-universal.zip .
+```
+
+Move **hedit.app** into Applications and open it. For command-line use, invoke
+`/Applications/hedit.app/Contents/MacOS/hedit` with the same arguments as on Linux.
+The shell installer and in-app updater support Linux; upgrade the Mac app by
+quitting hedit and replacing the bundle with the newly downloaded version.
+
+Initial bundles have an ad-hoc development signature, with no Developer ID or
+notarization ticket. Gatekeeper may block a downloaded app; use macOS's explicit
+Open Anyway action in Privacy & Security only for a download you trust. Native
+GUI validation is pending; see the [macOS build notes](DEVELOPER_GUIDE.md#macos-builds)
+for the current checks and remaining platform work.
+
+Recovery data lives in `~/Library/Application Support/hedit.hedit/session/`.
+Removing or replacing the app does not remove that directory.
 
 ### First session
 
@@ -113,9 +141,9 @@ need your unsaved files again; see [Recovery](#recovery) before removing it.
 
 ## Updates
 
-In-app updates are available from version **0.1.1**. Version 0.1.0 needs one
+On Linux, in-app updates are available from version **0.1.1**. Version 0.1.0 needs one
 normal installer upgrade to get this feature. Close 0.1.0, run the release
-installer again to install 0.1.2, and reopen hedit.
+installer again to install 0.1.3, and reopen hedit.
 
 ### Check and install manually
 
@@ -218,9 +246,9 @@ and choose **Remove folder from workspace** to remove just that root, or choose
 **File → Close all folders** to remove all trees. Both actions keep tabs open
 and leave files on disk untouched.
 
-Click **×** beside FOLDERS or use **View → Show folder sidebar** (**Ctrl+Alt+B**)
-to hide or reveal the folder section independently of Open Files. **View → Show
-sidebar** (**Ctrl+B**) toggles the entire sidebar. Both options are also in
+Click **×** beside FOLDERS or use **View → Side bar → Show folder sidebar** (**Ctrl+Alt+B**)
+to hide or reveal the folder section independently of Open Files. **View → Side bar →
+Show sidebar** (**Ctrl+B**) toggles the entire sidebar. Both options are also in
 **Preferences → Settings… → Editor**.
 
 Directory listings show at most 2,000 entries per directory. Quick open returns
@@ -282,17 +310,118 @@ sits at a saved position.
 
 ## Editing and navigation
 
-Use a single selection for clipboard operations and indentation. **Ctrl+Z**
+Use one or more selections for clipboard operations and indentation. **Ctrl+Z**
 undoes; **Ctrl+Shift+Z** or **Ctrl+Y** redoes. Up to 256 edit steps per file are
 kept during the current process. Undo history is not restored after restart.
 
-Toggle wrap through **View → Word wrap** (**Ctrl+Shift+W**). Long lines scroll
-horizontally when wrap is off. **Ctrl++** and **Ctrl+-** change font size. Wrap, font size, line numbers, and sidebar visibility are kept between launches.
+Toggle wrap through **View → Editor → Word wrap** (**Ctrl+Shift+W**). Long lines scroll
+horizontally when wrap is off. **Ctrl++** and **Ctrl+-** change font size. Wrap,
+font size, line numbers, tabs, status bar, current-line highlighting, whitespace
+markers, and sidebar visibility are kept between launches.
 Use **Preferences → Settings… → Editor** to manage them together.
 
+### Edit commands
+
+**Edit** groups commands under **Selection**, **Line**, **Text**, and **Indentation**.
+All text changes participate in the current file's undo history and recovery.
+
+| Shortcut | Action |
+| --- | --- |
+| Ctrl+L | Select the current line or extend the selection to whole lines |
+| Ctrl+Shift+D | Duplicate the selection, or the current line with no selection |
+| Ctrl+Shift+K | Delete selected lines or the current line |
+| Ctrl+Enter / Ctrl+Shift+Enter | Insert an indented line after / before the cursor |
+| Ctrl+Shift+Up / Ctrl+Shift+Down | Move selected lines or the current line |
+| Ctrl+J | Join selected lines, or the current and next line |
+| Ctrl+] / Ctrl+[ | Indent / unindent lines |
+| Tab / Shift+Tab | Insert indentation or indent selected lines / unindent |
+| Ctrl+/ | Toggle line comments for languages with a supported line-comment prefix |
+
+**Line → Sort lines**, **Reverse lines**, and **Remove duplicate lines** affect
+selected lines, or the whole file without a selection. Duplicate removal keeps
+the first occurrence of each line and preserves their order.
+**Text → Uppercase/Lowercase** transforms the selection.
+**Trim trailing whitespace** affects selected lines or the whole file.
+
+Under **Indentation**, choose spaces or tabs and a 2/4/8-space indentation step
+for the current file. These choices survive restart. Conversions affect leading
+indentation on selected lines, or the whole file with no selection; tabs within
+code or strings stay intact. The indentation step controls inserted spaces and
+conversions and the rendered tab stops without replacing tab characters in the file.
+Opening a source file detects its indentation from up to 10,000 lines; choose
+**Detect indentation from file** to run detection again. **Automatic indentation**
+copies leading whitespace on Enter. **Smart indentation** adds a level after an
+opening bracket and places a matching closing bracket on its own line. Turn
+these options off independently in the submenu or Editor preferences.
+**Backspace to indentation stops** removes spaces back to the previous stop.
+Bulk text commands are unavailable in paged files and Follow mode.
+
+### Multiple cursors and rectangular selections
+
+Press **Ctrl+D** to select the word at the cursor, then repeat to add the next
+occurrence. **Ctrl+Shift+L** selects all occurrences of the selected text or word.
+Use **Alt+click** to add a cursor. Drag with **Alt+Shift** to select a rectangle,
+or make a normal selection and choose **Edit → Selection → Rectangular selection**.
+Short lines clamp to their ends. **Esc** or **Single selection** keeps just the
+primary cursor.
+
+Typing, pasting, deletion, indentation, line commands, and arrow-key navigation
+apply across the selections. Copy joins selected ranges with newlines; paste
+inserts the clipboard text at every cursor. Each batch is one undo step, with
+cursor positions restored by undo/redo during the current process. Additional
+selections survive recovery and reopening closed files. There is a limit of
+1,000 selections per view; these controls require a fully loaded file.
+
+### Split panes, folding, and minimap
+
+**View → Layout** offers a single pane, two columns, or two rows. A split initially
+shows the current file in both groups. Use a group's file dropdown to show
+another open file, click an editor to focus it, or use **Ctrl+Alt+Right** to switch
+groups. **Move file to other group** (**Ctrl+Alt+Shift+Right**) displays the current
+file there and focuses that group. If the other group showed a different file,
+the two displayed files exchange groups. Views keep independent cursor, selection,
+fold, and scroll positions; edits and undo share one document. Layout and view
+positions save with window preferences. Paged files share the currently loaded
+page across views.
+
+**View → Code folding** folds the current indentation block or selection, folds
+all indentation blocks, and unfolds one or all regions. **Ctrl+Shift+[** folds;
+**Ctrl+Shift+]** unfolds. Click a folded marker to expand it. Folded text remains
+in the file, in copy operations, and in recovery. Editing clears fold ranges so
+stale ranges cannot hide unrelated text. A search or cursor jump into a fold
+reveals it. Automatic folds use indentation rather than a language parser;
+select a region to fold code without indentation. Folding requires a fully
+loaded file.
+
+Toggle **Show indentation guides** and **Show minimap** under **View → Editor**
+or in preferences. Click or drag in the minimap to scroll. Its drawing is sampled
+to the available height; for paged files it shows the current page and is labeled
+**PAGE**, rather than reading the whole large file.
+
+### View controls
+
+**View → Editor** toggles tabs, status bar, line numbers, current-line highlighting,
+whitespace markers, and wrap. Whitespace markers show spaces as dots and tabs as
+arrows without changing the file. **View → Font size** includes zoom and reset.
+
+**View → Ruler** shows a vertical guide at column 80, 100, or 120, or hides it.
+**View → Word wrap column** chooses 80, 100, 120, or the window width and enables
+wrap. A narrow window wraps earlier to fit. Turning **Word wrap** off keeps your
+chosen column for the next time you enable it. Ruler and wrap-column choices
+survive restart and are also available in Editor preferences.
+
+**F11** toggles full screen. **Shift+F11** toggles distraction-free mode, temporarily
+hiding the sidebar, tabs, and status bar, entering full screen, and centering
+text within 100 columns. Toggle it again to restore your chosen layout and
+previous full-screen state. The menu remains available in both modes.
+
 UTF-8 text is supported, including an existing BOM and LF/CRLF bytes. UTF-16 and
-binary files are rejected. Edits can introduce LF breaks into CRLF files;
-line-ending conversion is not available yet.
+binary files are rejected. **Edit → Line endings** converts the entire loaded
+file to **LF (Unix)** or **CRLF (Windows)**, regardless of the current selection.
+The conversion is undoable, preserves an existing BOM, and updates the status
+bar and recovery metadata. Enter follows the file's selected LF/CRLF policy;
+pasted text may still contain mixed endings. Conversion is unavailable in
+paged files and Follow mode.
 
 ### Syntax highlighting
 
@@ -416,9 +545,9 @@ one window:
 
 | Page | Settings and actions |
 | --- | --- |
-| Editor | Word wrap, line numbers, open files sidebar, font size, restore defaults |
+| Editor | Wrap, line numbers, sidebar/folders, tabs, status bar, current line, whitespace, font size, restore defaults |
 | Appearance | Presets, custom colors, theme import/export, contrast feedback |
-| CUDA Tools | CUDA-GDB path and a shortcut to the tool panel |
+| CUDA Tools (Linux) | CUDA-GDB path and a shortcut to the tool panel |
 | Recovery | Checkpoint status, checkpoint now, closed files, recovery guidance |
 
 View commands provide quick toggles for the same editor settings. The status bar
@@ -471,6 +600,10 @@ leading `#` is optional on input. Unsupported versions, unknown fields, and
 files above 64 KiB are rejected. A failed import keeps your current palette.
 
 ## CUDA tools
+
+CUDA syntax highlighting and editing work on both platforms. Local CUDA-GDB,
+Compute Sanitizer, and NVIDIA GPU information are disabled on macOS; their
+menus and preferences are hidden there.
 
 Choose **Tools → CUDA panel**. You need NVIDIA's CUDA Toolkit and a compatible
 driver for device debugging. The panel uses `cuda-gdb`, `compute-sanitizer`, and
@@ -580,6 +713,12 @@ session if the graphical window cannot start.
 | Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y | Undo / redo |
 | Ctrl+C / Ctrl+X / Ctrl+V | Copy / cut / paste |
 | Ctrl+A | Select all in the focused text field |
+| Ctrl+D / Ctrl+Shift+L | Select next / all occurrences |
+| Alt+click / Alt+Shift+drag | Add a cursor / rectangular selection |
+| Ctrl+Alt+Right | Focus the other editor group |
+| Ctrl+Alt+Shift+Right | Show the current file in the other group |
+| Ctrl+Shift+[ / Ctrl+Shift+] | Fold / unfold |
+| F11 / Shift+F11 | Full screen / distraction-free mode |
 | Ctrl+Shift+W | Toggle wrap |
 | Ctrl++ or Ctrl+= / Ctrl+- | Increase / decrease editor font |
 | Ctrl+, | Preferences |

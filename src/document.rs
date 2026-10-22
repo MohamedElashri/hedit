@@ -56,6 +56,7 @@ struct EditState {
     version: u64,
     offset: u64,
     recovered: bool,
+    eol: &'static str,
 }
 
 #[derive(Clone)]
@@ -550,6 +551,7 @@ impl Document {
             version: self.version,
             offset,
             recovered: self.recovered,
+            eol: self.eol,
         }
     }
     fn remember_edit(&mut self, offset: u64) {
@@ -581,6 +583,7 @@ impl Document {
             candidate.size = saved.size;
             candidate.version = saved.version;
             candidate.recovered = saved.recovered;
+            candidate.eol = saved.eol;
             candidate.revision += 1;
             candidate.dirty = candidate.saved_version != Some(candidate.version);
             let page = candidate.page(saved.offset)?;
@@ -836,6 +839,22 @@ impl Document {
         self.pieces = next;
         self.size = self.size - (end - start) + replacement_len;
         self.finish_edit();
+        Ok(self.info())
+    }
+    /// Commit text and its explicit newline policy as one undoable edit.
+    pub fn replace_with_line_ending(
+        &mut self,
+        start: u64,
+        end: u64,
+        text: String,
+        revision: u64,
+        crlf: bool,
+    ) -> Result<Info, String> {
+        if self.paged {
+            return Err("Line-ending conversion requires a fully loaded file.".into());
+        }
+        self.replace(start, end, text, revision)?;
+        self.eol = if crlf { "CRLF" } else { "LF" };
         Ok(self.info())
     }
     pub fn mark_clean(&mut self) {

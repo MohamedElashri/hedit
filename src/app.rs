@@ -1,6 +1,9 @@
+mod advanced_edit;
 mod chrome;
 mod commands;
+mod edit_actions;
 mod editor_layout;
+mod panes;
 mod preferences;
 mod project;
 mod tree_row;
@@ -38,6 +41,7 @@ enum Action {
     Folders(Vec<hedit::folder::FolderListing>),
     Created(String, bool),
     Page(u64, Page, Option<(usize, usize)>),
+    History(u64, Page, bool, Vec<hedit::advanced::Selection>),
     Saved(u64, Info),
     ThemeImported(Theme),
     Notice(String),
@@ -68,10 +72,28 @@ pub struct HeditApp {
     error: Option<String>,
     notice: String,
     wrap: bool,
+    auto_indent: bool,
+    smart_indent: bool,
+    soft_tabs: bool,
+    indent_guides: bool,
+    minimap: bool,
+    panes: panes::Panes,
+    rectangle_start: Option<(usize, usize)>,
+    secondary_layout: editor_layout::LayoutCache,
+    projections: [editor_layout::ProjectionCache; 2],
     font_size: f32,
     sidebar: bool,
     folder_sidebar: bool,
     line_numbers: bool,
+    show_tabs: bool,
+    show_status: bool,
+    highlight_line: bool,
+    show_whitespace: bool,
+    ruler_column: u16,
+    wrap_column: u16,
+    distraction_free: bool,
+    fullscreen: bool,
+    distraction_was_fullscreen: bool,
     preferences_page: PreferencesPage,
     goto_open: bool,
     goto_focus: bool,
@@ -168,6 +190,11 @@ impl HeditApp {
             .map(|f| f.visible)
             .or_else(|| storage.and_then(|s| eframe::get_value(s, "folder_sidebar")))
             .unwrap_or(true);
+        let mut panes: panes::Panes = storage
+            .and_then(|s| eframe::get_value(s, "panes"))
+            .unwrap_or_default();
+        panes.focused = panes.focused.min(1);
+        panes.mode = panes.mode.min(2);
         Self {
             project,
             workspace,
@@ -192,12 +219,54 @@ impl HeditApp {
             },
             notice: "Ready.".into(),
             wrap,
+            auto_indent: storage
+                .and_then(|s| eframe::get_value(s, "auto_indent"))
+                .unwrap_or(true),
+            smart_indent: storage
+                .and_then(|s| eframe::get_value(s, "smart_indent"))
+                .unwrap_or(true),
+            soft_tabs: storage
+                .and_then(|s| eframe::get_value(s, "soft_tabs"))
+                .unwrap_or(true),
+            indent_guides: storage
+                .and_then(|s| eframe::get_value(s, "indent_guides"))
+                .unwrap_or(true),
+            minimap: storage
+                .and_then(|s| eframe::get_value(s, "minimap"))
+                .unwrap_or(false),
+            rectangle_start: None,
+            panes,
+            secondary_layout: editor_layout::LayoutCache::default(),
+            projections: Default::default(),
             font_size,
             sidebar,
             folder_sidebar,
             line_numbers: storage
                 .and_then(|s| eframe::get_value(s, "line_numbers"))
                 .unwrap_or(true),
+            show_tabs: storage
+                .and_then(|s| eframe::get_value(s, "show_tabs"))
+                .unwrap_or(true),
+            show_status: storage
+                .and_then(|s| eframe::get_value(s, "show_status"))
+                .unwrap_or(true),
+            highlight_line: storage
+                .and_then(|s| eframe::get_value(s, "highlight_line"))
+                .unwrap_or(true),
+            show_whitespace: storage
+                .and_then(|s| eframe::get_value(s, "show_whitespace"))
+                .unwrap_or(false),
+            ruler_column: storage
+                .and_then(|s| eframe::get_value(s, "ruler_column"))
+                .filter(|column| [0, 80, 100, 120].contains(column))
+                .unwrap_or(0),
+            wrap_column: storage
+                .and_then(|s| eframe::get_value(s, "wrap_column"))
+                .filter(|column| [0, 80, 100, 120].contains(column))
+                .unwrap_or(0),
+            distraction_free: false,
+            fullscreen: false,
+            distraction_was_fullscreen: false,
             preferences_page: PreferencesPage::Editor,
             goto_open: false,
             goto_focus: false,
@@ -461,6 +530,7 @@ impl HeditApp {
         let id = self.active().page.info.id;
         let offset = self.active().page.start;
         let revision = self.active().page.info.revision;
+        let cursors = self.selections();
         let editor = Arc::clone(&self.workspace.editor);
         self.job(ctx, move || {
             let page = editor
@@ -468,7 +538,7 @@ impl HeditApp {
                 .lock()
                 .map_err(|e| e.to_string())?
                 .history(redo, offset, revision)?;
-            Ok(Action::Page(id, page, None))
+            Ok(Action::History(id, page, redo, cursors))
         });
     }
     fn find(&mut self, ctx: &egui::Context) {
@@ -626,6 +696,40 @@ impl HeditApp {
                     }
                     self.report(result);
                 }
+                Ok(Action::History(id, page, redo, current)) => {
+                    if let Some(index) = self
+                        .workspace
+                        .open
+                        .iter()
+                        .position(|b| b.page.info.id == id)
+                    {
+                        self.workspace.active = index;
+                        let buffer = &mut self.workspace.open[index];
+                        let selection = if redo {
+                            buffer.cursor_redo.pop()
+                        } else {
+                            buffer.cursor_undo.pop()
+                        };
+                        if selection.is_some() {
+                            if redo {
+                                buffer.cursor_undo.push(current);
+                            } else {
+                                buffer.cursor_redo.push(current);
+                            }
+                        }
+                        buffer.set_page(page);
+                        buffer.external = false;
+                        if let Some(selection) = selection {
+                            self.set_selections(selection);
+                        } else {
+                            let b = &mut self.workspace.open[index];
+                            b.view.anchor = 0;
+                            b.view.head = 0;
+                        }
+                        self.focus_editor = true;
+                        self.changed();
+                    }
+                }
                 Ok(Action::Page(id, page, selection)) => {
                     if let Some(index) = self
                         .workspace
@@ -745,6 +849,16 @@ impl HeditApp {
                 Key::B,
                 Command::FolderSidebar,
             ),
+            (
+                Modifiers { alt: true, ..shift },
+                Key::ArrowRight,
+                Command::MovePane,
+            ),
+            (
+                Modifiers { alt: true, ..cmd },
+                Key::ArrowRight,
+                Command::FocusPane,
+            ),
             (cmd, Key::B, Command::Sidebar),
             (cmd, Key::N, Command::New),
             (shift, Key::O, Command::OpenFolder),
@@ -767,13 +881,63 @@ impl HeditApp {
                 self.execute(ctx, command);
             }
         }
+        if take(Modifiers::SHIFT, Key::F11) {
+            self.execute(ctx, Command::DistractionFree);
+        } else if take(Modifiers::NONE, Key::F11) {
+            self.execute(ctx, Command::Fullscreen);
+        }
         // Let single-line search and debugger inputs keep their own undo history.
-        let editor_id = egui::Id::new((
+        let mut editor_id = egui::Id::new((
             "editor",
             self.active().page.info.id,
             self.active().page.start,
         ));
+        if self.panes.mode != 0 && self.panes.focused > 0 {
+            editor_id = editor_id.with(self.panes.focused);
+        }
+        if self.focus_editor
+            && self.panes.mode != 0
+            && !self.preferences_open
+            && !self.palette
+            && !self.find_focus
+            && !self.goto_focus
+        {
+            ctx.memory_mut(|m| m.request_focus(editor_id));
+        }
         if ctx.memory(|m| m.has_focus(editor_id)) {
+            for (modifiers, key, command) in [
+                (shift, Key::D, Command::Duplicate),
+                (cmd, Key::D, Command::NextOccurrence),
+                (shift, Key::L, Command::AllOccurrences),
+                (shift, Key::OpenBracket, Command::Fold),
+                (shift, Key::CloseBracket, Command::Unfold),
+                (shift, Key::K, Command::DeleteLine),
+                (shift, Key::Enter, Command::InsertBefore),
+                (cmd, Key::Enter, Command::InsertAfter),
+                (shift, Key::ArrowUp, Command::MoveUp),
+                (shift, Key::ArrowDown, Command::MoveDown),
+                (cmd, Key::L, Command::SelectLine),
+                (cmd, Key::J, Command::JoinLines),
+                (cmd, Key::Slash, Command::ToggleComment),
+                (cmd, Key::CloseBracket, Command::Indent),
+                (cmd, Key::OpenBracket, Command::Unindent),
+            ] {
+                if take(modifiers, key) {
+                    self.execute(ctx, command);
+                }
+            }
+            if take(Modifiers::SHIFT, Key::Tab) {
+                self.execute(ctx, Command::Unindent);
+            } else if take(Modifiers::NONE, Key::Tab) {
+                self.insert_indentation();
+            }
+            self.advanced_input(ctx);
+            if !self.auto_indent
+                && self.active().page.info.eol == "CRLF"
+                && take(Modifiers::NONE, Key::Enter)
+            {
+                self.insert_crlf();
+            }
             if take(shift, Key::Z) || take(cmd, Key::Y) {
                 self.execute(ctx, Command::Redo);
             } else if take(cmd, Key::Z) {
@@ -788,6 +952,9 @@ impl HeditApp {
         }
         // Leave Escape visible to egui so open menus can dismiss themselves too.
         if ctx.input(|input| input.key_pressed(Key::Escape)) {
+            let b = &mut self.workspace.open[self.workspace.active];
+            b.view.selections.clear();
+            b.restore_cursor = true;
             self.palette = false;
             self.find_open = false;
             self.goto_open = false;
@@ -809,142 +976,230 @@ impl HeditApp {
                     .fill(theme.background.color())
                     .inner_margin(egui::Margin::symmetric(12, 10)),
             )
-            .show(ctx, |ui| {
-                if let Some(error) = self.error.clone() {
-                    egui::Frame::new()
-                        .fill(theme.error.color().gamma_multiply(0.12))
-                        .inner_margin(10.0)
-                        .show(ui, |ui| {
-                            ui.horizontal_wrapped(|ui| {
-                                ui.label(RichText::new(&error).color(theme.error.color()));
-                                if ui.button("Dismiss").clicked() {
-                                    self.error = None;
-                                }
-                                if ui.button("Retry checkpoint").clicked() {
-                                    self.checkpoint(ctx);
-                                }
-                            });
-                        });
-                }
-                if self.active().external {
+            .show(ctx, |ui| self.pane_layout(ui));
+    }
+    fn editor_pane(&mut self, ui: &mut egui::Ui, pane_id: usize) {
+        if self.distraction_free {
+            let mut rect = ui.available_rect_before_wrap();
+            let width =
+                ui.fonts(|f| f.glyph_width(&FontId::monospace(self.font_size), ' ')) * 100.0 + 60.0;
+            if rect.width() > width {
+                let margin = (rect.width() - width) / 2.0;
+                rect.min.x += margin;
+                rect.max.x -= margin;
+            }
+            ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                self.editor_surface(ui, pane_id)
+            });
+        } else {
+            self.editor_surface(ui, pane_id);
+        }
+    }
+    fn editor_surface(&mut self, ui: &mut egui::Ui, pane_id: usize) {
+        let context = ui.ctx().clone();
+        let ctx = &context;
+        let theme = self.theme.clone();
+
+        if let Some(error) = self.error.clone() {
+            egui::Frame::new()
+                .fill(theme.error.color().gamma_multiply(0.12))
+                .inner_margin(10.0)
+                .show(ui, |ui| {
                     ui.horizontal_wrapped(|ui| {
-                        ui.colored_label(
-                            theme.warning.color(),
-                            "File changed outside hedit. Your open text has been kept.",
-                        );
-                        if ui
-                            .add_enabled(
-                                !self.busy && !self.active().page.info.dirty,
-                                egui::Button::new("Reload file"),
-                            )
-                            .clicked()
-                        {
-                            self.load_page(ctx, self.active().page.start, true);
+                        ui.label(RichText::new(&error).color(theme.error.color()));
+                        if ui.button("Dismiss").clicked() {
+                            self.error = None;
                         }
-                        if ui
-                            .add_enabled(!self.busy, egui::Button::new("Save file as…"))
-                            .clicked()
-                        {
-                            self.save_file(ctx, true);
+                        if ui.button("Retry checkpoint").clicked() {
+                            self.checkpoint(ctx);
                         }
                     });
-                }
-                if self.active().page.info.paged {
-                    ui.add_enabled_ui(!self.busy && !self.closing, |ui| {
-                        ui.horizontal(|ui| {
-                            if ui.button("|‹ Start").clicked() {
-                                self.load_page(ctx, 0, false);
-                            }
-                            if ui.button("‹ Previous").clicked() {
-                                self.load_page(
-                                    ctx,
-                                    self.active().page.start.saturating_sub(PAGE_SIZE),
-                                    false,
-                                );
-                            }
-                            if ui.button("Next ›").clicked() {
-                                self.load_page(ctx, self.active().page.end, false);
-                            }
-                            if ui.button("End ›|").clicked() {
-                                self.load_page(
-                                    ctx,
-                                    self.active().page.info.size.saturating_sub(PAGE_SIZE),
-                                    false,
-                                );
-                            }
-                            let page = &self.active().page;
-                            ui.label(format!(
-                                "Bytes {}–{} of {}",
-                                page.start, page.end, page.info.size
-                            ));
-                        })
-                    });
-                }
-                let index = self.workspace.active;
-                let buffer = &mut self.workspace.open[index];
-                let id = egui::Id::new(("editor", buffer.page.info.id, buffer.page.start));
-                if buffer.restore_cursor {
-                    let mut state = egui::TextEdit::load_state(ctx, id).unwrap_or_default();
-                    state.clear_undoer();
-                    state
-                        .cursor
-                        .set_char_range(Some(egui::text::CCursorRange::two(
-                            egui::text::CCursor::new(buffer.view.anchor),
-                            egui::text::CCursor::new(buffer.view.head),
-                        )));
-                    state.store(ctx, id);
-                }
-                let old = buffer.page.text.clone();
-                let language = buffer.language();
-                let font_size = self.font_size;
-                let wrap = self.wrap;
-                let layout_cache = &mut self.editor_layout;
-                let mut layouter = move |ui: &egui::Ui, text: &str, wrap_width: f32| {
-                    layout_cache.layout(
-                        ui,
-                        text,
-                        language,
-                        font_size,
-                        if wrap { wrap_width } else { f32::INFINITY },
-                        &theme,
+                });
+        }
+        if self.active().external {
+            ui.horizontal_wrapped(|ui| {
+                ui.colored_label(
+                    theme.warning.color(),
+                    "File changed outside hedit. Your open text has been kept.",
+                );
+                if ui
+                    .add_enabled(
+                        !self.busy && !self.active().page.info.dirty,
+                        egui::Button::new("Reload file"),
                     )
-                };
-                let mut scroll = egui::ScrollArea::both()
-                    .id_salt(("page-scroll", buffer.page.info.id, buffer.page.start))
-                    .auto_shrink([false, false])
-                    .stick_to_bottom(buffer.follow);
-                if buffer.restore_cursor {
-                    scroll = scroll
-                        .vertical_scroll_offset(buffer.view.scroll_top as f32)
-                        .horizontal_scroll_offset(buffer.view.scroll_left as f32);
+                    .clicked()
+                {
+                    self.load_page(ctx, self.active().page.start, true);
                 }
-                let restore = buffer.restore_cursor;
-                let gutter = if self.line_numbers {
-                    let digits = (buffer
-                        .page
-                        .text
-                        .bytes()
-                        .filter(|&byte| byte == b'\n')
-                        .count()
-                        + 1)
-                    .to_string()
-                    .len();
-                    (digits.max(3) as f32 * font_size * 0.65 + 16.0).max(42.0)
+                if ui
+                    .add_enabled(!self.busy, egui::Button::new("Save file as…"))
+                    .clicked()
+                {
+                    self.save_file(ctx, true);
+                }
+            });
+        }
+        if self.active().page.info.paged {
+            ui.add_enabled_ui(!self.busy && !self.closing, |ui| {
+                ui.horizontal(|ui| {
+                    if ui.button("|‹ Start").clicked() {
+                        self.load_page(ctx, 0, false);
+                    }
+                    if ui.button("‹ Previous").clicked() {
+                        self.load_page(
+                            ctx,
+                            self.active().page.start.saturating_sub(PAGE_SIZE),
+                            false,
+                        );
+                    }
+                    if ui.button("Next ›").clicked() {
+                        self.load_page(ctx, self.active().page.end, false);
+                    }
+                    if ui.button("End ›|").clicked() {
+                        self.load_page(
+                            ctx,
+                            self.active().page.info.size.saturating_sub(PAGE_SIZE),
+                            false,
+                        );
+                    }
+                    let page = &self.active().page;
+                    ui.label(format!(
+                        "Bytes {}–{} of {}",
+                        page.start, page.end, page.info.size
+                    ));
+                })
+            });
+        }
+        let index = self.workspace.active;
+        let buffer = &mut self.workspace.open[index];
+        let base_id = egui::Id::new(("editor", buffer.page.info.id, buffer.page.start));
+        let id = if pane_id == 0 {
+            base_id
+        } else {
+            base_id.with(pane_id)
+        };
+        let count = buffer.page.text.chars().count();
+        buffer.view.anchor = buffer.view.anchor.min(count);
+        buffer.view.head = buffer.view.head.min(count);
+        buffer.view.folds.retain(|f| {
+            f.end <= count && !(f.start < buffer.view.head && buffer.view.head < f.end)
+        });
+        let projection = self.projections[pane_id].get(
+            &buffer.page.text,
+            buffer.view.tab_size.unwrap_or(4),
+            &buffer.view.folds,
+        );
+        let mut display = projection.text.clone();
+        let original_selection = hedit::advanced::Selection {
+            anchor: buffer.view.anchor,
+            head: buffer.view.head,
+        };
+        {
+            let mut state = egui::TextEdit::load_state(ctx, id).unwrap_or_default();
+            state.clear_undoer();
+            state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::two(
+                    egui::text::CCursor::new(projection.display(buffer.view.anchor)),
+                    egui::text::CCursor::new(projection.display(buffer.view.head)),
+                )));
+            state.store(ctx, id);
+        }
+        if !ctx.input(|i| i.pointer.primary_down()) {
+            self.rectangle_start = None;
+        }
+        if ctx.input(|i| {
+            i.pointer.primary_pressed()
+                && i.modifiers.alt
+                && i.modifiers.shift
+                && i.pointer
+                    .interact_pos()
+                    .is_some_and(|p| ui.clip_rect().contains(p))
+        }) {
+            self.rectangle_start = Some((pane_id, original_selection.head));
+        }
+        let old = buffer.page.text.clone();
+        let language = buffer.language();
+        let font_size = self.font_size;
+        let wrap = self.wrap || self.distraction_free;
+        let column_width = ui.fonts(|fonts| fonts.glyph_width(&FontId::monospace(font_size), ' '));
+        let wrap_limit = if self.wrap_column == 0 {
+            if self.distraction_free {
+                column_width * 100.0
+            } else {
+                f32::INFINITY
+            }
+        } else {
+            column_width * f32::from(self.wrap_column)
+        };
+        let layout_cache = if pane_id == 0 {
+            &mut self.editor_layout
+        } else {
+            &mut self.secondary_layout
+        };
+        let mut layouter = move |ui: &egui::Ui, text: &str, wrap_width: f32| {
+            layout_cache.layout(
+                ui,
+                text,
+                language,
+                font_size,
+                if wrap {
+                    wrap_width.min(wrap_limit)
                 } else {
-                    0.0
-                };
-                let gutter_color = self.theme.muted.color();
-                let gutter_background = self.theme.background.color();
-                let gutter_text = self.theme.text.color();
-                let current_line = buffer
-                    .page
-                    .text
-                    .chars()
-                    .take(buffer.view.head)
-                    .filter(|&c| c == '\n')
-                    .count()
-                    + 1;
-                let scroll_output = scroll.show(ui, |ui| {
+                    f32::INFINITY
+                },
+                &theme,
+            )
+        };
+        let mut scroll = egui::ScrollArea::both()
+            .id_salt((
+                "page-scroll",
+                buffer.page.info.id,
+                buffer.page.start,
+                pane_id,
+            ))
+            .auto_shrink([false, false])
+            .stick_to_bottom(buffer.follow);
+        if buffer.restore_cursor {
+            scroll = scroll
+                .vertical_scroll_offset(buffer.view.scroll_top as f32)
+                .horizontal_scroll_offset(buffer.view.scroll_left as f32);
+        }
+        let restore = buffer.restore_cursor;
+        let gutter = if self.line_numbers {
+            let digits = (buffer
+                .page
+                .text
+                .bytes()
+                .filter(|&byte| byte == b'\n')
+                .count()
+                + 1)
+            .to_string()
+            .len();
+            (digits.max(3) as f32 * font_size * 0.65 + 16.0).max(42.0)
+        } else {
+            0.0
+        };
+        let gutter_color = self.theme.muted.color();
+        let gutter_background = self.theme.background.color();
+        let gutter_text = self.theme.text.color();
+        let current_line = buffer
+            .page
+            .text
+            .chars()
+            .take(buffer.view.head)
+            .filter(|&c| c == '\n')
+            .count()
+            + 1;
+        let map_area = ui.available_rect_before_wrap();
+        let mut editor_area = map_area;
+        if self.minimap && map_area.width() > 300.0 {
+            editor_area.max.x -= 76.0;
+        }
+        let scroll_output = ui
+            .scope_builder(egui::UiBuilder::new().max_rect(editor_area), |ui| {
+                ui.set_clip_rect(ui.clip_rect().intersect(editor_area));
+                scroll.show(ui, |ui| {
                     let gutter_rect = egui::Rect::from_min_max(
                         ui.clip_rect().min,
                         egui::pos2(ui.clip_rect().left() + gutter, ui.clip_rect().bottom()),
@@ -958,14 +1213,14 @@ impl HeditApp {
                             egui::pos2(gutter_rect.right(), ui.clip_rect().top()),
                             ui.clip_rect().max,
                         )));
-                        let mut edit = egui::TextEdit::multiline(&mut buffer.page.text)
+                        let mut edit = egui::TextEdit::multiline(&mut display)
                             .id(id)
                             .font(FontId::monospace(font_size))
                             .code_editor()
                             .lock_focus(true)
                             .frame(false)
                             .desired_rows(30)
-                            .desired_width(if self.wrap {
+                            .desired_width(if wrap {
                                 ui.available_width()
                             } else {
                                 f32::INFINITY
@@ -984,16 +1239,205 @@ impl HeditApp {
                                     && !self.about_open
                                     && !self.updates.open,
                             );
-                        if !self.wrap {
+                        if !wrap {
                             edit = edit.desired_width(f32::INFINITY);
                         }
                         if self.focus_editor {
                             ctx.memory_mut(|m| m.request_focus(id));
                         }
+                        let line_background = ui.painter().add(egui::Shape::Noop);
                         let mut output = edit.show(ui);
+                        if self.highlight_line {
+                            if let Some(range) = &output.cursor_range {
+                                let caret = output
+                                    .galley
+                                    .pos_from_cursor(&range.primary)
+                                    .translate(output.galley_pos.to_vec2());
+                                let rect = egui::Rect::from_min_max(
+                                    egui::pos2(ui.clip_rect().left(), caret.top()),
+                                    egui::pos2(ui.clip_rect().right(), caret.bottom()),
+                                );
+                                ui.painter().set(
+                                    line_background,
+                                    egui::Shape::rect_filled(
+                                        rect.intersect(ui.clip_rect()),
+                                        0.0,
+                                        self.theme.elevated.color().gamma_multiply(0.35),
+                                    ),
+                                );
+                            }
+                        }
+                        for fold in buffer.view.folds.clone() {
+                            let display_start = projection.display(fold.start);
+                            if projection.source(display_start) != fold.start {
+                                continue;
+                            }
+                            let cursor = output
+                                .galley
+                                .from_ccursor(egui::text::CCursor::new(display_start));
+                            let position = output
+                                .galley
+                                .pos_from_cursor(&cursor)
+                                .translate(output.galley_pos.to_vec2());
+                            if !position.intersects(ui.clip_rect()) {
+                                continue;
+                            }
+                            let lines = old[hedit::advanced::byte(&old, fold.start)
+                                ..hedit::advanced::byte(&old, fold.end)]
+                                .bytes()
+                                .filter(|c| *c == b'\n')
+                                .count()
+                                .max(1);
+                            let button = egui::Rect::from_min_size(
+                                position.left_top(),
+                                egui::vec2(140.0, position.height()),
+                            );
+                            if ui
+                                .put(
+                                    button,
+                                    egui::Button::new(format!("▸ {lines} lines folded")).small(),
+                                )
+                                .clicked()
+                            {
+                                buffer.view.folds.retain(|f| *f != fold);
+                                self.focus_editor = true;
+                                self.generation = self.generation.wrapping_add(1);
+                            }
+                        }
+                        if self.indent_guides {
+                            let mut first = true;
+                            for row in &output.galley.rows {
+                                if first
+                                    && output.galley_pos.y + row.rect.bottom()
+                                        >= ui.clip_rect().top()
+                                    && output.galley_pos.y + row.rect.top()
+                                        <= ui.clip_rect().bottom()
+                                {
+                                    let spaces =
+                                        row.glyphs.iter().take_while(|g| g.chr == ' ').count();
+                                    for col in
+                                        (0..spaces)
+                                            .step_by(buffer.view.tab_size.unwrap_or(4).clamp(1, 8)
+                                                as usize)
+                                    {
+                                        let x = output.galley_pos.x + column_width * col as f32;
+                                        ui.painter().vline(
+                                            x,
+                                            (output.galley_pos.y + row.rect.top())
+                                                ..=(output.galley_pos.y + row.rect.bottom()),
+                                            egui::Stroke::new(
+                                                1.0,
+                                                self.theme.muted.color().gamma_multiply(0.22),
+                                            ),
+                                        );
+                                    }
+                                }
+                                first = row.ends_with_newline;
+                            }
+                        }
+                        for selection in &buffer.view.selections {
+                            let a = output.galley.from_ccursor(egui::text::CCursor::new(
+                                projection.display(selection.start()),
+                            ));
+                            let b = output.galley.from_ccursor(egui::text::CCursor::new(
+                                projection.display(selection.end()),
+                            ));
+                            let mut left = output
+                                .galley
+                                .pos_from_cursor(&a)
+                                .translate(output.galley_pos.to_vec2());
+                            let right = output
+                                .galley
+                                .pos_from_cursor(&b)
+                                .translate(output.galley_pos.to_vec2());
+                            if selection.start() == selection.end() {
+                                ui.painter().vline(
+                                    left.left(),
+                                    left.y_range(),
+                                    egui::Stroke::new(1.5, self.theme.accent.color()),
+                                );
+                            } else {
+                                for row in a.rcursor.row..=b.rcursor.row {
+                                    let r = &output.galley.rows[row];
+                                    let y = output.galley_pos.y + r.rect.top();
+                                    let x = if row == a.rcursor.row {
+                                        left.left()
+                                    } else {
+                                        output.galley_pos.x
+                                    };
+                                    let end = if row == b.rcursor.row {
+                                        right.left()
+                                    } else {
+                                        output.galley_pos.x + r.rect.right()
+                                    };
+                                    left = egui::Rect::from_min_max(
+                                        egui::pos2(x, y),
+                                        egui::pos2(end, y + r.rect.height()),
+                                    );
+                                    ui.painter().rect_filled(
+                                        left,
+                                        0.0,
+                                        self.theme.accent.color().gamma_multiply(0.22),
+                                    );
+                                }
+                            }
+                        }
+                        if self.ruler_column > 0 {
+                            let x =
+                                output.galley_pos.x + column_width * f32::from(self.ruler_column);
+                            ui.painter().vline(
+                                x,
+                                ui.clip_rect().y_range(),
+                                egui::Stroke::new(
+                                    1.0,
+                                    self.theme.muted.color().gamma_multiply(0.25),
+                                ),
+                            );
+                        }
+                        if self.show_whitespace {
+                            let source_chars: Vec<_> = old.chars().collect();
+                            let mut row_start = 0;
+                            for row in &output.galley.rows {
+                                let top = output.galley_pos.y + row.rect.top();
+                                if top + row.rect.height() >= ui.clip_rect().top()
+                                    && top <= ui.clip_rect().bottom()
+                                {
+                                    for (n, glyph) in row.glyphs.iter().enumerate() {
+                                        let position = row_start + n;
+                                        let source = projection.source(position);
+                                        let mut center = output.galley_pos
+                                            + glyph.pos.to_vec2()
+                                            + egui::vec2(glyph.advance_width / 2.0, -3.0);
+                                        if source_chars.get(source) == Some(&'\t') {
+                                            if projection.display(source) == position {
+                                                let width =
+                                                    projection.display(source + 1) - position;
+                                                center.x += glyph.advance_width
+                                                    * (width.saturating_sub(1)) as f32
+                                                    / 2.0;
+                                                ui.painter().text(
+                                                    center,
+                                                    egui::Align2::CENTER_CENTER,
+                                                    "→",
+                                                    FontId::monospace(font_size - 2.0),
+                                                    self.theme.muted.color(),
+                                                );
+                                            }
+                                        } else if glyph.chr == ' ' {
+                                            ui.painter().circle_filled(
+                                                center,
+                                                0.8,
+                                                self.theme.muted.color().gamma_multiply(0.65),
+                                            );
+                                        }
+                                    }
+                                }
+                                row_start += row.glyphs.len() + usize::from(row.ends_with_newline);
+                            }
+                        }
                         if gutter > 0.0 {
                             gutter_painter.rect_filled(gutter_rect, 0.0, gutter_background);
-                            let mut line = 1;
+                            let mut display_line = 0;
                             let mut first_row = true;
                             for row in &output.galley.rows {
                                 if first_row {
@@ -1007,9 +1451,15 @@ impl HeditApp {
                                         gutter_painter.text(
                                             position,
                                             egui::Align2::RIGHT_CENTER,
-                                            line.to_string(),
+                                            projection
+                                                .source_lines
+                                                .get(display_line)
+                                                .unwrap_or(&1)
+                                                .to_string(),
                                             FontId::monospace(font_size - 1.0),
-                                            if line == current_line {
+                                            if projection.source_lines.get(display_line)
+                                                == Some(&current_line)
+                                            {
                                                 gutter_text
                                             } else {
                                                 gutter_color
@@ -1019,7 +1469,7 @@ impl HeditApp {
                                 }
                                 first_row = row.ends_with_newline;
                                 if row.ends_with_newline {
-                                    line += 1;
+                                    display_line += 1;
                                 }
                             }
                         }
@@ -1039,8 +1489,71 @@ impl HeditApp {
                         if let Some(range) = output.cursor_range {
                             let range = range.as_ccursor_range();
                             let previous = (buffer.view.anchor, buffer.view.head);
-                            buffer.view.anchor = range.secondary.index;
-                            buffer.view.head = range.primary.index;
+                            let selection = hedit::advanced::Selection {
+                                anchor: range.secondary.index,
+                                head: range.primary.index,
+                            };
+                            if output.response.changed() {
+                                let edited = projection.edited(&old, &display, selection);
+                                let (a, b, _) =
+                                    hedit::workspace::splice(&projection.text, &display);
+                                let a = projection.text[..a].chars().count();
+                                let b = projection.text[..b].chars().count();
+                                let touched = projection.touches_fold(a, b);
+                                if original_selection.anchor == original_selection.head && touched {
+                                    buffer.page.text = old.clone();
+                                } else {
+                                    buffer.page.text = edited.text;
+                                }
+                                let selected = edited.selections[0];
+                                buffer.view.anchor = selected.anchor;
+                                buffer.view.head = selected.head;
+                                buffer.view.folds.clear();
+                                self.generation = self.generation.wrapping_add(1);
+                            } else {
+                                buffer.view.anchor = projection.source(selection.anchor);
+                                buffer.view.head = projection.source(selection.head);
+                            }
+                            if output.response.clicked() || output.response.dragged() {
+                                let modifiers = ctx.input(|i| i.modifiers);
+                                if modifiers.alt && !buffer.page.info.paged {
+                                    let head = buffer.view.head;
+                                    if modifiers.shift {
+                                        let mut ranges = hedit::advanced::rectangle(
+                                            &buffer.page.text,
+                                            self.rectangle_start
+                                                .filter(|(pane, _)| *pane == pane_id)
+                                                .map_or(
+                                                    original_selection.anchor,
+                                                    |(_, anchor)| anchor,
+                                                ),
+                                            head,
+                                            buffer.view.tab_size.unwrap_or(4) as usize,
+                                        );
+                                        if let Some(primary) = ranges.pop() {
+                                            buffer.view.anchor = primary.anchor;
+                                            buffer.view.head = primary.head;
+                                        }
+                                        buffer.view.selections = ranges;
+                                    } else if output.response.clicked()
+                                        && buffer.view.selections.len()
+                                            < hedit::advanced::MAX_SELECTIONS - 1
+                                    {
+                                        buffer.view.selections.push(original_selection);
+                                    }
+                                } else {
+                                    buffer.view.selections.clear();
+                                }
+                                if let Some(at) = output.response.interact_pointer_pos() {
+                                    let cursor =
+                                        output.galley.cursor_from_pos(at - output.galley_pos);
+                                    let source = projection.source(cursor.ccursor.index);
+                                    buffer
+                                        .view
+                                        .folds
+                                        .retain(|f| !(f.start <= source && source <= f.end));
+                                }
+                            }
                             if previous != (buffer.view.anchor, buffer.view.head) {
                                 self.generation = self.generation.wrapping_add(1);
                             }
@@ -1049,45 +1562,112 @@ impl HeditApp {
                         // second, potentially large TextEdit undo history.
                         output.state.clear_undoer();
                         output.state.store(ctx, id);
-                        output.response.changed()
+                        buffer.page.text != old
                     })
                     .inner
-                });
-                buffer.restore_cursor = false;
-                buffer.reveal_cursor = false;
-                if buffer.view.scroll_top != scroll_output.state.offset.y as f64
-                    || buffer.view.scroll_left != scroll_output.state.offset.x as f64
-                {
-                    buffer.view.scroll_top = scroll_output.state.offset.y as f64;
-                    buffer.view.scroll_left = scroll_output.state.offset.x as f64;
-                    self.generation = self.generation.wrapping_add(1);
+                })
+            })
+            .inner;
+        let mut minimap_target = None;
+        if self.minimap && map_area.width() > 300.0 {
+            let map = egui::Rect::from_min_max(
+                egui::pos2(map_area.right() - 68.0, map_area.top()),
+                map_area.max,
+            );
+            ui.painter().rect_filled(map, 0.0, self.theme.panel.color());
+            let lines: Vec<_> = projection.text.lines().collect();
+            let rows = lines.len().max(1);
+            let samples = (map.height() as usize).min(rows).max(1);
+            for n in 0..samples {
+                let line = lines.get(n * rows / samples).copied().unwrap_or("");
+                let y = map.top() + n as f32 * (map.height() / samples as f32).min(2.0);
+                let leading = line
+                    .chars()
+                    .take_while(|c| c.is_whitespace())
+                    .count()
+                    .min(100);
+                let width = line.chars().count().min(120);
+                ui.painter().hline(
+                    (map.left() + leading as f32 * 0.45)..=(map.left() + width as f32 * 0.45),
+                    y,
+                    egui::Stroke::new(0.7, self.theme.muted.color().gamma_multiply(0.5)),
+                );
+            }
+            let content = scroll_output.content_size.y.max(map.height());
+            let start = (scroll_output.state.offset.y / content).clamp(0.0, 1.0);
+            let fraction = (map.height() / content).min(1.0);
+            let viewport = egui::Rect::from_min_size(
+                egui::pos2(map.left(), map.top() + start * map.height()),
+                egui::vec2(map.width(), (fraction * map.height()).max(8.0)),
+            );
+            ui.painter().rect_filled(
+                viewport.intersect(map),
+                0.0,
+                self.theme.accent.color().gamma_multiply(0.12),
+            );
+            let response = ui.interact(
+                map,
+                egui::Id::new(("minimap", pane_id)),
+                egui::Sense::click_and_drag(),
+            );
+            if let Some(pos) = response.interact_pointer_pos() {
+                minimap_target = Some(
+                    (((pos.y - map.top()) / map.height()) * content - map.height() / 2.0).max(0.0)
+                        as f64,
+                );
+            }
+            if buffer.page.info.paged {
+                ui.painter().text(
+                    map.left_top(),
+                    egui::Align2::LEFT_TOP,
+                    "PAGE",
+                    FontId::monospace(9.0),
+                    self.theme.muted.color(),
+                );
+            }
+        }
+        buffer.restore_cursor = false;
+        buffer.reveal_cursor = false;
+        if buffer.view.scroll_top != scroll_output.state.offset.y as f64
+            || buffer.view.scroll_left != scroll_output.state.offset.x as f64
+        {
+            buffer.view.scroll_top = scroll_output.state.offset.y as f64;
+            buffer.view.scroll_left = scroll_output.state.offset.x as f64;
+            self.generation = self.generation.wrapping_add(1);
+        }
+        if let Some(target) = minimap_target {
+            buffer.view.scroll_top = target;
+            buffer.restore_cursor = true;
+        }
+        if scroll_output.inner {
+            let b = &mut self.workspace.open[index];
+            let mut cursors = b.view.selections.clone();
+            cursors.push(original_selection);
+            b.pending_selection = Some(cursors);
+            match self.workspace.edit(index, &old) {
+                Ok(()) => self.changed(),
+                Err(error) => {
+                    // If an external writer invalidates a paged source, keep
+                    // the user's edited view in a new independent unsaved file.
+                    let text = self.workspace.open[index].page.text.clone();
+                    self.workspace.open[index].page.text = old;
+                    let result = (|| {
+                        let mut doc = Document::empty(self.workspace.editor.id());
+                        doc.replace(0, 0, text, 0)?;
+                        let page = doc.page(0)?;
+                        self.workspace.add(doc, page)
+                    })();
+                    self.report(result);
+                    self.error = Some(format!(
+                        "{error}\nThe edited page has been kept in a new unsaved file."
+                    ));
                 }
-                if scroll_output.inner {
-                    match self.workspace.edit(index, &old) {
-                        Ok(()) => self.changed(),
-                        Err(error) => {
-                            // If an external writer invalidates a paged source, keep
-                            // the user's edited view in a new independent unsaved file.
-                            let text = self.workspace.open[index].page.text.clone();
-                            self.workspace.open[index].page.text = old;
-                            let result = (|| {
-                                let mut doc = Document::empty(self.workspace.editor.id());
-                                doc.replace(0, 0, text, 0)?;
-                                let page = doc.page(0)?;
-                                self.workspace.add(doc, page)
-                            })();
-                            self.report(result);
-                            self.error = Some(format!(
-                                "{error}\nThe edited page has been kept in a new unsaved file."
-                            ));
-                        }
-                    }
-                }
-            });
+            }
+        }
     }
     fn gpu(&mut self, ctx: &egui::Context) {
         let theme = self.theme.clone();
-        if !self.gpu_open {
+        if !hedit::debugger::LOCAL_TOOLS_SUPPORTED || !self.gpu_open {
             return;
         }
         egui::TopBottomPanel::bottom("gpu").resizable(true).default_height(285.0).min_height(160.0).show(ctx, |ui| {
@@ -1414,14 +1994,20 @@ impl HeditApp {
                     if ui
                         .add_enabled(
                             !self.busy && !self.closing,
-                            egui::Button::new("Toggle at cursor · Ctrl+F2"),
+                            egui::Button::new(format!(
+                                "Toggle at cursor · {}",
+                                Command::Bookmark.shortcut()
+                            )),
                         )
                         .clicked()
                     {
                         self.toggle_bookmark();
                     }
                     if bookmarks.is_empty() {
-                        ui.label("No bookmarks yet. Mark a position with Ctrl+F2.");
+                        ui.label(format!(
+                            "No bookmarks yet. Mark a position with {}.",
+                            Command::Bookmark.shortcut()
+                        ));
                     }
                     egui::ScrollArea::vertical()
                         .max_height(300.0)
@@ -1526,11 +2112,23 @@ impl eframe::App for HeditApp {
         ));
     }
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        eframe::set_value(storage, "auto_indent", &self.auto_indent);
+        eframe::set_value(storage, "smart_indent", &self.smart_indent);
+        eframe::set_value(storage, "soft_tabs", &self.soft_tabs);
+        eframe::set_value(storage, "indent_guides", &self.indent_guides);
+        eframe::set_value(storage, "minimap", &self.minimap);
+        eframe::set_value(storage, "panes", &self.panes);
         eframe::set_value(storage, "wrap", &self.wrap);
         eframe::set_value(storage, "font_size", &self.font_size);
         eframe::set_value(storage, "sidebar", &self.sidebar);
         eframe::set_value(storage, "folder_sidebar", &self.folder_sidebar);
         eframe::set_value(storage, "line_numbers", &self.line_numbers);
+        eframe::set_value(storage, "show_tabs", &self.show_tabs);
+        eframe::set_value(storage, "show_status", &self.show_status);
+        eframe::set_value(storage, "highlight_line", &self.highlight_line);
+        eframe::set_value(storage, "show_whitespace", &self.show_whitespace);
+        eframe::set_value(storage, "ruler_column", &self.ruler_column);
+        eframe::set_value(storage, "wrap_column", &self.wrap_column);
         storage.set_string("debugger", self.debugger.clone());
         eframe::set_value(storage, "update_github_cli", &self.updates.use_github_cli);
         let mut theme = self.theme.clone();
@@ -1637,7 +2235,10 @@ mod tests {
         let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
         app.open(&ctx, Some(root.clone()));
         finish_app_job(&mut app, &ctx);
-        assert_eq!(app.workspace.folders[0].path, root.to_str().unwrap());
+        assert_eq!(
+            app.workspace.folders[0].path,
+            std::fs::canonicalize(&root).unwrap().to_str().unwrap()
+        );
         frame(&ctx, &mut app, vec![]);
         click_label(&ctx, &mut app, "src");
         let started = Instant::now();
@@ -1996,6 +2597,273 @@ mod tests {
     }
     #[derive(Default)]
     struct MemoryStorage(std::collections::HashMap<String, String>);
+    #[test]
+    fn multiple_cursors_type_delete_undo_and_recover_as_one_document() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut workspace, _) = Workspace::restore(directory.path().into()).unwrap();
+        workspace.open[0].page.text = "α foo β foo".into();
+        workspace.edit(0, "").unwrap();
+        workspace.open[0].view.anchor = 2;
+        workspace.open[0].view.head = 5;
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        app.execute(&ctx, Command::AllOccurrences);
+        assert_eq!(app.selections().len(), 2);
+        frame(&ctx, &mut app, vec![]);
+        frame(&ctx, &mut app, vec![egui::Event::Text("🦀".into())]);
+        assert_eq!(app.active().page.text, "α 🦀 β 🦀");
+        assert_eq!(app.selections().len(), 2);
+        app.workspace.checkpoint().unwrap();
+        app.execute(&ctx, Command::Undo);
+        finish_app_job(&mut app, &ctx);
+        assert_eq!(app.active().page.text, "α foo β foo");
+        app.execute(&ctx, Command::Redo);
+        finish_app_job(&mut app, &ctx);
+        assert_eq!(app.active().page.text, "α 🦀 β 🦀");
+        assert_eq!(app.selections().len(), 2);
+        app.set_selections(vec![
+            hedit::advanced::Selection::caret(3),
+            hedit::advanced::Selection::caret(7),
+        ]);
+        app.workspace.checkpoint().unwrap();
+        drop(app);
+        let (workspace, errors) = Workspace::restore(directory.path().into()).unwrap();
+        assert!(errors.is_empty());
+        assert_eq!(workspace.open[workspace.active].view.selections.len(), 1);
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        frame(&ctx, &mut app, vec![]);
+        frame(&ctx, &mut app, vec![key(Key::Backspace, Modifiers::NONE)]);
+        assert_eq!(app.active().page.text, "α  β ");
+    }
+
+    #[test]
+    fn move_group_shortcut_exchanges_the_displayed_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut workspace, _) = Workspace::restore(directory.path().into()).unwrap();
+        workspace.open[0].page.text = "A".into();
+        workspace.edit(0, "").unwrap();
+        workspace.new_buffer().unwrap();
+        workspace.open[1].page.text = "B".into();
+        workspace.edit(1, "").unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        app.execute(&ctx, Command::SplitColumns);
+        frame(&ctx, &mut app, vec![]);
+        app.workspace.active = 0;
+        frame(&ctx, &mut app, vec![]);
+        frame(
+            &ctx,
+            &mut app,
+            vec![key(
+                Key::ArrowRight,
+                Modifiers {
+                    shift: true,
+                    alt: true,
+                    ..Modifiers::COMMAND
+                },
+            )],
+        );
+        assert_eq!(app.panes.focused, 1);
+        assert_eq!(app.active().page.text, "A");
+        app.execute(&ctx, Command::FocusPane);
+        frame(&ctx, &mut app, vec![]);
+        assert_eq!(app.active().page.text, "B");
+    }
+
+    #[test]
+    fn minimap_click_scrolls_and_shift_duplicate_keeps_its_shortcut() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut workspace, _) = Workspace::restore(directory.path().into()).unwrap();
+        workspace.open[0].page.text = "alpha\n".repeat(600);
+        workspace.edit(0, "").unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        app.execute(&ctx, Command::Minimap);
+        frame(&ctx, &mut app, vec![]);
+        frame(&ctx, &mut app, vec![]);
+        let response = ctx
+            .read_response(egui::Id::new(("minimap", 0usize)))
+            .unwrap();
+        let position = egui::pos2(response.rect.center().x, response.rect.bottom() - 8.0);
+        frame(
+            &ctx,
+            &mut app,
+            vec![
+                egui::Event::PointerMoved(position),
+                egui::Event::PointerButton {
+                    pos: position,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Modifiers::NONE,
+                },
+            ],
+        );
+        frame(
+            &ctx,
+            &mut app,
+            vec![egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: Modifiers::NONE,
+            }],
+        );
+        assert!(app.active().view.scroll_top > 1000.0);
+        frame(&ctx, &mut app, vec![]);
+        assert!(app.active().view.scroll_top > 1000.0);
+        app.execute(&ctx, Command::Minimap);
+        app.focus_editor = true;
+        frame(&ctx, &mut app, vec![]);
+        let before = app.active().page.text.clone();
+        frame(
+            &ctx,
+            &mut app,
+            vec![key(
+                Key::D,
+                Modifiers {
+                    shift: true,
+                    ..Modifiers::COMMAND
+                },
+            )],
+        );
+        assert_eq!(app.active().page.text.len(), before.len() + 6);
+    }
+
+    #[test]
+    fn alt_shift_drag_creates_a_rectangle_in_the_native_editor() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut workspace, _) = Workspace::restore(directory.path().into()).unwrap();
+        workspace.open[0].page.text = "abcde\nfghij\nklmno\n".into();
+        workspace.edit(0, "").unwrap();
+        workspace.open[0].view.anchor = 1;
+        workspace.open[0].view.head = 1;
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        frame(&ctx, &mut app, vec![]);
+        let id = egui::Id::new(("editor", app.active().page.info.id, 0u64));
+        let rect = ctx.read_response(id).unwrap().rect;
+        let start = rect.min + egui::vec2(10.0, 8.0);
+        let end = rect.min + egui::vec2(26.0, 40.0);
+        let modifiers = Modifiers {
+            alt: true,
+            shift: true,
+            ..Modifiers::NONE
+        };
+        let run = |app: &mut HeditApp, events| {
+            ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1280.0, 820.0),
+                    )),
+                    modifiers,
+                    events,
+                    focused: true,
+                    ..Default::default()
+                },
+                |ctx| {
+                    app.shortcuts(ctx);
+                    app.chrome(ctx);
+                    app.editor(ctx);
+                },
+            )
+        };
+        run(
+            &mut app,
+            vec![
+                egui::Event::PointerMoved(start),
+                egui::Event::PointerButton {
+                    pos: start,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers,
+                },
+            ],
+        );
+        run(&mut app, vec![egui::Event::PointerMoved(end)]);
+        assert_eq!(app.selections().len(), 3);
+        assert_eq!(app.active().page.text, "abcde\nfghij\nklmno\n");
+    }
+
+    #[test]
+    fn split_views_share_edits_and_undo_but_keep_separate_cursors() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut workspace, _) = Workspace::restore(directory.path().into()).unwrap();
+        workspace.open[0].page.text = "one\ntwo\nthree\n".into();
+        workspace.edit(0, "").unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        app.execute(&ctx, Command::SplitColumns);
+        frame(&ctx, &mut app, vec![]);
+        app.workspace.open[0].view.anchor = 4;
+        app.workspace.open[0].view.head = 4;
+        app.execute(&ctx, Command::FocusPane);
+        assert_eq!(app.active().view.head, 0);
+        frame(&ctx, &mut app, vec![]);
+        frame(&ctx, &mut app, vec![egui::Event::Text("α".into())]);
+        assert_eq!(app.active().page.text, "αone\ntwo\nthree\n");
+        assert_eq!(app.workspace.open.len(), 1);
+        app.execute(&ctx, Command::FocusPane);
+        frame(&ctx, &mut app, vec![]);
+        assert_eq!(app.active().view.head, 5);
+        app.execute(&ctx, Command::Undo);
+        finish_app_job(&mut app, &ctx);
+        assert_eq!(app.active().page.text, "one\ntwo\nthree\n");
+        app.execute(&ctx, Command::SplitRows);
+        frame(&ctx, &mut app, vec![]);
+        app.workspace.checkpoint().unwrap();
+        let mut storage = MemoryStorage::default();
+        eframe::App::save(&mut app, &mut storage);
+        drop(app);
+        let (workspace, errors) = Workspace::restore(directory.path().into()).unwrap();
+        assert!(errors.is_empty());
+        let mut app = HeditApp::from_context(&ctx, Some(&storage), workspace, vec![], vec![]);
+        assert_eq!(app.panes.mode, 2);
+        frame(&ctx, &mut app, vec![]);
+        app.execute(&ctx, Command::SinglePane);
+        frame(&ctx, &mut app, vec![]);
+        assert_eq!(app.workspace.open.len(), 1);
+    }
+
+    #[test]
+    fn smart_indentation_tab_stops_and_folds_never_expand_saved_tabs() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut workspace, _) = Workspace::restore(directory.path().into()).unwrap();
+        workspace.open[0].page.text = "\tα();\n".into();
+        workspace.edit(0, "").unwrap();
+        workspace.open[0].view.tab_size = Some(8);
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        frame(&ctx, &mut app, vec![]);
+        frame(&ctx, &mut app, vec![key(Key::ArrowRight, Modifiers::NONE)]);
+        assert_eq!(app.active().view.head, 1);
+        frame(&ctx, &mut app, vec![egui::Event::Text("β".into())]);
+        assert_eq!(app.active().page.text, "\tβα();\n");
+        app.workspace.open[0].page.text = "fn f() {\n    α();\n}\n".into();
+        let old = "\tβα();\n";
+        app.workspace.edit(0, old).unwrap();
+        app.workspace.open[0].view.anchor = 0;
+        app.workspace.open[0].view.head = 0;
+        let source = app.active().page.text.clone();
+        app.execute(&ctx, Command::FoldAll);
+        frame(&ctx, &mut app, vec![]);
+        assert!(!app.active().view.folds.is_empty());
+        assert_eq!(app.active().page.text, source);
+        app.execute(&ctx, Command::Minimap);
+        frame(&ctx, &mut app, vec![]);
+        assert_eq!(app.active().page.text, source);
+        app.execute(&ctx, Command::SelectAll);
+        frame(&ctx, &mut app, vec![]);
+        let output = frame(&ctx, &mut app, vec![egui::Event::Copy]);
+        assert!(output
+            .platform_output
+            .commands
+            .iter()
+            .any(|c| matches!(c,egui::OutputCommand::CopyText(text) if text==&source)));
+        app.execute(&ctx, Command::UnfoldAll);
+        frame(&ctx, &mut app, vec![]);
+        assert!(app.active().view.folds.is_empty());
+    }
     impl eframe::Storage for MemoryStorage {
         fn get_string(&self, key: &str) -> Option<String> {
             self.0.get(key).cloned()
@@ -2004,6 +2872,213 @@ mod tests {
             self.0.insert(key.into(), value);
         }
         fn flush(&mut self) {}
+    }
+    #[test]
+    fn edit_actions_use_backend_undo_and_respect_read_only_and_paged_buffers() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut workspace, _) = Workspace::restore(directory.path().into()).unwrap();
+        workspace.open[0].page.text = "α();\nβ();\n".into();
+        workspace.edit(0, "").unwrap();
+        workspace.open[0].set_language(Some(syntax::Language::Rust));
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        app.execute(&ctx, Command::Duplicate);
+        assert_eq!(app.active().page.text, "α();\nα();\nβ();\n");
+        assert!(app.active().page.info.dirty);
+        app.execute(&ctx, Command::Undo);
+        finish_app_job(&mut app, &ctx);
+        assert_eq!(app.active().page.text, "α();\nβ();\n");
+        app.execute(&ctx, Command::Redo);
+        finish_app_job(&mut app, &ctx);
+        assert_eq!(app.active().page.text, "α();\nα();\nβ();\n");
+        let original = app.active().page.text.clone();
+        for paged in [false, true] {
+            app.workspace.open[0].follow = !paged;
+            app.workspace.open[0].page.info.paged = paged;
+            for command in [
+                Command::DeleteLine,
+                Command::Indent,
+                Command::ToggleComment,
+                Command::TrimWhitespace,
+                Command::ToLf,
+                Command::ToCrlf,
+            ] {
+                assert!(!app.command_enabled(command));
+                app.execute(&ctx, command);
+                assert_eq!(app.active().page.text, original);
+            }
+        }
+    }
+
+    #[test]
+    fn line_ending_conversion_undo_typing_save_and_recovery_keep_bytes_and_policy_together() {
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("text.txt");
+        std::fs::write(&file, "\u{feff}α\nβ\n").unwrap();
+        let session = directory.path().join("session");
+        let (workspace, _) = Workspace::restore(session.clone()).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        app.open(&ctx, Some(file.clone()));
+        finish_app_job(&mut app, &ctx);
+        app.workspace.open[app.workspace.active].view.anchor = 3;
+        app.workspace.open[app.workspace.active].view.head = 2;
+        app.execute(&ctx, Command::ToCrlf);
+        assert_eq!(app.active().page.text, "α\r\nβ\r\n");
+        assert_eq!(app.active().page.info.eol, "CRLF");
+        assert_eq!((app.active().view.anchor, app.active().view.head), (4, 3));
+        app.execute(&ctx, Command::Undo);
+        finish_app_job(&mut app, &ctx);
+        assert_eq!(app.active().page.text, "α\nβ\n");
+        assert_eq!(app.active().page.info.eol, "LF");
+        app.execute(&ctx, Command::Redo);
+        finish_app_job(&mut app, &ctx);
+        assert_eq!(app.active().page.info.eol, "CRLF");
+        let index = app.workspace.active;
+        let length = app.active().page.text.chars().count();
+        app.workspace.open[index].view.anchor = length;
+        app.workspace.open[index].view.head = length;
+        app.workspace.open[index].restore_cursor = true;
+        app.focus_editor = true;
+        frame(&ctx, &mut app, vec![]);
+        frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)]);
+        assert_eq!(app.active().page.text, "α\r\nβ\r\n\r\n");
+        app.execute(&ctx, Command::Save);
+        finish_app_job(&mut app, &ctx);
+        assert_eq!(
+            std::fs::read_to_string(file).unwrap(),
+            "\u{feff}α\r\nβ\r\n\r\n"
+        );
+        app.workspace.checkpoint().unwrap();
+        drop(app);
+        let (restored, errors) = Workspace::restore(session).unwrap();
+        assert!(errors.is_empty());
+        assert_eq!(restored.open[restored.active].page.info.eol, "CRLF");
+        assert_eq!(restored.open[restored.active].page.text, "α\r\nβ\r\n\r\n");
+    }
+
+    #[test]
+    fn column_wrapping_changes_layout_without_changing_text() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut workspace, _) = Workspace::restore(directory.path().into()).unwrap();
+        let source = "x".repeat(200);
+        workspace.open[0].page.text = source.clone();
+        workspace.edit(0, "").unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        let rows = |output: &egui::FullOutput| {
+            output
+                .shapes
+                .iter()
+                .find_map(|s| {
+                    if let egui::Shape::Text(text) = &s.shape {
+                        if text.galley.job.text == source {
+                            return Some(text.galley.rows.len());
+                        }
+                    }
+                    None
+                })
+                .unwrap()
+        };
+        app.execute(&ctx, Command::WrapWindow);
+        let window = rows(&frame(&ctx, &mut app, vec![]));
+        app.execute(&ctx, Command::Wrap80);
+        app.execute(&ctx, Command::Ruler80);
+        let column = rows(&frame(&ctx, &mut app, vec![]));
+        assert!(column > window);
+        assert_eq!(app.active().page.text, source);
+        assert!(app.command_selected(Command::Ruler80));
+        app.execute(&ctx, Command::Wrap);
+        assert_eq!(rows(&frame(&ctx, &mut app, vec![])), 1);
+    }
+
+    #[test]
+    fn editor_shortcuts_indent_by_policy_and_leave_search_inputs_alone() {
+        let directory = tempfile::tempdir().unwrap();
+        let (workspace, _) = Workspace::restore(directory.path().into()).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        app.execute(&ctx, Command::Indent2);
+        frame(&ctx, &mut app, vec![]);
+        frame(&ctx, &mut app, vec![key(Key::Tab, Modifiers::NONE)]);
+        assert_eq!(app.active().page.text, "  ");
+        app.execute(&ctx, Command::IndentTabs);
+        frame(&ctx, &mut app, vec![key(Key::Tab, Modifiers::NONE)]);
+        assert_eq!(app.active().page.text, "  \t");
+        frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::COMMAND)]);
+        assert_eq!(app.active().page.text, "  \t\n  \t");
+        app.execute(&ctx, Command::Find);
+        frame(&ctx, &mut app, vec![]);
+        let original = app.active().page.text.clone();
+        frame(
+            &ctx,
+            &mut app,
+            vec![key(
+                Key::D,
+                Modifiers {
+                    shift: true,
+                    ..Modifiers::COMMAND
+                },
+            )],
+        );
+        assert_eq!(app.active().page.text, original);
+    }
+
+    #[test]
+    fn view_preferences_survive_restart_and_distraction_free_restores_layout() {
+        let directory = tempfile::tempdir().unwrap();
+        let (workspace, _) = Workspace::restore(directory.path().into()).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        app.execute(&ctx, Command::Tabs);
+        app.execute(&ctx, Command::CurrentLine);
+        app.execute(&ctx, Command::Whitespace);
+        app.execute(&ctx, Command::Ruler100);
+        app.execute(&ctx, Command::Wrap80);
+        let flags = (app.sidebar, app.show_tabs, app.show_status);
+        app.execute(&ctx, Command::DistractionFree);
+        let output = frame(&ctx, &mut app, vec![]);
+        assert!(!output
+            .shapes
+            .iter()
+            .any(|s| text_rect(&s.shape, "OPEN FILES").is_some()));
+        assert_eq!((app.sidebar, app.show_tabs, app.show_status), flags);
+        app.execute(&ctx, Command::DistractionFree);
+        let output = frame(&ctx, &mut app, vec![]);
+        assert!(output
+            .shapes
+            .iter()
+            .any(|s| text_rect(&s.shape, "OPEN FILES").is_some()));
+        let mut storage = MemoryStorage::default();
+        eframe::App::save(&mut app, &mut storage);
+        drop(app);
+        let (workspace, _) = Workspace::restore(directory.path().into()).unwrap();
+        let restored = HeditApp::from_context(&ctx, Some(&storage), workspace, vec![], vec![]);
+        assert!(!restored.show_tabs);
+        assert!(!restored.highlight_line);
+        assert!(restored.show_status && restored.show_whitespace);
+        assert_eq!(restored.ruler_column, 100);
+        assert_eq!(restored.wrap_column, 80);
+        assert!(restored.wrap);
+        assert!(!restored.distraction_free);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_hides_cuda_tools_but_keeps_cuda_editing() {
+        let directory = tempfile::tempdir().unwrap();
+        let (workspace, _) = Workspace::restore(directory.path().into()).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        assert!(!app.command_enabled(Command::Gpu));
+        assert!(!app.command_enabled(Command::ToolSettings));
+        app.execute(&ctx, Command::Gpu);
+        assert!(!app.gpu_open);
+        app.open_preferences(PreferencesPage::Tools);
+        assert_eq!(app.preferences_page, PreferencesPage::Editor);
+        app.workspace.open[0].set_language(Some(syntax::Language::Cuda));
+        assert_eq!(app.active().language(), syntax::Language::Cuda);
+        assert_eq!(Command::Open.shortcut(), "Cmd+O");
     }
     #[test]
     fn custom_appearance_survives_preferences_restart() {
@@ -2290,7 +3365,9 @@ mod tests {
         click_label(&ctx, &mut app, "Appearance");
         click_label(&ctx, &mut app, "Hedit Paper");
         assert_eq!(app.theme, Preset::Paper.theme());
-        click_label(&ctx, &mut app, "CUDA Tools");
+        if hedit::debugger::LOCAL_TOOLS_SUPPORTED {
+            click_label(&ctx, &mut app, "CUDA Tools");
+        }
         click_label(&ctx, &mut app, "Recovery");
         assert_eq!(app.active().page.text, "keep these notes");
         frame(&ctx, &mut app, vec![key(Key::Escape, Modifiers::NONE)]);
@@ -2512,6 +3589,138 @@ mod tests {
         app.workspace.open[0].restore_cursor = true;
         let scrolled = frame(&ctx, &mut app, vec![]);
         assert!((position(&unscrolled, "1").left() - position(&scrolled, "1").left()).abs() < 1.0);
+    }
+
+    #[test]
+    fn expanded_edit_and_view_submenus_are_usable_at_compact_sizes() {
+        let directory = tempfile::tempdir().unwrap();
+        let (workspace, _) = Workspace::restore(directory.path().into()).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        let size = egui::vec2(720.0, 480.0);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+        for (menu, submenu, command) in [
+            ("Edit", "Line", Command::Duplicate),
+            ("Edit", "Text", Command::TrimWhitespace),
+            ("Edit", "Indentation", Command::Indent2),
+            ("View", "Editor", Command::Whitespace),
+            ("View", "Side bar", Command::Sidebar),
+            ("View", "Font size", Command::ResetZoom),
+            ("View", "Ruler", Command::Ruler80),
+            ("View", "Word wrap column", Command::Wrap100),
+            ("Edit", "Line endings", Command::ToCrlf),
+        ] {
+            frame_size(
+                &ctx,
+                &mut app,
+                vec![key(Key::Escape, Modifiers::NONE)],
+                size,
+            );
+            click_label_sized(&ctx, &mut app, menu, size);
+            click_label_sized(&ctx, &mut app, submenu, size);
+            let output = frame_size(&ctx, &mut app, vec![], size);
+            let rect = output
+                .shapes
+                .iter()
+                .find_map(|s| text_rect(&s.shape, command.label()))
+                .unwrap();
+            assert!(screen.contains_rect(rect), "Clipped {}", command.label());
+            click_label_sized(&ctx, &mut app, command.label(), size);
+        }
+        assert_eq!(app.active().view.tab_size, Some(2));
+        assert!(app.show_whitespace);
+        assert!(!app.sidebar);
+        assert_eq!(app.active().page.info.eol, "CRLF");
+        assert_eq!(app.ruler_column, 80);
+        assert_eq!(app.wrap_column, 100);
+    }
+
+    #[test]
+    #[ignore = "writes Edit/View SVG previews to HEDIT_PREVIEW_DIR"]
+    fn export_menu_previews() {
+        let output =
+            PathBuf::from(std::env::var_os("HEDIT_PREVIEW_DIR").expect("set HEDIT_PREVIEW_DIR"));
+        std::fs::create_dir_all(&output).unwrap();
+        for (slug, preset) in [("ink", Preset::Ink), ("paper", Preset::Paper)] {
+            for (name, menu, submenu) in [
+                ("line", "Edit", "Line"),
+                ("indentation", "Edit", "Indentation"),
+                ("view", "View", "Editor"),
+                ("ruler", "View", "Ruler"),
+                ("wrap-column", "View", "Word wrap column"),
+                ("line-endings", "Edit", "Line endings"),
+                ("columns", "", ""),
+                ("distraction", "", ""),
+                ("split", "", ""),
+                ("folded", "", ""),
+                ("multiple", "", ""),
+            ] {
+                let directory = tempfile::tempdir().unwrap();
+                let (mut workspace, _) =
+                    Workspace::restore(directory.path().join("session")).unwrap();
+                workspace.open[0].page.text = "fn main() {\n    let message = \"Hello, hedit\";\n\tprintln!(\"{message}\");\n}\n".into();
+                workspace.edit(0, "").unwrap();
+                workspace.open[0].set_language(Some(syntax::Language::Rust));
+                let ctx = egui::Context::default();
+                let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+                app.set_theme(&ctx, preset.theme());
+                app.show_whitespace = true;
+                if name == "split" {
+                    app.execute(&ctx, Command::SplitColumns);
+                    app.execute(&ctx, Command::Minimap);
+                }
+                if name == "folded" {
+                    app.execute(&ctx, Command::FoldAll);
+                    app.execute(&ctx, Command::Minimap);
+                }
+                if name == "multiple" {
+                    let old = app.active().page.text.clone();
+                    app.workspace.open[0].page.text =
+                        "let value = α;\nprintln!(\"{value}\");\nvalue += 1;".into();
+                    app.workspace.edit(0, &old).unwrap();
+                    app.workspace.open[0].view.anchor = 4;
+                    app.workspace.open[0].view.head = 9;
+                    app.execute(&ctx, Command::AllOccurrences);
+                }
+                if name == "columns" {
+                    app.execute(&ctx, Command::Sidebar);
+                    app.execute(&ctx, Command::Ruler80);
+                    app.execute(&ctx, Command::Wrap80);
+                    let old = app.active().page.text.clone();
+                    app.workspace.open[0].page.text = format!(
+                        "{}\n// {}",
+                        old,
+                        "long text to check wrapping at the chosen column. ".repeat(6)
+                    );
+                    app.workspace.edit(0, &old).unwrap();
+                }
+                let size = if name == "columns" || name == "split" {
+                    egui::vec2(1280.0, 820.0)
+                } else {
+                    egui::vec2(720.0, 480.0)
+                };
+                frame_size(&ctx, &mut app, vec![], size);
+                if name == "distraction" {
+                    app.execute(&ctx, Command::DistractionFree);
+                } else if !menu.is_empty() {
+                    click_label_sized(&ctx, &mut app, menu, size);
+                    click_label_sized(&ctx, &mut app, submenu, size);
+                }
+                let mut last = frame_size(&ctx, &mut app, vec![], size);
+                for _ in 0..3 {
+                    last = frame_size(&ctx, &mut app, vec![], size);
+                }
+                std::fs::write(
+                    output.join(format!("menus-{slug}-{name}.svg")),
+                    crate::preview::export(
+                        &last.shapes,
+                        [size.x, size.y],
+                        app.theme.background.color(),
+                    ),
+                )
+                .unwrap();
+            }
+        }
     }
 
     #[test]

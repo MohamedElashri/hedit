@@ -2,6 +2,7 @@ pub mod brand;
 pub mod cli;
 pub mod debugger;
 pub mod document;
+pub mod editing;
 pub mod folder;
 pub mod session;
 pub mod syntax;
@@ -53,3 +54,4 @@ impl Editor {
         Ok(())
     }
 }
+pub mod advanced;

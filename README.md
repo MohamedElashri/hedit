@@ -17,7 +17,8 @@ inspect, snippets to revisit, and notes that do not need a filename yet. Keep a
 workspace of files between sessions, find your place in large logs, and
 work with CUDA source without leaving the editor.
 
-Version **0.1.2** adds folder workspaces and search across multiple project roots.
+The upcoming **0.1.3** adds richer Edit and View menus and a universal macOS app
+for Apple Silicon and Intel. Version **0.1.2** introduced folder workspaces.
 See the [release changes](CHANGELOG.md#012---2026-10-22).
 
 ## What you can do
@@ -60,12 +61,19 @@ Prefer a manual download? Get an archive and its checksum from
 [user guide](USER_GUIDE.md#installation) also covers custom installation paths,
 pinned versions, private-repository access, and building from source.
 
-Releases are built on Ubuntu 24.04 and need compatible Linux libraries, a graphical
+Linux releases are built on Ubuntu 24.04 and need compatible Linux libraries, a graphical
 X11 or Wayland session, and OpenGL. NVIDIA hardware and CUDA tools are optional
 for ordinary editing.
 
+The upcoming v0.1.3 will include `hedit-0.1.3-macos-universal.zip` and its checksum
+for macOS 11 or newer. Once released, verify it with `shasum -a 256 -c`, then unzip and move
+**hedit.app** to Applications. The same app contains Apple Silicon and Intel
+code. Initial packages use an ad-hoc development signature; Developer ID signing
+and notarization are pending. Native GUI validation is also pending. See
+[macOS installation](USER_GUIDE.md#macos-installation) for details.
+
 Choose **Help → Check for updates…** to review and install a
-newer release. Update checks, installations, and restarts are always manual.
+newer Linux release. Update checks, installations, and restarts are always manual.
 See [updating hedit](USER_GUIDE.md#updates) for requirements and upgrading 0.1.0.
 
 ## Quick start
@@ -96,6 +104,8 @@ whenever you want a normal saved file.
 
 ## Everyday shortcuts
 
+On macOS, use **Cmd** in place of **Ctrl** and **Option** in place of **Alt**.
+
 | Shortcut | Action |
 | --- | --- |
 | Ctrl+N / Ctrl+O | New file / open a file |
@@ -106,11 +116,25 @@ whenever you want a normal saved file.
 | Ctrl+F / Ctrl+G | Find text / go to a line |
 | Ctrl+W / Ctrl+Shift+T | Close a tab / reopen the latest closed tab |
 | Ctrl+, | Open preferences |
+| Ctrl+Shift+D / Ctrl+Shift+K | Duplicate selection or line / delete lines |
+| Ctrl+Shift+Up / Ctrl+Shift+Down | Move lines up / down |
+| Ctrl+/ | Toggle line comments |
+| F11 / Shift+F11 | Full screen / distraction-free mode |
+
+**Edit** groups selection, line operations, text transformations, and indentation.
+**View** groups sidebar, editor, and font controls. Hide tabs or the status bar,
+show whitespace, choose a column ruler and wrap width, and highlight the current
+line. **Edit → Line endings** converts the current file between LF and CRLF. Use
+**Ctrl+D** to select the next occurrence, **View → Layout** for split panes, and
+**View → Code folding** to collapse blocks. Indentation detection, smart Enter,
+and configurable tab stops support daily code editing.
 
 ## CUDA tools
 
-Choose **Tools → CUDA panel**, select a debug executable, and start CUDA-GDB or a
+On Linux, choose **Tools → CUDA panel**, select a debug executable, and start CUDA-GDB or a
 sanitizer run. Install NVIDIA's CUDA Toolkit and a compatible driver separately.
+macOS keeps CUDA syntax highlighting and code editing; local CUDA debugging,
+Compute Sanitizer, and NVIDIA GPU tools are disabled there.
 See the [CUDA guide](USER_GUIDE.md#cuda-tools) for compilation flags, debugger
 controls, and tool requirements. Device debugging still needs validation on
 NVIDIA hardware.
@@ -123,7 +147,8 @@ kill or power loss can lose edits since the last completed checkpoint. Keep
 independent saved copies and backups for important work.
 
 hedit currently supports UTF-8 text. Undo history lasts for the current process;
-regex search, multiple cursors, and split views are planned. Read the
+multiple cursors, rectangular selections, split panes, indentation folding, guides,
+and a minimap are available. Regex search is planned. Read the
 [user guide](USER_GUIDE.md) for everyday use and recovery, or the
 [developer guide](DEVELOPER_GUIDE.md) for contributing and the roadmap.
 

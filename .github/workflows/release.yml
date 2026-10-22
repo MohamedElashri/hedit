@@ -1,4 +1,4 @@
-name: Release Linux packages
+name: Release packages
 on:
   push:
     tags:
@@ -48,10 +48,14 @@ jobs:
           path: dist/hedit-*-linux-${{ matrix.arch }}.tar.gz*
           if-no-files-found: error
 
+  macos:
+    name: Build universal macOS app
+    uses: ./.github/workflows/macos-probe.yml
+
   publish:
     name: Publish GitHub release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, macos]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -59,7 +63,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          pattern: hedit-linux-*
+          pattern: hedit-*
           merge-multiple: true
           path: dist
       - name: Upload complete release before publishing
@@ -75,9 +79,9 @@ jobs:
               echo 'This release is already published. Use a new version tag for changes.' >&2
               exit 1
             fi
-            gh release upload "$RELEASE_TAG" dist/*.tar.gz dist/*.sha256 install.sh --clobber
+            gh release upload "$RELEASE_TAG" dist/*.tar.gz dist/*.zip dist/*.sha256 install.sh --clobber
           else
-            gh release create "$RELEASE_TAG" dist/*.tar.gz dist/*.sha256 install.sh \
+            gh release create "$RELEASE_TAG" dist/*.tar.gz dist/*.zip dist/*.sha256 install.sh \
               --verify-tag --draft --generate-notes --title "hedit $RELEASE_TAG"
           fi
           if [[ "$RELEASE_TAG" == *-* ]]; then

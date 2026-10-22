@@ -22,6 +22,10 @@ pub struct TabView {
     pub page_start: u64,
     pub anchor: usize,
     pub head: usize,
+    #[serde(default)]
+    pub selections: Vec<crate::advanced::Selection>,
+    #[serde(default)]
+    pub folds: Vec<crate::advanced::Fold>,
     pub scroll_top: f64,
     pub scroll_left: f64,
     pub language_override: Option<String>,

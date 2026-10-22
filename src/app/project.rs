@@ -257,7 +257,10 @@ impl HeditApp {
             }
             if ui
                 .small_button("×")
-                .on_hover_text("Hide folder sidebar · Ctrl+Alt+B")
+                .on_hover_text(format!(
+                    "Hide folder sidebar · {}",
+                    Command::FolderSidebar.shortcut()
+                ))
                 .clicked()
             {
                 self.folder_sidebar = false;
@@ -514,10 +517,13 @@ mod tests {
         let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
         let roots: Vec<_> = ["client", "server"]
             .iter()
-            .map(|name| directory.path().join(name))
+            .map(|name| {
+                let root = directory.path().join(name);
+                std::fs::create_dir_all(root.join("src")).unwrap();
+                std::fs::canonicalize(root).unwrap()
+            })
             .collect();
         for root in &roots {
-            std::fs::create_dir_all(root.join("src")).unwrap();
             app.set_folder(folder::read_directory(root.clone()).unwrap());
             app.project
                 .expanded

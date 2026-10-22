@@ -1,9 +1,9 @@
-use hedit::debugger::{decode_stream, quote, DebugSession, State, OUTPUT_LIMIT};
-use std::{
-    ffi::OsString,
-    path::Path,
-    time::{Duration, Instant},
-};
+use hedit::debugger::{decode_stream, quote, DebugSession};
+#[cfg(not(target_os = "macos"))]
+use hedit::debugger::{State, OUTPUT_LIMIT};
+#[cfg(not(target_os = "macos"))]
+use std::time::{Duration, Instant};
+use std::{ffi::OsString, path::Path};
 
 #[test]
 fn mi_console_decodes_c_escapes_and_octal_utf8() {
@@ -45,6 +45,7 @@ fn cuda_highlighting_preserves_every_byte() {
     assert!(job.sections.len() > 10);
 }
 
+#[cfg(not(target_os = "macos"))]
 #[test]
 fn absent_tools_report_actionable_errors() {
     let result = DebugSession::launch("/no/such/cuda-gdb", Path::new("Cargo.toml"), &[], None);
@@ -52,7 +53,7 @@ fn absent_tools_report_actionable_errors() {
     assert!(DebugSession::sanitizer(Path::new("Cargo.toml"), &[], "unknown").is_err());
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn real_process_transport_handles_commands_state_and_bounded_output() {
     use std::os::unix::fs::PermissionsExt;
@@ -109,4 +110,26 @@ for command in sys.stdin:
     }
     assert_eq!(session.state, State::Exited);
     assert!(!Path::new("forbidden").exists());
+}
+
+#[test]
+fn macos_disables_tool_launching_without_disabling_cuda_highlighting() {
+    assert_eq!(
+        hedit::debugger::LOCAL_TOOLS_SUPPORTED,
+        !cfg!(target_os = "macos")
+    );
+    #[cfg(target_os = "macos")]
+    {
+        let executable = std::path::Path::new("Cargo.toml");
+        assert!(DebugSession::launch("cuda-gdb", executable, &[], None)
+            .err()
+            .unwrap()
+            .contains("disabled on macOS"));
+        assert!(DebugSession::sanitizer(executable, &[], "memcheck").is_err());
+        assert!(DebugSession::gpu_info().is_err());
+    }
+    assert_eq!(
+        hedit::syntax::Language::detect("kernel.cu"),
+        hedit::syntax::Language::Cuda
+    );
 }

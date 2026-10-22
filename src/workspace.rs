@@ -7,6 +7,12 @@ use crate::{
 };
 use std::{path::PathBuf, sync::Arc};
 
+pub struct Change {
+    pub revision: u64,
+    pub start: usize,
+    pub end: usize,
+    pub added: usize,
+}
 pub struct Buffer {
     pub page: Page,
     pub view: TabView,
@@ -14,6 +20,10 @@ pub struct Buffer {
     pub follow: bool,
     pub restore_cursor: bool,
     pub reveal_cursor: bool,
+    pub changes: std::collections::VecDeque<Change>,
+    pub cursor_undo: Vec<Vec<crate::advanced::Selection>>,
+    pub cursor_redo: Vec<Vec<crate::advanced::Selection>>,
+    pub pending_selection: Option<Vec<crate::advanced::Selection>>,
 }
 impl Buffer {
     pub fn language_override(&self) -> Option<Language> {
@@ -36,12 +46,15 @@ impl Buffer {
         true
     }
     pub fn new(page: Page, view: Option<TabView>) -> Self {
-        let view = view.unwrap_or(TabView {
+        let detect = view.is_none() && page.info.path.is_some();
+        let mut view = view.unwrap_or(TabView {
             id: page.info.id,
             name: label(&page),
             page_start: page.start,
             anchor: 0,
             head: 0,
+            selections: vec![],
+            folds: vec![],
             scroll_top: 0.0,
             scroll_left: 0.0,
             language_override: None,
@@ -50,7 +63,20 @@ impl Buffer {
             custom_name: None,
             bookmarks: vec![],
         });
+        view.tab_size = Some(view.tab_size.unwrap_or(4).clamp(1, 8));
+        if detect {
+            let (tabs, width) = crate::advanced::detect_indentation(&page.text);
+            view.tab_size = Some(width);
+            view.indent = Some(if tabs { "tabs" } else { "spaces" }.into());
+        }
+        view.selections = crate::advanced::normalize(&view.selections, page.text.chars().count());
+        view.selections
+            .truncate(crate::advanced::MAX_SELECTIONS - 1);
         Self {
+            changes: std::collections::VecDeque::new(),
+            cursor_undo: vec![],
+            cursor_redo: vec![],
+            pending_selection: None,
             page,
             view,
             external: false,
@@ -60,6 +86,26 @@ impl Buffer {
         }
     }
     pub fn set_page(&mut self, page: Page) {
+        if !page.info.paged
+            && !self.page.info.paged
+            && page.start == self.page.start
+            && page.text != self.page.text
+        {
+            let (start, end, inserted) = splice(&self.page.text, &page.text);
+            self.changes.push_back(Change {
+                revision: self.page.info.revision,
+                start: self.page.text[..start].chars().count(),
+                end: self.page.text[..end].chars().count(),
+                added: inserted.chars().count(),
+            });
+            if self.changes.len() > 256 {
+                self.changes.pop_front();
+            }
+        } else if page.start != self.page.start {
+            self.changes.clear();
+        }
+        self.view.selections.clear();
+        self.view.folds.clear();
         self.view.page_start = page.start;
         self.page = page;
         self.refresh_name();
@@ -305,19 +351,56 @@ impl Workspace {
     }
     /// Commit a UTF-8-safe minimal splice so history shares unchanged bytes.
     pub fn edit(&mut self, index: usize, old: &str) -> Result<(), String> {
+        self.edit_with_line_ending(index, old, None)
+    }
+    pub fn edit_with_line_ending(
+        &mut self,
+        index: usize,
+        old: &str,
+        crlf: Option<bool>,
+    ) -> Result<(), String> {
         let buffer = &mut self.open[index];
         let (start, end, replacement) = splice(old, &buffer.page.text);
-        let info = self
-            .editor
-            .get(buffer.page.info.id)?
-            .lock()
-            .map_err(|e| e.to_string())?
-            .replace(
+        let editor = self.editor.get(buffer.page.info.id)?;
+        let mut document = editor.lock().map_err(|e| e.to_string())?;
+        let info = if let Some(crlf) = crlf {
+            document.replace_with_line_ending(
                 buffer.page.start + start as u64,
                 buffer.page.start + end as u64,
                 replacement.to_owned(),
                 buffer.page.info.revision,
-            )?;
+                crlf,
+            )?
+        } else {
+            document.replace(
+                buffer.page.start + start as u64,
+                buffer.page.start + end as u64,
+                replacement.to_owned(),
+                buffer.page.info.revision,
+            )?
+        };
+        let selection = buffer.pending_selection.take().unwrap_or_else(|| {
+            let mut ranges = buffer.view.selections.clone();
+            ranges.push(crate::advanced::Selection {
+                anchor: buffer.view.anchor,
+                head: buffer.view.head,
+            });
+            ranges
+        });
+        buffer.cursor_undo.push(selection);
+        buffer.cursor_redo.clear();
+        if buffer.cursor_undo.len() > 256 {
+            buffer.cursor_undo.remove(0);
+        }
+        buffer.changes.push_back(Change {
+            revision: buffer.page.info.revision,
+            start: old[..start].chars().count(),
+            end: old[..end].chars().count(),
+            added: replacement.chars().count(),
+        });
+        if buffer.changes.len() > 256 {
+            buffer.changes.pop_front();
+        }
         buffer.page.end = buffer.page.start + buffer.page.text.len() as u64;
         buffer.page.info = info;
         let absolute_start = buffer.page.start + start as u64;

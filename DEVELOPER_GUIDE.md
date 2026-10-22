@@ -5,6 +5,7 @@ Build, maintain, and contribute to hedit. For using the application, see the
 
 - [Build and install](#build-and-install)
 - [Checks and visual review](#checks-and-visual-review)
+- [macOS builds](#macos-builds)
 - [Architecture](#architecture)
 - [Recovery and compatibility](#recovery-and-compatibility)
 - [CUDA transport](#cuda-transport)
@@ -32,7 +33,8 @@ make run ARGS='--session-dir /tmp/hedit-development'
 
 X11 and Wayland are enabled. Native file dialogs use the desktop's XDG portal.
 CUDA and NVIDIA drivers are optional external tools, not editor build dependencies.
-The current validated build target is Linux; macOS and Windows remain unverified.
+Linux is runtime-validated. Universal macOS packaging is configured, with native
+validation pending; Windows remains unverified.
 
 ```sh
 make build
@@ -79,7 +81,7 @@ Use narrower targets while working:
 | `make package` | Build and package a release under `dist/` |
 | `make smoke` | Build and test a package in a temporary installation |
 | `make ci` | Full pre-commit and GitHub CI validation |
-| `make release-check RELEASE_TAG=v0.1.2` | Validate a release tag against `Cargo.toml` |
+| `make release-check RELEASE_TAG=v0.1.3` | Validate a release tag against `Cargo.toml` |
 | `make workflow-lint` | Optional workflow validation; requires `actionlint` |
 | `make clean` | Remove Cargo build artifacts |
 
@@ -109,6 +111,71 @@ For a repeatable CPU timing check, run
 This opens the picker over a 231 KB CUDA document and reports the mean time for
 20 hover frames. It measures headless rendering work, not desktop input latency.
 
+## macOS builds
+
+The release workflow produces one `hedit-0.1.3-macos-universal.zip` containing
+`hedit.app`, with native Apple Silicon and Intel slices. The deployment target is
+macOS 11.0. On a Mac with Xcode's command-line tools and Rust installed:
+
+```sh
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+make macos
+```
+
+`make macos` builds both release executables. `scripts/package-macos.py` verifies
+the input architectures, combines them with `lipo`, creates Info.plist and an
+ICNS icon, copies themes/examples/guides, signs and verifies the app, checks its
+version, and archives it with `ditto`. A failed assembly leaves any previous ZIP
+intact. A `.sha256` file accompanies the ZIP. Apple's
+[universal binary documentation](https://developer.apple.com/documentation/apple-silicon/building-a-universal-macos-binary)
+describes the architecture slices.
+
+The default signature is ad-hoc. For an available Developer ID identity, package
+already-built slices with:
+
+```sh
+python3 scripts/package-macos.py --identity 'Developer ID Application: Your Name (TEAMID)'
+```
+
+This enables hardened runtime and a timestamp. Notarization and ticket stapling
+are separate steps and are not yet automated. Follow Apple's
+[notarization documentation](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution)
+before treating downloaded bundles as ready for normal public distribution.
+Do not disable system-wide Gatekeeper settings to test an app.
+
+The [Universal macOS build](.github/workflows/macos-probe.yml) workflow can run
+manually and is also called by release automation. One Apple Silicon `macos-15`
+runner checks and lints both targets, runs native editor/recovery tests, builds
+both slices, and uploads one universal app archive. It unpacks that archive,
+verifies its signature and both architectures, and runs the CLI; when Rosetta is
+available it also runs the Intel slice. Runner architectures are documented by
+[GitHub](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
+It does not create two Mac downloads.
+
+The native test list excludes the library updater suite, whose Unix tests still
+expect Linux installation layouts, GNU tar, and `scripts/package-linux.py`.
+Use the explicit test command in the workflow on macOS rather than `make ci`.
+Linux runs the full suite, offline installer tests, and mocked macOS packaging
+contract tests. Folder tests compare resolved paths, including temporary
+directories reached through symlinks.
+
+Linux source checks and strict Clippy checks pass for both Mac targets. These
+checks do not link Mach-O code or validate AppKit. The first native workflow run
+and GUI review are still pending; Linux remains the runtime-validated platform.
+Before calling Mac support stable, check Open/Save As, multiple folders, clipboard,
+Retina rendering, Cmd+Q recovery, Dock reopen, Finder document events, external
+changes, and atomic saves on APFS (including case-insensitive volumes), then
+launch an actually downloaded archive on a clean Mac.
+
+Mac shortcuts display Cmd/Option. The bundle identifier remains `hedit.hedit`,
+with recovery under `~/Library/Application Support/hedit.hedit/session/`.
+Updates currently support Linux only; Mac upgrades replace the app manually.
+Local CUDA debugging, Compute Sanitizer, and NVIDIA GPU commands are hidden and
+blocked at their backend entry points on macOS. CUDA source highlighting,
+editing, and line-comment commands remain available. NVIDIA identifies CUDA
+10.2 as the final Mac release in its
+[release notes](https://docs.nvidia.com/cuda/archive/10.2/cuda-toolkit-release-notes/index.html).
+
 ## Architecture
 
 | Module | Responsibility |
@@ -123,6 +190,11 @@ This opens the picker over a 231 KB CUDA document and reports the mean time for
 | `src/workspace.rs` | Open/closed buffers, names, bookmarks, UTF-8-safe edit splices |
 | `src/document.rs` | Disk-backed piece table, bounded pages, source guards, atomic saves, undo |
 | `src/session.rs` | Process lock, snapshots, manifests, fallback and preservation |
+| `src/advanced.rs` | Multi-selection edits, indentation heuristics, folding/tab projections |
+| `src/app/panes.rs` | Shared-document split views and independent view positions |
+| `src/app/advanced_edit.rs` | Occurrence commands, multi-cursor input, and folding |
+| `src/editing.rs` | Unicode-safe line/text transformations used by Edit commands |
+| `src/app/edit_actions.rs` | Apply transformations through backend undo/recovery |
 | `src/debugger.rs` | CUDA-GDB/MI and bounded NVIDIA tool subprocess output |
 | `src/syntax.rs`, `src/syntax/lexer.rs`, `src/syntax/keywords.rs` | Syntax catalog, filename detection, and bounded lexical highlighting with active theme colors |
 | `src/theme.rs` | Validated RGB palettes, native styling, JSON theme files |
@@ -160,8 +232,9 @@ copies can protect live pieces and history from later source changes. Before a
 copy completes, unseen externally changed bytes cannot be reconstructed; a failed
 visible edit is rescued into an independent unsaved file.
 
-The renderer is a bounded standard text widget. Continuous document layout,
-multiple selections, and folding require further editor work.
+The renderer uses a bounded standard text widget. Tab stops, selections, and
+folding use the source/display projection in `src/advanced.rs`. Continuous
+whole-file layout remains future work for paged buffers.
 
 `Language` defines stable syntax IDs, display names, and filename associations
 in one catalog. It includes separate C, C++, and CUDA modes. The status-bar menu
@@ -306,7 +379,7 @@ installed paths consistent. Update `scripts/smoke-package.py` when changing the
 archive or documentation layout. `scripts/check-docs.py` validates document links
 and local section anchors.
 
-The normal CI workflow and the release matrix both call `make ci`; keep checks
+The Linux CI workflow and Linux release matrix both call `make ci`; keep checks
 in the Makefile instead of duplicating their commands in workflow YAML. Workflow
 steps set up dependencies and the pinned Rust/Python versions. Offline installer tests cover public
 and authenticated downloads, version/architecture selection, checksum rejection,
@@ -314,20 +387,21 @@ failed downloads, and preservation of an existing installation on download failu
 
 ### Publish a release
 
-The `Release Linux packages` workflow builds x86-64 and ARM64 natively on Ubuntu
-24.04. It publishes when a version tag is pushed; the tag must equal `v` followed
+The `Release packages` workflow builds Linux x86-64 and ARM64 natively on Ubuntu
+24.04 and one universal macOS app through its reusable Mac workflow. It publishes when a version tag is pushed; the tag must equal `v` followed
 by the version in `Cargo.toml`. Builds run checks and package smoke tests before
-publication. GitHub generates release notes, and each release includes both
-archives, their SHA-256 files, and the root `install.sh` downloader.
+publication. GitHub generates release notes, and each release includes two Linux
+tarballs, one universal macOS ZIP, their SHA-256 files, and the Linux `install.sh`
+downloader. The publish job waits for all three packages.
 
 1. Set the version in `Cargo.toml` and run `cargo check` to update `Cargo.lock`.
-2. Run `make ci` and `make release-check RELEASE_TAG=v0.1.2`, using the new tag.
+2. Run `make ci` and `make release-check RELEASE_TAG=v0.1.3`, using the new tag.
 3. Commit the version, lockfile, and release changes, then push the commit.
 4. Create and push an annotated tag matching the version:
 
    ```sh
-   git tag -a v0.1.2 -m "hedit 0.1.2"
-   git push origin v0.1.2
+   git tag -a v0.1.3 -m "hedit 0.1.3"
+   git push origin v0.1.3
    ```
 
 The workflow uses GitHub's `GITHUB_TOKEN` with write permission only in the
@@ -427,15 +501,40 @@ and consolidated user/developer guides.
 
 - Durable edit journal, recovery checksums, filesystem fault injection, and soak tests.
 - Persistent undo and bookmark anchors that follow undo/external changes.
-- Explicit line-ending conversion and broader encoding support.
+- Broader encoding support and streaming line-ending conversion for paged files.
 - Single-instance CLI forwarding and search across files.
 - Continuous large-file scrolling, global line indexes, and log filtering.
 - X11/Wayland visual validation, accessibility, DEB/RPM packages, and release checks.
 
 ### Editor and GPU workbench
 
-- Regex/case-insensitive search, replace-all controls, multiple cursors,
-  rectangular selections, folding, and split views.
+#### Edit and View comparison with Sublime Text
+
+The v0.1.3 menus cover common line operations, comments, case conversion,
+indentation conversion, LF/CRLF conversion, visibility toggles, column rulers,
+wrap columns, zoom, and focus modes. They do not establish full Sublime parity.
+The remaining controls from the comparison are now implemented as follows.
+
+| Control | v0.1.3 implementation | Current limits |
+| --- | --- | --- |
+| Multiple cursors and rectangular selection | Occurrence selection, Alt+click/Alt+Shift+drag, batch typing/clipboard/deletion, cursor undo and recovery | Up to 1,000 selections; fully loaded files |
+| Split panes | Two columns or rows, focus/move actions, independent view positions on shared documents | Two groups; paged views share their loaded page |
+| Indentation | Automatic detection, smart Enter, soft Backspace, 2/4/8 tab rendering and insertion | Detection examines 10,000 lines; smart Enter uses bracket heuristics |
+| Folding and guides | Indentation blocks, manual selections, fold/unfold all, original line numbers | Fully loaded files; edits invalidate fold ranges |
+| Minimap | Click/drag scrolling, sampled viewport overview | Current page only for paged files |
+
+The comparison uses Sublime's official descriptions of
+[multiple selections and split views](https://www.sublimetext.com/),
+[column selection](https://www.sublimetext.com/docs/column_selection.html),
+[indentation settings](https://www.sublimetext.com/docs/indentation.html),
+[rulers and guides](https://www.sublimetext.com/docs/color_schemes.html), and
+[distraction-free mode](https://www.sublimetext.com/docs/distraction_free.html).
+Its [API reference](https://www.sublimetext.com/docs/api_reference.html) also
+describes folding and minimap controls. Keep unavailable commands out of the
+menus until their underlying editing behavior is implemented.
+
+- Regex/case-insensitive search, replace-all controls, richer split layouts, and
+  syntax-aware folding across pages.
 - More language lexers and incremental multiline state across pages.
 - NVIDIA hardware/driver testing, source synchronization, gutter breakpoints,
   structured variables/watches, GPU execution views, and remote setup workflows.

@@ -157,3 +157,40 @@ mod tests {
         }
     }
 }
+
+/// Cache the original-coordinate mapping independently of syntax galley layout.
+#[derive(Default)]
+pub(super) struct ProjectionCache {
+    entry: Option<(
+        String,
+        u8,
+        Vec<hedit::advanced::Fold>,
+        Arc<hedit::advanced::Projection>,
+    )>,
+}
+impl ProjectionCache {
+    pub(super) fn get(
+        &mut self,
+        text: &str,
+        width: u8,
+        folds: &[hedit::advanced::Fold],
+    ) -> Arc<hedit::advanced::Projection> {
+        if let Some((source, previous_width, previous_folds, projection)) = &self.entry {
+            if source == text && *previous_width == width && previous_folds == folds {
+                return Arc::clone(projection);
+            }
+        }
+        let projection = Arc::new(hedit::advanced::Projection::new(
+            text,
+            width as usize,
+            folds,
+        ));
+        self.entry = Some((
+            text.to_owned(),
+            width,
+            folds.to_vec(),
+            Arc::clone(&projection),
+        ));
+        projection
+    }
+}
