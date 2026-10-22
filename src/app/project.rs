@@ -333,6 +333,45 @@ impl HeditApp {
                 ui.close_menu();
             }
         }
+        for (label, operation) in [
+            ("Rename…", quality::FileOperation::Rename),
+            ("Move…", quality::FileOperation::Move),
+            ("Duplicate…", quality::FileOperation::Duplicate),
+            ("Move to trash…", quality::FileOperation::Trash),
+        ] {
+            if ui.button(label).clicked() {
+                self.begin_file_action(PathBuf::from(path), operation);
+                ui.close_menu();
+            }
+        }
+        if ui.button("Reveal in file manager").clicked() {
+            let path = path.to_owned();
+            self.job(ui.ctx(), move || {
+                hedit::folder::reveal_in_file_manager(path)?;
+                Ok(Action::Nothing)
+            });
+            ui.close_menu();
+        }
+        if ui.button("Copy relative path").clicked() {
+            let roots = self
+                .workspace
+                .folders
+                .iter()
+                .map(|f| PathBuf::from(&f.path))
+                .collect::<Vec<_>>();
+            let path = std::path::Path::new(path);
+            let relative = roots
+                .iter()
+                .filter_map(|root| path.strip_prefix(root).ok())
+                .min_by_key(|p| p.components().count())
+                .unwrap_or(path);
+            ui.ctx().copy_text(if relative.as_os_str().is_empty() {
+                ".".into()
+            } else {
+                relative.to_string_lossy().into_owned()
+            });
+            ui.close_menu();
+        }
         if ui.button("Copy path").clicked() {
             ui.ctx().copy_text(path.to_owned());
             ui.close_menu();
@@ -395,6 +434,10 @@ impl HeditApp {
                     }
                     self.sync_folder_view();
                 } else {
+                    self.quality.preview_request = !response.double_clicked();
+                    if response.double_clicked() {
+                        self.quality.preview = None;
+                    }
                     self.pending_paths.push_back(PathBuf::from(&entry.path));
                 }
             }

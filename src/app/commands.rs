@@ -1,7 +1,29 @@
 use super::*;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(super) enum Command {
+    FindFiles,
+    FindPrevious,
+    ReplaceAll,
+    OpenProject,
+    SaveProject,
+    SaveProjectAs,
+    RecentProjects,
+    ProjectSettings,
+    Symbols,
+    NavBack,
+    NavForward,
+    CompareDisk,
+    GitDiff,
+    KeyBindings,
+    Encoding,
+    Complete,
+    Snippets,
+    PinTab,
+    CloseOthers,
+    CloseRight,
+
     NextOccurrence,
     AllOccurrences,
     SingleSelection,
@@ -107,6 +129,26 @@ pub(super) enum Command {
 }
 impl Command {
     pub(super) const ALL: &'static [Self] = &[
+        Self::FindFiles,
+        Self::FindPrevious,
+        Self::ReplaceAll,
+        Self::OpenProject,
+        Self::SaveProject,
+        Self::SaveProjectAs,
+        Self::RecentProjects,
+        Self::ProjectSettings,
+        Self::Symbols,
+        Self::NavBack,
+        Self::NavForward,
+        Self::CompareDisk,
+        Self::GitDiff,
+        Self::KeyBindings,
+        Self::Encoding,
+        Self::Complete,
+        Self::Snippets,
+        Self::PinTab,
+        Self::CloseOthers,
+        Self::CloseRight,
         Self::NextOccurrence,
         Self::AllOccurrences,
         Self::SingleSelection,
@@ -210,6 +252,27 @@ impl Command {
     ];
     pub(super) fn label(self) -> &'static str {
         match self {
+            Self::FindFiles => "Find in folders…",
+            Self::FindPrevious => "Find previous",
+            Self::ReplaceAll => "Replace all in file",
+            Self::OpenProject => "Open project…",
+            Self::SaveProject => "Save project",
+            Self::SaveProjectAs => "Save project as…",
+            Self::RecentProjects => "Recent projects…",
+            Self::ProjectSettings => "Project settings…",
+            Self::Symbols => "Go to symbol…",
+            Self::NavBack => "Navigate back",
+            Self::NavForward => "Navigate forward",
+            Self::CompareDisk => "Compare with disk…",
+            Self::GitDiff => "Git changes…",
+            Self::KeyBindings => "Keyboard, snippets and formatting…",
+            Self::Encoding => "File encoding…",
+            Self::Complete => "Complete word…",
+            Self::Snippets => "Insert snippet…",
+            Self::PinTab => "Pin tab",
+            Self::CloseOthers => "Close other tabs",
+            Self::CloseRight => "Close tabs to the right",
+
             Self::NextOccurrence => "Select next occurrence",
             Self::AllOccurrences => "Select all occurrences",
             Self::SingleSelection => "Single selection",
@@ -324,6 +387,12 @@ impl Command {
     }
     fn shortcut_label(self) -> &'static str {
         match self {
+            Self::FindFiles => "Ctrl+Shift+F",
+            Self::FindPrevious => "Shift+F3",
+            Self::Symbols => "Ctrl+R",
+            Self::NavBack => "Alt+Left",
+            Self::NavForward => "Alt+Right",
+            Self::Complete => "Ctrl+Space",
             Self::NextOccurrence => "Ctrl+D",
             Self::AllOccurrences => "Ctrl+Shift+L",
             Self::FocusPane => "Ctrl+Alt+Right",
@@ -443,6 +512,7 @@ impl HeditApp {
     }
     pub(super) fn command_selected(&self, command: Command) -> bool {
         match command {
+            Command::PinTab => self.active().view.pinned,
             Command::AutoIndent => self.auto_indent,
             Command::SmartIndent => self.smart_indent,
             Command::SoftTabs => self.soft_tabs,
@@ -486,6 +556,53 @@ impl HeditApp {
             return;
         }
         match command {
+            Command::FindFiles => {
+                self.quality.folders_open = true;
+                self.quality.folder_focus = true;
+                self.focus_editor = false;
+            }
+            Command::FindPrevious => self.find_advanced(ctx, true),
+            Command::ReplaceAll => self.replace_advanced(true),
+            Command::OpenProject => self.load_project(ctx, None),
+            Command::SaveProject => self.save_project(ctx, false),
+            Command::SaveProjectAs => self.save_project(ctx, true),
+            Command::RecentProjects => self.quality.recent_open = true,
+            Command::ProjectSettings => {
+                self.quality.settings_project = true;
+                self.quality.settings_json =
+                    serde_json::to_string_pretty(&self.quality.project_settings)
+                        .unwrap_or_default();
+                self.quality.settings_open = true;
+            }
+            Command::Symbols => self.list_symbols(ctx),
+            Command::NavBack => self.navigate(ctx, false),
+            Command::NavForward => self.navigate(ctx, true),
+            Command::CompareDisk => self.compare_disk(ctx, false),
+            Command::GitDiff => self.compare_disk(ctx, true),
+            Command::KeyBindings => {
+                self.quality.settings_project = false;
+                self.quality.settings_json =
+                    serde_json::to_string_pretty(&self.quality.config).unwrap_or_default();
+                self.quality.settings_open = true;
+            }
+            Command::Encoding => {
+                self.quality.encoding = self.active().page.info.encoding.clone();
+                self.quality.encoding_open = true;
+            }
+            Command::Complete => self.open_completion(),
+            Command::Snippets => {
+                self.quality.snippets_open = true;
+                self.quality.snippet_focus = true;
+                self.focus_editor = false;
+            }
+            Command::PinTab => {
+                let b = &mut self.workspace.open[self.workspace.active];
+                b.view.pinned = !b.view.pinned;
+                self.quality.preview = None;
+                self.changed();
+            }
+            Command::CloseOthers => self.close_tab_group(false),
+            Command::CloseRight => self.close_tab_group(true),
             Command::NextOccurrence => self.occurrence(false),
             Command::AllOccurrences => {
                 if self.active().view.anchor == self.active().view.head {
@@ -630,6 +747,7 @@ impl HeditApp {
                 self.focus_editor = true;
             }
             Command::Paste => {
+                self.quality.paste_requested = true;
                 self.focus_editor = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
             }
@@ -643,6 +761,17 @@ impl HeditApp {
                 self.changed();
             }
             Command::Find | Command::Replace => {
+                let b = self.active();
+                self.quality.scope = (b.view.anchor != b.view.head).then(|| {
+                    (
+                        b.view.id,
+                        b.page.start as usize
+                            + hedit::advanced::byte(&b.page.text, b.view.anchor.min(b.view.head)),
+                        b.page.start as usize
+                            + hedit::advanced::byte(&b.page.text, b.view.anchor.max(b.view.head)),
+                    )
+                });
+                self.quality.selection_only = false;
                 self.find_open = true;
                 self.find_focus = true;
                 self.replace_open = command == Command::Replace;

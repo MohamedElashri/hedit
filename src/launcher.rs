@@ -91,7 +91,14 @@ pub fn launch(
     } else {
         None
     };
-    fs::create_dir_all(directory)?;
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(directory)?;
     let log = directory.join(LOG_NAME);
     let mut command = Command::new(std::env::current_exe()?);
     command

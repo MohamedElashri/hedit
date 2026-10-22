@@ -20,7 +20,7 @@ fn run(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let options = hedit::cli::Options::parse(args.clone())?;
     if options.help {
-        println!("hedit — keep your train of thought\n\nUsage: hedit [--session-dir DIR] [--new] [FILE[:LINE[:COLUMN]] | FOLDER ...] [-]\n\n  -                 Read UTF-8 stdin into an unsaved file\n  --new             Add a new file\n  --session-dir DIR Use an isolated session (one process per session)\n  --                Treat remaining arguments as paths\n  -h, --help        Show help\n  -V, --version     Show version\n\nhedit releases the terminal after the window starts.\nBuild and run with Cargo. CUDA tools are optional.");
+        println!("hedit — keep your train of thought\n\nUsage: hedit [--session-dir DIR] [--new] [FILE[:LINE[:COLUMN]] | FOLDER ...] [-]\n\n  -                 Read UTF-8 stdin into an unsaved file\n  --new             Add a new file\n  --session-dir DIR Use an isolated session (one process per session)\n  --                Treat remaining arguments as paths\n  -h, --help        Show help\n  -V, --version     Show version\n\nhedit opens in the running session and releases the terminal after startup.\nBuild and run with Cargo. CUDA tools are optional.");
         return Ok(());
     }
     if options.version {
@@ -39,6 +39,10 @@ fn run(
     if !startup.is_child() {
         return launcher::launch(&args, &directory, options.stdin);
     }
+    if hedit::ipc::forward(&directory, &options, startup.stdin_path())? {
+        startup.ready()?;
+        return Ok(());
+    }
     let native_options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([1280.0, 820.0])
@@ -50,7 +54,16 @@ fn run(
     };
     // Acquire the session lock before starting the UI. A second process must
     // never overwrite this process's snapshots.
-    let (mut workspace, errors) = hedit::workspace::Workspace::restore(directory)?;
+    let (mut workspace, errors) = match hedit::workspace::Workspace::restore(directory.clone()) {
+        Ok(workspace) => workspace,
+        Err(error) => {
+            if hedit::ipc::forward(&directory, &options, startup.stdin_path())? {
+                startup.ready()?;
+                return Ok(());
+            }
+            return Err(error.into());
+        }
+    };
     if options.new_buffer {
         workspace.new_buffer()?;
     }

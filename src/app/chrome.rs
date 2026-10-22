@@ -10,7 +10,7 @@ fn menu_item(ui: &mut egui::Ui, app: &HeditApp, command: Command) -> bool {
         app.command_enabled(command),
         egui::Button::new(command.label())
             .selected(app.command_selected(command))
-            .shortcut_text(command.shortcut()),
+            .shortcut_text(app.shortcut_text(command)),
     )
     .clicked()
 }
@@ -22,13 +22,14 @@ impl HeditApp {
             .inner_margin(egui::Margin::symmetric(8, 3))).show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 for (title, groups) in [
-                    ("File", vec![vec![Command::New, Command::Open, Command::OpenFolder], vec![Command::RefreshFolder, Command::CloseFolder], vec![Command::Save, Command::SaveAs, Command::Rename], vec![Command::Close, Command::Reopen, Command::Shelf], vec![Command::Quit]]),
+                    ("File", vec![vec![Command::New, Command::Open, Command::OpenFolder], vec![Command::RefreshFolder, Command::CloseFolder], vec![Command::Save, Command::SaveAs, Command::Rename, Command::Encoding], vec![Command::Close, Command::Reopen, Command::Shelf], vec![Command::Quit]]),
                     ("Edit", vec![]),
-                    ("Find", vec![vec![Command::Find, Command::Replace]]),
+                    ("Find", vec![vec![Command::Find, Command::Replace, Command::FindPrevious, Command::ReplaceAll, Command::FindFiles]]),
                     ("View", vec![]),
-                    ("Goto", vec![vec![Command::Switcher, Command::Goto], vec![Command::Bookmark, Command::NextBookmark, Command::PreviousBookmark, Command::Bookmarks]]),
-                    ("Tools", vec![vec![Command::Palette, Command::Gpu], vec![Command::Checkpoint]]),
-                    ("Preferences", vec![vec![Command::Settings, Command::Appearance, Command::ToolSettings]]),
+                    ("Goto", vec![vec![Command::Switcher, Command::Goto, Command::Symbols], vec![Command::NavBack, Command::NavForward], vec![Command::Bookmark, Command::NextBookmark, Command::PreviousBookmark, Command::Bookmarks]]),
+                    ("Project", vec![vec![Command::OpenProject,Command::SaveProject,Command::SaveProjectAs,Command::RecentProjects],vec![Command::ProjectSettings]]),
+                    ("Tools", vec![vec![Command::Palette, Command::Gpu, Command::GitDiff, Command::CompareDisk, Command::Complete, Command::Snippets], vec![Command::Checkpoint]]),
+                    ("Preferences", vec![vec![Command::Settings, Command::Appearance, Command::ToolSettings, Command::KeyBindings]]),
                     ("Help", vec![vec![Command::Updates, Command::About]]),
                 ] {
                     ui.menu_button(title, |ui| {
@@ -67,6 +68,7 @@ impl HeditApp {
         let mut select = None;
         let mut close = None;
         let mut action = None;
+        let mut reorder = None;
         egui::TopBottomPanel::top("tabs")
             .frame(
                 egui::Frame::new()
@@ -87,6 +89,11 @@ impl HeditApp {
                                 } else {
                                     title
                                 };
+                                let title = if buffer.view.pinned {
+                                    format!("◆ {title}")
+                                } else {
+                                    title
+                                };
                                 let output = egui::Frame::new()
                                     .fill(if active {
                                         theme.background.color()
@@ -100,22 +107,42 @@ impl HeditApp {
                                                 let response = ui
                                                     .add(
                                                         egui::Button::new(
-                                                            RichText::new(title).size(12.0).color(
-                                                                if active {
-                                                                    theme.text.color()
-                                                                } else {
-                                                                    theme.muted.color()
-                                                                },
-                                                            ),
+                                                            (if self.quality.preview
+                                                                == Some(buffer.view.id)
+                                                            {
+                                                                RichText::new(title).italics()
+                                                            } else {
+                                                                RichText::new(title)
+                                                            })
+                                                            .size(12.0)
+                                                            .color(if active {
+                                                                theme.text.color()
+                                                            } else {
+                                                                theme.muted.color()
+                                                            }),
                                                         )
                                                         .frame(false)
-                                                        .min_size(egui::vec2(80.0, 20.0)),
+                                                        .min_size(egui::vec2(80.0, 20.0))
+                                                        .sense(egui::Sense::click_and_drag()),
                                                     )
                                                     .on_hover_text(
                                                         buffer.page.info.path.as_deref().unwrap_or(
                                                             "Unsaved file · included in recovery",
                                                         ),
                                                     );
+                                                if response.drag_started() {
+                                                    self.quality.tab_drag = Some(buffer.view.id);
+                                                }
+                                                if response.contains_pointer()
+                                                    && ui.input(|i| i.pointer.any_released())
+                                                {
+                                                    if let Some(id) = self.quality.tab_drag.take() {
+                                                        reorder = Some((id, index));
+                                                    }
+                                                }
+                                                if response.double_clicked() {
+                                                    self.quality.preview = None;
+                                                }
                                                 if response.clicked() {
                                                     select = Some(index);
                                                 }
@@ -124,6 +151,17 @@ impl HeditApp {
                                                     close = Some(index);
                                                 }
                                                 response.context_menu(|ui| {
+                                                    for command in [
+                                                        Command::PinTab,
+                                                        Command::CloseOthers,
+                                                        Command::CloseRight,
+                                                    ] {
+                                                        if ui.button(command.label()).clicked() {
+                                                            select = Some(index);
+                                                            action = Some(command);
+                                                            ui.close_menu();
+                                                        }
+                                                    }
                                                     if ui.button("Close tab").clicked() {
                                                         close = Some(index);
                                                         ui.close_menu();
@@ -190,8 +228,27 @@ impl HeditApp {
                     });
             });
         if !self.busy && !self.closing {
+            if let Some((id, target)) = reorder {
+                let active = self.active().view.id;
+                if let Some(source) = self.workspace.open.iter().position(|b| b.view.id == id) {
+                    let buffer = self.workspace.open.remove(source);
+                    self.workspace
+                        .open
+                        .insert(target.min(self.workspace.open.len()), buffer);
+                    self.workspace.active = self
+                        .workspace
+                        .open
+                        .iter()
+                        .position(|b| b.view.id == active)
+                        .unwrap_or(0);
+                    self.changed();
+                }
+                self.quality.tab_drag = None;
+            }
             if let Some(index) = select {
+                self.navigation_mark();
                 self.workspace.active = index;
+                self.navigation_mark();
                 self.changed();
                 self.focus_editor = true;
             }
@@ -278,7 +335,8 @@ impl HeditApp {
                         let info = &self.active().page.info;
                         ui.label(
                             RichText::new(format!(
-                                "UTF-8{} · {} · {}",
+                                "{}{} · {} · {}",
+                                info.encoding,
                                 if info.bom { " BOM" } else { "" },
                                 info.eol,
                                 format_bytes(info.size)
@@ -552,7 +610,7 @@ impl HeditApp {
                         egui::TextEdit::singleline(&mut self.query)
                             .id(input_id)
                             .desired_width(width)
-                            .hint_text("Literal, case-sensitive text"),
+                            .hint_text("Search text or regular expression"),
                     );
                     if self.find_focus {
                         response.request_focus();
@@ -570,6 +628,21 @@ impl HeditApp {
                         self.focus_editor = true;
                     }
                 });
+                ui.horizontal_wrapped(|ui| {
+                    ui.checkbox(&mut self.quality.options.regex, "Regex");
+                    ui.checkbox(&mut self.quality.options.case_sensitive, "Case sensitive");
+                    ui.checkbox(&mut self.quality.options.whole_word, "Whole words");
+                    ui.add_enabled_ui(self.quality.scope.is_some(), |ui| {
+                        ui.checkbox(&mut self.quality.selection_only, "Selection only");
+                    });
+                    if ui
+                        .add_enabled(!self.busy, egui::Button::new("Previous"))
+                        .clicked()
+                    {
+                        self.find_advanced(ctx, true);
+                    }
+                    ui.label(&self.quality.match_status);
+                });
                 if self.replace_open {
                     ui.horizontal(|ui| {
                         ui.label("With");
@@ -586,6 +659,15 @@ impl HeditApp {
                             .clicked()
                         {
                             self.replace_selection();
+                        }
+                        if ui
+                            .add_enabled(
+                                self.command_enabled(Command::Replace),
+                                egui::Button::new("Replace all"),
+                            )
+                            .clicked()
+                        {
+                            self.replace_advanced(true);
                         }
                     });
                 }

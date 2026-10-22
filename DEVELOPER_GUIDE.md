@@ -190,6 +190,12 @@ editing, and line-comment commands remain available. NVIDIA identifies CUDA
 | `src/app/chrome.rs` | Menus, tabs, sidebar, status bar, bottom search panel |
 | `src/app/editor_layout.rs` | One-entry cache of the displayed page's highlighted text layout |
 | `src/app/commands.rs` | Shared menu/shortcut commands and keyboard-driven palette |
+| `src/app/quality.rs`, `quality_windows.rs` | Project/search/file workflows, settings, comparisons, navigation, completion and native dialogs |
+| `src/search.rs` | Shared Unicode regex engine, ignore-aware folder traversal and guarded replacement plans |
+| `src/projects.rs` | Project/workspace JSON, formatting precedence and EditorConfig |
+| `src/intelligence.rs` | Source-line symbols, completion, snippet expansion and read-only Git transport |
+| `src/text_encoding.rs` | Lossless UTF-8, UTF-16 and explicit legacy encoding conversion |
+| `src/ipc.rs`, `src/launcher.rs` | Per-session request mailbox, startup acknowledgements and terminal detachment |
 | `src/update.rs`, `src/update/install.rs` | Manual release checks, checksum verification, archive preflight, staged installation and rollback |
 | `src/app/updates.rs` | Explicit check/install actions, worker progress, restart guidance and close gating |
 | `src/app/preferences.rs` | Unified settings, theme controls, tool/recovery preferences, navigation dialogs |
@@ -497,7 +503,7 @@ features as available.
 
 Native editor and Cargo build; periodic recovery with fallback/preservation;
 named unsaved files and a searchable shelf; guarded atomic saves; bounded large-file
-pages, log following, literal search, and bookmarks; process-local undo; automatic
+pages, log following, literal search, and bookmarks; bounded persistent undo; automatic
 syntax detection and persistent per-buffer syntax selection; customizable themes
 and SVG identity; persistent folder trees with multiple roots, file/subfolder creation, and fuzzy
 quick open; CUDA tools; Linux packaging
@@ -506,9 +512,8 @@ and consolidated user/developer guides.
 ### Reliability and daily use
 
 - Durable edit journal, recovery checksums, filesystem fault injection, and soak tests.
-- Persistent undo and bookmark anchors that follow undo/external changes.
-- Broader encoding support and streaming line-ending conversion for paged files.
-- Single-instance CLI forwarding and search across files.
+- Bookmark anchors that follow undo/external changes.
+- Streaming encoding and line-ending conversion for large paged files.
 - Continuous large-file scrolling, global line indexes, and log filtering.
 - X11/Wayland visual validation, accessibility, DEB/RPM packages, and release checks.
 
@@ -539,11 +544,53 @@ Its [API reference](https://www.sublimetext.com/docs/api_reference.html) also
 describes folding and minimap controls. Keep unavailable commands out of the
 menus until their underlying editing behavior is implemented.
 
-- Regex/case-insensitive search, replace-all controls, richer split layouts, and
-  syntax-aware folding across pages.
+- Richer split layouts and syntax-aware folding across pages.
 - More language lexers and incremental multiline state across pages.
 - NVIDIA hardware/driver testing, source synchronization, gutter breakpoints,
   structured variables/watches, GPU execution views, and remote setup workflows.
+
+### Daily-use features in 0.1.3
+
+Terminal launches always detach. A child first probes the existing recovery lock;
+when another process owns it, the child submits an atomic mailbox request under
+`session/requests`. Requests retain native path bytes and resolve relative paths
+against the invoking directory. The GUI imports stdin on a worker, opens queued
+paths, checkpoints, and acknowledges. Only the session owner writes snapshots.
+Lock destruction explicitly unlocks before closing, preventing a concurrently
+forked child from briefly retaining an inherited recovery lock before exec.
+
+Search uses the shared regex engine with Unicode boundaries and capture-group
+replacement. Folder workers honor Git ignore files, deduplicate overlapping
+roots, skip personal `.hedit-workspace` files, and cap files/results/retained text.
+Replacement plans fingerprint original bytes. Applying rechecks disk and buffer
+state, skips dirty/followed buffers, and commits candidate documents only after a
+successful guarded save. Changes across several files are individually atomic,
+with partial success reported; unopened files have no retained editor undo.
+
+Project definitions hold roots and settings; the adjacent workspace holds bounded
+personal text/views and remaps restored document IDs in split-pane state. Current
+unsaved buffers go to the shelf before switching. First-save formatting resolves
+rules against the chosen destination, and cleanup uses the normal undo engine.
+User and language defaults are overlaid by project settings, then matching parent
+EditorConfig sections. EditorConfig support covers common formatting properties
+and globs with indentation widths of 1–8; it is not a full conformance claim.
+
+Internal pieces and recovery files stay UTF-8. Encoding metadata controls disk
+output; UTF-16 conversion is explicit or BOM-detected and legacy encodings are
+never guessed. Conversion is bounded at 32 MiB and refuses lossy output. Format
+state, including encoding/BOM, follows undo. Fully loaded documents checkpoint up
+to 64 undo/redo states and 32 MiB in each direction. Historical text is coalesced
+into immutable, content-addressed sources so typing does not multiply open file
+descriptors or manifest entries. Paged history remains process-local.
+
+Git uses bounded read-only subprocesses and background refresh. Symbol navigation
+uses source-line heuristics; completion uses open buffers, and snippets support
+selection insertion plus a final cursor. These features do not require an LSP.
+Run `cargo test quality` for the backend/UI contracts. To inspect native layouts:
+
+```sh
+HEDIT_PREVIEW_DIR=/tmp/hedit-quality-previews cargo test --bin hedit export_quality_previews -- --ignored
+```
 
 ## Provenance and license
 

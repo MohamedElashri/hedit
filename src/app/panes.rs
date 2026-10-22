@@ -45,6 +45,26 @@ pub(super) struct Panes {
     pub focused: usize,
     views: [Pane; 2],
 }
+impl Panes {
+    pub(super) fn remap(&mut self, ids: &std::collections::HashMap<u64, (u64, u64)>) {
+        self.mode = self.mode.min(2);
+        self.focused = self.focused.min(1);
+        for pane in &mut self.views {
+            if let Some(&(id, revision)) = ids.get(&pane.id) {
+                pane.id = id;
+                pane.revision = revision;
+            } else {
+                pane.id = 0;
+            }
+        }
+    }
+    pub(super) fn secondary_id(&self) -> Option<u64> {
+        (self.mode != 0).then_some(self.views[1].id)
+    }
+    pub(super) fn set_secondary(&mut self, id: u64) {
+        self.views[1].id = id;
+    }
+}
 impl Pane {
     fn refresh(&mut self, b: &Buffer) {
         if self.revision == b.page.info.revision {

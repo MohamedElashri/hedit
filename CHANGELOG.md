@@ -4,6 +4,29 @@
 
 ### Added
 
+- Open files, folders, projects, and piped snippets in the running session from
+  subsequent terminal commands, bringing its window forward after recovery completes.
+- Regex, case-insensitive, whole-word, and selection-scoped search, match counts,
+  previous-match navigation, capture-group replacement, and undoable replace all.
+- Find in all workspace folders with filename filters, `.gitignore` support,
+  cancellation, clickable locations, selectable replacement previews, and guarded writes.
+- Named `.hedit-project` definitions, personal `.hedit-workspace` snapshots,
+  recent projects, project formatting settings, and restoration of unsaved text,
+  tabs, selections, pins, and split views. Switching preserves unrelated unsaved work.
+- Clean-file auto-reload and disk/editor comparisons with guarded conflict resolution;
+  taking the disk version retains the prior editor text in Undo.
+- File/project symbol lists and back/forward navigation across files and positions.
+- Reorder tabs by dragging, pin tabs, preview sidebar files, and close other/right tabs.
+- Sidebar rename, move, duplicate, system trash, relative-path copy, and file-manager reveal.
+- EditorConfig rules and user/project/per-language formatting preferences, including
+  undoable save-time cleanup and first-save destination rules.
+- Persistent undo/redo for fully loaded buffers, retaining up to 64 states and
+  32 MiB in each direction per document in recovery checkpoints.
+- Custom keyboard overrides, editable snippets with trigger/selection/cursor support,
+  and word completion from open files.
+- Git change markers and inline hunk previews, plus a full comparison with HEAD.
+- Automatic UTF-16 BOM detection and explicit UTF-8, UTF-16LE/BE, Windows-1252,
+  ISO-8859-1, Shift JIS, and GBK conversion; unrepresentable characters are rejected.
 - Terminal launches return the prompt after window startup and keep running when
   the terminal closes. This behavior is automatic for every editor launch.
   Startup errors remain visible, stdin retains recovery protection, and background

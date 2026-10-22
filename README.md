@@ -17,9 +17,9 @@ inspect, snippets to revisit, and notes that do not need a filename yet. Keep a
 workspace of files between sessions, find your place in large logs, and
 work with CUDA source without leaving the editor.
 
-The upcoming **0.1.3** adds richer Edit and View menus and a universal macOS app
-for Apple Silicon and Intel. Version **0.1.2** introduced folder workspaces.
-See the [release changes](CHANGELOG.md#012---2026-10-22).
+The upcoming **0.1.3** adds project search, saved projects, richer editing and
+navigation, persistent undo, encoding conversion, and a universal macOS app for
+Apple Silicon and Intel. See the [release changes](CHANGELOG.md#013---unreleased).
 
 ## What you can do
 
@@ -32,8 +32,13 @@ See the [release changes](CHANGELOG.md#012---2026-10-22).
   tab, and return to it after restarting. Browse the shelf to reopen closed files.
 - **Inspect large logs.** Read files in manageable pages, follow new output, search
   across the file, and bookmark positions you want to revisit.
-- **Find your way around.** Switch files, jump to a line, search and replace
-  individual matches, and undo edits during your session.
+- **Find your way around.** Search folder contents with regex and filename filters,
+  review replacements, jump to symbols, and navigate back and forward. Save named
+  projects with their tabs and split views; later terminal launches open in the
+  running window.
+- **Handle everyday file work.** Pin and reorder tabs, preview sidebar files,
+  rename/move/duplicate entries, send them to the system trash, and compare edits
+  with disk or Git HEAD. Customize keyboard shortcuts, snippets, and formatting.
 - **Read code in color.** Syntax is selected from the filename. Choose a language
   from the searchable bottom-bar menu for unsaved snippets, or switch to plain
   text. Common programming, web, configuration, build, and scientific formats
@@ -149,9 +154,10 @@ copies are separate from files you save to disk. Checkpoints are periodic, so an
 kill or power loss can lose edits since the last completed checkpoint. Keep
 independent saved copies and backups for important work.
 
-hedit currently supports UTF-8 text. Undo history lasts for the current process;
+hedit supports UTF-8 and BOM-marked UTF-16, with explicit legacy encoding choices.
+Fully loaded buffers retain bounded undo/redo history across restarts;
 multiple cursors, rectangular selections, split panes, indentation folding, guides,
-and a minimap are available. Regex search is planned. Read the
+and a minimap are available. Read the
 [user guide](USER_GUIDE.md) for everyday use and recovery, or the
 [developer guide](DEVELOPER_GUIDE.md) for contributing and the roadmap.
 

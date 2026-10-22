@@ -16,6 +16,12 @@ memchr = "2"
 directories = "6"
 semver = "1"
 sha2 = "0.10"
+regex = "1.13.1"
+encoding_rs = "0.8.42"
+ignore = "0.4.33"
+trash = "5.2.9"
+similar = "3.2.0"
+globset = "0.4.20"
 
 [target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
 rustix = { version = "1", features = ["fs", "process"] }

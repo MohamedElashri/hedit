@@ -355,6 +355,81 @@ fn rename_no_replace(from: &Path, target: &Path) -> std::io::Result<()> {
     renameat_with(CWD, from, CWD, target, RenameFlags::NOREPLACE).map_err(Into::into)
 }
 
+/// Move within a filesystem without replacing an existing destination.
+pub fn move_path(from: &Path, target: &Path) -> Result<PathBuf, String> {
+    let from = unresolved_leaf(&from.to_string_lossy())?;
+    let parent = fs::canonicalize(target.parent().ok_or("Choose a destination folder.")?)
+        .map_err(|e| e.to_string())?;
+    let target = parent.join(target.file_name().ok_or("Choose a destination name.")?);
+    require_absent(&target)?;
+    if target.starts_with(&from) {
+        return Err("A folder cannot be moved into itself.".into());
+    }
+    rename_no_replace(&from, &target).map_err(|e| e.to_string())?;
+    Ok(target)
+}
+
+/// Duplicate regular files and directories; never follow symlinks or overwrite.
+pub fn duplicate_path(from: &Path, target: &Path) -> Result<(), String> {
+    let from = unresolved_leaf(&from.to_string_lossy())?;
+    let parent = fs::canonicalize(target.parent().ok_or("Choose a destination folder.")?)
+        .map_err(|e| e.to_string())?;
+    let target = parent.join(target.file_name().ok_or("Choose a destination name.")?);
+    fn copy(from: &Path, to: &Path, depth: usize, count: &mut usize) -> Result<(), String> {
+        *count += 1;
+        if depth > 32 || *count > 50_000 {
+            return Err("Copy exceeds folder depth/file limits.".into());
+        }
+        let meta = fs::symlink_metadata(from).map_err(|e| e.to_string())?;
+        if meta.is_symlink() {
+            return Err(
+                "Duplicating symlinks is not supported; copy their targets explicitly.".into(),
+            );
+        }
+        if meta.is_dir() {
+            fs::create_dir(to).map_err(|e| e.to_string())?;
+            for entry in fs::read_dir(from).map_err(|e| e.to_string())? {
+                let entry = entry.map_err(|e| e.to_string())?;
+                copy(&entry.path(), &to.join(entry.file_name()), depth + 1, count)?;
+            }
+        } else if meta.is_file() {
+            use std::io::Write;
+            let mut input = fs::File::open(from).map_err(|e| e.to_string())?;
+            let mut output = fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(to)
+                .map_err(|e| e.to_string())?;
+            std::io::copy(&mut input, &mut output).map_err(|e| e.to_string())?;
+            output.flush().map_err(|e| e.to_string())?;
+            output
+                .set_permissions(meta.permissions())
+                .map_err(|e| e.to_string())?;
+        } else {
+            return Err("Only regular files and folders can be duplicated.".into());
+        }
+        Ok(())
+    }
+    require_absent(&target)?;
+    if target.starts_with(&from) {
+        return Err("A folder cannot be copied into itself.".into());
+    }
+    copy(&from, &target, 0, &mut 0)
+}
+pub fn duplicate_sibling(from: &Path, name: &str) -> Result<PathBuf, String> {
+    let name = leaf_name(name)?;
+    let target = from.parent().ok_or("Choose a file or folder.")?.join(name);
+    duplicate_path(from, &target)?;
+    Ok(target)
+}
+pub fn trash_path(path: &Path) -> Result<(), String> {
+    let path = unresolved_leaf(&path.to_string_lossy())?;
+    if path.parent().is_none() {
+        return Err("Cannot trash a filesystem root.".into());
+    }
+    trash::delete(path).map_err(|e| e.to_string())
+}
+
 #[cfg(windows)]
 fn rename_no_replace(from: &Path, target: &Path) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt;

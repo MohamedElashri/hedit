@@ -57,6 +57,28 @@ struct EditState {
     offset: u64,
     recovered: bool,
     eol: &'static str,
+    encoding: String,
+    bom: bool,
+}
+fn utf8_encoding() -> String {
+    "UTF-8".into()
+}
+#[derive(Clone, Serialize, Deserialize)]
+struct SavedHistoryState {
+    pieces: Vec<SavedPiece>,
+    size: u64,
+    version: u64,
+    offset: u64,
+    eol: String,
+    encoding: String,
+    bom: bool,
+}
+#[derive(Clone, Serialize, Deserialize)]
+struct SavedHistory {
+    undo: Vec<SavedHistoryState>,
+    redo: Vec<SavedHistoryState>,
+    version: u64,
+    saved_version: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -71,6 +93,7 @@ pub struct Document {
     paged: bool,
     bom: bool,
     eol: &'static str,
+    encoding: String,
     recovered: bool,
     undo: Vec<EditState>,
     redo: Vec<EditState>,
@@ -86,6 +109,10 @@ pub struct SavedDocument {
     paged: bool,
     bom: bool,
     eol: String,
+    #[serde(default = "utf8_encoding")]
+    encoding: String,
+    #[serde(default)]
+    history: Option<SavedHistory>,
     pub buffer: Option<PathBuf>,
     #[serde(default)]
     pub pieces: Option<Vec<SavedPiece>>,
@@ -109,12 +136,19 @@ impl SavedDocument {
         self.buffer
             .iter()
             .chain(self.pieces.iter().flatten().map(|piece| &piece.buffer))
+            .chain(
+                self.history
+                    .iter()
+                    .flat_map(|h| h.undo.iter().chain(&h.redo))
+                    .flat_map(|s| s.pieces.iter().map(|p| &p.buffer)),
+            )
     }
 }
 #[derive(Clone, Default)]
 pub struct SnapshotSources {
     sources: std::collections::HashMap<usize, (Source, PathBuf)>,
     protected: std::collections::HashMap<usize, Source>,
+    histories: std::collections::HashMap<[u8; 32], PathBuf>,
 }
 impl SnapshotSources {
     pub fn register_recovery(&mut self, doc: &Document, saved: &SavedDocument) {
@@ -135,6 +169,35 @@ impl SnapshotSources {
         self.sources.retain(|_, (_, path)| paths.contains(path));
         self.protected
             .retain(|key, _| self.sources.contains_key(key));
+        self.histories.retain(|_, path| paths.contains(path));
+    }
+    fn history(
+        &mut self,
+        bytes: &[u8],
+        directory: &Path,
+        relative: &Path,
+    ) -> Result<PathBuf, String> {
+        use sha2::{Digest, Sha256};
+        let hash: [u8; 32] = Sha256::digest(bytes).into();
+        if let Some(path) = self.histories.get(&hash) {
+            return Ok(path.clone());
+        }
+        let mut file = NamedTempFile::new_in(directory).map_err(err)?;
+        file.write_all(bytes).map_err(err)?;
+        file.flush().map_err(err)?;
+        file.as_file().sync_all().map_err(err)?;
+        let name = format!(
+            "history-{}.txt",
+            hash.iter().map(|b| format!("{b:02x}")).collect::<String>()
+        );
+        // Identical states in the same stage share their immutable source.
+        let target = directory.join(&name);
+        if !target.exists() {
+            file.persist(&target).map_err(err)?;
+        }
+        let path = relative.join(name);
+        self.histories.insert(hash, path.clone());
+        Ok(path)
     }
     /// Move live pieces and history onto completed, private recovery sources.
     /// This also covers edits made while the checkpoint was streaming.
@@ -240,6 +303,7 @@ pub struct Info {
     pub paged: bool,
     pub bom: bool,
     pub eol: &'static str,
+    pub encoding: String,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -264,7 +328,7 @@ pub struct SearchScan {
 fn reject_binary(bytes: &[u8]) -> Result<(), String> {
     if bytes.contains(&0) {
         return Err(
-            "This looks like a binary or UTF-16 file. hedit currently supports UTF-8 text.".into(),
+            "This looks like a binary file or text in another encoding. For a text file, try File → File encoding….".into(),
         );
     }
     Ok(())
@@ -332,6 +396,7 @@ impl Document {
             paged: false,
             bom: false,
             eol: "LF",
+            encoding: utf8_encoding(),
             recovered: false,
             undo: vec![],
             redo: vec![],
@@ -340,11 +405,265 @@ impl Document {
         }
     }
     pub fn open(id: u64, path: &Path) -> Result<Self, String> {
+        let mut file = File::open(path).map_err(err)?;
+        let mut prefix = [0; 3];
+        let count = std::io::Read::read(&mut file, &mut prefix).map_err(err)?;
+        let label = crate::text_encoding::detect(&prefix[..count]);
+        if label != "UTF-8" {
+            return Self::open_with_encoding(id, path, label);
+        }
         Self::open_file(id, path)
+    }
+    pub fn open_with_encoding(id: u64, path: &Path, label: &str) -> Result<Self, String> {
+        let path = fs::canonicalize(path).map_err(err)?;
+        let metadata = fs::metadata(&path).map_err(err)?;
+        if !metadata.is_file() || metadata.len() > crate::text_encoding::DECODE_LIMIT {
+            return Err("Encoding conversion supports regular files up to 32 MiB.".into());
+        }
+        let (text, bom) = crate::text_encoding::decode(&fs::read(&path).map_err(err)?, label)?;
+        let mut doc = Self::empty(id);
+        doc.size = text.len() as u64;
+        doc.eol = detected_eol(text.as_bytes());
+        doc.pieces = vec![Piece {
+            source: Source::Edit(Arc::new(text.into_bytes())),
+            start: 0,
+            len: doc.size,
+        }];
+        doc.path = Some(path);
+        doc.stamp = Some(Stamp::from_metadata(&metadata)?);
+        doc.encoding = crate::text_encoding::canonical(label)?.to_owned();
+        doc.bom = bom;
+        doc.paged = doc.size > SMALL_LIMIT;
+        doc.check_original()?;
+        Ok(doc)
+    }
+    pub fn text(&self, limit: u64) -> Result<String, String> {
+        if self.size > limit {
+            return Err(format!(
+                "This operation supports files up to {} MiB.",
+                limit / (1024 * 1024)
+            ));
+        }
+        String::from_utf8(self.read_range(0, self.size)?).map_err(err)
+    }
+    /// Preserve text before deliberately removing its disk source.
+    pub fn preserve_as_unsaved(&mut self) {
+        self.dirty = true;
+        self.saved_version = None;
+        self.revision += 1;
+    }
+    pub fn set_encoding(&mut self, label: &str) -> Result<(), String> {
+        let label = crate::text_encoding::canonical(label)?;
+        let text = self.text(crate::text_encoding::DECODE_LIMIT)?;
+        crate::text_encoding::encode(&text, label, self.bom)?;
+        if self.encoding != label {
+            self.remember_edit(0);
+            self.encoding = label.into();
+            if label.starts_with("UTF-16") {
+                self.bom = true;
+            } else if label != "UTF-8" {
+                self.bom = false;
+            }
+            self.finish_edit();
+        }
+        Ok(())
+    }
+    pub fn set_bom(&mut self, bom: bool) {
+        if self.bom != bom {
+            self.remember_edit(0);
+            self.bom = bom;
+            self.finish_edit();
+        }
+    }
+    pub fn accept_disk_version(&mut self, expected: &str) -> Result<(), String> {
+        if self.paged {
+            return Err("Resolve paged-file conflicts with Save As.".into());
+        }
+        let path = self.path.as_ref().ok_or("No disk file.")?;
+        let disk = Self::open_with_encoding(self.id, path, &self.encoding)?;
+        if disk.text(crate::text_encoding::DECODE_LIMIT)? != expected {
+            return Err("The disk file changed again; compare it again.".into());
+        }
+        self.stamp = disk.stamp;
+        Ok(())
+    }
+    pub fn take_disk_version(&mut self, expected: &str, revision: u64) -> Result<Page, String> {
+        if self.revision != revision {
+            return Err("The buffer changed; compare it again.".into());
+        }
+        self.accept_disk_version(expected)?;
+        let disk = Self::open_with_encoding(self.id, self.path.as_ref().unwrap(), &self.encoding)?;
+        if disk.text(crate::text_encoding::DECODE_LIMIT)? != expected {
+            return Err("The disk file changed again; compare it again.".into());
+        }
+        self.remember_edit(0);
+        self.pieces = disk.pieces;
+        self.size = disk.size;
+        self.eol = disk.eol;
+        self.bom = disk.bom;
+        self.stamp = disk.stamp;
+        self.finish_edit();
+        self.saved_version = Some(self.version);
+        self.dirty = false;
+        self.page(0)
+    }
+    fn write_encoded_content(&self, output: &mut File) -> Result<(), String> {
+        if self.encoding == "UTF-8" {
+            return self.write_content(output);
+        }
+        let text = self.text(crate::text_encoding::DECODE_LIMIT)?;
+        let bytes = crate::text_encoding::encode(&text, &self.encoding, self.bom)?;
+        output.write_all(&bytes).map_err(err)?;
+        output.sync_all().map_err(err)
+    }
+    fn snapshot_history(
+        &self,
+        directory: &Path,
+        relative: &Path,
+        sources: &mut SnapshotSources,
+    ) -> Result<Option<SavedHistory>, String> {
+        if self.paged || self.undo.is_empty() && self.redo.is_empty() {
+            return Ok(None);
+        }
+        let save = |states: &[EditState],
+                    sources: &mut SnapshotSources|
+         -> Result<Vec<SavedHistoryState>, String> {
+            let mut total = 0;
+            let mut out = Vec::new();
+            for state in states.iter().rev().take(64) {
+                total += state.size;
+                if total > 32 * 1024 * 1024 {
+                    break;
+                }
+                let mut historical = Self::empty(self.id);
+                historical.pieces = state.pieces.clone();
+                historical.size = state.size;
+                historical.recovered = state.recovered;
+                historical.check_source()?;
+                let bytes = historical.read_range(0, state.size)?;
+                historical.check_source()?;
+                let pieces = if bytes.is_empty() {
+                    vec![]
+                } else {
+                    vec![SavedPiece {
+                        buffer: sources.history(&bytes, directory, relative)?,
+                        start: 0,
+                        len: state.size,
+                    }]
+                };
+                out.push(SavedHistoryState {
+                    pieces,
+                    size: state.size,
+                    version: state.version,
+                    offset: state.offset,
+                    eol: state.eol.into(),
+                    encoding: state.encoding.clone(),
+                    bom: state.bom,
+                });
+            }
+            out.reverse();
+            Ok(out)
+        };
+        Ok(Some(SavedHistory {
+            undo: save(&self.undo, sources)?,
+            redo: save(&self.redo, sources)?,
+            version: self.version,
+            saved_version: self.saved_version,
+        }))
+    }
+    pub fn recover(id: u64, saved: &SavedDocument, directory: &Path) -> Result<Self, String> {
+        crate::text_encoding::canonical(&saved.encoding)?;
+        let mut doc = Self::recover_content(id, saved, directory)?;
+        if let Some(history) = &saved.history {
+            if history.undo.len() > 64 || history.redo.len() > 64 {
+                return Err("Invalid recovery undo history.".into());
+            }
+            let mut files = std::collections::HashMap::<PathBuf, Source>::new();
+            let mut load = |states: &[SavedHistoryState]| -> Result<Vec<EditState>, String> {
+                let mut out = Vec::new();
+                let mut total = 0u64;
+                for state in states {
+                    total = total
+                        .checked_add(state.size)
+                        .ok_or("Invalid recovery history size.")?;
+                    if total > 32 * 1024 * 1024 {
+                        return Err("Recovery undo history exceeds 32 MiB.".into());
+                    }
+                    crate::text_encoding::canonical(&state.encoding)?;
+                    let mut pieces = Vec::new();
+                    let mut size = 0u64;
+                    for piece in &state.pieces {
+                        validate_buffer_path(&piece.buffer)?;
+                        let source = if let Some(source) = files.get(&piece.buffer) {
+                            source.clone()
+                        } else {
+                            if files.len() >= 1024 {
+                                return Err(
+                                    "Recovery undo history has too many source files.".into()
+                                );
+                            }
+                            let source = Source::disk(
+                                File::open(directory.join(&piece.buffer)).map_err(err)?,
+                            )?;
+                            files.insert(piece.buffer.clone(), source.clone());
+                            source
+                        };
+                        let Source::Disk(_, stamp) = &source else {
+                            unreachable!()
+                        };
+                        if piece
+                            .start
+                            .checked_add(piece.len)
+                            .is_none_or(|end| end > stamp.size)
+                        {
+                            return Err("Invalid recovery history source range.".into());
+                        }
+                        size = size
+                            .checked_add(piece.len)
+                            .ok_or("Invalid recovery history lengths.")?;
+                        pieces.push(Piece {
+                            source,
+                            start: piece.start,
+                            len: piece.len,
+                        });
+                    }
+                    if size != state.size {
+                        return Err("Invalid recovery history size.".into());
+                    }
+                    out.push(EditState {
+                        pieces,
+                        size: state.size,
+                        version: state.version,
+                        offset: state.offset,
+                        recovered: true,
+                        eol: if state.eol == "CRLF" { "CRLF" } else { "LF" },
+                        encoding: state.encoding.clone(),
+                        bom: state.bom,
+                    });
+                }
+                Ok(out)
+            };
+            doc.undo = load(&history.undo)?;
+            doc.redo = load(&history.redo)?;
+            doc.version = history.version;
+            doc.saved_version = history.saved_version;
+            doc.revision = history
+                .version
+                .max(
+                    doc.undo
+                        .iter()
+                        .chain(&doc.redo)
+                        .map(|s| s.version)
+                        .max()
+                        .unwrap_or(0),
+                )
+                .saturating_add(1);
+        }
+        Ok(doc)
     }
     pub fn open_or_new(id: u64, path: &Path) -> Result<Self, String> {
         match fs::symlink_metadata(path) {
-            Ok(_) => Self::open_file(id, path),
+            Ok(_) => Self::open(id, path),
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 let parent = fs::canonicalize(path.parent().ok_or("Invalid file directory.")?)
                     .map_err(err)?;
@@ -403,7 +722,7 @@ impl Document {
             || sample.starts_with(&[0xfe, 0xff])
         {
             return Err(
-                "This looks like a binary or UTF-16 file. hedit currently supports UTF-8 text."
+                "This looks like a binary file or text in another encoding. For a text file, try File → File encoding…."
                     .into(),
             );
         }
@@ -435,6 +754,7 @@ impl Document {
             saved_version: if unsaved { None } else { Some(0) },
             bom,
             eol: detected_eol(&sample),
+            encoding: utf8_encoding(),
         };
         if !doc.paged {
             let bytes = doc.read_range(0, size)?;
@@ -473,6 +793,7 @@ impl Document {
             paged: self.paged,
             bom: self.bom,
             eol: if self.eol == "CRLF" { "CRLF" } else { "LF" },
+            encoding: self.encoding.clone(),
         }
     }
     fn check_source(&self) -> Result<(), String> {
@@ -540,7 +861,8 @@ impl Document {
         if !path.is_file() {
             return Err("The renamed file is no longer available.".into());
         }
-        self.stamp = Some(Stamp::read(&path)?);
+        // Keep the original stamp: an external change before/during the move
+        // must still prevent a later save from overwriting unseen bytes.
         self.path = Some(path);
         Ok(self.info())
     }
@@ -552,6 +874,8 @@ impl Document {
             offset,
             recovered: self.recovered,
             eol: self.eol,
+            encoding: self.encoding.clone(),
+            bom: self.bom,
         }
     }
     fn remember_edit(&mut self, offset: u64) {
@@ -584,6 +908,8 @@ impl Document {
             candidate.version = saved.version;
             candidate.recovered = saved.recovered;
             candidate.eol = saved.eol;
+            candidate.encoding = saved.encoding;
+            candidate.bom = saved.bom;
             candidate.revision += 1;
             candidate.dirty = candidate.saved_version != Some(candidate.version);
             let page = candidate.page(saved.offset)?;
@@ -919,7 +1245,9 @@ impl Document {
         } else {
             None
         };
-        let buffer = if pieces.is_none() && (self.dirty || self.path.is_none()) {
+        let buffer = if pieces.is_none()
+            && (self.dirty || self.path.is_none() || !self.undo.is_empty() || !self.redo.is_empty())
+        {
             let name = format!("buffer-{}.txt", self.id);
             let mut file = File::create(directory.join(&name)).map_err(err)?;
             self.write_content(&mut file)?;
@@ -935,11 +1263,13 @@ impl Document {
             paged: self.paged,
             bom: self.bom,
             eol: self.eol.into(),
+            encoding: self.encoding.clone(),
+            history: self.snapshot_history(directory, relative_directory, sources)?,
             buffer,
             pieces,
         })
     }
-    pub fn recover(id: u64, saved: &SavedDocument, directory: &Path) -> Result<Self, String> {
+    fn recover_content(id: u64, saved: &SavedDocument, directory: &Path) -> Result<Self, String> {
         if saved.size > 9_007_199_254_740_991 {
             return Err("Invalid session buffer size.".into());
         }
@@ -995,6 +1325,7 @@ impl Document {
                     "Unknown" => "Unknown",
                     _ => "LF",
                 },
+                encoding: saved.encoding.clone(),
                 recovered: true,
                 undo: vec![],
                 redo: vec![],
@@ -1007,7 +1338,7 @@ impl Document {
                 .path
                 .as_ref()
                 .ok_or("The session has no file or buffer.")?;
-            let mut doc = Self::open_file(id, path)?;
+            let mut doc = Self::open(id, path)?;
             doc.paged |= saved.paged;
             return Ok(doc);
         };
@@ -1039,6 +1370,7 @@ impl Document {
                 "Unknown" => "Unknown",
                 _ => "LF",
             },
+            encoding: saved.encoding.clone(),
             recovered: true,
             undo: vec![],
             redo: vec![],
@@ -1085,7 +1417,7 @@ impl Document {
             .transpose()?;
         let parent = target.parent().ok_or("Invalid save directory.")?;
         let mut temp = NamedTempFile::new_in(parent).map_err(err)?;
-        self.write_content(temp.as_file_mut())?;
+        self.write_encoded_content(temp.as_file_mut())?;
         self.check_source()?;
         if self.path.as_ref() == Some(&target) {
             self.check_original()?;
@@ -1116,7 +1448,7 @@ impl Document {
         };
         self.stamp = Some(Stamp::from_metadata(&file.metadata().map_err(err)?)?);
         self.path = Some(target);
-        if self.paged {
+        if self.paged && self.encoding == "UTF-8" {
             self.pieces = vec![Piece {
                 source: Source::disk(file)?,
                 start: if self.bom { 3 } else { 0 },

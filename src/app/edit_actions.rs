@@ -62,6 +62,9 @@ impl HeditApp {
     }
 
     pub(super) fn insert_indentation(&mut self) {
+        if !self.active().follow && !self.busy && !self.closing && self.expand_trigger() {
+            return;
+        }
         if self.active().follow || self.closing || self.busy {
             return;
         }

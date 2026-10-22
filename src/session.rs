@@ -17,6 +17,8 @@ const MANIFEST_LIMIT: u64 = 16 * 1024 * 1024;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TabView {
+    #[serde(default)]
+    pub pinned: bool,
     pub id: u64,
     pub name: String,
     pub page_start: u64,
@@ -120,6 +122,14 @@ pub struct SessionStore {
     directory: PathBuf,
     state: Mutex<StoreState>,
 }
+impl Drop for SessionStore {
+    fn drop(&mut self) {
+        let state = self.state.get_mut().unwrap_or_else(|e| e.into_inner());
+        if let Some(lock) = state.lock.take() {
+            let _ = lock.unlock();
+        }
+    }
+}
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
@@ -146,6 +156,9 @@ fn read_manifest(path: &Path) -> Result<SavedSession, String> {
     Ok(saved)
 }
 impl SessionStore {
+    pub fn directory(&self) -> &Path {
+        &self.directory
+    }
     pub fn new(directory: PathBuf) -> Self {
         Self {
             directory,

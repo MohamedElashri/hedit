@@ -272,9 +272,9 @@ fn paged_edits_recover_even_after_original_file_disappears() {
 }
 
 #[test]
-fn rejects_binary_utf16_and_invalid_utf8() {
+fn rejects_binary_and_malformed_encodings() {
     let directory = tempfile::tempdir().unwrap();
-    for bytes in [vec![0, 1, 2], vec![0xff, 0xfe, 1, 0], vec![0xff, b'a']] {
+    for bytes in [vec![0, 1, 2], vec![0xff, 0xfe, 1], vec![0xff, b'a']] {
         let path = directory.path().join("binary");
         fs::write(&path, bytes).unwrap();
         assert!(Document::open(1, &path).is_err());

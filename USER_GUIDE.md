@@ -208,6 +208,11 @@ path. After saving, the tab uses the filename from disk.
 Click a tab or an Open Files row to switch files. **Ctrl+P** finds open files
 and files in all open folders. A dot on a tab indicates unsaved changes.
 
+Drag a tab to reorder it. Its context menu offers **Pin tab**, **Close other tabs**,
+and **Close tabs to the right**; group closing keeps pinned tabs. A single click
+on a sidebar file opens an italic preview tab, replacing the previous clean,
+unpinned preview. Double-click, pin, or edit the preview to keep it.
+
 ### Open a folder of code
 
 Choose **File → Open folder…** (**Ctrl+Shift+O**), drag a folder into the window,
@@ -224,8 +229,13 @@ you expand them, with folders listed first and hidden files included. Opening
 an already open file keeps its selection and unsaved edits. A file on the closed
 shelf is reopened with its recovery text.
 
-Right-click a folder for **New file…**, **New folder…**, **Copy path**, and
-**Refresh folder**. Creation refuses to overwrite an existing entry. **Save as…**
+Right-click an entry to rename, move, duplicate, copy its absolute/relative path,
+or reveal it in the system file manager. **Move to trash…** uses the system trash
+and asks for confirmation; open text remains recoverable. Folders also offer
+**New file…**, **New folder…**, and **Refresh folder**. Creation, moving, and
+duplication refuse to overwrite existing entries. Moves require the same
+filesystem; duplication does not follow symlinks and is limited to 50,000 entries
+and 32 folder levels. **Save as…**
 starts in the folder containing the current file, or the first root for an unsaved
 file. After changes made outside hedit, use **File → Refresh folders** or the **↻**
 button to reload the tree and clear cached quick-open results.
@@ -292,9 +302,12 @@ When a log rotates, Follow reads the file currently at the original path. If tha
 path disappears or the replacement is not UTF-8 text, an error is shown and the
 visible file remains.
 
-Outside Follow mode, hedit flags external changes when the file becomes active.
-A clean file offers **Reload file**. For a modified file, use **Save file
-as…** to keep your version before reopening the disk version.
+Outside Follow mode, hedit checks the active file about once per second and
+automatically reloads clean files. Modified files keep their text and offer
+**Compare changes…** or **Save file as…**. The comparison lets you take the disk
+version, retaining your prior text in Undo, or explicitly save the editor version
+over the compared disk version. If either side changes again, compare again.
+Conflict resolution requires a fully loaded file; paged files retain Save As.
 
 ### Bookmark a position
 
@@ -519,14 +532,103 @@ when opened and adapts its height to smaller windows.
 ### Find and replace
 
 1. Press **Ctrl+F** or choose **Find → Find…** to open the bottom search panel.
-2. Enter a literal, case-sensitive query of up to 4,096 UTF-8 bytes.
+2. Enter a query of up to 4,096 UTF-8 bytes and choose search options.
 3. Click **Find next** to select the next match across the whole file.
 4. Enable **Replace** (or press **Ctrl+H**), enter replacement text, and click
    **Replace selected** to change that occurrence.
 
-Search wraps at the end. Long searches can be cancelled from the status bar;
-**Esc** closes the panel. Regex, case-insensitive search, and replace-all controls
-are not yet available.
+Search wraps at the end. Enable **Regex**, **Case sensitive**, or **Whole words**;
+**Selection only** uses the selection captured when opening Find. Use **Previous**
+or **Shift+F3** to go backward. The panel shows match counts after searching.
+Regex replacements support capture groups such as `${1}`. **Replace all** is one
+undoable edit. **Esc** closes the panel. Advanced search supports up to 32 MiB
+and 20,000 matches; advanced replacement requires a fully loaded file. Literal,
+case-sensitive Find continues to stream across larger paged files and supports
+cancellation from the status bar.
+
+**Find → Find in folders…** (**Ctrl+Shift+F**) searches disk contents across all
+workspace roots. Enter comma-separated filename/path globs, such as `*.rs, *.cu`,
+or leave Files empty. Git ignore rules apply, including outside Git repositories;
+directory symlinks are not followed. Click a result to open its location.
+Search reads UTF-8 and BOM-marked UTF-16 files, skipping unsupported/binary files
+and files over 16 MiB. It reports skipped files and result limits. Open unsaved
+text is not included in folder searches.
+
+Choose **Preview replacements**, select the files to change, and click a filename
+to inspect its diff before **Apply reviewed replacements**. Changing the query,
+replacement, filters, or options requires a new preview. Files changed externally,
+open with unsaved text, or in Follow mode are skipped and reported. Preview text
+is limited to 128 MiB; applying across files is not a single transaction. Open,
+fully loaded buffers retain undo for successful replacements; unopened disk files
+should be restored through version control or backups if necessary.
+
+### Saved projects and formatting
+
+Use **Project → Save project as…** to create a `.hedit-project` file containing
+folder roots and project settings. **Open project…**, **Recent projects…**, and
+`hedit path/to/demo.hedit-project` restore it. The adjacent `.hedit-workspace`
+stores personal tabs, unsaved text, selections, pins, split views, wrap, and font
+size; keep it out of version control. Workspace state updates with recovery
+checkpoints. Switching projects preserves unrelated unsaved buffers on the closed
+shelf. A full shelf of unsaved work must be saved before switching. Workspace
+snapshots support 200 tabs, 16 MiB per unsaved tab, and 32 MiB of unsaved text.
+
+**Project → Project settings…** edits project formatting defaults and per-language
+overrides. **Preferences → Keyboard, snippets and formatting…** edits user defaults
+in `editor-settings.json` in the session directory. Formatting properties are
+`indent_style` (`spaces` or `tabs`), `indent_size` (1–8), `end_of_line` (`lf`/`crlf`),
+`insert_final_newline`, `trim_trailing_whitespace`, and `charset`.
+
+hedit also reads matching `.editorconfig` sections from parent folders, honoring
+`root = true`, common filename globs, and the formatting properties above.
+EditorConfig uses `space`/`tab`; `tab_width` supplies a width when no indentation
+size is set. Matching EditorConfig rules override project and user defaults.
+Save-time cleanup is undoable and uses the destination rules on the first Save As.
+Paged files cannot apply cleanup or line-ending conversion requiring a whole-file
+rewrite; hedit reports that limitation instead of silently changing them.
+
+### Symbols, Git, snippets, and keyboard settings
+
+**Goto → Go to symbol…** (**Ctrl+R**) lists functions, classes, and types in the
+current file; enable **All project folders** to scan the workspace. These are
+source-line heuristics, not language-server definitions. Project indexing follows
+the same ignore and per-file size limits as folder search and lists up to 20,000
+symbols. **Alt+Left/Right** navigates back/forward through up to 200 recorded
+locations, reopening shelved files when needed.
+
+With Git installed, changed-line markers refresh about every two seconds for the
+active fully loaded file. Hover a marker for its inline hunk. **Tools → Git changes…**
+opens a comparison of editor text with HEAD, including staged and unsaved changes.
+These operations do not stage, commit, or otherwise modify the repository.
+
+**Tools → Complete word…** (**Ctrl+Space**) offers words from open files.
+**Tools → Insert snippet…** inserts a configured template into the current selection.
+Alternatively, type its trigger and press Tab. Templates support `${SELECTION}`
+and `$0` for the final cursor; a `language` value restricts them to a syntax ID.
+Completion and snippets operate on fully loaded files.
+
+The keyboard/snippet settings window edits JSON and lists command identifiers.
+For example, a `keybindings` entry can be
+`{"command":"find_files","shortcut":"Primary+Shift+F","editor_only":false}`.
+`Primary` means Ctrl on Linux and Command on macOS. An empty shortcut unbinds a
+command; duplicate overrides and conflicting custom shortcuts are rejected.
+User formatting lives under `defaults.formatting`, with language overrides under
+`defaults.languages` using IDs such as `python`, `rust`, and `cpp`.
+
+### Encodings and persistent undo
+
+UTF-8 remains the default. BOM-marked UTF-16LE/BE opens automatically. Use
+**File → File encoding…** to open or reopen a file with an explicit encoding, or
+choose its encoding for the next save. Supported choices include Windows-1252,
+ISO-8859-1, Shift JIS, and GBK. Conversion supports files up to 32 MiB and rejects
+unrepresentable characters rather than substituting them. Reopening with a
+different encoding requires saving unsaved changes first.
+
+Recovery checkpoints preserve undo and redo for fully loaded files: up to 64
+states and 32 MiB of historical text in each direction per document. Older history
+is trimmed; paged-file undo remains available during the current process.
+Closing to the shelf preserves retained history as well as text. The previous
+release's recovery snapshots remain readable, with no historical undo to restore.
 
 ### Go to a line or switch files
 
@@ -696,8 +798,10 @@ An existing literal filename takes precedence over location syntax. CLI columns
 use UTF-16 units; out-of-range locations clamp to the document or line end. A
 missing file opens only if its parent exists and is created on **Save**.
 
-One process can use a session directory at a time. A second launch does not
-forward files to the current window; open them there or use `--session-dir`.
+One process owns each session directory. Subsequent launches forward files,
+folders, projects, new-buffer requests, and stdin to its existing window and
+bring it forward. The command returns after the request and recovery checkpoint
+complete. Use `--session-dir` for an independent window and workspace.
 `HEDIT_SESSION_DIR` changes the default directory; the CLI option takes precedence.
 
 With `-`, hedit reads until EOF before releasing the terminal. Stdin is

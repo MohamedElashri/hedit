@@ -48,6 +48,7 @@ impl Buffer {
     pub fn new(page: Page, view: Option<TabView>) -> Self {
         let detect = view.is_none() && page.info.path.is_some();
         let mut view = view.unwrap_or(TabView {
+            pinned: false,
             id: page.info.id,
             name: label(&page),
             page_start: page.start,
