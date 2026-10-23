@@ -152,8 +152,8 @@ pub struct HeditApp {
     key_filter: String,
     panes: panes::Panes,
     rectangle_start: Option<(usize, usize)>,
-    secondary_layout: editor_layout::LayoutCache,
-    projections: [editor_layout::ProjectionCache; 2],
+    extra_layouts: [editor_layout::LayoutCache; panes::MAX_GROUPS - 1],
+    projections: [editor_layout::ProjectionCache; panes::MAX_GROUPS],
     distraction_free: bool,
     fullscreen: bool,
     distraction_was_fullscreen: bool,
@@ -244,8 +244,7 @@ impl HeditApp {
         let mut panes: panes::Panes = storage
             .and_then(|s| eframe::get_value(s, "panes"))
             .unwrap_or_default();
-        panes.focused = panes.focused.min(1);
-        panes.mode = panes.mode.min(2);
+        panes.normalize();
         let mut app = Self {
             _requests: RequestWatch::start(ctx, workspace.store.directory().to_owned()),
             quality: Default::default(),
@@ -286,7 +285,7 @@ impl HeditApp {
             key_filter: String::new(),
             rectangle_start: None,
             panes,
-            secondary_layout: editor_layout::LayoutCache::default(),
+            extra_layouts: Default::default(),
             projections: Default::default(),
             distraction_free: false,
             fullscreen: false,
@@ -986,6 +985,70 @@ impl HeditApp {
         let cmd = Modifiers::COMMAND;
         let shift = Modifiers { shift: true, ..cmd };
         let take = |m, k| ctx.input_mut(|i| i.consume_key(m, k));
+        // Layouts as in Sublime: Alt+Shift+N on Linux, Cmd+Option+N on macOS.
+        let layout = if cfg!(target_os = "macos") {
+            Modifiers { alt: true, ..cmd }
+        } else {
+            Modifiers {
+                alt: true,
+                shift: true,
+                ..Modifiers::NONE
+            }
+        };
+        let rows = Modifiers {
+            shift: true,
+            ..layout
+        };
+        for (modifiers, key, command) in [
+            (layout, Key::Num1, Command::SinglePane),
+            (layout, Key::Num2, Command::SplitColumns),
+            (layout, Key::Num3, Command::Columns3),
+            (layout, Key::Num4, Command::Columns4),
+            (layout, Key::Num5, Command::Grid),
+            (
+                if cfg!(target_os = "macos") {
+                    rows
+                } else {
+                    layout
+                },
+                if cfg!(target_os = "macos") {
+                    Key::Num2
+                } else {
+                    Key::Num8
+                },
+                Command::SplitRows,
+            ),
+            (
+                if cfg!(target_os = "macos") {
+                    rows
+                } else {
+                    layout
+                },
+                if cfg!(target_os = "macos") {
+                    Key::Num3
+                } else {
+                    Key::Num9
+                },
+                Command::Rows3,
+            ),
+        ] {
+            // Exact modifiers, so Alt+Shift+2 is not taken for Alt+2.
+            let pressed = ctx.input_mut(|i| {
+                let found = i.events.iter().position(|e| {
+                    matches!(e, egui::Event::Key { key: k, pressed: true, modifiers: m, .. } if *k == key && m.matches_exact(modifiers))
+                });
+                found.map(|n| i.events.remove(n)).is_some()
+            });
+            if pressed && !self.overridden(command) {
+                self.execute(ctx, command);
+            }
+        }
+        // Focus a group with Ctrl+N (Control+N on macOS, where Cmd+N is New).
+        let focus = if cfg!(target_os = "macos") {
+            Modifiers::CTRL
+        } else {
+            cmd
+        };
         // macOS's Control+Cmd+F shortcuts first, since a Cmd+F or Cmd+Shift+F
         // pattern also matches them.
         if cfg!(target_os = "macos") {
@@ -1050,6 +1113,10 @@ impl HeditApp {
             (cmd, Key::Comma, Command::Settings),
             (cmd, Key::F, Command::Find),
             (cmd, Key::Q, Command::Quit),
+            (focus, Key::Num1, Command::FocusGroup1),
+            (focus, Key::Num2, Command::FocusGroup2),
+            (focus, Key::Num3, Command::FocusGroup3),
+            (focus, Key::Num4, Command::FocusGroup4),
             (cmd, Key::Num0, Command::ResetZoom),
             (cmd, Key::G, Command::Goto),
             (shift, Key::W, Command::Wrap),
@@ -1334,10 +1401,11 @@ impl HeditApp {
         } else {
             column_width * f32::from(self.settings.wrap_width)
         };
+        // Each group keeps its own layout and highlighting.
         let layout_cache = if pane_id == 0 {
             &mut self.editor_layout
         } else {
-            &mut self.secondary_layout
+            &mut self.extra_layouts[pane_id - 1]
         };
         let row_height = ui.fonts(|f| f.row_height(&FontId::monospace(font_size)));
         let line_height =
@@ -4254,6 +4322,7 @@ mod tests {
                 ("columns", "", ""),
                 ("distraction", "", ""),
                 ("split", "", ""),
+                ("grid", "", ""),
                 ("folded", "", ""),
                 ("multiple", "", ""),
             ] {
@@ -4270,6 +4339,9 @@ mod tests {
                 if name == "split" {
                     app.execute(&ctx, Command::SplitColumns);
                     app.execute(&ctx, Command::Minimap);
+                }
+                if name == "grid" {
+                    app.execute(&ctx, Command::Grid);
                 }
                 if name == "folded" {
                     app.execute(&ctx, Command::FoldAll);
@@ -4296,7 +4368,7 @@ mod tests {
                     );
                     app.workspace.edit(0, &old).unwrap();
                 }
-                let size = if name == "columns" || name == "split" {
+                let size = if matches!(name, "columns" | "split" | "grid") {
                     egui::vec2(1280.0, 820.0)
                 } else {
                     egui::vec2(720.0, 480.0)

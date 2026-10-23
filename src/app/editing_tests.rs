@@ -376,3 +376,48 @@ fn ctrl_b_saves_builds_and_f4_visits_errors() {
     frame(&ctx, &mut app, vec![key(Key::Escape, Modifiers::NONE)]);
     assert!(!app.build.open);
 }
+
+#[test]
+fn layouts_have_up_to_four_groups_and_ctrl_n_focuses_one() {
+    let (_directory, ctx, mut app) = app_with("first file");
+    let both = Modifiers {
+        alt: true,
+        shift: true,
+        ..Modifiers::NONE
+    };
+    for (key_number, mode, groups) in [
+        (Key::Num3, 3, 3),
+        (Key::Num4, 4, 4),
+        (Key::Num5, 6, 4),
+        (Key::Num9, 5, 3),
+        (Key::Num8, 2, 2),
+        (Key::Num1, 0, 1),
+    ] {
+        if cfg!(target_os = "macos") {
+            break; // macOS uses Cmd+Option+N, checked by the command labels.
+        }
+        frame(&ctx, &mut app, vec![key(key_number, both)]);
+        assert_eq!(app.panes.mode, mode, "{key_number:?}");
+        assert_eq!(app.panes.groups(), groups);
+    }
+    // Three columns, each group showing its own file.
+    app.execute(&ctx, Command::Columns3);
+    app.execute(&ctx, Command::New);
+    frame(&ctx, &mut app, vec![]);
+    let second = app.active().page.info.id;
+    frame(&ctx, &mut app, vec![key(Key::Num3, Modifiers::COMMAND)]);
+    frame(&ctx, &mut app, vec![]);
+    assert_eq!(app.panes.focused, 2);
+    frame(&ctx, &mut app, vec![key(Key::Num2, Modifiers::COMMAND)]);
+    frame(&ctx, &mut app, vec![]);
+    assert_eq!(app.panes.focused, 1);
+    let _ = second;
+    // A layout saved by the two-group version still loads.
+    let mut old: panes::Panes =
+        serde_json::from_str(r#"{"mode":2,"focused":1,"views":[{},{}]}"#).unwrap();
+    old.normalize();
+    assert_eq!((old.mode, old.focused, old.groups()), (2, 1, 2));
+    let mut bad: panes::Panes = serde_json::from_str(r#"{"mode":40,"focused":9}"#).unwrap();
+    bad.normalize();
+    assert_eq!((bad.mode, bad.focused), (0, 0));
+}

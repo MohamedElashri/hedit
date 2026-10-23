@@ -945,7 +945,11 @@ impl HeditApp {
             &[
                 Command::SinglePane,
                 Command::SplitColumns,
+                Command::Columns3,
+                Command::Columns4,
                 Command::SplitRows,
+                Command::Rows3,
+                Command::Grid,
                 Command::FocusPane,
                 Command::MovePane,
             ],

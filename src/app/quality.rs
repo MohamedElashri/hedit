@@ -367,7 +367,7 @@ impl HeditApp {
                 self.quality.project_path = Some(path.clone());
                 self.recent_project(path);
                 self.panes = Default::default();
-                self.split(state.pane_mode.min(2));
+                self.split(state.pane_mode.min(panes::LAYOUTS - 1));
                 if let Some(index) = state.secondary.filter(|i| *i < self.workspace.open.len()) {
                     self.panes.set_secondary(self.workspace.open[index].view.id);
                 }

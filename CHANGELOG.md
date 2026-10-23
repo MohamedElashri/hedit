@@ -51,6 +51,9 @@
 - Build systems: Ctrl+B saves and builds with nvcc, g++, gcc, cargo, Python, or
   make (or your own `build_systems`), streaming output to a results panel; F4 and
   Shift+F4 visit the errors, and Ctrl+Shift+B chooses a build system.
+- Sublime's editor layouts: one to four columns, two or three rows, and a grid of
+  four (Alt+Shift+1–5, 8, 9), with Ctrl+1–4 to focus a group. Each group keeps its
+  own highlighting.
 
 ### Changed
 

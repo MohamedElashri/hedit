@@ -400,12 +400,15 @@ selections survive recovery and reopening closed files. There is a limit of
 
 ### Split panes, folding, and minimap
 
-**View → Layout** offers a single pane, two columns, or two rows. A split initially
-shows the current file in both groups. Use a group's file dropdown to show
-another open file, click an editor to focus it, or use **Ctrl+Alt+Right** to switch
-groups. **Move file to other group** (**Ctrl+Alt+Shift+Right**) displays the current
-file there and focuses that group. If the other group showed a different file,
-the two displayed files exchange groups. Views keep independent cursor, selection,
+**View → Layout** offers Sublime's layouts: a single group (**Alt+Shift+1**), two,
+three, or four columns (**Alt+Shift+2/3/4**), two or three rows
+(**Alt+Shift+8/9**), and a grid of four (**Alt+Shift+5**). On macOS use
+**Cmd+Option+1–5**, and **Cmd+Option+Shift+2/3** for rows. New groups show the
+current file. Use a group's file dropdown to show another open file, click an
+editor to focus it, press **Ctrl+1–4** (**Control+1–4** on macOS) to focus a
+group, or use **Ctrl+Alt+Right** to go to the next group. **Move file to other
+group** (**Ctrl+Alt+Shift+Right**) displays the current file in the next group and
+focuses it. If that group showed a different file, the two files exchange groups. Views keep independent cursor, selection,
 fold, and scroll positions; edits and undo share one document. Layout and view
 positions save with window preferences. Paged files share the currently loaded
 page across views.
@@ -1063,7 +1066,8 @@ and Quit are in macOS's own hedit menu. Change any shortcut under
 | Ctrl+K, Ctrl+U / Ctrl+K, Ctrl+L | Uppercase / lowercase |
 | Ctrl+K, Ctrl+1 / Ctrl+K, Ctrl+J | Fold / unfold all |
 | Alt+click / Alt+Shift+drag | Add a cursor / rectangular selection |
-| Ctrl+Alt+Right | Focus the other editor group |
+| Ctrl+Alt+Right / Ctrl+1–4 | Focus the next editor group / group 1–4 |
+| Alt+Shift+1–5, 8, 9 | Layout: 1–4 columns, grid of four, 2 or 3 rows |
 | Ctrl+Alt+Shift+Right | Show the current file in the other group |
 | Ctrl+Shift+[ / Ctrl+Shift+] | Fold / unfold |
 | F11 / Shift+F11 | Full screen / distraction-free mode |
