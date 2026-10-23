@@ -39,6 +39,42 @@ impl HeditApp {
             self.set_selections(batch.selections);
         }
     }
+    /// Record each selection change, for Undo selection change (Sublime's soft undo).
+    pub(super) fn track_selection(&mut self) {
+        let current = (self.active().view.id, self.selections());
+        let (undo, redo, last) = &mut self.soft_history;
+        if last.as_ref() == Some(&current) {
+            return;
+        }
+        if let Some(previous) = last.replace(current) {
+            undo.push(previous);
+            if undo.len() > 200 {
+                undo.remove(0);
+            }
+            redo.clear();
+        }
+    }
+    /// Step back (or forward) through selection changes in the active file.
+    pub(super) fn soft_undo(&mut self, redo: bool) {
+        let view = self.active().view.id;
+        let (back, forward, last) = &mut self.soft_history;
+        let (from, to) = if redo {
+            (forward, back)
+        } else {
+            (back, forward)
+        };
+        while let Some((id, cursors)) = from.pop() {
+            if id != view {
+                continue;
+            }
+            if let Some(current) = last.take() {
+                to.push(current);
+            }
+            *last = Some((id, cursors.clone()));
+            self.set_selections(cursors);
+            return;
+        }
+    }
     pub(super) fn occurrence(&mut self, all: bool) {
         let ranges = advanced::occurrences(&self.active().page.text, &self.selections(), all);
         self.set_selections(ranges);

@@ -375,7 +375,17 @@ Bulk text commands are unavailable in paged files and Follow mode.
 ### Multiple cursors and rectangular selections
 
 Press **Ctrl+D** to select the word at the cursor, then repeat to add the next
-occurrence. **Ctrl+Shift+L** selects all occurrences of the selected text or word.
+occurrence. **Edit → Selection → Skip occurrence** drops the last one and selects
+the next instead. **Alt+F3** selects all occurrences of the selected text or word,
+and **Ctrl+Shift+L** splits a selection into one cursor per line.
+
+**Ctrl+Shift+Space** expands the selection step by step: the word, the text inside
+quotes, the quotes, the text inside brackets, the brackets, the line, and the whole
+file. **Ctrl+Shift+M** selects inside the nearest brackets (press again to include
+them, then the next pair out), **Ctrl+Shift+J** selects the surrounding lines at
+the same or deeper indentation, and **Ctrl+M** jumps between matching brackets.
+**Ctrl+U** and **Ctrl+Shift+U** step back and forward through selection changes,
+like Sublime's soft undo for cursor movement.
 Use **Alt+click** to add a cursor. Drag with **Alt+Shift** to select a rectangle,
 or make a normal selection and choose **Edit → Selection → Rectangular selection**.
 Short lines clamp to their ends. **Esc** or **Single selection** keeps just the
@@ -978,7 +988,8 @@ On macOS, use Cmd for Ctrl and Option for Alt, with these exceptions that follow
 macOS and Sublime Text conventions: Replace is **Cmd+Option+F** (Cmd+H hides the
 app), full screen is **Control+Cmd+F**, distraction-free mode is
 **Control+Shift+Cmd+F**, Complete word is **Control+Space** (Cmd+Space opens
-Spotlight), and navigate back/forward is **Control+-** / **Control+Shift+-**. About
+Spotlight), select all occurrences is **Control+Cmd+G**, jump to bracket is
+**Control+M**, and navigate back/forward is **Control+-** / **Control+Shift+-**. About
 and Quit are in macOS's own hedit menu. Change any shortcut under
 **Settings → Key Bindings**.
 
@@ -995,7 +1006,11 @@ and Quit are in macOS's own hedit menu. Change any shortcut under
 | Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y | Undo / redo |
 | Ctrl+C / Ctrl+X / Ctrl+V | Copy / cut / paste |
 | Ctrl+A | Select all in the focused text field |
-| Ctrl+D / Ctrl+Shift+L | Select next / all occurrences |
+| Ctrl+D / Alt+F3 | Select next / all occurrences |
+| Ctrl+Shift+L | Split the selection into lines |
+| Ctrl+Shift+Space / Ctrl+Shift+M / Ctrl+Shift+J | Expand selection / to brackets / to indentation |
+| Ctrl+M | Jump to the matching bracket |
+| Ctrl+U / Ctrl+Shift+U | Undo / redo a selection change |
 | Alt+click / Alt+Shift+drag | Add a cursor / rectangular selection |
 | Ctrl+Alt+Right | Focus the other editor group |
 | Ctrl+Alt+Shift+Right | Show the current file in the other group |

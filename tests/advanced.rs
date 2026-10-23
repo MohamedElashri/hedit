@@ -200,3 +200,62 @@ fn found_indentation_is_none_without_indented_lines() {
     assert_eq!(found_indentation("a\n\tb\n"), Some((true, None)));
     assert_eq!(found_indentation("a\n  b\n    c\n"), Some((false, Some(2))));
 }
+
+#[test]
+fn selection_expands_like_sublime() {
+    use hedit::advanced::{expand_selection, expand_to_brackets, expand_to_indentation, Selection};
+    let text = "f(a, \"hi there\", [x, y])\n";
+    let range = |s: Selection| (s.start(), s.end());
+    // Word, then quoted text, then quotes, then bracket contents, ...
+    let mut s = Selection::caret(8);
+    let mut steps = vec![];
+    for _ in 0..6 {
+        s = expand_selection(text, s);
+        steps.push(range(s));
+    }
+    assert_eq!(steps, [(6, 8), (6, 14), (5, 15), (2, 23), (1, 24), (0, 24)]);
+    // Brackets: inside, then including, then the next pair out.
+    let s = expand_to_brackets(text, Selection::caret(18));
+    assert_eq!(range(s), (18, 22));
+    let s = expand_to_brackets(text, s);
+    assert_eq!(range(s), (17, 23));
+    let s = expand_to_brackets(text, s);
+    assert_eq!(range(s), (2, 23));
+    assert_eq!(
+        range(expand_to_brackets("no brackets", Selection::caret(3))),
+        (3, 3)
+    );
+    let code = "fn f() {\n    a();\n\n    b();\n}\n";
+    assert_eq!(
+        range(expand_to_indentation(code, Selection::caret(12))),
+        (9, 27)
+    );
+}
+
+#[test]
+fn cursors_jump_split_and_skip() {
+    use hedit::advanced::{jump_to_bracket, skip_occurrence, split_into_lines, Selection};
+    let text = "if (a) { b(); }";
+    let s = jump_to_bracket(text, Selection::caret(7));
+    assert_eq!(s.head, 14);
+    assert_eq!(jump_to_bracket(text, s).head, 8);
+    let lines = split_into_lines(
+        "one\ntwo\nthree",
+        &[Selection {
+            anchor: 1,
+            head: 11,
+        }],
+    );
+    let ranges: Vec<_> = lines.iter().map(|s| (s.start(), s.end())).collect();
+    assert_eq!(ranges, [(1, 3), (4, 7), (8, 11)]);
+    let text = "x y x y x";
+    let skipped = skip_occurrence(
+        text,
+        &[
+            Selection { anchor: 0, head: 1 },
+            Selection { anchor: 4, head: 5 },
+        ],
+    );
+    let ranges: Vec<_> = skipped.iter().map(|s| (s.start(), s.end())).collect();
+    assert_eq!(ranges, [(0, 1), (8, 9)]);
+}

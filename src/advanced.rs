@@ -767,3 +767,243 @@ pub fn transform(
         selections: normalize(&final_ranges, output.chars().count()),
     }
 }
+
+/// Character indices of line starts around `selection`: the start of its first
+/// line and the end of its last line (before the newline).
+fn line_bounds(chars: &[char], selection: Selection) -> (usize, usize) {
+    let mut start = selection.start();
+    while start > 0 && chars[start - 1] != '\n' {
+        start -= 1;
+    }
+    let mut end = selection.end();
+    while end < chars.len() && chars[end] != '\n' {
+        end += 1;
+    }
+    (start, end)
+}
+
+/// The innermost bracket pair around `selection`, as (opener, closer) indices.
+fn enclosing_brackets(
+    chars: &[char],
+    selection: Selection,
+    limit: usize,
+) -> Option<(usize, usize)> {
+    let mut depth = [0usize; 3];
+    let mut at = selection.start();
+    for _ in 0..limit {
+        at = at.checked_sub(1)?;
+        let c = chars[at];
+        if let Some(i) = CLOSERS.iter().position(|&x| x == c) {
+            depth[i] += 1;
+        } else if let Some(i) = OPENERS.iter().position(|&x| x == c) {
+            if depth[i] > 0 {
+                depth[i] -= 1;
+                continue;
+            }
+            // The matching closer must lie at or after the selection's end.
+            let mut nested = 0usize;
+            for (offset, &d) in chars[at + 1..].iter().enumerate().take(limit) {
+                if d == OPENERS[i] {
+                    nested += 1;
+                } else if d == CLOSERS[i] {
+                    if nested == 0 {
+                        let close = at + 1 + offset;
+                        return (close >= selection.end()).then_some((at, close));
+                    }
+                    nested -= 1;
+                }
+            }
+            return None;
+        }
+    }
+    None
+}
+
+/// The text inside the nearest same-line quotes around `selection`.
+fn enclosing_quotes(chars: &[char], selection: Selection) -> Option<(usize, usize)> {
+    let (line_start, line_end) = line_bounds(chars, selection);
+    for quote in ['"', '\'', '`'] {
+        let open = (line_start..selection.start())
+            .rev()
+            .find(|&i| chars[i] == quote);
+        let close = (selection.end()..line_end).find(|&i| chars[i] == quote);
+        if let (Some(open), Some(close)) = (open, close) {
+            // Only quotes that pair up on the line, counting from its start.
+            let before = chars[line_start..open]
+                .iter()
+                .filter(|&&c| c == quote)
+                .count();
+            if before % 2 == 0 {
+                return Some((open, close));
+            }
+        }
+    }
+    None
+}
+
+/// Like Sublime's Expand Selection to Brackets: select inside the nearest
+/// brackets, then the brackets too, then the next pair out.
+pub fn expand_to_brackets(text: &str, selection: Selection) -> Selection {
+    let chars: Vec<char> = text.chars().collect();
+    let mut current = selection;
+    loop {
+        let Some((open, close)) = enclosing_brackets(&chars, current, 1_000_000) else {
+            return selection;
+        };
+        let inside = Selection {
+            anchor: open + 1,
+            head: close,
+        };
+        if (inside.start(), inside.end()) != (selection.start(), selection.end())
+            && inside.start() <= selection.start()
+            && inside.end() >= selection.end()
+        {
+            return inside;
+        }
+        let whole = Selection {
+            anchor: open,
+            head: close + 1,
+        };
+        if (whole.start(), whole.end()) != (selection.start(), selection.end()) {
+            return whole;
+        }
+        current = whole;
+    }
+}
+
+/// Like Sublime's Expand Selection to Indentation: the surrounding lines
+/// indented at least as deeply as the current one.
+pub fn expand_to_indentation(text: &str, selection: Selection) -> Selection {
+    let lines: Vec<&str> = text.split('\n').collect();
+    let mut starts = Vec::with_capacity(lines.len());
+    let mut at = 0;
+    for line in &lines {
+        starts.push(at);
+        at += line.chars().count() + 1;
+    }
+    let line_of = |index: usize| starts.partition_point(|&s| s <= index) - 1;
+    let indent = |line: &str| line.chars().take_while(|c| matches!(c, ' ' | '\t')).count();
+    let (first, last) = (line_of(selection.start()), line_of(selection.end()));
+    let level = (first..=last)
+        .filter(|&l| !lines[l].trim().is_empty())
+        .map(|l| indent(lines[l]))
+        .min()
+        .unwrap_or(0);
+    let inside = |l: usize| lines[l].trim().is_empty() || indent(lines[l]) >= level;
+    let mut top = first;
+    while top > 0 && inside(top - 1) {
+        top -= 1;
+    }
+    let mut bottom = last;
+    while bottom + 1 < lines.len() && inside(bottom + 1) {
+        bottom += 1;
+    }
+    Selection {
+        anchor: starts[top],
+        head: starts[bottom] + lines[bottom].chars().count(),
+    }
+}
+
+/// Like Sublime's Expand Selection: the smallest of the word, quoted text,
+/// bracket contents, brackets, line, or whole text that is larger than now.
+pub fn expand_selection(text: &str, selection: Selection) -> Selection {
+    let chars: Vec<char> = text.chars().collect();
+    let size = |s: (usize, usize)| s.1 - s.0;
+    let current = (selection.start(), selection.end());
+    let mut candidates = vec![];
+    let w = word(text, selection.start());
+    if selection.start() == selection.end() && w.start() != w.end() {
+        candidates.push((w.start(), w.end()));
+    }
+    if let Some((open, close)) = enclosing_quotes(&chars, selection) {
+        candidates.push((open + 1, close));
+        candidates.push((open, close + 1));
+    }
+    if let Some((open, close)) = enclosing_brackets(&chars, selection, 1_000_000) {
+        candidates.push((open + 1, close));
+        candidates.push((open, close + 1));
+    }
+    let (start, end) = line_bounds(&chars, selection);
+    candidates.push((start, end));
+    candidates.push((0, chars.len()));
+    candidates
+        .into_iter()
+        .filter(|&c| c.0 <= current.0 && c.1 >= current.1 && size(c) > size(current))
+        .min_by_key(|&c| size(c))
+        .map_or(selection, |(a, b)| Selection { anchor: a, head: b })
+}
+
+/// Move the cursor to the bracket matching the one beside it: just inside the
+/// closer, or just after the opener, so pressing again returns.
+pub fn jump_to_bracket(text: &str, selection: Selection) -> Selection {
+    match matching_bracket(text, selection.head, 1_000_000) {
+        Some((at, other)) if other > at => Selection::caret(other),
+        Some((_, other)) => Selection::caret(other + 1),
+        None => selection,
+    }
+}
+
+/// One cursor per line of each selection, like Sublime's Split into Lines.
+pub fn split_into_lines(text: &str, selections: &[Selection]) -> Vec<Selection> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = Vec::new();
+    for s in normalize(selections, chars.len()) {
+        if s.start() == s.end() {
+            out.push(s);
+            continue;
+        }
+        let mut start = s.start();
+        for (i, &c) in chars.iter().enumerate().take(s.end()).skip(s.start()) {
+            if c == '\n' {
+                out.push(Selection {
+                    anchor: start,
+                    head: i,
+                });
+                start = i + 1;
+            }
+        }
+        if start < s.end() {
+            out.push(Selection {
+                anchor: start,
+                head: s.end(),
+            });
+        }
+    }
+    normalize(&out, chars.len())
+}
+
+/// Like Sublime's Quick Skip Next: drop the last selection and select the
+/// next occurrence of its text after it instead.
+pub fn skip_occurrence(text: &str, selections: &[Selection]) -> Vec<Selection> {
+    let mut ranges = normalize(selections, text.chars().count());
+    let Some(last) = ranges.pop() else {
+        return ranges;
+    };
+    if last.start() == last.end() {
+        ranges.push(last);
+        return ranges;
+    }
+    let needle: String = text
+        .chars()
+        .skip(last.start())
+        .take(last.end() - last.start())
+        .collect();
+    let starts: Vec<usize> = text
+        .match_indices(needle.as_str())
+        .map(|(i, _)| text[..i].chars().count())
+        .collect();
+    let len = last.end() - last.start();
+    let free =
+        |a: usize| a != last.start() && !ranges.iter().any(|s| s.start() < a + len && a < s.end());
+    let next = starts
+        .iter()
+        .copied()
+        .filter(|&a| a >= last.end())
+        .chain(starts.iter().copied().filter(|&a| a < last.start()))
+        .find(|&a| free(a));
+    ranges.push(next.map_or(last, |a| Selection {
+        anchor: a,
+        head: a + len,
+    }));
+    normalize(&ranges, text.chars().count())
+}

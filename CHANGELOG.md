@@ -40,6 +40,10 @@
 - Find as you type: the Find bar selects the first match after the cursor while
   you type, shows “n of m”, and highlights every match on the page.
 - Selecting a word outlines its other occurrences (`match_selection`).
+- Selection commands from Sublime: Expand selection (Ctrl+Shift+Space), Expand to
+  brackets (Ctrl+Shift+M), Expand to indentation (Ctrl+Shift+J), Jump to matching
+  bracket (Ctrl+M), Split into lines (Ctrl+Shift+L), Skip occurrence, and undo or
+  redo of selection changes (Ctrl+U, Ctrl+Shift+U).
 
 ### Changed
 
@@ -49,6 +53,8 @@
   “My theme”.
 - Theme files are now version 2. Version 1 files still load and look the same.
 - The tab width menu items read “Tab width: 2/4/8” instead of “2/4/8 spaces”.
+- Select all occurrences moves from Ctrl+Shift+L to Alt+F3 (Control+Cmd+G on
+  macOS), as in Sublime; Ctrl+Shift+L now splits a selection into lines.
 - Settings live in one readable `settings.json` file, like Sublime Text, in the
   configuration folder (`~/.config/hedit/` on Linux, `~/Library/Application
   Support/hedit.hedit/` on macOS, or `HEDIT_CONFIG_DIR`). Comments and trailing

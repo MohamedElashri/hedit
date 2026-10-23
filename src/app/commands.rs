@@ -25,6 +25,14 @@ pub(super) enum Command {
     CloseRight,
 
     NextOccurrence,
+    SkipOccurrence,
+    ExpandSelection,
+    ExpandToBrackets,
+    ExpandToIndentation,
+    JumpToBracket,
+    SplitLines,
+    SoftUndo,
+    SoftRedo,
     AllOccurrences,
     SingleSelection,
     Rectangle,
@@ -150,6 +158,14 @@ impl Command {
         Self::CloseOthers,
         Self::CloseRight,
         Self::NextOccurrence,
+        Self::SkipOccurrence,
+        Self::ExpandSelection,
+        Self::ExpandToBrackets,
+        Self::ExpandToIndentation,
+        Self::JumpToBracket,
+        Self::SplitLines,
+        Self::SoftUndo,
+        Self::SoftRedo,
         Self::AllOccurrences,
         Self::SingleSelection,
         Self::Rectangle,
@@ -303,6 +319,14 @@ impl Command {
             Self::CloseRight => "Close tabs to the right",
 
             Self::NextOccurrence => "Select next occurrence",
+            Self::SkipOccurrence => "Skip occurrence",
+            Self::ExpandSelection => "Expand selection",
+            Self::ExpandToBrackets => "Expand selection to brackets",
+            Self::ExpandToIndentation => "Expand selection to indentation",
+            Self::JumpToBracket => "Jump to matching bracket",
+            Self::SplitLines => "Split selection into lines",
+            Self::SoftUndo => "Undo selection change",
+            Self::SoftRedo => "Redo selection change",
             Self::AllOccurrences => "Select all occurrences",
             Self::SingleSelection => "Single selection",
             Self::Rectangle => "Rectangular selection",
@@ -428,7 +452,17 @@ impl Command {
             Self::Complete if cfg!(target_os = "macos") => "Control+Space",
             Self::Complete => "Ctrl+Space",
             Self::NextOccurrence => "Ctrl+D",
-            Self::AllOccurrences => "Ctrl+Shift+L",
+            // Sublime: Alt+F3 on Linux, Control+Cmd+G on macOS.
+            Self::AllOccurrences if cfg!(target_os = "macos") => "Control+Ctrl+G",
+            Self::AllOccurrences => "Alt+F3",
+            Self::SplitLines => "Ctrl+Shift+L",
+            Self::ExpandSelection => "Ctrl+Shift+Space",
+            Self::ExpandToBrackets => "Ctrl+Shift+M",
+            Self::ExpandToIndentation => "Ctrl+Shift+J",
+            Self::JumpToBracket if cfg!(target_os = "macos") => "Control+M",
+            Self::JumpToBracket => "Ctrl+M",
+            Self::SoftUndo => "Ctrl+U",
+            Self::SoftRedo => "Ctrl+Shift+U",
             Self::FocusPane => "Ctrl+Alt+Right",
             Self::MovePane => "Ctrl+Alt+Shift+Right",
             Self::Fold => "Ctrl+Shift+[",
@@ -528,6 +562,12 @@ impl HeditApp {
         match command {
             Command::NextOccurrence
             | Command::AllOccurrences
+            | Command::SkipOccurrence
+            | Command::ExpandSelection
+            | Command::ExpandToBrackets
+            | Command::ExpandToIndentation
+            | Command::JumpToBracket
+            | Command::SplitLines
             | Command::Rectangle
             | Command::Fold
             | Command::FoldAll => !self.active().page.info.paged,
@@ -643,6 +683,37 @@ impl HeditApp {
             Command::CloseOthers => self.close_tab_group(false),
             Command::CloseRight => self.close_tab_group(true),
             Command::NextOccurrence => self.occurrence(false),
+            Command::SkipOccurrence => {
+                let ranges =
+                    hedit::advanced::skip_occurrence(&self.active().page.text, &self.selections());
+                self.set_selections(ranges);
+            }
+            Command::ExpandSelection
+            | Command::ExpandToBrackets
+            | Command::ExpandToIndentation
+            | Command::JumpToBracket => {
+                use hedit::advanced as a;
+                let text = self.active().page.text.clone();
+                let expand = match command {
+                    Command::ExpandSelection => a::expand_selection,
+                    Command::ExpandToBrackets => a::expand_to_brackets,
+                    Command::ExpandToIndentation => a::expand_to_indentation,
+                    _ => a::jump_to_bracket,
+                };
+                let ranges = self
+                    .selections()
+                    .into_iter()
+                    .map(|s| expand(&text, s))
+                    .collect();
+                self.set_selections(ranges);
+            }
+            Command::SplitLines => {
+                let ranges =
+                    hedit::advanced::split_into_lines(&self.active().page.text, &self.selections());
+                self.set_selections(ranges);
+            }
+            Command::SoftUndo => self.soft_undo(false),
+            Command::SoftRedo => self.soft_undo(true),
             Command::AllOccurrences => {
                 if self.active().view.anchor == self.active().view.head {
                     self.occurrence(false);

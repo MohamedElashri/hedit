@@ -165,3 +165,66 @@ fn quit_and_zoom_shortcuts_follow_the_platform() {
         "Ctrl/Cmd+Q quits through the recovery checkpoint"
     );
 }
+
+#[test]
+fn selection_shortcuts_follow_sublime() {
+    let (_directory, ctx, mut app) = app_with("call(one, two)\nnext line\n");
+    let shift = Modifiers {
+        shift: true,
+        ..Modifiers::COMMAND
+    };
+    let ranges = |app: &HeditApp| -> Vec<(usize, usize)> {
+        app.selections()
+            .iter()
+            .map(|s| (s.start(), s.end()))
+            .collect()
+    };
+    app.set_selections(vec![hedit::advanced::Selection::caret(6)]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![key(Key::Space, shift)]);
+    assert_eq!(
+        ranges(&app),
+        [(5, 8)],
+        "Ctrl+Shift+Space expands to the word"
+    );
+    assert!(!app.quality.completion_open, "not Complete word");
+    frame(&ctx, &mut app, vec![key(Key::M, shift)]);
+    assert_eq!(
+        ranges(&app),
+        [(5, 13)],
+        "Ctrl+Shift+M selects inside brackets"
+    );
+    // Ctrl+U steps back through selection changes.
+    frame(&ctx, &mut app, vec![key(Key::U, Modifiers::COMMAND)]);
+    assert_eq!(ranges(&app), [(5, 8)]);
+    frame(&ctx, &mut app, vec![key(Key::U, Modifiers::COMMAND)]);
+    assert_eq!(ranges(&app), [(6, 6)]);
+    frame(&ctx, &mut app, vec![key(Key::U, shift)]);
+    assert_eq!(ranges(&app), [(5, 8)], "Ctrl+Shift+U steps forward");
+    // Ctrl+M jumps between brackets.
+    app.set_selections(vec![hedit::advanced::Selection::caret(5)]);
+    frame(&ctx, &mut app, vec![key(Key::M, Modifiers::COMMAND)]);
+    assert_eq!(ranges(&app), [(13, 13)]);
+    // Ctrl+Shift+L splits a selection into one cursor per line.
+    app.set_selections(vec![hedit::advanced::Selection {
+        anchor: 0,
+        head: 19,
+    }]);
+    frame(&ctx, &mut app, vec![key(Key::L, shift)]);
+    assert_eq!(ranges(&app), [(0, 14), (15, 19)]);
+    // Alt+F3 selects every occurrence.
+    app.set_selections(vec![hedit::advanced::Selection {
+        anchor: 15,
+        head: 19,
+    }]);
+    frame(&ctx, &mut app, vec![key(Key::F3, Modifiers::ALT)]);
+    assert_eq!(ranges(&app), [(15, 19)]);
+    app.set_selections(vec![hedit::advanced::Selection {
+        anchor: 10,
+        head: 11,
+    }]);
+    frame(&ctx, &mut app, vec![key(Key::F3, Modifiers::ALT)]);
+    assert_eq!(ranges(&app), [(10, 11), (18, 19)]);
+    assert_eq!(app.active().page.text, "call(one, two)\nnext line\n");
+}

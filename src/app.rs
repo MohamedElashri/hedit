@@ -72,6 +72,7 @@ enum Action {
     Notice(String),
     Nothing,
 }
+type SoftState = (u64, Vec<hedit::advanced::Selection>);
 const CHECKPOINT_FAILED: &str = "RECOVERY CHECKPOINT FAILED";
 /// Job outcomes that are expected answers, shown as notices rather than errors.
 const ROUTINE: [&str; 2] = ["No matches found.", "Search cancelled."];
@@ -134,6 +135,8 @@ pub struct HeditApp {
     settings_files: settings_store::SettingsFiles,
     /// The command whose shortcut is being recorded on the Key Bindings page.
     key_capture: Option<Command>,
+    /// Selection history for Undo/Redo selection change: (view, cursors).
+    soft_history: (Vec<SoftState>, Vec<SoftState>, Option<SoftState>),
     live_find: find_live::LiveFind,
     /// Where the cursor was before Go to Anything previewed a result.
     goto_origin: Option<goto_anything::Origin>,
@@ -266,6 +269,7 @@ impl HeditApp {
             settings,
             settings_files,
             key_capture: None,
+            soft_history: Default::default(),
             live_find: Default::default(),
             goto_origin: None,
             font_applied: String::new(),
@@ -959,6 +963,7 @@ impl HeditApp {
         if self.capture_binding(ctx) {
             return;
         }
+        self.track_selection();
         // Escape still closes windows while a background job runs.
         self.escape(ctx);
         if self.busy || self.closing {
@@ -985,6 +990,9 @@ impl HeditApp {
                 if !self.overridden(command) && take(modifiers, Key::F) {
                     self.execute(ctx, command);
                 }
+            }
+            if !self.overridden(Command::AllOccurrences) && take(control, Key::G) {
+                self.execute(ctx, Command::AllOccurrences);
             }
         }
         self.quality_shortcuts(ctx);
@@ -1065,7 +1073,13 @@ impl HeditApp {
             for (modifiers, key, command) in [
                 (shift, Key::D, Command::Duplicate),
                 (cmd, Key::D, Command::NextOccurrence),
-                (shift, Key::L, Command::AllOccurrences),
+                (shift, Key::L, Command::SplitLines),
+                (Modifiers::ALT, Key::F3, Command::AllOccurrences),
+                (shift, Key::Space, Command::ExpandSelection),
+                (shift, Key::M, Command::ExpandToBrackets),
+                (shift, Key::J, Command::ExpandToIndentation),
+                (shift, Key::U, Command::SoftRedo),
+                (cmd, Key::U, Command::SoftUndo),
                 (shift, Key::OpenBracket, Command::Fold),
                 (shift, Key::CloseBracket, Command::Unfold),
                 (shift, Key::K, Command::DeleteLine),
@@ -1075,6 +1089,16 @@ impl HeditApp {
                 (shift, Key::ArrowDown, Command::MoveDown),
                 (cmd, Key::L, Command::SelectLine),
                 (cmd, Key::J, Command::JoinLines),
+                (
+                    // Cmd+M minimizes on macOS; Sublime uses Control+M there.
+                    if cfg!(target_os = "macos") {
+                        Modifiers::CTRL
+                    } else {
+                        cmd
+                    },
+                    Key::M,
+                    Command::JumpToBracket,
+                ),
                 (cmd, Key::Slash, Command::ToggleComment),
                 (cmd, Key::CloseBracket, Command::Indent),
                 (cmd, Key::OpenBracket, Command::Unindent),
