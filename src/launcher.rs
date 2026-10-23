@@ -74,10 +74,14 @@ impl Startup {
     }
 }
 
+/// The child learns where to signal `hedit -w` through this variable.
+pub const WAIT_VARIABLE: &str = "HEDIT_WAIT_FILE";
+
 pub fn launch(
     args: &[OsString],
     directory: &Path,
     stdin: bool,
+    wait: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let status_directory = tempfile::Builder::new().prefix("hedit-launch-").tempdir()?;
     let status = status_directory.path().join("status.json");
@@ -106,8 +110,28 @@ pub fn launch(
         .arg(&status)
         .arg(spool.as_deref().unwrap_or_else(|| Path::new("")))
         .args(args);
+    let closed = status_directory.path().join("closed");
+    if wait {
+        command.env(WAIT_VARIABLE, &closed);
+    }
     let mut child = spawn_detached(&mut command, &log)?;
     wait_for_startup(&mut child, &status, &log)?;
+    if wait {
+        // The window creates the file when the files are closed or it exits.
+        // Stop waiting too if the window goes away without doing so.
+        let mut absent = 0;
+        while !closed.exists() {
+            absent = if hedit::ipc::is_running(directory) {
+                0
+            } else {
+                absent + 1
+            };
+            if absent > 10 {
+                break;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+    }
     Ok(())
 }
 

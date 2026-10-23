@@ -988,7 +988,7 @@ Device debugging has not yet been validated on NVIDIA hardware in this project.
 ## Command line
 
 ```text
-hedit [--session-dir DIR] [--new] [FILE[:LINE[:COLUMN]] | FOLDER ...] [-]
+hedit [--session-dir DIR] [--new] [-w] [FILE[:LINE[:COLUMN]] | FOLDER ...] [-]
 ```
 
 | Argument | Effect |
@@ -997,6 +997,7 @@ hedit [--session-dir DIR] [--new] [FILE[:LINE[:COLUMN]] | FOLDER ...] [-]
 | `FILE:LINE[:COLUMN]` | Open at a one-based location |
 | `-` | Read UTF-8 stdin until EOF into an unsaved file |
 | `--new` | Add an empty unsaved file to the restored session |
+| `-w`, `--wait` | Keep the terminal waiting until the files are closed in hedit |
 | `--session-dir DIR` | Use an independent session |
 | `--` | Treat remaining arguments as filenames |
 | `-h`, `--help` | Show help |
@@ -1012,7 +1013,14 @@ hedit --session-dir /tmp/hedit-investigation --new
 hedit -- -notes.txt
 ```
 
-hedit always returns the terminal prompt after the window starts. Closing
+With `-w`, the command returns only after you close the files' tabs (or quit
+hedit), so hedit can be the editor for other tools:
+
+```sh
+git config --global core.editor "hedit -w"
+```
+
+Without `-w`, hedit returns the terminal prompt as soon as the window starts. Closing
 the terminal leaves the editor running. Help, version, and
 startup errors still appear in the invoking terminal; background diagnostics
 are appended to `hedit.log` in the session directory.

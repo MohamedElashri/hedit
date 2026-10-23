@@ -54,6 +54,8 @@
 - Sublime's editor layouts: one to four columns, two or three rows, and a grid of
   four (Alt+Shift+1–5, 8, 9), with Ctrl+1–4 to focus a group. Each group keeps its
   own highlighting.
+- `hedit -w` (`--wait`) keeps the terminal waiting until the files are closed, so
+  hedit can be the editor for `git commit` and other tools.
 
 ### Changed
 

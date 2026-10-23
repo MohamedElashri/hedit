@@ -1286,8 +1286,11 @@ impl HeditApp {
             self.report(result);
         }
         let spool = incoming.request.stdin.as_ref().map(|p| p.path());
-        self.pending_paths
-            .extend(incoming.request.files.iter().map(|p| p.path()));
+        let files: Vec<PathBuf> = incoming.request.files.iter().map(|p| p.path()).collect();
+        if let Some(wait) = &incoming.request.wait {
+            self.wait_for(&files, wait.path());
+        }
+        self.pending_paths.extend(files);
         self.quality.incoming = Some(incoming);
         self.changed();
         if let Some(path) = spool {

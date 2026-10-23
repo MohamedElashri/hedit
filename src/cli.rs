@@ -10,6 +10,9 @@ pub struct Options {
     pub files: Vec<PathBuf>,
     pub stdin: bool,
     pub new_buffer: bool,
+    /// Keep the terminal waiting until the files are closed (`-w`), so hedit
+    /// can be the editor for tools such as `git commit`.
+    pub wait: bool,
     pub help: bool,
     pub version: bool,
 }
@@ -30,6 +33,7 @@ impl Options {
                         Some(args.next().ok_or("--session-dir needs a directory")?.into())
                 }
                 Some("--new") => options.new_buffer = true,
+                Some("--wait" | "-w") => options.wait = true,
                 Some("--help" | "-h") => options.help = true,
                 Some("--version" | "-V") => options.version = true,
                 Some("-") => options.stdin = true,

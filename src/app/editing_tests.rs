@@ -421,3 +421,53 @@ fn layouts_have_up_to_four_groups_and_ctrl_n_focuses_one() {
     bad.normalize();
     assert_eq!((bad.mode, bad.focused), (0, 0));
 }
+
+#[test]
+fn hedit_w_waits_until_the_files_are_closed() {
+    assert!(
+        hedit::cli::Options::parse(["-w".into(), "a.txt".into()])
+            .unwrap()
+            .wait
+    );
+    let directory = tempfile::tempdir().unwrap();
+    let file = directory.path().join("COMMIT_EDITMSG");
+    std::fs::write(&file, "message\n").unwrap();
+    let closed = directory.path().join("closed");
+    let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![file.clone()]);
+    app.wait_for(
+        &[PathBuf::from(format!("{}:1", file.display()))],
+        closed.clone(),
+    );
+    finish_app_job(&mut app, &ctx);
+    app.track_waits();
+    assert!(!closed.exists(), "still open");
+    app.execute(&ctx, Command::Close);
+    app.track_waits();
+    assert!(closed.exists(), "released once the file is closed");
+    // A request from another `hedit -w` waits the same way.
+    let other = directory.path().join("other.txt");
+    std::fs::write(&other, "x").unwrap();
+    let released = directory.path().join("released");
+    let requests = directory.path().join("session/requests");
+    std::fs::create_dir_all(&requests).unwrap();
+    let request = hedit::ipc::Request {
+        files: vec![hedit::ipc::WirePath::new(&other)],
+        stdin: None,
+        new_buffer: false,
+        wait: Some(hedit::ipc::WirePath::new(&released)),
+    };
+    std::fs::write(
+        requests.join("1.request"),
+        serde_json::to_vec(&request).unwrap(),
+    )
+    .unwrap();
+    app.poll_incoming(&ctx);
+    finish_app_job(&mut app, &ctx);
+    app.track_waits();
+    assert!(!released.exists());
+    // Closing the window releases every wait.
+    app.release_waits();
+    assert!(released.exists());
+}

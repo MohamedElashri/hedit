@@ -20,7 +20,7 @@ fn run(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let options = hedit::cli::Options::parse(args.clone())?;
     if options.help {
-        println!("hedit — keep your train of thought\n\nUsage: hedit [--session-dir DIR] [--new] [FILE[:LINE[:COLUMN]] | FOLDER ...] [-]\n\n  -                 Read UTF-8 stdin into an unsaved file\n  --new             Add a new file\n  --session-dir DIR Use an isolated session (one process per session)\n  --                Treat remaining arguments as paths\n  -h, --help        Show help\n  -V, --version     Show version\n\nhedit opens in the running session and releases the terminal after startup.\nBuild and run with Cargo. CUDA tools are optional.");
+        println!("hedit — keep your train of thought\n\nUsage: hedit [--session-dir DIR] [--new] [FILE[:LINE[:COLUMN]] | FOLDER ...] [-]\n\n  -                 Read UTF-8 stdin into an unsaved file\n  --new             Add a new file\n  -w, --wait        Wait until the files are closed (for git and other tools)\n  --session-dir DIR Use an isolated session (one process per session)\n  --                Treat remaining arguments as paths\n  -h, --help        Show help\n  -V, --version     Show version\n\nhedit opens in the running session and releases the terminal after startup.\nBuild and run with Cargo. CUDA tools are optional.");
         return Ok(());
     }
     if options.version {
@@ -37,9 +37,10 @@ fn run(
         })
         .ok_or("Cannot determine session directory; pass --session-dir.")?;
     if !startup.is_child() {
-        return launcher::launch(&args, &directory, options.stdin);
+        return launcher::launch(&args, &directory, options.stdin, options.wait);
     }
-    if hedit::ipc::forward(&directory, &options, startup.stdin_path())? {
+    let wait = std::env::var_os(launcher::WAIT_VARIABLE).map(std::path::PathBuf::from);
+    if hedit::ipc::forward(&directory, &options, startup.stdin_path(), wait.as_deref())? {
         startup.ready()?;
         return Ok(());
     }
@@ -57,7 +58,7 @@ fn run(
     let (mut workspace, errors) = match hedit::workspace::Workspace::restore(directory.clone()) {
         Ok(workspace) => workspace,
         Err(error) => {
-            if hedit::ipc::forward(&directory, &options, startup.stdin_path())? {
+            if hedit::ipc::forward(&directory, &options, startup.stdin_path(), wait.as_deref())? {
                 startup.ready()?;
                 return Ok(());
             }
@@ -80,7 +81,10 @@ fn run(
         "hedit",
         native_options,
         Box::new(move |cc| {
-            let app = app::HeditApp::new(cc, workspace, errors, options.files);
+            let mut app = app::HeditApp::new(cc, workspace, errors, options.files.clone());
+            if let Some(file) = wait {
+                app.wait_for(&options.files, file);
+            }
             startup.ready()?;
             Ok(Box::new(app))
         }),

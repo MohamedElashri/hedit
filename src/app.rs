@@ -28,6 +28,7 @@ mod settings_tests;
 mod themes;
 mod tree_row;
 mod updates;
+mod wait;
 
 use commands::Command;
 use eframe::egui::{self, FontId, Key, Modifiers, RichText};
@@ -137,6 +138,8 @@ pub struct HeditApp {
     settings_files: settings_store::SettingsFiles,
     /// The command whose shortcut is being recorded on the Key Bindings page.
     key_capture: Option<Command>,
+    /// `hedit -w` requests waiting for their files to close.
+    waits: Vec<wait::Wait>,
     build: build_panel::BuildState,
     /// The first key of a shortcut being recorded, and when it was pressed.
     capture_first: Option<(String, Instant)>,
@@ -275,6 +278,7 @@ impl HeditApp {
             settings,
             settings_files,
             key_capture: None,
+            waits: Vec::new(),
             build: Default::default(),
             capture_first: None,
             chord: None,
@@ -931,6 +935,7 @@ impl HeditApp {
                 .follow
                 .then(|| due(self.poll_at, Duration::from_secs(1))),
             self.settings_due(),
+            self.wait_due(),
             (!self.quality.git_pending && self.git_stale(ctx)).then(|| {
                 self.quality
                     .git_at
@@ -2528,6 +2533,7 @@ impl eframe::App for HeditApp {
             self.window_title = title;
         }
         self.poll_build();
+        self.track_waits();
         self.chrome(ctx);
         self.gpu(ctx);
         self.search_panel(ctx);
@@ -2573,6 +2579,7 @@ impl eframe::App for HeditApp {
         Duration::from_secs(2)
     }
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.release_waits();
         if let Err(error) = self.workspace.checkpoint() {
             eprintln!("hedit: final recovery checkpoint failed: {error}");
         }

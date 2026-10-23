@@ -59,6 +59,9 @@ pub struct Request {
     pub files: Vec<WirePath>,
     pub stdin: Option<WirePath>,
     pub new_buffer: bool,
+    /// For `hedit -w`: create this file once the files are closed.
+    #[serde(default)]
+    pub wait: Option<WirePath>,
 }
 pub struct Incoming {
     pub request: Request,
@@ -68,6 +71,10 @@ impl Incoming {
     pub fn finish(self, result: Result<(), String>) -> Result<(), String> {
         crate::projects::atomic_json(&self.reply, &result)
     }
+}
+/// Whether an editor window owns this session.
+pub fn is_running(directory: &Path) -> bool {
+    running(directory).unwrap_or(false)
 }
 fn running(directory: &Path) -> Result<bool, String> {
     let lock = match File::options()
@@ -92,6 +99,7 @@ pub fn forward(
     directory: &Path,
     options: &crate::cli::Options,
     stdin: Option<&Path>,
+    wait: Option<&Path>,
 ) -> Result<bool, String> {
     if !running(directory)? {
         return Ok(false);
@@ -111,6 +119,7 @@ pub fn forward(
             .collect(),
         stdin: stdin.map(WirePath::new),
         new_buffer: options.new_buffer,
+        wait: wait.map(WirePath::new),
     };
     let mailbox = directory.join("requests");
     fs::create_dir_all(&mailbox).map_err(|e| e.to_string())?;
