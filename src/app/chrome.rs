@@ -41,7 +41,7 @@ impl HeditApp {
             .inner_margin(egui::Margin::symmetric(8, 3))).show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 for (title, groups) in [
-                    ("File", vec![vec![Command::New, Command::Open, Command::OpenFolder], vec![Command::RefreshFolder, Command::CloseFolder], vec![Command::Save, Command::SaveAs, Command::Rename, Command::Encoding], vec![Command::Close, Command::Reopen, Command::Shelf], if cfg!(target_os = "macos") { vec![] } else { vec![Command::Quit] }]),
+                    ("File", vec![vec![Command::New, Command::NewWindow, Command::Open, Command::OpenFolder], vec![Command::RefreshFolder, Command::CloseFolder], vec![Command::Save, Command::SaveAs, Command::Rename, Command::Encoding], vec![Command::Close, Command::Reopen, Command::Shelf], if cfg!(target_os = "macos") { vec![] } else { vec![Command::Quit] }]),
                     ("Edit", vec![]),
                     ("Find", vec![vec![Command::Find, Command::Replace, Command::FindPrevious, Command::ReplaceAll, Command::FindFiles]]),
                     ("View", vec![]),

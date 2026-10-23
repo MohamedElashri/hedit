@@ -350,6 +350,17 @@ impl HeditApp {
         }
         app
     }
+    /// Whether the window holds nothing worth reopening: no folders, no
+    /// closed files, and only empty, unnamed files.
+    fn workspace_is_empty(&self) -> bool {
+        self.workspace.folders.is_empty()
+            && self.workspace.closed.is_empty()
+            && self
+                .workspace
+                .open
+                .iter()
+                .all(|b| b.page.text.is_empty() && b.page.info.path.is_none())
+    }
     fn changed(&mut self) {
         self.generation = self.generation.wrapping_add(1);
     }
@@ -1104,6 +1115,7 @@ impl HeditApp {
             (cmd, Key::B, Command::Build),
             (Modifiers::SHIFT, Key::F4, Command::PreviousResult),
             (Modifiers::NONE, Key::F4, Command::NextResult),
+            (shift, Key::N, Command::NewWindow),
             (cmd, Key::N, Command::New),
             (shift, Key::O, Command::OpenFolder),
             (cmd, Key::O, Command::Open),
@@ -2582,6 +2594,11 @@ impl eframe::App for HeditApp {
         self.release_waits();
         if let Err(error) = self.workspace.checkpoint() {
             eprintln!("hedit: final recovery checkpoint failed: {error}");
+        }
+        // An extra window closed with nothing in it is not reopened next time.
+        let session = self.workspace.store.directory().to_owned();
+        if hedit::windows::is_extra(&session) && self.workspace_is_empty() {
+            let _ = std::fs::remove_dir_all(&session);
         }
         if let Some(path) = &self.quality.project_path {
             if let Err(error) = self.project_snapshot().and_then(|state| {

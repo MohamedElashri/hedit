@@ -65,6 +65,12 @@ fn run(
             return Err(error.into());
         }
     };
+    // Reopen the extra windows that were open with the main window last time.
+    if let Ok(exe) = std::env::current_exe() {
+        for session in hedit::windows::to_restore(&directory) {
+            let _ = hedit::windows::spawn(&exe, &session, false);
+        }
+    }
     if options.new_buffer {
         workspace.new_buffer()?;
     }

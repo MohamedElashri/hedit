@@ -471,3 +471,27 @@ fn hedit_w_waits_until_the_files_are_closed() {
     app.release_waits();
     assert!(released.exists());
 }
+
+#[test]
+fn an_empty_extra_window_removes_its_session_on_close() {
+    let data = tempfile::tempdir().unwrap();
+    for (text, kept) in [("", false), ("draft", true)] {
+        let session = hedit::windows::new_session(&data.path().join("session"));
+        let (mut workspace, _) = Workspace::restore(session.clone()).unwrap();
+        workspace.open[0].page.text = text.into();
+        workspace.edit(0, "").unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        eframe::App::on_exit(&mut app, None);
+        drop(app);
+        assert_eq!(session.exists(), kept, "{text:?}");
+    }
+    // The main window's session is never removed.
+    let main = data.path().join("session");
+    let (workspace, _) = Workspace::restore(main.clone()).unwrap();
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    eframe::App::on_exit(&mut app, None);
+    drop(app);
+    assert!(main.exists());
+}

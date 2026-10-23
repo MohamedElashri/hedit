@@ -248,3 +248,25 @@ fn exclusion_patterns_hide_folders_and_files_everywhere() {
     let listing = folder::read_directory(root.path().into()).unwrap();
     assert_eq!(listing.entries.len(), 3);
 }
+
+#[test]
+fn extra_windows_get_their_own_sessions_and_reopen_with_the_main_window() {
+    use hedit::windows::{is_extra, new_session, to_restore, windows_dir};
+    let data = tempfile::tempdir().unwrap();
+    let main = data.path().join("session");
+    assert!(!is_extra(&main));
+    assert_eq!(windows_dir(&main), data.path().join("windows"));
+    let first = new_session(&main);
+    assert!(is_extra(&first));
+    assert_eq!(first.parent().unwrap(), data.path().join("windows"));
+    // Another window opened from an extra window goes beside it.
+    assert_eq!(windows_dir(&first), data.path().join("windows"));
+    std::fs::create_dir_all(&first).unwrap();
+    let second = new_session(&first);
+    assert_ne!(first, second);
+    std::fs::create_dir_all(&second).unwrap();
+    std::fs::write(data.path().join("windows/not-a-session"), "x").unwrap();
+    assert_eq!(to_restore(&main), [first.clone(), second]);
+    // Extra windows never reopen other windows.
+    assert!(to_restore(&first).is_empty());
+}

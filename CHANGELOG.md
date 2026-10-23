@@ -56,6 +56,8 @@
   own highlighting.
 - `hedit -w` (`--wait`) keeps the terminal waiting until the files are closed, so
   hedit can be the editor for `git commit` and other tools.
+- File → New window (Ctrl+Shift+N) opens another window with its own tabs and
+  recovery data. Windows that held work reopen with the first window.
 
 ### Changed
 

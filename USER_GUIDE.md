@@ -398,6 +398,15 @@ cursor positions restored by undo/redo during the current process. Additional
 selections survive recovery and reopening closed files. There is a limit of
 1,000 selections per view; these controls require a fully loaded file.
 
+### Windows
+
+**File → New window** (**Ctrl+Shift+N**) opens another hedit window with its own
+tabs, folders, and layout. Each window keeps its own recovery data, so unsaved
+work is safe in each; settings, key bindings, snippets, and themes are shared.
+When the first window starts, it reopens the other windows that were open last
+time. A window closed with nothing in it is not reopened. Files opened from a
+terminal with `hedit FILE` go to the first window.
+
 ### Split panes, folding, and minimap
 
 **View → Layout** offers Sublime's layouts: a single group (**Alt+Shift+1**), two,
@@ -1053,6 +1062,7 @@ and Quit are in macOS's own hedit menu. Change any shortcut under
 | Shortcut | Action |
 | --- | --- |
 | Ctrl+N / Ctrl+O | New file / open file |
+| Ctrl+Shift+N | New window |
 | Ctrl+S / Ctrl+Shift+S | Save / Save As |
 | Ctrl+W / Ctrl+Shift+T | Close to shelf / reopen latest |
 | Ctrl+Shift+R | Name the active unsaved file |

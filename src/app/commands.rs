@@ -66,6 +66,7 @@ pub(super) enum Command {
     IndentGuides,
     Minimap,
     New,
+    NewWindow,
     Open,
     OpenFolder,
     CloseFolder,
@@ -213,6 +214,7 @@ impl Command {
         Self::IndentGuides,
         Self::Minimap,
         Self::New,
+        Self::NewWindow,
         Self::Open,
         Self::OpenFolder,
         Self::CloseFolder,
@@ -388,6 +390,7 @@ impl Command {
             Self::IndentGuides => "Show indentation guides",
             Self::Minimap => "Show minimap",
             Self::New => "New file",
+            Self::NewWindow => "New window",
             Self::Open => "Open file…",
             Self::OpenFolder => "Open folder…",
             Self::CloseFolder => "Close all folders",
@@ -542,6 +545,7 @@ impl Command {
             Self::Fold => "Ctrl+Shift+[",
             Self::Unfold => "Ctrl+Shift+]",
             Self::New => "Ctrl+N",
+            Self::NewWindow => "Ctrl+Shift+N",
             Self::Open => "Ctrl+O",
             Self::OpenFolder => "Ctrl+Shift+O",
             Self::Sidebar => "Ctrl+K, Ctrl+B",
@@ -890,6 +894,13 @@ impl HeditApp {
                 self.report(r);
             }
             Command::Open => self.open(ctx, None),
+            Command::NewWindow => {
+                let session = hedit::windows::new_session(self.workspace.store.directory());
+                let result = std::env::current_exe()
+                    .map_err(|e| e.to_string())
+                    .and_then(|exe| hedit::windows::spawn(&exe, &session, true));
+                self.report(result);
+            }
             Command::OpenFolder => self.open_folder(ctx),
             Command::CloseFolder => self.close_folder(),
             Command::RefreshFolder => self.refresh_folder(),

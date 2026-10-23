@@ -16,6 +16,7 @@ pub mod syntax;
 pub mod text_encoding;
 pub mod theme;
 pub mod update;
+pub mod windows;
 pub mod workspace;
 
 use document::Document;
