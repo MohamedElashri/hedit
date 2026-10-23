@@ -5,6 +5,7 @@ mod edit_actions;
 #[cfg(test)]
 mod editing_tests;
 mod editor_layout;
+mod find_live;
 mod goto_anything;
 #[cfg(test)]
 mod goto_tests;
@@ -133,6 +134,7 @@ pub struct HeditApp {
     settings_files: settings_store::SettingsFiles,
     /// The command whose shortcut is being recorded on the Key Bindings page.
     key_capture: Option<Command>,
+    live_find: find_live::LiveFind,
     /// Where the cursor was before Go to Anything previewed a result.
     goto_origin: Option<goto_anything::Origin>,
     /// The `font_face` in use, or being loaded.
@@ -264,6 +266,7 @@ impl HeditApp {
             settings,
             settings_files,
             key_capture: None,
+            live_find: Default::default(),
             goto_origin: None,
             font_applied: String::new(),
             key_filter: String::new(),
@@ -1166,6 +1169,8 @@ impl HeditApp {
         let context = ui.ctx().clone();
         let ctx = &context;
         let theme = self.theme.clone();
+        let find_matches = self.find_highlights();
+        let word_matches = self.selection_highlights();
 
         if self.active().external {
             ui.horizontal_wrapped(|ui| {
@@ -1510,6 +1515,45 @@ impl HeditApp {
                         let unfocused = (!output.response.has_focus()
                             && primary.start() != primary.end())
                         .then_some(primary);
+                        // Find matches are filled; other occurrences of a selected
+                        // word are outlined.
+                        for (ranges, fill, stroke) in [
+                            (
+                                &find_matches,
+                                self.theme.warning.color().gamma_multiply(0.22),
+                                egui::Stroke::new(
+                                    1.0,
+                                    self.theme.warning.color().gamma_multiply(0.7),
+                                ),
+                            ),
+                            (
+                                &word_matches,
+                                egui::Color32::TRANSPARENT,
+                                egui::Stroke::new(
+                                    1.0,
+                                    self.theme.muted.color().gamma_multiply(0.8),
+                                ),
+                            ),
+                        ] {
+                            if let Some(ranges) = ranges {
+                                let shown: Vec<(usize, usize)> = ranges
+                                    .iter()
+                                    .filter(|&&(a, _)| {
+                                        projection.source(projection.display(a)) == a
+                                    })
+                                    .map(|&(a, b)| (projection.display(a), projection.display(b)))
+                                    .collect();
+                                find_live::paint_ranges(
+                                    ui.painter(),
+                                    &output.galley,
+                                    output.galley_pos,
+                                    ui.clip_rect(),
+                                    &shown,
+                                    fill,
+                                    stroke,
+                                );
+                            }
+                        }
                         if self.settings.match_brackets && primary.start() == primary.end() {
                             let pair =
                                 hedit::advanced::matching_bracket(&old, primary.head, 100_000);
@@ -4409,6 +4453,11 @@ mod tests {
                 app.preferences_open = page.is_some();
                 app.preferences_page = page.unwrap_or(PreferencesPage::Editor);
                 app.find_open = name == "search";
+                app.query = if name == "search" {
+                    "count".into()
+                } else {
+                    String::new()
+                };
                 app.replace_open = name == "search";
                 app.gpu_open = name == "cuda";
                 app.appearance.customizing = name == "customize";

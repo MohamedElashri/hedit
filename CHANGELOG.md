@@ -37,6 +37,9 @@
 - Go to Anything in Go to file (Ctrl+P): `@symbol`, `:line[:column]`, and `#text`
   jump inside the current file with a live preview that Esc undoes, and a file
   name in front (`app.rs@save`, `main.cu:42`) opens that file at the target.
+- Find as you type: the Find bar selects the first match after the cursor while
+  you type, shows “n of m”, and highlights every match on the page.
+- Selecting a word outlines its other occurrences (`match_selection`).
 
 ### Changed
 

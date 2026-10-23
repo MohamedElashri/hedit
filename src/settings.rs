@@ -90,6 +90,8 @@ pub struct Settings {
     pub auto_match_enabled: bool,
     /// Highlight the bracket matching the one beside the cursor.
     pub match_brackets: bool,
+    /// Outline other occurrences of a selected word.
+    pub match_selection: bool,
     /// Use the indentation a file already has instead of the defaults.
     pub detect_indentation: bool,
     // Window
@@ -142,6 +144,7 @@ impl Default for Settings {
             smart_backspace: true,
             auto_match_enabled: true,
             match_brackets: true,
+            match_selection: true,
             detect_indentation: true,
             show_tab_bar: true,
             show_status_bar: true,

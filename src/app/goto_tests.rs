@@ -99,3 +99,45 @@ fn a_file_name_before_the_target_opens_it_there() {
         .ends_with("other.rs"));
     assert_eq!(line_of(&app), 3);
 }
+
+#[test]
+fn find_selects_matches_while_typing_and_highlights_them_all() {
+    let text = "one two\nthree two\nfour\n";
+    let directory = tempfile::tempdir().unwrap();
+    let (mut workspace, _) = Workspace::restore(directory.path().into()).unwrap();
+    workspace.open[0].page.text = text.into();
+    workspace.edit(0, "").unwrap();
+    // Find starts searching from the cursor.
+    workspace.open[0].view.anchor = 5;
+    workspace.open[0].view.head = 5;
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![key(Key::F, Modifiers::COMMAND)]);
+    frame(&ctx, &mut app, vec![egui::Event::Text("t".into())]);
+    let selected = |app: &HeditApp| (app.active().view.anchor, app.active().view.head);
+    assert_eq!(selected(&app), (8, 9), "first “t” after the cursor");
+    frame(&ctx, &mut app, vec![egui::Event::Text("wo".into())]);
+    assert_eq!(selected(&app), (14, 17), "“two” after the cursor");
+    assert_eq!(app.quality.match_status, "2 of 2");
+    assert_eq!(
+        app.find_highlights().unwrap().as_slice(),
+        [(4, 7), (14, 17)]
+    );
+    frame(&ctx, &mut app, vec![egui::Event::Text("x".into())]);
+    assert_eq!(selected(&app), (5, 5), "no match returns to the start");
+    assert_eq!(app.quality.match_status, "No matches");
+    assert_eq!(app.active().page.text, text);
+    // Without Find, selecting a word outlines its other occurrences.
+    frame(&ctx, &mut app, vec![key(Key::Escape, Modifiers::NONE)]);
+    app.set_selections(vec![hedit::advanced::Selection { anchor: 4, head: 7 }]);
+    assert_eq!(
+        app.selection_highlights().unwrap().as_slice(),
+        [(4, 7), (14, 17)]
+    );
+    app.set_selections(vec![hedit::advanced::Selection { anchor: 4, head: 6 }]);
+    assert!(app.selection_highlights().is_none(), "only whole words");
+    app.settings.match_selection = false;
+    app.set_selections(vec![hedit::advanced::Selection { anchor: 4, head: 7 }]);
+    assert!(app.selection_highlights().is_none());
+}

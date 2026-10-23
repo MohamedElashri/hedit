@@ -728,6 +728,9 @@ impl HeditApp {
                             .desired_width(width)
                             .hint_text("Search text or regular expression"),
                     );
+                    if response.changed() {
+                        self.find_as_you_type();
+                    }
                     if self.find_focus {
                         response.request_focus();
                         self.find_focus = false;
@@ -747,9 +750,14 @@ impl HeditApp {
                     }
                 });
                 ui.horizontal_wrapped(|ui| {
-                    ui.checkbox(&mut self.quality.options.regex, "Regex");
-                    ui.checkbox(&mut self.quality.options.case_sensitive, "Case sensitive");
-                    ui.checkbox(&mut self.quality.options.whole_word, "Whole words");
+                    let options = [
+                        ui.checkbox(&mut self.quality.options.regex, "Regex"),
+                        ui.checkbox(&mut self.quality.options.case_sensitive, "Case sensitive"),
+                        ui.checkbox(&mut self.quality.options.whole_word, "Whole words"),
+                    ];
+                    if options.iter().any(|r| r.changed()) {
+                        self.find_as_you_type();
+                    }
                     ui.add_enabled_ui(self.quality.scope.is_some(), |ui| {
                         ui.checkbox(&mut self.quality.selection_only, "Selection only");
                     });

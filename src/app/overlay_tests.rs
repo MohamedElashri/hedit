@@ -111,6 +111,8 @@ fn enter_in_the_find_bar_steps_through_matches_without_editing() {
     let (_directory, ctx, mut app) = app_with(text);
     frame(&ctx, &mut app, vec![key(Key::F, Modifiers::COMMAND)]);
     frame(&ctx, &mut app, vec![egui::Event::Text("beta".into())]);
+    // Typing already selects the first match, as in Sublime.
+    assert_eq!(app.active().view.anchor.min(app.active().view.head), 6);
     let mut found = vec![];
     for _ in 0..3 {
         frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)]);
@@ -120,13 +122,13 @@ fn enter_in_the_find_bar_steps_through_matches_without_editing() {
         found.push(app.active().view.anchor.min(app.active().view.head));
     }
     assert_eq!(app.active().page.text, text);
-    assert_eq!(found, vec![6, 17, 6]);
+    assert_eq!(found, vec![17, 6, 17]);
     // Shift+Enter goes back.
     frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::SHIFT)]);
     finish_app_job(&mut app, &ctx);
     frame(&ctx, &mut app, vec![]);
     assert_eq!(app.active().page.text, text);
-    assert_eq!(app.active().view.anchor.min(app.active().view.head), 17);
+    assert_eq!(app.active().view.anchor.min(app.active().view.head), 6);
 }
 
 #[test]

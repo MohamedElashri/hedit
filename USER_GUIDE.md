@@ -543,8 +543,10 @@ when opened and adapts its height to smaller windows.
 
 1. Press **Ctrl+F** or choose **Find → Find…** to open the bottom search panel.
 2. Enter a query of up to 4,096 UTF-8 bytes and choose search options.
-3. Press **Enter** or click **Find next** to select the next match across the whole
-   file; **Shift+Enter** selects the previous one. The cursor stays in the search
+3. As you type, the first match after the cursor is selected and every match on
+   the page is highlighted (in large paged files, search starts when you press
+   Enter). Press **Enter** or click **Find next** to select the next match across
+   the whole file; **Shift+Enter** selects the previous one. The cursor stays in the search
    field, so you can keep pressing Enter or refine the query. Enter in the
    replacement field also finds the next match.
 4. Enable **Replace** (or press **Ctrl+H**), enter replacement text, and click
@@ -734,6 +736,7 @@ you fix it.
 | `smart_backspace` | `true` | Backspace in leading whitespace removes one level |
 | `auto_match_enabled` | `true` | Close brackets and quotes, wrap selections in them, and step over closers |
 | `match_brackets` | `true` | Outline the bracket matching the one beside the cursor |
+| `match_selection` | `true` | Outline other occurrences of a selected word |
 | `detect_indentation` | `true` | Use the indentation a file already has instead of `tab_size` and `translate_tabs_to_spaces` |
 | `show_tab_bar`, `show_status_bar` | `true` | Show the tab bar and status bar |
 | `show_sidebar`, `show_folders` | `true` | Show the sidebar and its folder section |

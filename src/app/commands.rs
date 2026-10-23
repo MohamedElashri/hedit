@@ -816,6 +816,9 @@ impl HeditApp {
                     )
                 });
                 self.quality.selection_only = false;
+                // Typing in Find searches from here.
+                let b = self.active();
+                self.live_find.origin = Some((b.view.id, b.view.anchor.min(b.view.head)));
                 self.find_open = true;
                 self.find_focus = true;
                 // The palette asks for editor focus when it runs a command.
