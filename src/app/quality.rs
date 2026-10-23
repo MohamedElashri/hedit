@@ -55,6 +55,8 @@ pub(super) struct Quality {
     pub git_at: Option<Instant>,
     pub git_cache: std::collections::BTreeMap<u64, String>,
     pub git_pending: bool,
+    /// The buffer and revision the current markers were computed for.
+    pub git_key: Option<(u64, u64)>,
     pub git_lines: std::collections::BTreeMap<u64, std::collections::BTreeSet<usize>>,
     pub file_action: Option<(PathBuf, FileOperation)>,
     pub file_name: String,
@@ -1287,15 +1289,29 @@ impl HeditApp {
 }
 
 impl HeditApp {
+    /// Whether git markers are out of date: the text changed, the window came
+    /// back into focus (a commit may have happened), or they are 30 s old.
+    pub(super) fn git_stale(&self, ctx: &egui::Context) -> bool {
+        let b = self.active();
+        b.page.info.path.is_some()
+            && !b.page.info.paged
+            && (self.quality.git_key != Some((b.view.id, b.page.info.revision))
+                || refocused(ctx)
+                || self
+                    .quality
+                    .git_at
+                    .is_none_or(|t| t.elapsed() >= Duration::from_secs(30)))
+    }
     pub(super) fn poll_git(&mut self, ctx: &egui::Context) {
         if self.quality.git_pending
             || self.busy
             || self.closing
-            || self.active().page.info.paged
-            || self
-                .quality
-                .git_at
-                .is_some_and(|t| t.elapsed() < Duration::from_secs(2))
+            || !self.git_stale(ctx)
+            || (!refocused(ctx)
+                && self
+                    .quality
+                    .git_at
+                    .is_some_and(|t| t.elapsed() < Duration::from_secs(2)))
         {
             return;
         }
@@ -1310,6 +1326,7 @@ impl HeditApp {
         let ctx = ctx.clone();
         self.quality.git_at = Some(Instant::now());
         self.quality.git_pending = true;
+        self.quality.git_key = Some((id, revision));
         thread::spawn(move || {
             let diff = intelligence::git_diff(Path::new(&path), &text).unwrap_or_default();
             let _ = tx.send(Ok(Action::Quality(Box::new(Event::GitMarkers(
@@ -1318,4 +1335,13 @@ impl HeditApp {
             ctx.request_repaint();
         });
     }
+}
+
+/// True on the frame the window regains keyboard focus.
+pub(super) fn refocused(ctx: &egui::Context) -> bool {
+    ctx.input(|i| {
+        i.events
+            .iter()
+            .any(|e| matches!(e, egui::Event::WindowFocused(true)))
+    })
 }

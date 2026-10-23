@@ -51,6 +51,18 @@
 - On macOS, navigate back/forward with Control+- and Control+Shift+-, so
   Option+arrows keep moving by word.
 
+### Performance
+
+- An idle window no longer redraws five times a second. hedit redraws on input or
+  when work is pending, and a background thread wakes it when another `hedit`
+  command sends files.
+- Git change markers refresh when the text changes or the window regains focus,
+  instead of running git every two seconds.
+- Files changed on disk are noticed as soon as the window regains focus.
+- The editor no longer copies and compares the whole page on every frame, and the
+  folder tree no longer copies folder listings on every frame.
+- The CUDA panel's Browse dialog no longer blocks the window.
+
 ### Removed
 
 - The Ember theme. A saved Ember appearance keeps its colors.

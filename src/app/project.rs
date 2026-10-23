@@ -25,7 +25,8 @@ pub(super) struct CreateEntry {
 
 /// Directory reads and bounded fuzzy scans never run on the paint thread.
 pub(super) struct ProjectBrowser {
-    listings: HashMap<String, Result<FolderListing, String>>,
+    // Shared so drawing the tree each frame does not copy up to 2,000 entries per folder.
+    listings: HashMap<String, std::sync::Arc<Result<FolderListing, String>>>,
     pending: HashSet<String>,
     pub expanded: BTreeSet<String>,
     generation: u64,
@@ -75,7 +76,8 @@ impl ProjectBrowser {
         while let Ok(result) = self.rx.try_recv() {
             if result.generation == self.generation {
                 self.pending.remove(&result.path);
-                self.listings.insert(result.path, result.listing);
+                self.listings
+                    .insert(result.path, std::sync::Arc::new(result.listing));
             }
         }
         while let Ok(result) = self.search_rx.try_recv() {
@@ -178,7 +180,7 @@ impl HeditApp {
         self.project.invalidate();
         self.project
             .listings
-            .insert(listing.path.clone(), Ok(listing));
+            .insert(listing.path.clone(), std::sync::Arc::new(Ok(listing)));
         self.sidebar = true;
         self.folder_sidebar = true;
         self.sync_folder_view();
@@ -399,7 +401,7 @@ impl HeditApp {
             ui.weak("Loading…");
             return;
         };
-        let listing = match listing {
+        let listing = match listing.as_ref() {
             Ok(listing) => listing,
             Err(error) => {
                 ui.colored_label(self.theme.warning.color(), error);
@@ -409,7 +411,7 @@ impl HeditApp {
         if listing.entries.is_empty() {
             ui.weak("Empty folder");
         }
-        for entry in listing.entries {
+        for entry in &listing.entries {
             let expanded = self.project.expanded.contains(&entry.path);
             let selected = self.active().page.info.path.as_deref() == Some(entry.path.as_str());
             let response = tree_row::show(

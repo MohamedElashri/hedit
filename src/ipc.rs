@@ -162,3 +162,14 @@ pub fn receive(directory: &Path) -> Option<Result<Incoming, String>> {
     }
     None
 }
+
+/// Whether a request is waiting, without taking it. Cheap enough to poll from
+/// a background thread so an idle window needs no redraw timer.
+pub fn pending(directory: &Path) -> bool {
+    fs::read_dir(directory.join("requests")).is_ok_and(|entries| {
+        entries
+            .flatten()
+            .take(128)
+            .any(|entry| entry.path().extension().is_some_and(|e| e == "request"))
+    })
+}

@@ -54,6 +54,7 @@ enum Action {
     Saved(u64, Info),
     SaveTo(u64, PathBuf),
     ThemeImported(Theme),
+    DebugProgram(PathBuf),
     Notice(String),
     Nothing,
 }
@@ -66,7 +67,33 @@ struct Checkpoint {
     result: Result<(), String>,
 }
 
+/// Wakes the window when another `hedit` process sends files, so an idle
+/// window needs no redraw timer. Stops when the app is dropped.
+struct RequestWatch(Arc<AtomicBool>);
+impl RequestWatch {
+    fn start(ctx: &egui::Context, directory: PathBuf) -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&stop);
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            while !flag.load(Ordering::Relaxed) {
+                if hedit::ipc::pending(&directory) {
+                    ctx.request_repaint();
+                }
+                thread::sleep(Duration::from_millis(250));
+            }
+        });
+        Self(stop)
+    }
+}
+impl Drop for RequestWatch {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+}
+
 pub struct HeditApp {
+    _requests: RequestWatch,
     quality: quality::Quality,
     workspace: Workspace,
     project: project::ProjectBrowser,
@@ -211,6 +238,7 @@ impl HeditApp {
         panes.focused = panes.focused.min(1);
         panes.mode = panes.mode.min(2);
         let mut app = Self {
+            _requests: RequestWatch::start(ctx, workspace.store.directory().to_owned()),
             quality: Default::default(),
             project,
             workspace,
@@ -834,6 +862,9 @@ impl HeditApp {
                     self.changed();
                 }
                 Ok(Action::ThemeImported(theme)) => self.add_imported_theme(ctx, theme),
+                Ok(Action::DebugProgram(path)) => {
+                    self.debug_program = path.to_string_lossy().into_owned();
+                }
                 Ok(Action::Notice(message)) => self.notice = message,
                 Ok(Action::Nothing) => (),
                 Err(error) if ROUTINE.contains(&error.as_str()) => {
@@ -883,8 +914,44 @@ impl HeditApp {
             self.checkpoint(ctx);
         }
     }
+    /// When the next frame is needed without input: soon while work is in
+    /// flight, at the next checkpoint or git refresh, or never when idle.
+    fn next_wake(&self, ctx: &egui::Context) -> Option<Duration> {
+        let working = self.busy
+            || self.closing
+            || self.checkpoint_pending
+            || self.updates.active()
+            || self.quality.incoming.is_some()
+            || !self.pending_paths.is_empty()
+            || self
+                .debug
+                .as_ref()
+                .is_some_and(|d| d.state != State::Exited);
+        if working {
+            return Some(Duration::from_millis(50));
+        }
+        let due = |since: Instant, every: Duration| every.saturating_sub(since.elapsed());
+        [
+            (self.generation != self.persisted)
+                .then(|| due(self.checkpoint_at, Duration::from_secs(2))),
+            // Followed logs and files on disk are checked once a second.
+            self.active()
+                .follow
+                .then(|| due(self.poll_at, Duration::from_secs(1))),
+            (!self.quality.git_pending && self.git_stale(ctx)).then(|| {
+                self.quality
+                    .git_at
+                    .map_or(Duration::ZERO, |at| due(at, Duration::from_secs(2)))
+            }),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
+    }
     fn poll_external(&mut self, ctx: &egui::Context) {
-        if self.busy || self.poll_at.elapsed() < Duration::from_secs(1) {
+        if self.busy
+            || (self.poll_at.elapsed() < Duration::from_secs(1) && !quality::refocused(ctx))
+        {
             return;
         }
         self.poll_at = Instant::now();
@@ -1200,7 +1267,6 @@ impl HeditApp {
         }) {
             self.rectangle_start = Some((pane_id, original_selection.head));
         }
-        let old = buffer.page.text.clone();
         let language = buffer.language();
         let font_size = self.font_size;
         let wrap = self.wrap || self.distraction_free;
@@ -1249,15 +1315,9 @@ impl HeditApp {
         }
         let restore = buffer.restore_cursor;
         let gutter = if self.line_numbers {
-            let digits = (buffer
-                .page
-                .text
-                .bytes()
-                .filter(|&byte| byte == b'\n')
-                .count()
-                + 1)
-            .to_string()
-            .len();
+            let digits = (memchr::memchr_iter(b'\n', buffer.page.text.as_bytes()).count() + 1)
+                .to_string()
+                .len();
             (digits.max(3) as f32 * font_size * 0.65 + 16.0).max(42.0)
         } else {
             0.0
@@ -1265,19 +1325,18 @@ impl HeditApp {
         let gutter_color = self.theme.muted.color();
         let gutter_background = self.theme.background.color();
         let gutter_text = self.theme.text.color();
-        let current_line = buffer
-            .page
-            .text
-            .chars()
-            .take(buffer.view.head)
-            .filter(|&c| c == '\n')
-            .count()
-            + 1;
+        let head_byte = hedit::advanced::byte(&buffer.page.text, buffer.view.head);
+        let current_line =
+            memchr::memchr_iter(b'\n', &buffer.page.text.as_bytes()[..head_byte]).count() + 1;
         let map_area = ui.available_rect_before_wrap();
         let mut editor_area = map_area;
         if self.minimap && map_area.width() > 300.0 {
             editor_area.max.x -= 76.0;
         }
+        // Move the text out for this frame instead of copying a page of up to
+        // 2 MiB; it goes back, possibly edited, right after the editor is drawn.
+        let old = std::mem::take(&mut buffer.page.text);
+        let mut edited_text: Option<String> = None;
         let scroll_output = ui
             .scope_builder(egui::UiBuilder::new().max_rect(editor_area), |ui| {
                 ui.set_clip_rect(ui.clip_rect().intersect(editor_area));
@@ -1635,10 +1694,10 @@ impl HeditApp {
                                 let a = projection.text[..a].chars().count();
                                 let b = projection.text[..b].chars().count();
                                 let touched = projection.touches_fold(a, b);
-                                if original_selection.anchor == original_selection.head && touched {
-                                    buffer.page.text = old.clone();
-                                } else {
-                                    buffer.page.text = edited.text;
+                                if !(original_selection.anchor == original_selection.head
+                                    && touched)
+                                {
+                                    edited_text = Some(edited.text);
                                 }
                                 let selected = edited.selections[0];
                                 buffer.view.anchor = selected.anchor;
@@ -1655,7 +1714,7 @@ impl HeditApp {
                                     let head = buffer.view.head;
                                     if modifiers.shift {
                                         let mut ranges = hedit::advanced::rectangle(
-                                            &buffer.page.text,
+                                            edited_text.as_deref().unwrap_or(&old),
                                             self.rectangle_start
                                                 .filter(|(pane, _)| *pane == pane_id)
                                                 .map_or(
@@ -1697,12 +1756,23 @@ impl HeditApp {
                         // second, potentially large TextEdit undo history.
                         output.state.clear_undoer();
                         output.state.store(ctx, id);
-                        buffer.page.text != old
+                        edited_text.as_ref().is_some_and(|text| *text != old)
                     })
                     .inner
                 })
             })
             .inner;
+        // Keep the previous text only when it changed; history needs it.
+        let previous = match edited_text {
+            Some(text) if text != old => {
+                buffer.page.text = text;
+                Some(old)
+            }
+            _ => {
+                buffer.page.text = old;
+                None
+            }
+        };
         let mut minimap_target = None;
         if self.minimap && map_area.width() > 300.0 {
             let map = egui::Rect::from_min_max(
@@ -1774,7 +1844,7 @@ impl HeditApp {
             buffer.view.scroll_top = target;
             buffer.restore_cursor = true;
         }
-        if scroll_output.inner {
+        if let Some(old) = previous {
             let b = &mut self.workspace.open[index];
             let mut cursors = b.view.selections.clone();
             cursors.push(original_selection);
@@ -1817,8 +1887,9 @@ impl HeditApp {
                 ui.horizontal_wrapped(|ui| {
                     ui.label("Executable");
                     ui.add(egui::TextEdit::singleline(&mut self.debug_program).desired_width(280.0).hint_text("/path/to/cuda-program"));
-                    if ui.button("Browse…").clicked() {
-                        if let Some(path) = rfd::FileDialog::new().pick_file() { self.debug_program = path.to_string_lossy().into_owned(); }
+                    if ui.add_enabled(!self.busy, egui::Button::new("Browse…")).clicked() {
+                        // Native dialogs block; run it off the UI thread like the others.
+                        self.job(ctx, || Ok(rfd::FileDialog::new().pick_file().map_or(Action::Nothing, Action::DebugProgram)));
                     }
                     ui.label("Args (JSON)");
                     ui.add(egui::TextEdit::singleline(&mut self.debug_args).desired_width(180.0).hint_text("[\"arg one\", \"arg2\"]"));
@@ -2249,13 +2320,9 @@ impl eframe::App for HeditApp {
                 .collect()
         });
         self.pending_paths.extend(paths);
-        ctx.request_repaint_after(Duration::from_millis(
-            if self.debug.is_some() || self.busy || self.updates.active() {
-                50
-            } else {
-                200
-            },
-        ));
+        if let Some(after) = self.next_wake(ctx) {
+            ctx.request_repaint_after(after);
+        }
     }
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, "recent_projects", &self.quality.recent);

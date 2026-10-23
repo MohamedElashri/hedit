@@ -183,3 +183,43 @@ fn routine_search_outcomes_are_notices_not_errors() {
     assert_eq!(app.error, None);
     assert_eq!(app.notice, "No matches found.");
 }
+
+#[test]
+fn an_idle_window_schedules_no_redraws() {
+    let (_directory, ctx, mut app) = app_with("");
+    // Let the startup checkpoint finish.
+    let started = Instant::now();
+    while app.generation != app.persisted || app.checkpoint_pending {
+        assert!(started.elapsed() < Duration::from_secs(5));
+        app.checkpoint(&ctx);
+        app.receive(&ctx);
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(app.next_wake(&ctx), None, "idle: wait for input");
+    app.generation = app.generation.wrapping_add(1);
+    assert!(app.next_wake(&ctx).unwrap() <= Duration::from_secs(2));
+    app.generation = app.persisted;
+    app.busy = true;
+    assert_eq!(app.next_wake(&ctx), Some(Duration::from_millis(50)));
+    app.busy = false;
+    app.workspace.open[0].follow = true;
+    assert!(app.next_wake(&ctx).unwrap() <= Duration::from_secs(1));
+}
+
+#[test]
+fn a_request_from_another_hedit_process_wakes_the_window() {
+    let (directory, ctx, _app) = app_with("");
+    let requests = directory.path().join("requests");
+    std::fs::create_dir_all(&requests).unwrap();
+    let _ = ctx.run(egui::RawInput::default(), |_| {});
+    assert!(!ctx.has_requested_repaint());
+    std::fs::write(requests.join("1.request"), "{}").unwrap();
+    let started = Instant::now();
+    while !ctx.has_requested_repaint() {
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "watcher did not wake the window"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+}
