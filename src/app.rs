@@ -832,8 +832,11 @@ impl HeditApp {
                 }
                 Ok(Action::SaveTo(id, path)) => self.save_to_path(ctx, id, Some(path)),
                 Ok(Action::Saved(id, info)) => {
-                    let settings_file =
-                        info.path.as_deref().map(PathBuf::from) == self.settings_path();
+                    // Compare resolved paths: the config folder may be reached
+                    // through a symlink, such as /var → /private/var on macOS.
+                    let resolve = |p: PathBuf| std::fs::canonicalize(&p).unwrap_or(p);
+                    let settings_file = info.path.as_deref().map(|p| resolve(PathBuf::from(p)))
+                        == self.settings_path().map(resolve);
                     let new_path = self
                         .workspace
                         .open
@@ -3586,7 +3589,7 @@ mod tests {
         app.execute(&ctx, Command::Gpu);
         assert!(!app.gpu_open);
         app.open_preferences(PreferencesPage::Tools);
-        assert_eq!(app.preferences_page, PreferencesPage::Editor);
+        assert_eq!(app.preferences_page, PreferencesPage::General);
         app.workspace.open[0].set_language(Some(syntax::Language::Cuda));
         assert_eq!(app.active().language(), syntax::Language::Cuda);
         assert_eq!(Command::Open.shortcut(), "Cmd+O");

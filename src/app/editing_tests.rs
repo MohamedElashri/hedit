@@ -204,7 +204,13 @@ fn selection_shortcuts_follow_sublime() {
     assert_eq!(ranges(&app), [(5, 8)], "Ctrl+Shift+U steps forward");
     // Ctrl+M jumps between brackets.
     app.set_selections(vec![hedit::advanced::Selection::caret(5)]);
-    frame(&ctx, &mut app, vec![key(Key::M, Modifiers::COMMAND)]);
+    // Control+M on macOS, where Cmd+M minimizes the window.
+    let jump = if cfg!(target_os = "macos") {
+        Modifiers::CTRL
+    } else {
+        Modifiers::COMMAND
+    };
+    frame(&ctx, &mut app, vec![key(Key::M, jump)]);
     assert_eq!(ranges(&app), [(13, 13)]);
     // Ctrl+Shift+L splits a selection into one cursor per line.
     app.set_selections(vec![hedit::advanced::Selection {
@@ -297,7 +303,15 @@ fn two_key_shortcuts_run_commands_and_can_be_recorded() {
     frame(&ctx, &mut app, ctrl(Key::K));
     frame(&ctx, &mut app, ctrl(Key::G));
     assert_eq!(app.key_capture, None);
-    assert_eq!(app.shortcut_text(Command::Goto), "Ctrl+K, Ctrl+G");
+    let primary = if cfg!(target_os = "macos") {
+        "Cmd"
+    } else {
+        "Ctrl"
+    };
+    assert_eq!(
+        app.shortcut_text(Command::Goto),
+        format!("{primary}+K, {primary}+G")
+    );
     app.preferences_open = false;
     frame(&ctx, &mut app, ctrl(Key::K));
     frame(&ctx, &mut app, ctrl(Key::G));
@@ -352,7 +366,7 @@ fn ctrl_b_saves_builds_and_f4_visits_errors() {
     assert_eq!(app.build.locations.len(), 2);
     assert_eq!(
         app.build.locations[0].file,
-        directory.path().join("tool.py")
+        std::fs::canonicalize(directory.path().join("tool.py")).unwrap()
     );
     // F4 goes to each location in turn.
     frame(&ctx, &mut app, vec![key(Key::F4, Modifiers::NONE)]);
@@ -405,10 +419,16 @@ fn layouts_have_up_to_four_groups_and_ctrl_n_focuses_one() {
     app.execute(&ctx, Command::New);
     frame(&ctx, &mut app, vec![]);
     let second = app.active().page.info.id;
-    frame(&ctx, &mut app, vec![key(Key::Num3, Modifiers::COMMAND)]);
+    // Ctrl+N focuses a group; Control+N on macOS, where Cmd+N is New file.
+    let focus = if cfg!(target_os = "macos") {
+        Modifiers::CTRL
+    } else {
+        Modifiers::COMMAND
+    };
+    frame(&ctx, &mut app, vec![key(Key::Num3, focus)]);
     frame(&ctx, &mut app, vec![]);
     assert_eq!(app.panes.focused, 2);
-    frame(&ctx, &mut app, vec![key(Key::Num2, Modifiers::COMMAND)]);
+    frame(&ctx, &mut app, vec![key(Key::Num2, focus)]);
     frame(&ctx, &mut app, vec![]);
     assert_eq!(app.panes.focused, 1);
     let _ = second;

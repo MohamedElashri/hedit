@@ -137,9 +137,16 @@ fn saving_settings_json_in_hedit_applies_it() {
     let (ctx, mut app) = app_in(directory.path(), None);
     app.open_settings_file(&ctx);
     finish_app_job(&mut app, &ctx);
+    let resolve = |p: PathBuf| std::fs::canonicalize(&p).unwrap_or(p);
     assert_eq!(
-        app.active().page.info.path.as_deref().map(PathBuf::from),
-        app.settings_path()
+        app.active()
+            .page
+            .info
+            .path
+            .as_deref()
+            .map(PathBuf::from)
+            .map(resolve),
+        app.settings_path().map(resolve)
     );
     let text = app
         .active()
