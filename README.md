@@ -121,7 +121,8 @@ On macOS, use **Cmd** in place of **Ctrl** and **Option** in place of **Alt**.
 | --- | --- |
 | Ctrl+N / Ctrl+O | New file / open a file |
 | Ctrl+Shift+O | Add one or more folders |
-| Ctrl+B / Ctrl+Alt+B | Toggle sidebar / folder section |
+| Ctrl+K, Ctrl+B / Ctrl+Alt+B | Toggle sidebar / folder section |
+| Ctrl+B / F4 | Build / go to the next build error |
 | Ctrl+S | Save to a file |
 | Ctrl+P / Ctrl+Shift+P | Find files / open the command palette |
 | Ctrl+F / Ctrl+G | Find text / go to a line |

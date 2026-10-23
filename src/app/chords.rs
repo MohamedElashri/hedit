@@ -3,7 +3,8 @@ use super::*;
 use egui::KeyboardShortcut;
 
 /// Sublime's default chords. `Primary` is Ctrl on Linux and Cmd on macOS.
-pub(super) const DEFAULT_CHORDS: [(Command, &str); 5] = [
+pub(super) const DEFAULT_CHORDS: [(Command, &str); 6] = [
+    (Command::Sidebar, "Primary+K, Primary+B"),
     (Command::SkipOccurrence, "Primary+K, Primary+D"),
     (Command::Uppercase, "Primary+K, Primary+U"),
     (Command::Lowercase, "Primary+K, Primary+L"),

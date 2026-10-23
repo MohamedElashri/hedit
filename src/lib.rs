@@ -1,4 +1,5 @@
 pub mod brand;
+pub mod build;
 pub mod cli;
 pub mod debugger;
 pub mod document;

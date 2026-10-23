@@ -303,3 +303,76 @@ fn two_key_shortcuts_run_commands_and_can_be_recorded() {
     frame(&ctx, &mut app, ctrl(Key::G));
     assert!(app.goto_open, "the recorded chord runs Go to line");
 }
+
+#[test]
+fn ctrl_b_saves_builds_and_f4_visits_errors() {
+    let directory = tempfile::tempdir().unwrap();
+    let file = directory.path().join("tool.py");
+    std::fs::write(&file, "line one\nline two\nline three\n").unwrap();
+    let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    app.settings.build_systems = vec![hedit::build::BuildSystem {
+        name: "Check".into(),
+        shell_cmd: r#"cat "$file_name" > /dev/null; echo "$file_name:2:4: warning: two"; echo "$file_name:3:1: error: three"; exit 2"#.into(),
+        file_regex: r"^(..[^:\n]*):(\d+):(\d+): (.*)$".into(),
+        selector: vec!["python".into()],
+        ..Default::default()
+    }];
+    app.open(&ctx, Some(file.clone()));
+    finish_app_job(&mut app, &ctx);
+    // An unsaved change is saved before building.
+    let index = app.workspace.active;
+    let previous = std::mem::replace(
+        &mut app.workspace.open[index].page.text,
+        "line one\nline two!\nline three\n".into(),
+    );
+    app.workspace.edit(index, &previous).unwrap();
+    app.execute(&ctx, Command::Build);
+    finish_app_job(&mut app, &ctx);
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "line one\nline two!\nline three\n"
+    );
+    let started = Instant::now();
+    while app.build.running() {
+        assert!(started.elapsed() < Duration::from_secs(10));
+        thread::sleep(Duration::from_millis(10));
+        app.poll_build();
+    }
+    assert!(app.build.open);
+    assert!(
+        app.build.output.contains("tool.py:2:4: warning: two"),
+        "{:?} {:?} {:?} pending",
+        app.build.output,
+        app.build.status,
+        app.error
+    );
+    assert!(app.build.output.ends_with("with exit code 2]"));
+    assert_eq!(app.build.locations.len(), 2);
+    assert_eq!(
+        app.build.locations[0].file,
+        directory.path().join("tool.py")
+    );
+    // F4 goes to each location in turn.
+    frame(&ctx, &mut app, vec![key(Key::F4, Modifiers::NONE)]);
+    finish_app_job(&mut app, &ctx);
+    assert_eq!(app.build.current, Some(0));
+    assert_eq!(app.notice, "warning: two");
+    let b = app.active();
+    let line = b
+        .page
+        .text
+        .chars()
+        .take(b.view.head)
+        .filter(|&c| c == '\n')
+        .count()
+        + 1;
+    assert_eq!(line, 2);
+    frame(&ctx, &mut app, vec![key(Key::F4, Modifiers::SHIFT)]);
+    finish_app_job(&mut app, &ctx);
+    assert_eq!(app.build.current, Some(1));
+    // Escape hides the panel.
+    frame(&ctx, &mut app, vec![key(Key::Escape, Modifiers::NONE)]);
+    assert!(!app.build.open);
+}

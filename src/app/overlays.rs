@@ -24,9 +24,10 @@ pub(super) enum Overlay {
     Updates,
     Preferences,
     Find,
+    Build,
 }
 impl Overlay {
-    const ALL: [Self; 19] = [
+    const ALL: [Self; 20] = [
         Self::Palette,
         Self::Goto,
         Self::Rename,
@@ -46,6 +47,7 @@ impl Overlay {
         Self::Updates,
         Self::Preferences,
         Self::Find,
+        Self::Build,
     ];
 }
 
@@ -83,6 +85,7 @@ impl HeditApp {
             Overlay::Updates => self.updates.open,
             Overlay::Preferences => self.preferences_open,
             Overlay::Find => self.find_open,
+            Overlay::Build => self.build.open,
         }
     }
     pub(super) fn close_overlay(&mut self, ctx: &egui::Context, overlay: Overlay) {
@@ -116,13 +119,14 @@ impl HeditApp {
                 self.find_open = false;
                 self.replace_open = false;
             }
+            Overlay::Build => self.build.open = false,
         }
     }
     /// Close every transient window before opening another. The Find bar is a
     /// panel, not a window, so it stays.
     pub(super) fn close_transient(&mut self, ctx: &egui::Context) {
         for overlay in Overlay::ALL {
-            if overlay != Overlay::Find {
+            if !matches!(overlay, Overlay::Find | Overlay::Build) {
                 self.close_overlay(ctx, overlay);
             }
         }

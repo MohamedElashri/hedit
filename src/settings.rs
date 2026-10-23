@@ -118,6 +118,12 @@ pub struct Settings {
     pub follow_system_appearance: bool,
     pub dark_color_theme: String,
     pub light_color_theme: String,
+    // Build
+    /// `"automatic"` picks by syntax; otherwise a build system's name.
+    pub build_system: String,
+    /// Build systems added to, or replacing, the built-in ones.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub build_systems: Vec<crate::build::BuildSystem>,
     // Tools
     pub cuda_gdb_path: String,
     pub update_with_github_cli: bool,
@@ -165,6 +171,8 @@ impl Default for Settings {
             follow_system_appearance: false,
             dark_color_theme: crate::theme::INK.into(),
             light_color_theme: crate::theme::PAPER.into(),
+            build_system: "automatic".into(),
+            build_systems: Vec::new(),
             cuda_gdb_path: "cuda-gdb".into(),
             update_with_github_cli: false,
         }
@@ -237,6 +245,9 @@ impl Settings {
             &self.folder_exclude_patterns,
             &self.file_exclude_patterns,
         )?;
+        for system in &self.build_systems {
+            system.validate()?;
+        }
         if self.cuda_gdb_path.trim().is_empty() {
             return Err("cuda_gdb_path cannot be empty.".into());
         }

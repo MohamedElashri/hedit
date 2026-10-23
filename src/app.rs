@@ -1,4 +1,5 @@
 mod advanced_edit;
+mod build_panel;
 mod chords;
 mod chrome;
 mod commands;
@@ -136,6 +137,7 @@ pub struct HeditApp {
     settings_files: settings_store::SettingsFiles,
     /// The command whose shortcut is being recorded on the Key Bindings page.
     key_capture: Option<Command>,
+    build: build_panel::BuildState,
     /// The first key of a shortcut being recorded, and when it was pressed.
     capture_first: Option<(String, Instant)>,
     /// The first key of a two-key shortcut that is waiting for its second.
@@ -274,6 +276,7 @@ impl HeditApp {
             settings,
             settings_files,
             key_capture: None,
+            build: Default::default(),
             capture_first: None,
             chord: None,
             soft_history: Default::default(),
@@ -843,6 +846,7 @@ impl HeditApp {
                     if settings_file {
                         self.reload_settings(ctx);
                     }
+                    self.build_after_save(ctx);
                 }
                 Ok(Action::ThemeImported(theme)) => self.add_imported_theme(ctx, theme),
                 Ok(Action::Font(name, bytes)) => {
@@ -1028,7 +1032,10 @@ impl HeditApp {
                 Key::ArrowRight,
                 Command::FocusPane,
             ),
-            (cmd, Key::B, Command::Sidebar),
+            (shift, Key::B, Command::BuildWith),
+            (cmd, Key::B, Command::Build),
+            (Modifiers::SHIFT, Key::F4, Command::PreviousResult),
+            (Modifiers::NONE, Key::F4, Command::NextResult),
             (cmd, Key::N, Command::New),
             (shift, Key::O, Command::OpenFolder),
             (cmd, Key::O, Command::Open),
@@ -2452,9 +2459,11 @@ impl eframe::App for HeditApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
             self.window_title = title;
         }
+        self.poll_build();
         self.chrome(ctx);
         self.gpu(ctx);
         self.search_panel(ctx);
+        self.build_panel(ctx);
         self.editor(ctx);
         if !self.busy && !self.closing {
             self.command_palette(ctx);
@@ -2558,6 +2567,8 @@ mod tests {
             app.chrome(ctx);
             app.gpu(ctx);
             app.search_panel(ctx);
+            app.poll_build();
+            app.build_panel(ctx);
             app.editor(ctx);
             app.command_palette(ctx);
             app.preferences(ctx);
@@ -2823,7 +2834,25 @@ mod tests {
             )],
         );
         assert!(app.settings.show_folders);
-        frame(&ctx, &mut app, vec![key(Key::B, Modifiers::COMMAND)]);
+        // The sidebar toggle is Sublime's Ctrl+K, Ctrl+B; Ctrl+B builds.
+        let release = |key| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: false,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        };
+        frame(&ctx, &mut app, vec![release(Key::B)]);
+        frame(
+            &ctx,
+            &mut app,
+            vec![key(Key::K, Modifiers::COMMAND), release(Key::K)],
+        );
+        frame(
+            &ctx,
+            &mut app,
+            vec![key(Key::B, Modifiers::COMMAND), release(Key::B)],
+        );
         assert!(!app.settings.show_sidebar);
         frame(
             &ctx,
@@ -4481,6 +4510,7 @@ mod tests {
                     Some(PreferencesPage::Recovery),
                 ),
                 ("search", [1280.0, 820.0], None),
+                ("build", [1280.0, 820.0], None),
                 ("cuda", [1280.0, 820.0], None),
             ] {
                 frame(&ctx, &mut app, vec![key(Key::Escape, Modifiers::NONE)]);
@@ -4495,6 +4525,21 @@ mod tests {
                 app.replace_open = name == "search";
                 app.gpu_open = name == "cuda";
                 app.appearance.customizing = name == "customize";
+                app.build.open = name == "build";
+                if name == "build" {
+                    app.build.name = "CUDA (nvcc)".into();
+                    app.build.status =
+                        "[Finished in 1.4s with exit code 1] · 2 locations; F4 jumps to the next"
+                            .into();
+                    app.build.output = "vector_add.cu(6): error: identifier \"i2\" is undefined\nvector_add.cu(17): warning: variable \"x\" was declared but never referenced\n2 errors detected in the compilation of \"vector_add.cu\".\n[Finished in 1.4s with exit code 1]".into();
+                    app.build.locations = hedit::build::locations(
+                        &app.build.output,
+                        &hedit::build::defaults()[0].file_regex,
+                        std::path::Path::new("examples/cuda"),
+                        0,
+                    );
+                    app.build.current = Some(0);
+                }
                 if name == "switcher" {
                     app.open_theme_palette();
                 }
@@ -4518,6 +4563,7 @@ mod tests {
                             app.chrome(ctx);
                             app.gpu(ctx);
                             app.search_panel(ctx);
+                            app.build_panel(ctx);
                             app.editor(ctx);
                             app.command_palette(ctx);
                             app.preferences(ctx);

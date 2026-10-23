@@ -261,7 +261,7 @@ and leave files on disk untouched.
 
 Click **×** beside FOLDERS or use **View → Side bar → Show folders in the sidebar** (**Ctrl+Alt+B**)
 to hide or reveal the folder section independently of Open Files. **View → Side bar →
-Show sidebar** (**Ctrl+B**) toggles the entire sidebar. Both options are also in
+Show sidebar** (**Ctrl+K, Ctrl+B**) toggles the entire sidebar. Both options are also in
 **Preferences → Settings… → General**.
 
 Directory listings show at most 2,000 entries per directory. Quick open returns
@@ -667,6 +667,42 @@ When a file opens, hedit uses the indentation it already has; your `tab_size` an
 `translate_tabs_to_spaces` settings apply to new files and files without indented
 lines. Project settings and `.editorconfig` rules still take precedence.
 
+### Build systems
+
+**Tools → Build** (**Ctrl+B**) saves the file and runs its build system. Output
+appears in a panel at the bottom as it arrives, ending with the time taken and any
+exit code. Errors and warnings are highlighted; click one, or press **F4** /
+**Shift+F4**, to go to the next or previous one. **Esc** hides the panel, **Tools →
+Show build results** shows it again, and **Cancel** (or **Tools → Cancel build**)
+stops the build and the commands it started.
+
+hedit includes build systems for CUDA (`nvcc`), C++ (`g++`), C (`gcc`), Rust
+(`cargo build`), Python, and Make. By default the first one for the file's syntax
+is used. **Build with…** (**Ctrl+Shift+B**) chooses one, and hedit remembers it for
+Ctrl+B; choose **Automatic** to go back to choosing by syntax.
+
+Add your own under `build_systems` in [the settings file](#the-settings-file). A
+build system with the same name as a built-in one replaces it, and yours are
+chosen before the built-in ones:
+
+```json
+"build_systems": [
+  {
+    "name": "CUDA release",
+    "shell_cmd": "nvcc -O3 \"$file\" -o \"$file_base_name\"",
+    "file_regex": "^(..[^(]*)\\((\\d+)\\): (.*)$",
+    "selector": ["cuda"]
+  }
+]
+```
+
+`shell_cmd` runs through `sh`. It can use `$file`, `$file_path` (its folder),
+`$file_name`, `$file_base_name` (without extension), `$file_extension`, and
+`$folder` (the open folder containing the file). `working_dir` defaults to the
+file's folder. `file_regex` captures the file, the line, and optionally the column
+and message. `selector` lists the syntax IDs the system builds automatically.
+Build systems come only from your own settings, never from a project's files.
+
 ### Encodings and persistent undo
 
 UTF-8 remains the default. BOM-marked UTF-16LE/BE opens automatically. Use
@@ -771,6 +807,8 @@ you fix it.
 | `color_theme` | `"Hedit Ink"` | Theme name, built in or saved under Your themes |
 | `follow_system_appearance` | `false` | Switch between the dark and light themes with the system |
 | `dark_color_theme`, `light_color_theme` | `"Hedit Ink"`, `"Hedit Paper"` | Themes used when following the system |
+| `build_system` | `"automatic"` | The build system for Ctrl+B, or `"automatic"` to choose by syntax |
+| `build_systems` | `[]` | Your own build systems; see [Build systems](#build-systems) |
 | `cuda_gdb_path` | `"cuda-gdb"` | CUDA-GDB executable (Linux) |
 | `update_with_github_cli` | `false` | Check for updates through GitHub CLI |
 
@@ -1008,7 +1046,9 @@ and Quit are in macOS's own hedit menu. Change any shortcut under
 | Ctrl+W / Ctrl+Shift+T | Close to shelf / reopen latest |
 | Ctrl+Shift+R | Name the active unsaved file |
 | Ctrl+Shift+O | Add one or more folders |
-| Ctrl+B / Ctrl+Alt+B | Toggle entire sidebar / folder section |
+| Ctrl+K, Ctrl+B / Ctrl+Alt+B | Toggle entire sidebar / folder section |
+| Ctrl+B / Ctrl+Shift+B | Build / build with a chosen build system |
+| F4 / Shift+F4 | Next / previous build error |
 | Ctrl+P / Ctrl+Shift+P | Find files / command palette |
 | Ctrl+F / Ctrl+H / Ctrl+G | Find / Replace / Go to line |
 | Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y | Undo / redo |

@@ -25,6 +25,12 @@ pub(super) enum Command {
     CloseRight,
 
     NextOccurrence,
+    Build,
+    BuildWith,
+    CancelBuild,
+    BuildResults,
+    NextResult,
+    PreviousResult,
     SkipOccurrence,
     ExpandSelection,
     ExpandToBrackets,
@@ -158,6 +164,12 @@ impl Command {
         Self::CloseOthers,
         Self::CloseRight,
         Self::NextOccurrence,
+        Self::Build,
+        Self::BuildWith,
+        Self::CancelBuild,
+        Self::BuildResults,
+        Self::NextResult,
+        Self::PreviousResult,
         Self::SkipOccurrence,
         Self::ExpandSelection,
         Self::ExpandToBrackets,
@@ -319,6 +331,12 @@ impl Command {
             Self::CloseRight => "Close tabs to the right",
 
             Self::NextOccurrence => "Select next occurrence",
+            Self::Build => "Build",
+            Self::BuildWith => "Build with…",
+            Self::CancelBuild => "Cancel build",
+            Self::BuildResults => "Show build results",
+            Self::NextResult => "Next build result",
+            Self::PreviousResult => "Previous build result",
             Self::SkipOccurrence => "Skip occurrence",
             Self::ExpandSelection => "Expand selection",
             Self::ExpandToBrackets => "Expand selection to brackets",
@@ -452,6 +470,10 @@ impl Command {
             Self::Complete if cfg!(target_os = "macos") => "Control+Space",
             Self::Complete => "Ctrl+Space",
             Self::NextOccurrence => "Ctrl+D",
+            Self::Build => "Ctrl+B",
+            Self::BuildWith => "Ctrl+Shift+B",
+            Self::NextResult => "F4",
+            Self::PreviousResult => "Shift+F4",
             Self::SkipOccurrence => "Ctrl+K, Ctrl+D",
             Self::Uppercase => "Ctrl+K, Ctrl+U",
             Self::Lowercase => "Ctrl+K, Ctrl+L",
@@ -475,7 +497,7 @@ impl Command {
             Self::New => "Ctrl+N",
             Self::Open => "Ctrl+O",
             Self::OpenFolder => "Ctrl+Shift+O",
-            Self::Sidebar => "Ctrl+B",
+            Self::Sidebar => "Ctrl+K, Ctrl+B",
             Self::FolderSidebar => "Ctrl+Alt+B",
             Self::Save => "Ctrl+S",
             Self::SaveAs => "Ctrl+Shift+S",
@@ -577,6 +599,8 @@ impl HeditApp {
             | Command::Fold
             | Command::FoldAll => !self.active().page.info.paged,
             Command::FocusPane | Command::MovePane => self.panes.mode != 0,
+            Command::CancelBuild => self.build.running(),
+            Command::NextResult | Command::PreviousResult => !self.build.locations.is_empty(),
             Command::Gpu | Command::ToolSettings => hedit::debugger::LOCAL_TOOLS_SUPPORTED,
             Command::Uppercase | Command::Lowercase => {
                 self.active().view.anchor != self.active().view.head
@@ -634,6 +658,7 @@ impl HeditApp {
             Command::LineNumbers => self.settings.line_numbers,
             Command::Follow => self.active().follow,
             Command::Gpu => self.gpu_open,
+            Command::BuildResults => self.build.open,
             _ => false,
         }
     }
@@ -688,6 +713,19 @@ impl HeditApp {
             Command::CloseOthers => self.close_tab_group(false),
             Command::CloseRight => self.close_tab_group(true),
             Command::NextOccurrence => self.occurrence(false),
+            Command::Build => self.build(ctx),
+            Command::BuildWith => {
+                // Choose from "Build with: …" entries in the command palette.
+                self.palette = true;
+                self.commands_only = true;
+                self.palette_query = "build with: ".into();
+                self.palette_focus = true;
+                self.palette_index = 0;
+            }
+            Command::CancelBuild => self.cancel_build(),
+            Command::BuildResults => self.build.open = !self.build.open,
+            Command::NextResult => self.next_result(true),
+            Command::PreviousResult => self.next_result(false),
             Command::SkipOccurrence => {
                 let ranges =
                     hedit::advanced::skip_occurrence(&self.active().page.text, &self.selections());
@@ -1012,6 +1050,8 @@ impl HeditApp {
             File(String),
             Command(Command),
             Syntax(syntax::Language),
+            /// Remember a build system (or "automatic") and build with it.
+            BuildWith(String),
             /// A 1-based line and column in the current file.
             Line(usize, Option<usize>),
         }
@@ -1080,6 +1120,25 @@ impl HeditApp {
                             command.shortcut(),
                             Item::Command(command),
                         ));
+                    }
+                }
+                // Build with a chosen system, remembered for Ctrl+B.
+                if filter.starts_with("build") {
+                    let names = std::iter::once("Automatic".to_owned()).chain(
+                        hedit::build::all(&self.settings.build_systems)
+                            .into_iter()
+                            .map(|s| s.name),
+                    );
+                    for name in names {
+                        let label = format!("Build with: {name}");
+                        let current = self.settings.build_system.eq_ignore_ascii_case(&name);
+                        if label.to_lowercase().contains(&filter) {
+                            items.push((
+                                label,
+                                if current { "current".into() } else { String::new() },
+                                Item::BuildWith(name),
+                            ));
+                        }
                     }
                 }
                 // Like Sublime's “Set Syntax: …” commands.
@@ -1244,6 +1303,14 @@ impl HeditApp {
                 Item::File(path) => self.open(ctx, Some(path.into())),
                 Item::Command(command) => self.execute(ctx, command),
                 Item::Syntax(language) => self.set_syntax(Some(language)),
+                Item::BuildWith(name) => {
+                    self.settings.build_system = if name == "Automatic" {
+                        "automatic".into()
+                    } else {
+                        name
+                    };
+                    self.build(ctx);
+                }
             }
         }
     }

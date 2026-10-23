@@ -48,6 +48,9 @@
   Ctrl+K, Ctrl+U / Ctrl+K, Ctrl+L (upper/lowercase), and Ctrl+K, Ctrl+1 /
   Ctrl+K, Ctrl+J (fold/unfold all). They can be recorded on the Key Bindings page
   and written in keybindings.json as `"Primary+K, Primary+D"`.
+- Build systems: Ctrl+B saves and builds with nvcc, g++, gcc, cargo, Python, or
+  make (or your own `build_systems`), streaming output to a results panel; F4 and
+  Shift+F4 visit the errors, and Ctrl+Shift+B chooses a build system.
 
 ### Changed
 
@@ -57,6 +60,8 @@
   “My theme”.
 - Theme files are now version 2. Version 1 files still load and look the same.
 - The tab width menu items read “Tab width: 2/4/8” instead of “2/4/8 spaces”.
+- The sidebar toggle moves from Ctrl+B to Ctrl+K, Ctrl+B, as in Sublime, so
+  Ctrl+B can build.
 - Select all occurrences moves from Ctrl+Shift+L to Alt+F3 (Control+Cmd+G on
   macOS), as in Sublime; Ctrl+Shift+L now splits a selection into lines.
 - Settings live in one readable `settings.json` file, like Sublime Text, in the
