@@ -89,6 +89,7 @@ impl HeditApp {
         match overlay {
             Overlay::Palette => {
                 self.cancel_theme_palette(ctx);
+                self.cancel_goto_preview();
                 self.palette = false;
             }
             Overlay::Goto => self.goto_open = false,

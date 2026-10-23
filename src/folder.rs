@@ -143,7 +143,7 @@ pub struct QuickOpen {
     pub skipped_directories: u64,
 }
 
-fn fuzzy_score(path: &str, query: &str) -> Option<i64> {
+pub fn fuzzy_score(path: &str, query: &str) -> Option<i64> {
     let path = path.to_lowercase().replace('\\', "/");
     let mut wanted = query.chars().peekable();
     let mut score = 0;

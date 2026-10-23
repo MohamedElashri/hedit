@@ -933,8 +933,12 @@ impl HeditApp {
             File(String),
             Command(Command),
             Syntax(syntax::Language),
+            /// A 1-based line and column in the current file.
+            Line(usize, Option<usize>),
         }
         let commands = self.commands_only || self.palette_query.starts_with('>');
+        let mut target: Option<goto_anything::Target> = None;
+        let mut preview = None;
         let down = ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowDown));
         let up = ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowUp));
         let enter = ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter));
@@ -956,14 +960,15 @@ impl HeditApp {
                     .hint_text(if commands {
                         "Type a command…"
                     } else {
-                        "Type a file name, or > for commands…"
+                        "File name, then @symbol, :line, or #text; > for commands…"
                     }),
             );
             if self.palette_focus {
                 response.request_focus();
                 self.palette_focus = false;
             }
-            if response.changed() {
+            let changed = response.changed();
+            if changed {
                 self.palette_index = 0;
             }
             let commands = self.commands_only || self.palette_query.starts_with('>');
@@ -972,7 +977,16 @@ impl HeditApp {
                 .trim_start_matches('>')
                 .trim()
                 .to_lowercase();
-            if !commands && !self.workspace.folders.is_empty() {
+            // Go to Anything: `file@symbol`, `file:line`, `file#text`.
+            let (file_filter, goto) = if commands {
+                (filter.as_str(), None)
+            } else {
+                goto_anything::parse(&filter)
+            };
+            let filter = file_filter.to_owned();
+            let here = goto.is_some() && filter.is_empty();
+            target = goto.clone();
+            if !commands && !here && !self.workspace.folders.is_empty() {
                 let roots: Vec<_> = self.workspace.folders.iter().map(|f| PathBuf::from(&f.path)).collect();
                 self.project.search(ctx, &roots, &filter);
             }
@@ -998,6 +1012,34 @@ impl HeditApp {
                         }
                     }
                 }
+            } else if here {
+                // Targets in the current file, previewed as you move.
+                let b = self.active();
+                let path = b.page.info.path.clone().map(PathBuf::from).unwrap_or_default();
+                match goto.clone().unwrap() {
+                    goto_anything::Target::Symbol(query) => {
+                        for (name, line) in goto_anything::symbol_matches(&b.page.text, &path, &query)
+                            .into_iter()
+                            .take(500)
+                        {
+                            items.push((name, format!("line {line}"), Item::Line(line, None)));
+                        }
+                    }
+                    goto_anything::Target::Line(line, column) => {
+                        if let Some(line) = line {
+                            let label = match column {
+                                Some(c) => format!("Go to line {line}, column {c}"),
+                                None => format!("Go to line {line}"),
+                            };
+                            items.push((label, String::new(), Item::Line(line, column)));
+                        }
+                    }
+                    goto_anything::Target::Text(query) => {
+                        for (text, line) in goto_anything::text_matches(&b.page.text, &query, 500) {
+                            items.push((text, format!("line {line}"), Item::Line(line, None)));
+                        }
+                    }
+                }
             } else {
                 for (index, buffer) in self.workspace.open.iter().enumerate() {
                     if buffer.view.name.to_lowercase().contains(&filter)
@@ -1014,7 +1056,7 @@ impl HeditApp {
                     }
                 }
             }
-            if !commands && !self.workspace.folders.is_empty() {
+            if !commands && !here && !self.workspace.folders.is_empty() {
                 match &self.project.search {
                     Some(Ok(results)) => {
                         for entry in &results.entries {
@@ -1056,6 +1098,11 @@ impl HeditApp {
                 self.palette_index = (self.palette_index + items.len() - 1) % items.len();
             }
             let navigate = down || up;
+            if navigate || changed {
+                if let Some((_, _, Item::Line(line, column))) = items.get(self.palette_index) {
+                    preview = Some((*line, *column));
+                }
+            }
             ui.separator();
             egui::ScrollArea::vertical()
                 .max_height((ctx.screen_rect().height() - 190.0).clamp(120.0, 320.0))
@@ -1087,17 +1134,33 @@ impl HeditApp {
             ui.weak("↑ ↓ navigate    Enter select    Esc close");
         });
         if chosen.is_none() && overlays::clicked_away(ctx, &shown) {
+            self.cancel_goto_preview();
             self.palette = false;
             self.focus_editor = true;
             return;
+        }
+        if let Some((line, column)) = preview {
+            self.preview_line(ctx, line, column);
         }
         if let Some(item) = chosen {
             self.palette = false;
             self.focus_editor = true;
             match item {
+                Item::Line(line, column) => {
+                    // Mark where the search started, so Back returns there.
+                    self.cancel_goto_preview();
+                    self.navigation_mark();
+                    self.jump_to_line(ctx, line, column);
+                }
                 Item::Buffer(index) => {
                     self.workspace.active = index;
                     self.changed();
+                    if let Some(target) = target {
+                        self.go_to_target(ctx, None, target);
+                    }
+                }
+                Item::File(path) if target.is_some() => {
+                    self.go_to_target(ctx, Some(path), target.unwrap());
                 }
                 Item::File(path) => self.open(ctx, Some(path.into())),
                 Item::Command(command) => self.execute(ctx, command),

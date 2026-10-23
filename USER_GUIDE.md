@@ -669,7 +669,12 @@ locates a line in the entire document, even when only a page is displayed.
 
 **Ctrl+P** opens Go to file, including all open folders; **Ctrl+Shift+P** opens commands. Type a
 filter, use **Up/Down** to select a result, and press **Enter**, or click a result.
-Type `>` in the file switcher to search commands instead. **Esc** or a click
+Like Sublime's Go to Anything, Go to file also jumps inside files: `@name` lists
+the current file's symbols, `:42` (or `:42:7`) goes to a line and column, and
+`#text` lists lines containing the text. The cursor previews each result as you
+move through the list, and **Esc** returns to where you were. Put a file name
+first to jump inside another file, for example `app.rs@save`, `main.cu:42`, or
+`notes#todo`. Type `>` in the file switcher to search commands instead. **Esc** or a click
 outside closes either. Go to line, Bookmarks, and Closed files also close when you
 click elsewhere.
 The menus show the same commands and keyboard shortcuts.

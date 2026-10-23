@@ -5,6 +5,9 @@ mod edit_actions;
 #[cfg(test)]
 mod editing_tests;
 mod editor_layout;
+mod goto_anything;
+#[cfg(test)]
+mod goto_tests;
 #[cfg(test)]
 mod overlay_tests;
 mod overlays;
@@ -61,6 +64,8 @@ enum Action {
     SaveTo(u64, PathBuf),
     ThemeImported(Theme),
     DebugProgram(PathBuf),
+    /// Open a `path:line` location.
+    OpenAt(PathBuf),
     /// A font loaded for the `font_face` setting.
     Font(String, Vec<u8>),
     Notice(String),
@@ -128,6 +133,8 @@ pub struct HeditApp {
     settings_files: settings_store::SettingsFiles,
     /// The command whose shortcut is being recorded on the Key Bindings page.
     key_capture: Option<Command>,
+    /// Where the cursor was before Go to Anything previewed a result.
+    goto_origin: Option<goto_anything::Origin>,
     /// The `font_face` in use, or being loaded.
     font_applied: String,
     key_filter: String,
@@ -257,6 +264,7 @@ impl HeditApp {
             settings,
             settings_files,
             key_capture: None,
+            goto_origin: None,
             font_applied: String::new(),
             key_filter: String::new(),
             rectangle_start: None,
@@ -828,6 +836,7 @@ impl HeditApp {
                         settings_store::set_editor_font(ctx, Some(bytes));
                     }
                 }
+                Ok(Action::OpenAt(path)) => self.pending_paths.push_back(path),
                 Ok(Action::DebugProgram(path)) => {
                     self.debug_program = path.to_string_lossy().into_owned();
                 }

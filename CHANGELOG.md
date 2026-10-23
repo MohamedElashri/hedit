@@ -34,6 +34,9 @@
   language constructs. Edits re-highlight only the affected lines, and large files
   are highlighted in the background.
 - Import TextMate and Sublime `.tmTheme` color schemes as themes.
+- Go to Anything in Go to file (Ctrl+P): `@symbol`, `:line[:column]`, and `#text`
+  jump inside the current file with a live preview that Esc undoes, and a file
+  name in front (`app.rs@save`, `main.cu:42`) opens that file at the target.
 
 ### Changed
 
