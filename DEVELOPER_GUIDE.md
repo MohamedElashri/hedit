@@ -23,10 +23,12 @@ scripts. CI and release builds use Rust 1.92.0 and Python 3.12; use those versio
 for matching local checks. The application uses eframe/egui with OpenGL on Linux
 and builds through Cargo. Keep the build free of a web frontend, Node.js, and npm.
 
-On Debian/Ubuntu:
+Building needs only a C compiler (for the bundled Oniguruma regex engine): X11,
+Wayland, and OpenGL libraries are loaded when the editor starts, so their
+development packages are not needed to build. On Debian/Ubuntu:
 
 ```sh
-sudo apt-get install build-essential pkg-config libx11-dev libxkbcommon-dev libwayland-dev libegl1-mesa-dev
+sudo apt-get install build-essential
 make dev
 make run ARGS='--session-dir /tmp/hedit-development'
 ```
