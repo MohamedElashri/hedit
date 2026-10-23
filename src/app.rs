@@ -306,6 +306,11 @@ impl HeditApp {
         app.init_quality(storage);
         app.quality.config = config;
         app.apply_settings();
+        let warnings = app.apply_theme_settings(ctx);
+        if !warnings.is_empty() {
+            let banner = app.error.take().into_iter().chain(warnings);
+            app.error = Some(banner.collect::<Vec<_>>().join("\n"));
+        }
         app
     }
     fn changed(&mut self) {
@@ -805,7 +810,7 @@ impl HeditApp {
                     self.notice = "File saved.".into();
                     self.changed();
                     if settings_file {
-                        self.reload_settings();
+                        self.reload_settings(ctx);
                     }
                 }
                 Ok(Action::ThemeImported(theme)) => self.add_imported_theme(ctx, theme),
@@ -2228,7 +2233,7 @@ impl eframe::App for HeditApp {
         }
         self.sync_appearance(ctx);
         if quality::refocused(ctx) {
-            self.reload_settings();
+            self.reload_settings(ctx);
         }
         self.shortcuts(ctx);
         let title = format!(

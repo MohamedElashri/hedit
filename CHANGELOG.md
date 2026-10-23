@@ -47,6 +47,9 @@
 - Settings → Folders & Search sets which folders and files are hidden from the
   folder tree, Go to file, and Find in folders (`folder_exclude_patterns`,
   `file_exclude_patterns`). `*.pyc` and `.DS_Store` files are now hidden by default.
+- The theme in use, and the dark and light themes when following the system, are
+  named in `settings.json` (`color_theme`, `follow_system_appearance`,
+  `dark_color_theme`, `light_color_theme`).
 
 ### Fixed
 

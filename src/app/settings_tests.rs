@@ -209,3 +209,44 @@ fn key_bindings_are_recorded_by_pressing_keys_and_saved() {
     assert_eq!(app.shortcut_text(Command::Find), Command::Find.shortcut());
     settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
 }
+
+#[test]
+fn settings_choose_themes_by_name() {
+    let directory = tempfile::tempdir().unwrap();
+    let (ctx, mut app) = app_in(directory.path(), None);
+    let path = app.settings_path().unwrap();
+    // Choosing a theme in the app records its name.
+    app.choose_theme(&ctx, hedit::theme::builtin("Nord").unwrap());
+    app.flush_settings();
+    assert!(std::fs::read_to_string(&path)
+        .unwrap()
+        .contains("\"color_theme\": \"Nord\""));
+    // Naming a theme in the file switches to it.
+    thread::sleep(Duration::from_millis(20));
+    std::fs::write(&path, r#"{ "color_theme": "Dracula" }"#).unwrap();
+    app.reload_settings(&ctx);
+    assert_eq!(app.theme.name, "Dracula");
+    assert_eq!(ctx.style().visuals.panel_fill, app.theme.panel.color());
+    // An unknown name is reported and the current theme stays.
+    thread::sleep(Duration::from_millis(20));
+    std::fs::write(&path, r#"{ "color_theme": "No Such Theme" }"#).unwrap();
+    app.reload_settings(&ctx);
+    assert_eq!(app.theme.name, "Dracula");
+    assert!(app
+        .error
+        .take()
+        .unwrap()
+        .contains("Unknown theme “No Such Theme”"));
+    // Following the system uses the dark and light names.
+    thread::sleep(Duration::from_millis(20));
+    std::fs::write(
+        &path,
+        r#"{ "follow_system_appearance": true, "light_color_theme": "GitHub Light", "dark_color_theme": "One Dark" }"#,
+    )
+    .unwrap();
+    app.reload_settings(&ctx);
+    assert!(app.appearance.follow_system);
+    assert_eq!(app.appearance.light.name, "GitHub Light");
+    assert_eq!(app.appearance.dark.name, "One Dark");
+    settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
+}

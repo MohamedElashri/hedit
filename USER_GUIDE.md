@@ -717,6 +717,9 @@ you fix it.
 | `folder_exclude_patterns` | `[".git", ".hg", ".svn", "node_modules", "target", ".venv", "__pycache__"]` | Folder names or globs hidden from the folder tree and searches |
 | `file_exclude_patterns` | `["*.pyc", ".DS_Store"]` | File names or globs hidden from the folder tree and searches |
 | `find_case_sensitive`, `find_regex`, `find_whole_word` | `true`, `false`, `false` | Find options, remembered as you change them |
+| `color_theme` | `"Hedit Ink"` | Theme name, built in or saved under Your themes |
+| `follow_system_appearance` | `false` | Switch between the dark and light themes with the system |
+| `dark_color_theme`, `light_color_theme` | `"Hedit Ink"`, `"Hedit Paper"` | Themes used when following the system |
 | `cuda_gdb_path` | `"cuda-gdb"` | CUDA-GDB executable (Linux) |
 | `update_with_github_cli` | `false` | Check for updates through GitHub CLI |
 
@@ -788,10 +791,10 @@ Preferences save automatically every two seconds and on normal exit.
 
 ### Theme files
 
-Saved and imported themes are JSON files in your theme folder:
-`~/.config/hedit/themes/` on Linux, or
-`~/Library/Application Support/hedit.hedit/themes/` on macOS. Set
-`HEDIT_THEMES_DIR` to use another folder. hedit reads the folder when it starts.
+Saved and imported themes are JSON files in the `themes` folder beside
+[the settings file](#the-settings-file). Set `HEDIT_THEMES_DIR` to use another
+folder. Settings name the theme in use (`color_theme`); a customized theme you
+have not saved keeps its colors in hedit's own state until you save it. hedit reads the folder when it starts.
 
 **Import…** copies a theme file into the folder and selects it; a name that
 matches an existing theme gets a number. **Export…** saves the current colors

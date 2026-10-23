@@ -92,6 +92,24 @@ fn from_storage(storage: Option<&dyn eframe::Storage>) -> Settings {
     {
         settings.cuda_gdb_path = path;
     }
+    let theme_name = |key: &str| {
+        storage
+            .get_string(key)
+            .and_then(|json| Theme::from_json(&json).ok())
+            .map(|theme| theme.name)
+    };
+    for (key, field) in [
+        ("theme", &mut settings.color_theme),
+        ("theme_dark", &mut settings.dark_color_theme),
+        ("theme_light", &mut settings.light_color_theme),
+    ] {
+        if let Some(name) = theme_name(key) {
+            *field = name;
+        }
+    }
+    if let Some(follow) = eframe::get_value(storage, "theme_follow_system") {
+        settings.follow_system_appearance = follow;
+    }
     settings
 }
 
@@ -192,10 +210,12 @@ impl HeditApp {
     /// Keep find options, the updater, and formatting in step with settings,
     /// and write changes once they settle.
     pub(super) fn persist_settings(&mut self) {
+        self.sync_theme_settings();
         self.write_settings(false);
     }
     /// Write pending settings now, as when the app saves its state or exits.
     pub(super) fn flush_settings(&mut self) {
+        self.sync_theme_settings();
         self.write_settings(true);
     }
     fn write_settings(&mut self, now: bool) {
@@ -293,7 +313,7 @@ impl HeditApp {
     }
     /// Re-read settings.json when it changed on disk, such as after saving it
     /// in hedit or editing it elsewhere.
-    pub(super) fn reload_settings(&mut self) {
+    pub(super) fn reload_settings(&mut self, ctx: &egui::Context) {
         let Some(path) = self.settings_path() else {
             return;
         };
@@ -308,6 +328,8 @@ impl HeditApp {
                 self.settings = settings;
                 self.apply_settings();
                 self.apply_format_preferences();
+                let mut warnings = warnings;
+                warnings.extend(self.apply_theme_settings(ctx));
                 self.notice = "Settings reloaded.".into();
                 if !warnings.is_empty() {
                     self.error = Some(warnings.join("\n"));

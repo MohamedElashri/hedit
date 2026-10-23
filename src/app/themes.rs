@@ -51,10 +51,7 @@ impl Appearance {
         } else {
             std::env::var_os("HEDIT_THEMES_DIR")
                 .map(PathBuf::from)
-                .or_else(|| {
-                    directories::ProjectDirs::from("", "hedit", "hedit")
-                        .map(|d| d.config_dir().join("themes"))
-                })
+                .or_else(|| hedit::settings::config_dir().map(|d| d.join("themes")))
         };
         let mut appearance = Self {
             follow_system: storage
@@ -134,6 +131,59 @@ fn matches(theme: &Theme, query: &str) -> bool {
 }
 
 impl HeditApp {
+    /// Record the themes in use in settings.json by name.
+    pub(super) fn sync_theme_settings(&mut self) {
+        let a = &self.appearance;
+        if a.preview.is_some() {
+            return;
+        }
+        self.settings.follow_system_appearance = a.follow_system;
+        self.settings.dark_color_theme = a.dark.name.clone();
+        self.settings.light_color_theme = a.light.name.clone();
+        if !a.follow_system {
+            self.settings.color_theme = self.theme.name.clone();
+        }
+    }
+    /// Use the themes settings.json names. Unknown names are reported and the
+    /// current theme stays; a customized theme keeps its colors in app state.
+    pub(super) fn apply_theme_settings(&mut self, ctx: &egui::Context) -> Vec<String> {
+        let mut warnings = Vec::new();
+        let mut resolve = |name: &str, current: &Theme| -> Option<Theme> {
+            if current.name == name {
+                return None;
+            }
+            let found = self.appearance.known(name);
+            if found.is_none() {
+                warnings.push(format!(
+                    "Unknown theme “{name}” in settings; keeping “{}”.",
+                    current.name
+                ));
+            }
+            found
+        };
+        let dark = resolve(
+            &self.settings.dark_color_theme.clone(),
+            &self.appearance.dark.clone(),
+        );
+        let light = resolve(
+            &self.settings.light_color_theme.clone(),
+            &self.appearance.light.clone(),
+        );
+        let single = resolve(&self.settings.color_theme.clone(), &self.theme.clone());
+        if let Some(theme) = dark {
+            self.appearance.dark = theme;
+        }
+        if let Some(theme) = light {
+            self.appearance.light = theme;
+        }
+        self.appearance.follow_system = self.settings.follow_system_appearance;
+        if self.appearance.follow_system {
+            self.sync_appearance(ctx);
+        } else if let Some(theme) = single {
+            self.set_theme(ctx, theme);
+        }
+        warnings
+    }
     pub(super) fn set_theme(&mut self, ctx: &egui::Context, theme: Theme) {
         self.appearance.hex = hex(&theme);
         self.theme = theme;

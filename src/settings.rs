@@ -97,6 +97,11 @@ pub struct Settings {
     pub find_case_sensitive: bool,
     pub find_regex: bool,
     pub find_whole_word: bool,
+    // Appearance: theme names, built-in or saved in the themes folder.
+    pub color_theme: String,
+    pub follow_system_appearance: bool,
+    pub dark_color_theme: String,
+    pub light_color_theme: String,
     // Tools
     pub cuda_gdb_path: String,
     pub update_with_github_cli: bool,
@@ -131,6 +136,10 @@ impl Default for Settings {
             find_case_sensitive: true,
             find_regex: false,
             find_whole_word: false,
+            color_theme: crate::theme::INK.into(),
+            follow_system_appearance: false,
+            dark_color_theme: crate::theme::INK.into(),
+            light_color_theme: crate::theme::PAPER.into(),
             cuda_gdb_path: "cuda-gdb".into(),
             update_with_github_cli: false,
         }
