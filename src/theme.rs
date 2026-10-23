@@ -431,6 +431,15 @@ impl Theme {
         file.persist(path).map_err(|e| e.to_string())?;
         crate::session::sync_directory(parent)
     }
+    /// The fill under a hovered or open menu entry or button: the surface tinted
+    /// toward the accent, so it stands out on both the menu bar and popups.
+    pub fn hover(&self) -> Rgb {
+        let mix = |surface: u8, accent: u8| {
+            (surface as f32 + (accent as f32 - surface as f32) * 0.3).round() as u8
+        };
+        let (s, a) = (self.surface.0, self.accent.0);
+        Rgb([mix(s[0], a[0]), mix(s[1], a[1]), mix(s[2], a[2])])
+    }
     pub fn contrast(a: Rgb, b: Rgb) -> f32 {
         let (a, b) = (a.luminance(), b.luminance());
         (a.max(b) + 0.05) / (a.min(b) + 0.05)
@@ -471,6 +480,9 @@ impl Theme {
             w.corner_radius = egui::CornerRadius::same(2);
         }
         v.widgets.hovered.bg_stroke = Stroke::new(1.0, self.accent.color());
+        // Menus drop button strokes, so hover and open states need a visible fill.
+        v.widgets.hovered.weak_bg_fill = self.hover().color();
+        v.widgets.open.weak_bg_fill = self.hover().color();
         v.widgets.active.bg_fill = self.selection.color();
         v.widgets.active.fg_stroke = Stroke::new(1.0, self.selection_text.color());
         v.text_cursor.stroke = Stroke::new(1.5, self.accent.color());

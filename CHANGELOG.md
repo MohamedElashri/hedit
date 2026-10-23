@@ -26,6 +26,11 @@
   “My theme”.
 - Theme files are now version 2. Version 1 files still load and look the same.
 
+### Fixed
+
+- Menu-bar titles, menu entries, and buttons now show a visible highlight under
+  the pointer, and the title of the open menu stays highlighted.
+
 ### Removed
 
 - The Ember theme. A saved Ember appearance keeps its colors.

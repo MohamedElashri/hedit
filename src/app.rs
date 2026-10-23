@@ -137,6 +137,8 @@ pub struct HeditApp {
     theme: Theme,
     preferences_open: bool,
     appearance: themes::Appearance,
+    /// The menu-bar menu shown last frame, to highlight its title.
+    open_menu: Option<&'static str>,
     rename_target: Option<u64>,
     unsaved_file_name: String,
     unsaved_file_name_focus: bool,
@@ -310,6 +312,7 @@ impl HeditApp {
             theme,
             preferences_open: false,
             appearance,
+            open_menu: None,
             rename_target: None,
             unsaved_file_name: String::new(),
             unsaved_file_name_focus: false,
@@ -3319,6 +3322,105 @@ mod tests {
             }
             egui::Shape::Vec(shapes) => shapes.iter().find_map(|shape| text_rect(shape, label)),
             _ => None,
+        }
+    }
+    fn filled_rect_at(shape: &egui::Shape, point: egui::Pos2, fill: egui::Color32) -> bool {
+        match shape {
+            egui::Shape::Rect(rect) => rect.fill == fill && rect.rect.contains(point),
+            egui::Shape::Vec(shapes) => shapes.iter().any(|s| filled_rect_at(s, point, fill)),
+            _ => false,
+        }
+    }
+    #[test]
+    fn hovered_menu_titles_and_entries_are_highlighted() {
+        let directory = tempfile::tempdir().unwrap();
+        let (workspace, _) = Workspace::restore(directory.path().into()).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        let size = egui::vec2(1280.0, 820.0);
+        for theme in hedit::theme::builtins() {
+            app.set_theme(&ctx, theme.clone());
+            // Menus fade in; skip the animation so fills are fully opaque.
+            ctx.all_styles_mut(|style| style.animation_time = 0.0);
+            let hover = theme.hover().color();
+            let find = |output: &egui::FullOutput, label: &str| {
+                output
+                    .shapes
+                    .iter()
+                    .find_map(|s| text_rect(&s.shape, label))
+                    .unwrap()
+                    .center()
+            };
+            let highlighted = |output: &egui::FullOutput, point| {
+                output
+                    .shapes
+                    .iter()
+                    .any(|s| filled_rect_at(&s.shape, point, hover))
+            };
+            let output = frame_size(&ctx, &mut app, vec![], size);
+            let tools = find(&output, "Tools");
+            frame_size(&ctx, &mut app, vec![egui::Event::PointerMoved(tools)], size);
+            let output = frame_size(&ctx, &mut app, vec![], size);
+            assert!(highlighted(&output, tools), "{} menu title", theme.name);
+            click_label(&ctx, &mut app, "File");
+            let output = frame_size(&ctx, &mut app, vec![], size);
+            let item = find(&output, "New file");
+            frame_size(&ctx, &mut app, vec![egui::Event::PointerMoved(item)], size);
+            let output = frame_size(&ctx, &mut app, vec![], size);
+            if let Some(dir) = std::env::var_os("HEDIT_PREVIEW_DIR") {
+                let svg = crate::preview::export(
+                    &output.shapes,
+                    [size.x, size.y],
+                    theme.background.color(),
+                );
+                let slug = hedit::theme::slug(&theme.name);
+                std::fs::write(
+                    PathBuf::from(dir).join(format!("{slug}-menu-hover.svg")),
+                    svg,
+                )
+                .unwrap();
+            }
+            assert!(highlighted(&output, item), "{} menu entry", theme.name);
+            let file = find(&output, "File");
+            assert!(highlighted(&output, file), "{} open menu title", theme.name);
+            // Unavailable entries, such as Undo with nothing to undo, still
+            // show which row the pointer is on, with a fainter box.
+            let reopen = find(&output, "Reopen closed tab");
+            frame_size(
+                &ctx,
+                &mut app,
+                vec![egui::Event::PointerMoved(reopen)],
+                size,
+            );
+            let output = frame_size(&ctx, &mut app, vec![], size);
+            let faint = theme.hover().color().gamma_multiply(0.6);
+            assert!(
+                output
+                    .shapes
+                    .iter()
+                    .any(|s| filled_rect_at(&s.shape, reopen, faint)),
+                "{} disabled menu entry",
+                theme.name
+            );
+            if let Some(dir) = std::env::var_os("HEDIT_PREVIEW_DIR") {
+                let svg = crate::preview::export(
+                    &output.shapes,
+                    [size.x, size.y],
+                    theme.background.color(),
+                );
+                let slug = hedit::theme::slug(&theme.name);
+                std::fs::write(
+                    PathBuf::from(dir).join(format!("{slug}-menu-hover-disabled.svg")),
+                    svg,
+                )
+                .unwrap();
+            }
+            frame_size(
+                &ctx,
+                &mut app,
+                vec![key(Key::Escape, Modifiers::NONE)],
+                size,
+            );
         }
     }
     fn click_label(ctx: &egui::Context, app: &mut HeditApp, label: &str) {

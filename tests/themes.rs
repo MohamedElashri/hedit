@@ -40,9 +40,25 @@ fn builtin_themes_are_readable_and_drive_native_controls() {
             "{} dark flag",
             theme.name
         );
+        // Hovered and open menu entries stand out from menus and the menu bar.
+        let hover = theme.hover();
+        for (name, fill) in [("surface", theme.surface), ("panel", theme.panel)] {
+            assert!(
+                Theme::contrast(hover, fill) >= 1.2,
+                "{} hover on {name}",
+                theme.name
+            );
+        }
+        assert!(
+            Theme::contrast(theme.text, hover) >= 3.0,
+            "{} hover text",
+            theme.name
+        );
         let ctx = egui::Context::default();
         theme.apply(&ctx);
         let visuals = ctx.style().visuals.clone();
+        assert_eq!(visuals.widgets.hovered.weak_bg_fill, hover.color());
+        assert_eq!(visuals.widgets.open.weak_bg_fill, hover.color());
         assert_eq!(visuals.dark_mode, theme.dark);
         assert_eq!(visuals.panel_fill, theme.panel.color());
         assert_eq!(visuals.extreme_bg_color, theme.background.color());

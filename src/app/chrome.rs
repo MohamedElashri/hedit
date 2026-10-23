@@ -6,18 +6,34 @@ fn menu_item(ui: &mut egui::Ui, app: &HeditApp, command: Command) -> bool {
     {
         return false;
     }
-    ui.add_enabled(
-        app.command_enabled(command),
+    let enabled = app.command_enabled(command);
+    // Reserve a layer under the entry so unavailable entries can still show
+    // which row the pointer is on; egui gives disabled widgets no hover state.
+    let backdrop = ui.painter().add(egui::Shape::Noop);
+    let response = ui.add_enabled(
+        enabled,
         egui::Button::new(command.label())
             .selected(app.command_selected(command))
             .shortcut_text(app.shortcut_text(command)),
-    )
-    .clicked()
+    );
+    if !enabled && response.contains_pointer() {
+        let hovered = &ui.visuals().widgets.hovered;
+        ui.painter().set(
+            backdrop,
+            egui::Shape::rect_filled(
+                response.rect.expand(hovered.expansion),
+                hovered.corner_radius,
+                app.theme.hover().color().gamma_multiply(0.6),
+            ),
+        );
+    }
+    response.clicked()
 }
 impl HeditApp {
     pub(super) fn chrome(&mut self, ctx: &egui::Context) {
         let theme = self.theme.clone();
         let mut action = None;
+        let mut open_menu = None;
         egui::TopBottomPanel::top("menu-bar").frame(egui::Frame::new().fill(theme.panel.color())
             .inner_margin(egui::Margin::symmetric(8, 3))).show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
@@ -32,7 +48,15 @@ impl HeditApp {
                     ("Preferences", vec![vec![Command::Settings, Command::Appearance, Command::ToolSettings, Command::KeyBindings]]),
                     ("Help", vec![vec![Command::Updates, Command::About]]),
                 ] {
-                    ui.menu_button(title, |ui| {
+                    // egui does not mark the open menu's title, so keep it filled
+                    // like a hovered title while its menu is showing.
+                    let mut button = egui::Button::new(title);
+                    if self.open_menu == Some(title) {
+                        button = button.fill(theme.hover().color());
+                    }
+                    egui::menu::menu_custom_button(ui, button, |ui| {
+                        // Contents run only while this menu is open.
+                        open_menu = Some(title);
                         ui.set_min_width(245.0);
                         if title == "Edit" { self.edit_menu(ui, &mut action); return; }
                         if title == "View" { self.view_menu(ui, &mut action); return; }
@@ -53,6 +77,10 @@ impl HeditApp {
                 });
             });
         });
+        if self.open_menu != open_menu {
+            self.open_menu = open_menu;
+            ctx.request_repaint();
+        }
         if let Some(command) = action {
             self.execute(ctx, command);
         }
