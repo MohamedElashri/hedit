@@ -30,6 +30,26 @@
 
 - Menu-bar titles, menu entries, and buttons now show a visible highlight under
   the pointer, and the title of the open menu stays highlighted.
+- The command palette, theme switcher, Go to line, Bookmarks, and Closed files close
+  when you click elsewhere; clicking a tab while the palette was open used to
+  leave keyboard input nowhere.
+- Escape closes one window at a time, starting with the most recent, keeps extra
+  cursors unless nothing else is open, dismisses the error banner, and works while
+  a background job runs.
+- Opening a window closes the previous one instead of stacking them.
+- Pressing Enter in the Find bar keeps focus in the search field instead of
+  typing over the found match; Shift+Enter finds the previous match, and the
+  match stays highlighted.
+- Choosing Find or Go to line from the command palette focuses its field.
+- Enter only triggers Find in folders, Go to symbol, Insert snippet, and the New
+  file dialog when their field has focus, instead of overriding the editor.
+- “No matches found.” and “Search cancelled.” appear as status-bar messages, not
+  errors. The error banner appears once above split panes, and Retry checkpoint
+  only appears for checkpoint failures.
+- Status messages such as “File saved.” appear in the status bar for a few seconds.
+- Clicking a window that floats over a split pane no longer switches panes.
+- On macOS, navigate back/forward with Control+- and Control+Shift+-, so
+  Option+arrows keep moving by word.
 
 ### Removed
 

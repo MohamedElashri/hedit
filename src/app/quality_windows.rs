@@ -3,6 +3,26 @@ use super::*;
 use hedit::{projects, search};
 use std::path::PathBuf;
 
+const SYMBOLS_FIELD: &str = "symbols-query";
+// Option+arrows move by word on macOS, so navigate with Control+- there.
+#[cfg(target_os = "macos")]
+const NAV_BACK: (Modifiers, Key) = (Modifiers::CTRL, Key::Minus);
+#[cfg(target_os = "macos")]
+const NAV_FORWARD: (Modifiers, Key) = (
+    Modifiers {
+        ctrl: true,
+        shift: true,
+        ..Modifiers::NONE
+    },
+    Key::Minus,
+);
+#[cfg(not(target_os = "macos"))]
+const NAV_BACK: (Modifiers, Key) = (Modifiers::ALT, Key::ArrowLeft);
+#[cfg(not(target_os = "macos"))]
+const NAV_FORWARD: (Modifiers, Key) = (Modifiers::ALT, Key::ArrowRight);
+const SNIPPETS_FIELD: &str = "snippets-query";
+const FOLDER_FIELDS: [&str; 3] = ["folders-find", "folders-replace", "folders-filter"];
+
 pub(super) fn shortcut(value: &str) -> Result<Option<egui::KeyboardShortcut>, String> {
     if value.trim().is_empty() {
         return Ok(None);
@@ -98,6 +118,10 @@ impl HeditApp {
         });
     }
     pub(super) fn quality_shortcuts(&mut self, ctx: &egui::Context) {
+        // Enter belongs to a window only while its own field has focus, so it
+        // still types a newline in the editor beside an open window.
+        let focused = ctx.memory(|m| m.focused());
+        let field = |name: &str| focused == Some(egui::Id::new(name));
         if self.quality.completion_open {
             if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowDown)) {
                 self.quality.completion_index = (self.quality.completion_index + 1)
@@ -121,6 +145,7 @@ impl HeditApp {
                 self.focus_editor = true;
             }
         } else if self.quality.snippets_open
+            && field(SNIPPETS_FIELD)
             && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter))
         {
             let query = self.quality.snippet_query.to_lowercase();
@@ -142,6 +167,7 @@ impl HeditApp {
                 self.quality.snippets_open = false;
             }
         } else if self.quality.symbols_open
+            && field(SYMBOLS_FIELD)
             && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter))
         {
             let query = self.quality.symbol_query.to_lowercase();
@@ -163,6 +189,7 @@ impl HeditApp {
                 }
             }
         } else if self.quality.folders_open
+            && FOLDER_FIELDS.into_iter().any(field)
             && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter))
         {
             self.folder_search(ctx, false);
@@ -194,8 +221,8 @@ impl HeditApp {
             ),
             (Modifiers::SHIFT, Key::F3, Command::FindPrevious),
             (Modifiers::COMMAND, Key::R, Command::Symbols),
-            (Modifiers::ALT, Key::ArrowLeft, Command::NavBack),
-            (Modifiers::ALT, Key::ArrowRight, Command::NavForward),
+            (NAV_BACK.0, NAV_BACK.1, Command::NavBack),
+            (NAV_FORWARD.0, NAV_FORWARD.1, Command::NavForward),
             (Modifiers::COMMAND, Key::Space, Command::Complete),
         ] {
             if !self.overridden(command) && ctx.input_mut(|i| i.consume_key(modifiers, key)) {
@@ -273,6 +300,7 @@ impl HeditApp {
             let mut selected = None;
             egui::Window::new("Recent projects")
                 .open(&mut open)
+                .collapsible(false)
                 .max_width((ctx.screen_rect().width() - 32.0).max(300.0))
                 .max_height((ctx.screen_rect().height() - 32.0).max(220.0))
                 .vscroll(true)
@@ -297,10 +325,10 @@ impl HeditApp {
         let mut preview = false;
         let mut apply = false;
         let mut selected = None;
-        egui::Window::new("Find in folders").open(&mut open).max_width((ctx.screen_rect().width()-32.0).max(300.0)).max_height((ctx.screen_rect().height()-32.0).max(220.0)).vscroll(true).default_width(760.0).default_height((ctx.screen_rect().height()-90.0).min(520.0)).show(ctx,|ui|{
-            ui.horizontal(|ui|{ui.label("Find");let response=ui.text_edit_singleline(&mut self.query);if self.quality.folder_focus{response.request_focus();self.quality.folder_focus=false;}});
-            ui.horizontal(|ui|{ui.label("Replace");ui.text_edit_singleline(&mut self.replacement);});
-            ui.horizontal(|ui|{ui.label("Files");ui.add(egui::TextEdit::singleline(&mut self.quality.filter).hint_text("*.rs, *.cu — empty means all files"));});
+        egui::Window::new("Find in folders").open(&mut open).max_width((ctx.screen_rect().width()-32.0).max(300.0)).max_height((ctx.screen_rect().height()-32.0).max(220.0)).vscroll(true).collapsible(false).default_width(760.0).default_height((ctx.screen_rect().height()-90.0).min(520.0)).show(ctx,|ui|{
+            ui.horizontal(|ui|{ui.label("Find");let response=ui.add(egui::TextEdit::singleline(&mut self.query).id(egui::Id::new(FOLDER_FIELDS[0])));if self.quality.folder_focus{response.request_focus();self.quality.folder_focus=false;}});
+            ui.horizontal(|ui|{ui.label("Replace");ui.add(egui::TextEdit::singleline(&mut self.replacement).id(egui::Id::new(FOLDER_FIELDS[1])));});
+            ui.horizontal(|ui|{ui.label("Files");ui.add(egui::TextEdit::singleline(&mut self.quality.filter).id(egui::Id::new(FOLDER_FIELDS[2])).hint_text("*.rs, *.cu — empty means all files"));});
             ui.horizontal_wrapped(|ui|{ui.checkbox(&mut self.quality.options.regex,"Regex");ui.checkbox(&mut self.quality.options.case_sensitive,"Case sensitive");ui.checkbox(&mut self.quality.options.whole_word,"Whole words");});
             ui.horizontal(|ui|{find=ui.add_enabled(!self.busy,egui::Button::new("Find all")).clicked();preview=ui.add_enabled(!self.busy,egui::Button::new("Preview replacements")).clicked();if self.busy&&ui.button("Cancel search").clicked(){self.cancel.store(true,Ordering::Relaxed);}});
             ui.weak("Search respects .gitignore. Files over 16 MiB and unsupported/binary files are skipped. Open unsaved text is not searched here.");
@@ -337,8 +365,8 @@ impl HeditApp {
         let mut open = true;
         let mut reload = false;
         let mut selected = None;
-        egui::Window::new("Go to symbol").open(&mut open).max_width((ctx.screen_rect().width()-32.0).max(300.0)).max_height((ctx.screen_rect().height()-32.0).max(220.0)).vscroll(true).default_width(620.0).show(ctx,|ui|{
-            let response=ui.text_edit_singleline(&mut self.quality.symbol_query);if self.quality.symbol_focus{response.request_focus();self.quality.symbol_focus=false;}
+        egui::Window::new("Go to symbol").open(&mut open).max_width((ctx.screen_rect().width()-32.0).max(300.0)).max_height((ctx.screen_rect().height()-32.0).max(220.0)).vscroll(true).collapsible(false).default_width(620.0).show(ctx,|ui|{
+            let response=ui.add(egui::TextEdit::singleline(&mut self.quality.symbol_query).id(egui::Id::new(SYMBOLS_FIELD)));if self.quality.symbol_focus{response.request_focus();self.quality.symbol_focus=false;}
             ui.horizontal(|ui|{reload=ui.checkbox(&mut self.quality.symbols_project,"All project folders").changed();reload|=ui.add_enabled(!self.busy,egui::Button::new("Refresh symbols")).clicked();});
             ui.weak("Functions, classes and types detected from source lines; generated and ignored folders are skipped.");
             let query=self.quality.symbol_query.to_lowercase();
@@ -365,7 +393,7 @@ impl HeditApp {
         let mut open = true;
         let mut disk = false;
         let mut mine = false;
-        egui::Window::new(if self.quality.git_diff{"Git changes compared with HEAD"}else{"Disk and editor comparison"}).open(&mut open).max_width((ctx.screen_rect().width()-32.0).max(300.0)).max_height((ctx.screen_rect().height()-32.0).max(220.0)).vscroll(true).default_width(760.0).show(ctx,|ui|{
+        egui::Window::new(if self.quality.git_diff{"Git changes compared with HEAD"}else{"Disk and editor comparison"}).open(&mut open).max_width((ctx.screen_rect().width()-32.0).max(300.0)).max_height((ctx.screen_rect().height()-32.0).max(220.0)).vscroll(true).collapsible(false).default_width(760.0).show(ctx,|ui|{
             if self.quality.diff.is_empty(){ui.label("No changes.");}
             egui::ScrollArea::both().max_height(460.0).show(ui,|ui|{let mut text=self.quality.diff.as_str();ui.add(egui::TextEdit::multiline(&mut text).code_editor().desired_width(f32::INFINITY));});
             if !self.quality.git_diff {
@@ -422,7 +450,7 @@ impl HeditApp {
         let mut open = true;
         let mut save = false;
         let project = self.quality.settings_project;
-        egui::Window::new(if project{"Project formatting settings"}else{"Keyboard, snippets and formatting"}).open(&mut open).max_width((ctx.screen_rect().width()-32.0).max(300.0)).max_height((ctx.screen_rect().height()-32.0).max(220.0)).vscroll(true).default_width(740.0).show(ctx,|ui|{
+        egui::Window::new(if project{"Project formatting settings"}else{"Keyboard, snippets and formatting"}).open(&mut open).max_width((ctx.screen_rect().width()-32.0).max(300.0)).max_height((ctx.screen_rect().height()-32.0).max(220.0)).vscroll(true).collapsible(false).default_width(740.0).show(ctx,|ui|{
             if !project{
                 ui.label("Keybindings override defaults. Use Primary for Ctrl/Cmd, e.g. Primary+Shift+F. An empty shortcut unbinds a command.");
                 ui.label("Snippets support ${SELECTION} and $0 for the final cursor. Type a trigger then Tab, or use Tools → Insert snippet.");
@@ -498,7 +526,7 @@ impl HeditApp {
         let mut convert = false;
         let mut reopen = false;
         let mut choose = false;
-        egui::Window::new("File encoding").open(&mut open).max_width((ctx.screen_rect().width()-32.0).max(300.0)).max_height((ctx.screen_rect().height()-32.0).max(220.0)).vscroll(true).show(ctx,|ui|{
+        egui::Window::new("File encoding").open(&mut open).max_width((ctx.screen_rect().width()-32.0).max(300.0)).max_height((ctx.screen_rect().height()-32.0).max(220.0)).vscroll(true).collapsible(false).show(ctx,|ui|{
             ui.label(format!("Current: {}",self.active().page.info.encoding));
             egui::ComboBox::from_label("Encoding").selected_text(&self.quality.encoding).show_ui(ui,|ui|{for &label in hedit::text_encoding::LABELS{ui.selectable_value(&mut self.quality.encoding,label.to_owned(),label);}});
             ui.label("Conversion rejects characters the target encoding cannot represent. UTF-16 BOMs are detected automatically; legacy encodings must be selected explicitly.");
@@ -554,6 +582,7 @@ impl HeditApp {
         let mut selected = None;
         egui::Window::new("Complete word")
             .open(&mut open)
+            .collapsible(false)
             .max_width((ctx.screen_rect().width() - 32.0).max(300.0))
             .max_height((ctx.screen_rect().height() - 32.0).max(220.0))
             .vscroll(true)
@@ -613,12 +642,16 @@ impl HeditApp {
         let mut selected = None;
         egui::Window::new("Insert snippet")
             .open(&mut open)
+            .collapsible(false)
             .max_width((ctx.screen_rect().width() - 32.0).max(300.0))
             .max_height((ctx.screen_rect().height() - 32.0).max(220.0))
             .vscroll(true)
             .default_width(480.0)
             .show(ctx, |ui| {
-                let response = ui.text_edit_singleline(&mut self.quality.snippet_query);
+                let response = ui.add(
+                    egui::TextEdit::singleline(&mut self.quality.snippet_query)
+                        .id(egui::Id::new(SNIPPETS_FIELD)),
+                );
                 if self.quality.snippet_focus {
                     response.request_focus();
                     self.quality.snippet_focus = false;

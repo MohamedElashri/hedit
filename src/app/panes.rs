@@ -226,10 +226,11 @@ impl HeditApp {
                     });
                     let before = ui.available_rect_before_wrap();
                     self.editor_pane(ui, number);
+                    // Ignore clicks on a window that happens to float over this pane.
                     if ui.input(|i| i.pointer.any_pressed())
-                        && ui
-                            .input(|i| i.pointer.interact_pos())
-                            .is_some_and(|p| before.contains(p))
+                        && ui.input(|i| i.pointer.interact_pos()).is_some_and(|p| {
+                            before.contains(p) && ui.ctx().layer_id_at(p) == Some(ui.layer_id())
+                        })
                     {
                         focused = number;
                     }

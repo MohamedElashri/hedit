@@ -537,7 +537,10 @@ when opened and adapts its height to smaller windows.
 
 1. Press **Ctrl+F** or choose **Find → Find…** to open the bottom search panel.
 2. Enter a query of up to 4,096 UTF-8 bytes and choose search options.
-3. Click **Find next** to select the next match across the whole file.
+3. Press **Enter** or click **Find next** to select the next match across the whole
+   file; **Shift+Enter** selects the previous one. The cursor stays in the search
+   field, so you can keep pressing Enter or refine the query. Enter in the
+   replacement field also finds the next match.
 4. Enable **Replace** (or press **Ctrl+H**), enter replacement text, and click
    **Replace selected** to change that occurrence.
 
@@ -597,7 +600,8 @@ rewrite; hedit reports that limitation instead of silently changing them.
 current file; enable **All project folders** to scan the workspace. These are
 source-line heuristics, not language-server definitions. Project indexing follows
 the same ignore and per-file size limits as folder search and lists up to 20,000
-symbols. **Alt+Left/Right** navigates back/forward through up to 200 recorded
+symbols. **Alt+Left/Right** (**Control+-** / **Control+Shift+-** on macOS, where
+Option+arrows move by word) navigates back/forward through up to 200 recorded
 locations, reopening shelved files when needed.
 
 With Git installed, changed-line markers refresh about every two seconds for the
@@ -641,7 +645,9 @@ locates a line in the entire document, even when only a page is displayed.
 
 **Ctrl+P** opens Go to file, including all open folders; **Ctrl+Shift+P** opens commands. Type a
 filter, use **Up/Down** to select a result, and press **Enter**, or click a result.
-Type `>` in the file switcher to search commands instead. **Esc** closes either.
+Type `>` in the file switcher to search commands instead. **Esc** or a click
+outside closes either. Go to line, Bookmarks, and Closed files also close when you
+click elsewhere.
 The menus show the same commands and keyboard shortcuts.
 
 ## Preferences
@@ -890,7 +896,12 @@ the graphical window cannot start.
 | Ctrl+, | Preferences |
 | Ctrl+F2 | Toggle a bookmark at the cursor |
 | F2 / Shift+F2 | Next / previous bookmark |
-| Esc | Close search, the palette, or file-tool windows |
+| Esc | Close the topmost window or the search panel, then the error banner, then extra cursors |
+
+Opening a window closes any other window, so only one is open at a time; the
+search panel stays open beside it. Each **Esc** closes one thing, starting with
+the most recent. Escape works even while a search or save is running. Short
+messages such as “File saved.” appear in the status bar for a few seconds.
 
 Undo in a search or debugger input edits that input; in the editor it uses the
 file's history.

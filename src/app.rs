@@ -3,6 +3,9 @@ mod chrome;
 mod commands;
 mod edit_actions;
 mod editor_layout;
+#[cfg(test)]
+mod overlay_tests;
+mod overlays;
 mod panes;
 mod preferences;
 mod project;
@@ -54,6 +57,10 @@ enum Action {
     Notice(String),
     Nothing,
 }
+const CHECKPOINT_FAILED: &str = "RECOVERY CHECKPOINT FAILED";
+/// Job outcomes that are expected answers, shown as notices rather than errors.
+const ROUTINE: [&str; 2] = ["No matches found.", "Search cancelled."];
+
 struct Checkpoint {
     generation: u64,
     result: Result<(), String>,
@@ -80,6 +87,8 @@ pub struct HeditApp {
     pending_paths: VecDeque<PathBuf>,
     error: Option<String>,
     notice: String,
+    /// The notice on display in the status bar and when it appeared.
+    notice_shown: (String, Instant),
     wrap: bool,
     auto_indent: bool,
     smart_indent: bool,
@@ -226,6 +235,7 @@ impl HeditApp {
                 Some(errors.join("\n"))
             },
             notice: "Ready.".into(),
+            notice_shown: ("Ready.".into(), Instant::now()),
             wrap,
             auto_indent: storage
                 .and_then(|s| eframe::get_value(s, "auto_indent"))
@@ -792,7 +802,8 @@ impl HeditApp {
                             buffer.view.scroll_top = 0.0;
                         }
                         self.changed();
-                        self.focus_editor = true;
+                        // Stepping through matches keeps typing in the Find bar.
+                        self.focus_editor = !self.find_input_focused(ctx);
                         self.navigation_mark();
                     }
                 }
@@ -825,6 +836,10 @@ impl HeditApp {
                 Ok(Action::ThemeImported(theme)) => self.add_imported_theme(ctx, theme),
                 Ok(Action::Notice(message)) => self.notice = message,
                 Ok(Action::Nothing) => (),
+                Err(error) if ROUTINE.contains(&error.as_str()) => {
+                    self.quality.match_status = error.trim_end_matches('.').into();
+                    self.notice = error;
+                }
                 Err(error) => {
                     if self.quality.incoming.is_some() {
                         self.quality.incoming_error = Some(error.clone());
@@ -845,7 +860,7 @@ impl HeditApp {
                     self.last_saved = Some(Instant::now());
                 }
                 Err(error) => {
-                    self.error = Some(format!("RECOVERY CHECKPOINT FAILED\n{error}\nKeep hedit open and save your files to disk."));
+                    self.error = Some(format!("{CHECKPOINT_FAILED}\n{error}\nKeep hedit open and save your files to disk."));
                     self.closing = false;
                 }
             }
@@ -895,6 +910,8 @@ impl HeditApp {
         }
     }
     fn shortcuts(&mut self, ctx: &egui::Context) {
+        // Escape still closes windows while a background job runs.
+        self.escape(ctx);
         if self.busy || self.closing {
             return;
         }
@@ -1015,33 +1032,6 @@ impl HeditApp {
         if !self.overridden(Command::ZoomOut) && take(cmd, Key::Minus) {
             self.font_size = (self.font_size - 1.0).max(10.0);
         }
-        // Leave Escape visible to egui so open menus can dismiss themselves too.
-        if ctx.input(|input| input.key_pressed(Key::Escape)) {
-            let b = &mut self.workspace.open[self.workspace.active];
-            b.view.selections.clear();
-            b.restore_cursor = true;
-            self.cancel_theme_palette(ctx);
-            self.palette = false;
-            self.find_open = false;
-            self.goto_open = false;
-            self.preferences_open = false;
-            self.about_open = false;
-            self.updates.open = false;
-            self.rename_target = None;
-            self.shelf_open = false;
-            self.bookmarks_open = false;
-            self.project.create = None;
-            self.quality.folders_open = false;
-            self.quality.symbols_open = false;
-            self.quality.diff_open = false;
-            self.quality.file_action = None;
-            self.quality.settings_open = false;
-            self.quality.encoding_open = false;
-            self.quality.completion_open = false;
-            self.quality.snippets_open = false;
-            self.quality.recent_open = false;
-            self.focus_editor = true;
-        }
     }
     fn editor(&mut self, ctx: &egui::Context) {
         let theme = self.theme.clone();
@@ -1051,7 +1041,34 @@ impl HeditApp {
                     .fill(theme.background.color())
                     .inner_margin(egui::Margin::symmetric(12, 10)),
             )
-            .show(ctx, |ui| self.pane_layout(ui));
+            .show(ctx, |ui| {
+                self.error_banner(ui, &theme);
+                self.pane_layout(ui);
+            });
+    }
+    /// One banner above all panes; Escape or Dismiss clears it.
+    fn error_banner(&mut self, ui: &mut egui::Ui, theme: &Theme) {
+        let Some(error) = self.error.clone() else {
+            return;
+        };
+        let ctx = ui.ctx().clone();
+        egui::Frame::new()
+            .fill(theme.error.color().gamma_multiply(0.12))
+            .inner_margin(10.0)
+            .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new(&error).color(theme.error.color()));
+                    if ui.button("Dismiss").on_hover_text("Esc").clicked() {
+                        self.error = None;
+                    }
+                    if error.starts_with(CHECKPOINT_FAILED)
+                        && ui.button("Retry checkpoint").clicked()
+                    {
+                        self.checkpoint(&ctx);
+                    }
+                });
+            });
+        ui.add_space(6.0);
     }
     fn editor_pane(&mut self, ui: &mut egui::Ui, pane_id: usize) {
         if self.distraction_free {
@@ -1075,22 +1092,6 @@ impl HeditApp {
         let ctx = &context;
         let theme = self.theme.clone();
 
-        if let Some(error) = self.error.clone() {
-            egui::Frame::new()
-                .fill(theme.error.color().gamma_multiply(0.12))
-                .inner_margin(10.0)
-                .show(ui, |ui| {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(RichText::new(&error).color(theme.error.color()));
-                        if ui.button("Dismiss").clicked() {
-                            self.error = None;
-                        }
-                        if ui.button("Retry checkpoint").clicked() {
-                            self.checkpoint(ctx);
-                        }
-                    });
-                });
-        }
         if self.active().external {
             ui.horizontal_wrapped(|ui| {
                 ui.colored_label(
@@ -1318,7 +1319,9 @@ impl HeditApp {
                                     && !self.bookmarks_open
                                     && !self.goto_open
                                     && !self.about_open
-                                    && !self.updates.open,
+                                    && !self.updates.open
+                                    && self.project.create.is_none()
+                                    && self.quality.file_action.is_none(),
                             );
                         if !wrap {
                             edit = edit.desired_width(f32::INFINITY);
@@ -1416,7 +1419,16 @@ impl HeditApp {
                                 first = row.ends_with_newline;
                             }
                         }
-                        for selection in &buffer.view.selections {
+                        // egui paints the main selection only while the editor has
+                        // focus; keep a found match visible while typing in Find.
+                        let primary = hedit::advanced::Selection {
+                            anchor: buffer.view.anchor,
+                            head: buffer.view.head,
+                        };
+                        let unfocused = (!output.response.has_focus()
+                            && primary.start() != primary.end())
+                        .then_some(primary);
+                        for selection in buffer.view.selections.iter().chain(unfocused.iter()) {
                             let a = output.galley.from_ccursor(egui::text::CCursor::new(
                                 projection.display(selection.start()),
                             ));
@@ -2024,17 +2036,21 @@ impl HeditApp {
         if self.shelf_open {
             let mut open = true;
             let mut restore = None;
-            egui::Window::new("Closed files")
+            let shown = egui::Window::new("Closed files")
                 .open(&mut open)
                 .default_width(480.0)
                 .collapsible(false)
                 .show(ctx, |ui| {
                     ui.label("Closed files keep their text, names, and bookmarks.");
-                    ui.add(
+                    let filter = ui.add(
                         egui::TextEdit::singleline(&mut self.shelf_query)
                             .desired_width(f32::INFINITY)
                             .hint_text("Filter closed files…"),
                     );
+                    // Type to filter as soon as the window appears.
+                    if !ctx.memory(|m| m.areas().visible_last_frame(&ui.layer_id())) {
+                        filter.request_focus();
+                    }
                     if self.workspace.closed.is_empty() {
                         ui.label("The shelf is empty. Close a tab to keep it here.");
                     }
@@ -2087,7 +2103,7 @@ impl HeditApp {
                         .color(self.theme.muted.color()),
                     );
                 });
-            self.shelf_open = open;
+            self.shelf_open = open && !overlays::clicked_away(ctx, &shown);
             if let Some(index) = restore {
                 let result = self.workspace.reopen_at(index);
                 if result.is_ok() {
@@ -2103,7 +2119,7 @@ impl HeditApp {
             let mut open = true;
             let mut target = None;
             let bookmarks = self.active().view.bookmarks.clone();
-            egui::Window::new("Bookmarks")
+            let shown = egui::Window::new("Bookmarks")
                 .open(&mut open)
                 .default_width(480.0)
                 .collapsible(false)
@@ -2153,7 +2169,7 @@ impl HeditApp {
                         .color(self.theme.muted.color()),
                     );
                 });
-            self.bookmarks_open = open;
+            self.bookmarks_open = open && !overlays::clicked_away(ctx, &shown);
             if let Some(offset) = target {
                 self.bookmarks_open = false;
                 self.go_to_offset(ctx, offset);
@@ -3423,7 +3439,7 @@ mod tests {
             );
         }
     }
-    fn click_label(ctx: &egui::Context, app: &mut HeditApp, label: &str) {
+    pub(super) fn click_label(ctx: &egui::Context, app: &mut HeditApp, label: &str) {
         click_label_sized(ctx, app, label, egui::vec2(1280.0, 820.0));
     }
     fn click_label_sized(ctx: &egui::Context, app: &mut HeditApp, label: &str, size: egui::Vec2) {
@@ -3433,7 +3449,15 @@ mod tests {
             .iter()
             .find_map(|shape| text_rect(&shape.shape, label))
             .unwrap_or_else(|| panic!("Missing visible label: {label}"));
-        let position = rect.center();
+        click_at(ctx, app, rect.center(), size);
+    }
+    /// Press and release the primary button at `position` over two frames.
+    pub(super) fn click_at(
+        ctx: &egui::Context,
+        app: &mut HeditApp,
+        position: egui::Pos2,
+        size: egui::Vec2,
+    ) {
         frame_size(
             ctx,
             app,

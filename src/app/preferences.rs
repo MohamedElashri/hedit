@@ -313,7 +313,7 @@ impl HeditApp {
         }
         let mut open = true;
         let mut go = false;
-        egui::Window::new("Go to line")
+        let shown = egui::Window::new("Go to line")
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -354,6 +354,9 @@ impl HeditApp {
             } else {
                 self.notice = "Enter a positive line number.".into();
             }
+        }
+        if super::overlays::clicked_away(ctx, &shown) {
+            open = false;
         }
         self.goto_open = open;
         if !open {

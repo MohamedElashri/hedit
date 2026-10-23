@@ -178,7 +178,7 @@ impl HeditApp {
                     self.quality.match_status = format!("{count} matches");
                     self.navigation_mark();
                     self.changed();
-                    self.focus_editor = true;
+                    self.focus_editor = !self.find_input_focused(ctx);
                 }
             }
             Event::Results(results) => {

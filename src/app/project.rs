@@ -471,8 +471,8 @@ impl HeditApp {
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
         .show(ctx, |ui| {
             ui.label(&create.parent);
-            let enter = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter));
             let response = ui.add(egui::TextEdit::singleline(&mut create.name).hint_text("Name"));
+            let enter = response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
             if create.focus {
                 response.request_focus();
                 create.focus = false;

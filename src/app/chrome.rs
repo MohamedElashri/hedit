@@ -1,5 +1,8 @@
 use super::*;
 
+/// The Find bar's query field, which keeps focus while stepping through matches.
+pub(super) const FIND_INPUT: &str = "find-input";
+
 fn menu_item(ui: &mut egui::Ui, app: &HeditApp, command: Command) -> bool {
     if matches!(command, Command::Gpu | Command::ToolSettings)
         && !hedit::debugger::LOCAL_TOOLS_SUPPORTED
@@ -336,6 +339,20 @@ impl HeditApp {
                             self.cancel.store(true, Ordering::Relaxed);
                         }
                     }
+                    // Show each new notice briefly, like Sublime's status messages.
+                    if self.notice_shown.0 != self.notice {
+                        self.notice_shown = (self.notice.clone(), Instant::now());
+                    }
+                    let age = self.notice_shown.1.elapsed();
+                    if age < NOTICE_TIME && self.notice != "Ready." {
+                        ui.separator();
+                        ui.label(
+                            RichText::new(&self.notice)
+                                .size(11.0)
+                                .color(theme.muted.color()),
+                        );
+                        ctx.request_repaint_after(NOTICE_TIME - age);
+                    }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let (label, color) = if self.closing {
                             ("Finishing recovery…", theme.warning)
@@ -631,9 +648,13 @@ impl HeditApp {
                 ui.horizontal(|ui| {
                     ui.label("Find");
                     let width = (ui.available_width() - 225.0).max(100.0);
-                    let input_id = ui.make_persistent_id("find-input");
-                    let enter = ctx.memory(|m| m.has_focus(input_id))
-                        && ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter));
+                    let input_id = egui::Id::new(FIND_INPUT);
+                    let focused = ctx.memory(|m| m.has_focus(input_id));
+                    // Shift+Enter searches backwards, like Sublime Text.
+                    let previous =
+                        focused && ui.input_mut(|i| i.consume_key(Modifiers::SHIFT, Key::Enter));
+                    let enter =
+                        focused && ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter));
                     let response = ui.add(
                         egui::TextEdit::singleline(&mut self.query)
                             .id(input_id)
@@ -649,6 +670,8 @@ impl HeditApp {
                         .clicked();
                     if (clicked || enter) && !self.busy && !self.closing {
                         self.find(ctx);
+                    } else if previous && !self.busy && !self.closing {
+                        self.find_advanced(ctx, true);
                     }
                     ui.toggle_value(&mut self.replace_open, "Replace");
                     if ui.button("×").on_hover_text("Close search · Esc").clicked() {
@@ -674,11 +697,19 @@ impl HeditApp {
                 if self.replace_open {
                     ui.horizontal(|ui| {
                         ui.label("With");
-                        ui.add(
+                        let response = ui.add(
                             egui::TextEdit::singleline(&mut self.replacement)
                                 .desired_width((ui.available_width() - 150.0).max(100.0))
                                 .hint_text("Replacement text"),
                         );
+                        if response.lost_focus()
+                            && ui.input(|i| i.key_pressed(Key::Enter))
+                            && !self.busy
+                            && !self.closing
+                        {
+                            self.find(ctx);
+                            response.request_focus();
+                        }
                         if ui
                             .add_enabled(
                                 self.command_enabled(Command::Replace),
@@ -687,6 +718,7 @@ impl HeditApp {
                             .clicked()
                         {
                             self.replace_selection();
+                            self.focus_editor = false;
                         }
                         if ui
                             .add_enabled(
@@ -696,17 +728,15 @@ impl HeditApp {
                             .clicked()
                         {
                             self.replace_advanced(true);
+                            self.focus_editor = false;
                         }
                     });
                 }
-                ui.label(
-                    RichText::new(&self.notice)
-                        .size(11.0)
-                        .color(self.theme.muted.color()),
-                );
             });
     }
 }
+
+const NOTICE_TIME: std::time::Duration = std::time::Duration::from_secs(5);
 
 fn command_group(
     ui: &mut egui::Ui,

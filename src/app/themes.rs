@@ -677,8 +677,8 @@ impl HeditApp {
         let mut moved = down || up;
         // Bring the current theme into view when the switcher opens.
         let opened = self.palette_focus;
-        egui::Window::new("Color theme")
-            .id(egui::Id::new("command-palette"))
+        let shown = egui::Window::new("Color theme")
+            .id(egui::Id::new("theme-switcher"))
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_TOP, [0.0, 70.0])
@@ -751,6 +751,12 @@ impl HeditApp {
                     });
                 });
             });
+        if chosen.is_none() && !browse && super::overlays::clicked_away(ctx, &shown) {
+            self.cancel_theme_palette(ctx);
+            self.palette = false;
+            self.focus_editor = true;
+            return;
+        }
         if enter {
             chosen = items.get(self.palette_index).map(|(t, _)| t.clone());
         }

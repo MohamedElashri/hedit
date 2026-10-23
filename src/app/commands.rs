@@ -250,6 +250,35 @@ impl Command {
         Self::Updates,
         Self::Quit,
     ];
+    /// Commands that show a window or the Find bar; any other window closes first.
+    fn opens_window(self) -> bool {
+        matches!(
+            self,
+            Self::Switcher
+                | Self::Palette
+                | Self::Appearance
+                | Self::Goto
+                | Self::Find
+                | Self::Replace
+                | Self::Shelf
+                | Self::Bookmarks
+                | Self::Rename
+                | Self::Settings
+                | Self::ToolSettings
+                | Self::KeyBindings
+                | Self::ProjectSettings
+                | Self::About
+                | Self::Updates
+                | Self::FindFiles
+                | Self::Symbols
+                | Self::CompareDisk
+                | Self::GitDiff
+                | Self::Encoding
+                | Self::Complete
+                | Self::Snippets
+                | Self::RecentProjects
+        )
+    }
     pub(super) fn label(self) -> &'static str {
         match self {
             Self::FindFiles => "Find in folders…",
@@ -390,6 +419,9 @@ impl Command {
             Self::FindFiles => "Ctrl+Shift+F",
             Self::FindPrevious => "Shift+F3",
             Self::Symbols => "Ctrl+R",
+            // Option+arrows move by word on macOS, so use Sublime's Control+-.
+            Self::NavBack if cfg!(target_os = "macos") => "Control+-",
+            Self::NavForward if cfg!(target_os = "macos") => "Control+Shift+-",
             Self::NavBack => "Alt+Left",
             Self::NavForward => "Alt+Right",
             Self::Complete => "Ctrl+Space",
@@ -554,6 +586,9 @@ impl HeditApp {
     pub(super) fn execute(&mut self, ctx: &egui::Context, command: Command) {
         if !self.command_enabled(command) {
             return;
+        }
+        if command.opens_window() {
+            self.close_transient(ctx);
         }
         match command {
             Command::FindFiles => {
@@ -774,11 +809,14 @@ impl HeditApp {
                 self.quality.selection_only = false;
                 self.find_open = true;
                 self.find_focus = true;
+                // The palette asks for editor focus when it runs a command.
+                self.focus_editor = false;
                 self.replace_open = command == Command::Replace;
             }
             Command::Goto => {
                 self.goto_open = true;
                 self.goto_focus = true;
+                self.focus_editor = false;
             }
             Command::Switcher | Command::Palette => {
                 self.cancel_theme_palette(ctx);
@@ -890,7 +928,7 @@ impl HeditApp {
         let up = ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowUp));
         let enter = ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter));
         let mut chosen = None;
-        egui::Window::new(if commands {
+        let shown = egui::Window::new(if commands {
             "Command palette"
         } else {
             "Go to file"
@@ -1028,6 +1066,11 @@ impl HeditApp {
             ui.separator();
             ui.weak("↑ ↓ navigate    Enter select    Esc close");
         });
+        if chosen.is_none() && overlays::clicked_away(ctx, &shown) {
+            self.palette = false;
+            self.focus_editor = true;
+            return;
+        }
         if let Some(item) = chosen {
             self.palette = false;
             self.focus_editor = true;
