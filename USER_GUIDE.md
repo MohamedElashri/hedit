@@ -526,11 +526,16 @@ HTML/XML tags and attributes, CSS properties, CSV separators, and diff additions
 and deletions have format-specific colors. Log mode colors common severity
 words. Markdown highlights headings, quotes, and code.
 
-These are basic syntax modes: embedded languages, JSX/TSX markup, language
-validation, and complete language grammars are not supported. Multiline
-highlighting can reset at page boundaries in large files. Functions, types, and
-constants are recognized by form (a following `(`, a capital letter, or all
-capitals), not by analyzing your code. Customize colors in
+Most languages are colored with Sublime Text syntax definitions (from the
+collection the `bat` tool uses), so embedded languages, multi-line strings and
+comments, escape sequences, and language constructs are recognized as Sublime
+recognizes them. CUDA uses the C++ definition plus CUDA qualifiers and built-ins.
+Plain text, logs, CSV, PowerShell, Visual Basic, and lines longer than 20,000
+characters use hedit's quicker built-in highlighter, which recognizes functions,
+types, and constants by form. When a large file opens or a large paste lands,
+the quick colors show first and the full colors follow within a moment; typing
+only re-highlights the lines it affects. Highlighting restarts at page boundaries
+in very large paged files. Customize colors in
 **Preferences → Settings… → Appearance**. The menu scrolls to the current syntax
 when opened and adapts its height to smaller windows.
 
@@ -821,7 +826,8 @@ folder. Settings name the theme in use (`color_theme`); a customized theme you
 have not saved keeps its colors in hedit's own state until you save it. hedit reads the folder when it starts.
 
 **Import…** copies a theme file into the folder and selects it; a name that
-matches an existing theme gets a number. **Export…** saves the current colors
+matches an existing theme gets a number. It also accepts TextMate and Sublime
+`.tmTheme` color schemes, converting their colors to hedit's roles. **Export…** saves the current colors
 anywhere you choose. The bundled `themes/` directory has every built-in theme as
 a complete file, plus a custom example.
 

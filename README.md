@@ -37,10 +37,10 @@ See the [changelog](CHANGELOG.md) for what each release adds.
 - **Handle everyday file work.** Pin and reorder tabs, preview sidebar files,
   rename/move/duplicate entries, send them to the system trash, and compare edits
   with disk or Git HEAD. Customize keyboard shortcuts, snippets, and formatting.
-- **Read code in color.** Syntax is selected from the filename. Choose a language
-  from the searchable bottom-bar menu for unsaved snippets, or switch to plain
-  text. Common programming, web, configuration, build, and scientific formats
-  are included.
+- **Read code in color.** Highlighting uses Sublime Text syntax definitions for
+  most languages, chosen from the filename. Choose a language from the searchable
+  bottom-bar menu for unsaved snippets, or switch to plain text. Common
+  programming, web, configuration, build, and scientific formats are included.
 - **Make it comfortable.** Pick from popular editor themes such as One Dark,
   Dracula, Solarized, Gruvbox, Nord, Tokyo Night, Catppuccin, and GitHub, preview
   them live, follow the system's light or dark mode, and save your own color

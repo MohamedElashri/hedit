@@ -29,6 +29,12 @@
   `caret_blink`), and scrolling the last line up to the top (`scroll_past_end`,
   on by default).
 
+- Syntax highlighting uses Sublime Text syntax definitions for most languages,
+  recognizing embedded languages, multi-line strings and comments, escapes, and
+  language constructs. Edits re-highlight only the affected lines, and large files
+  are highlighted in the background.
+- Import TextMate and Sublime `.tmTheme` color schemes as themes.
+
 ### Changed
 
 - The Appearance page separates the theme gallery from color customization,

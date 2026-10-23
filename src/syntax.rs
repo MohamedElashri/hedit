@@ -1,4 +1,5 @@
 //! Bounded native highlighting, filename associations, and stable session IDs.
+pub mod grammar;
 mod keywords;
 mod lexer;
 
@@ -180,4 +181,48 @@ pub fn highlight_language(
     theme: &Theme,
 ) -> egui::text::LayoutJob {
     lexer::highlight(text, font_size, wrap_width, language, theme)
+}
+
+/// A layout of `text` colored by grammar runs of `(byte length, color)`.
+pub fn layout_runs(
+    text: &str,
+    runs: &[(usize, egui::Color32)],
+    font_size: f32,
+    wrap_width: f32,
+) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::default();
+    job.wrap.max_width = wrap_width;
+    let mut at = 0;
+    for &(len, color) in runs {
+        let end = (at + len).min(text.len());
+        job.append(
+            &text[at..end],
+            0.0,
+            egui::TextFormat {
+                font_id: egui::FontId::monospace(font_size),
+                color,
+                ..Default::default()
+            },
+        );
+        at = end;
+    }
+    if at < text.len() {
+        job.append(&text[at..], 0.0, Default::default());
+    }
+    job
+}
+
+/// A one-off highlight with the grammar when there is one, else the lexer,
+/// for small samples such as the theme preview.
+pub fn highlight_sample(
+    text: &str,
+    font_size: f32,
+    wrap_width: f32,
+    language: Language,
+    theme: &Theme,
+) -> egui::text::LayoutJob {
+    match grammar::Grammar::default().highlight(text, language, theme) {
+        Some(runs) => layout_runs(text, &runs, font_size, wrap_width),
+        None => highlight_language(text, font_size, wrap_width, language, theme),
+    }
 }

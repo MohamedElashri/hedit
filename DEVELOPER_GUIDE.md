@@ -209,7 +209,7 @@ editing, and line-comment commands remain available. NVIDIA identifies CUDA
 | `src/editing.rs` | Unicode-safe line/text transformations used by Edit commands |
 | `src/app/edit_actions.rs` | Apply transformations through backend undo/recovery |
 | `src/debugger.rs` | CUDA-GDB/MI and bounded NVIDIA tool subprocess output |
-| `src/syntax.rs`, `src/syntax/lexer.rs`, `src/syntax/keywords.rs` | Syntax catalog, filename detection, and bounded lexical highlighting with active theme colors |
+| `src/syntax.rs`, `src/syntax/grammar.rs`, `src/syntax/lexer.rs`, `src/syntax/keywords.rs` | Syntax catalog, filename detection, grammar highlighting with Sublime syntax definitions, and the quick lexer fallback |
 | `src/theme.rs` | Theme roles, built-in catalog, native styling, JSON theme files, user theme folder |
 | `src/brand.rs` | Native mark and antialiased launcher icon |
 | `src/cli.rs` | Arguments and file locations |
@@ -265,6 +265,18 @@ The editor retains one highlighted layout and checks the exact text, syntax,
 font size, wrap width, theme, display scale, and font atlas before reusing it. This avoids
 lexing and hashing a large layout again during menu hovers. The cache holds only
 the displayed page and invalidates immediately on edits or visual changes.
+
+`src/syntax/grammar.rs` highlights with syntect and the syntax definitions bundled
+by the `two-face` crate (bat's collection; MIT or Apache-2.0, with each grammar
+under its own permissive license). It maps TextMate scopes to the theme roles, so
+every hedit theme colors grammars without separate color schemes. `Grammar`
+keeps each line's parser and highlighter state: an edit re-parses from the first
+changed line and reuses the old lines once the state matches again, which a
+randomized test checks against full highlights. The editor's layout cache runs
+re-highlights of more than 64 KiB on a background thread and shows lexer colors
+meanwhile. syntect uses the Oniguruma engine (built from bundled C sources), which
+is about three times faster than the pure-Rust engine here; `grammar::Moved`
+documents why moving its parser state between threads is sound.
 
 Sorted keyword tables provide language-specific lookup, including case-insensitive
 keywords where appropriate, without allocations. Lexers work on the displayed

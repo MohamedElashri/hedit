@@ -374,7 +374,7 @@ fn block_comment(rest: &str, nested: bool) -> usize {
     rest.len()
 }
 
-fn cuda_keyword(word: &str) -> bool {
+pub(super) fn cuda_keyword(word: &str) -> bool {
     matches!(
         word,
         "__global__"

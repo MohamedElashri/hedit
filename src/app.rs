@@ -2002,13 +2002,29 @@ impl HeditApp {
     fn import_theme(&mut self, ctx: &egui::Context) {
         self.job(ctx, || {
             let Some(path) = rfd::FileDialog::new()
-                .set_title("Import hedit theme")
+                .set_title("Import a theme")
+                .add_filter("Themes", &["json", "tmTheme"])
                 .add_filter("hedit theme", &["json"])
+                .add_filter("TextMate or Sublime color scheme", &["tmTheme"])
                 .pick_file()
             else {
                 return Ok(Action::Nothing);
             };
-            Ok(Action::ThemeImported(Theme::load(&path)?))
+            let textmate = path
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("tmtheme"));
+            let theme = if textmate {
+                let size = std::fs::metadata(&path).map_err(|e| e.to_string())?.len();
+                if size > 1024 * 1024 {
+                    return Err("Color schemes must be at most 1 MiB.".into());
+                }
+                let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+                let stem = path.file_stem().unwrap_or_default().to_string_lossy();
+                syntax::grammar::import_tm_theme(&bytes, &stem)?
+            } else {
+                Theme::load(&path)?
+            };
+            Ok(Action::ThemeImported(theme))
         });
     }
     fn export_theme(&mut self, ctx: &egui::Context) {

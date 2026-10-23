@@ -530,11 +530,11 @@ impl HeditApp {
             .inner_margin(10.0)
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.label(syntax::highlight_with_theme(
+                ui.label(syntax::highlight_sample(
                     SAMPLE,
                     12.0,
                     ui.available_width(),
-                    true,
+                    syntax::Language::Cuda,
                     &self.theme,
                 ));
             });

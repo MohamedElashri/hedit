@@ -4,7 +4,13 @@ use hedit::{
     syntax::{self, Language},
     theme::Theme,
 };
-use std::sync::{Arc, Weak};
+use std::sync::{mpsc, Arc, Weak};
+
+/// Re-highlighting more than this many bytes runs on a background thread,
+/// showing the quick lexer's colors meanwhile.
+const BACKGROUND: usize = 64 * 1024;
+
+type Runs = Arc<Vec<(usize, egui::Color32)>>;
 
 type FontAtlas = egui::epaint::mutex::Mutex<egui::epaint::TextureAtlas>;
 
@@ -18,6 +24,9 @@ pub(super) struct Font {
 #[derive(Default)]
 pub(super) struct LayoutCache {
     entry: Option<Entry>,
+    grammar: syntax::grammar::Grammar,
+    /// A grammar highlight running on a background thread.
+    job: Option<mpsc::Receiver<syntax::grammar::Moved>>,
 }
 
 struct Entry {
@@ -27,6 +36,8 @@ struct Entry {
     pixels_per_point: f32,
     atlas: Weak<FontAtlas>,
     theme: Theme,
+    /// The grammar colors used, or `None` for the lexer's.
+    runs: Option<Runs>,
     galley: Arc<Galley>,
 }
 
@@ -50,6 +61,7 @@ impl LayoutCache {
             size: font_size,
             line_height,
         } = font;
+        let runs = self.grammar_runs(ui.ctx(), text, language, theme);
         let pixels_per_point = ui.ctx().pixels_per_point();
         // egui can recreate the font atlas when fonts change or it fills up.
         // A galley's texture coordinates belong to that particular atlas.
@@ -61,12 +73,20 @@ impl LayoutCache {
                 && entry.pixels_per_point == pixels_per_point
                 && entry.atlas.ptr_eq(&Arc::downgrade(&atlas))
                 && entry.theme == *theme
+                && match (&entry.runs, &runs) {
+                    (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                    (None, None) => true,
+                    _ => false,
+                }
                 && entry.galley.job.text == text
             {
                 return Arc::clone(&entry.galley);
             }
         }
-        let mut job = syntax::highlight_language(text, font_size, wrap_width, language, theme);
+        let mut job = match &runs {
+            Some(runs) => syntax::layout_runs(text, runs, font_size, wrap_width),
+            None => syntax::highlight_language(text, font_size, wrap_width, language, theme),
+        };
         if line_height.is_some() {
             for section in &mut job.sections {
                 section.format.line_height = line_height;
@@ -80,15 +100,100 @@ impl LayoutCache {
             pixels_per_point,
             atlas: Arc::downgrade(&atlas),
             theme: theme.clone(),
+            runs,
             galley: Arc::clone(&galley),
         });
         galley
+    }
+    /// Grammar colors for `text`, or `None` to use the lexer: for languages
+    /// without a grammar, and while a large highlight runs in the background.
+    fn grammar_runs(
+        &mut self,
+        ctx: &egui::Context,
+        text: &str,
+        language: Language,
+        theme: &Theme,
+    ) -> Option<Runs> {
+        if !syntax::grammar::has_grammar(language) {
+            return None;
+        }
+        if let Some(job) = &self.job {
+            match job.try_recv() {
+                Ok(syntax::grammar::Moved(grammar)) => {
+                    self.grammar = grammar;
+                    self.job = None;
+                }
+                Err(mpsc::TryRecvError::Empty) => return None,
+                Err(mpsc::TryRecvError::Disconnected) => self.job = None,
+            }
+        }
+        if let Some(runs) = self.grammar.cached(text, language, theme) {
+            return Some(runs);
+        }
+        if self.grammar.cost(text, language, theme) <= BACKGROUND {
+            return self.grammar.highlight(text, language, theme);
+        }
+        // The thread updates the cache and hands it back; edits made meanwhile
+        // are then highlighted incrementally from its result.
+        let moved = syntax::grammar::Moved(std::mem::take(&mut self.grammar));
+        let (tx, rx) = mpsc::channel();
+        let (text, theme, ctx) = (text.to_owned(), theme.clone(), ctx.clone());
+        std::thread::spawn(move || {
+            let mut moved = moved;
+            moved.0.highlight(&text, language, &theme);
+            let _ = tx.send(moved);
+            ctx.request_repaint();
+        });
+        self.job = Some(rx);
+        None
+    }
+    /// Wait for a background highlight, for tests.
+    #[cfg(test)]
+    pub(super) fn finish_highlight(&mut self) {
+        if let Some(job) = self.job.take() {
+            if let Ok(syntax::grammar::Moved(grammar)) = job.recv() {
+                self.grammar = grammar;
+            }
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn large_pages_are_highlighted_in_the_background_then_incrementally() {
+        let ctx = egui::Context::default();
+        let theme = Theme::default();
+        let font = Font {
+            size: 14.0,
+            line_height: None,
+        };
+        let large = "fn main() { let x = 1; } // note\n".repeat(4000);
+        let mut cache = LayoutCache::default();
+        let uses_grammar = |cache: &mut LayoutCache, text: &str| {
+            let mut grammar = false;
+            let _ = ctx.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    cache.layout(ui, text, Language::Rust, font, 800.0, &theme);
+                    grammar = cache.entry.as_ref().unwrap().runs.is_some();
+                });
+            });
+            grammar
+        };
+        assert!(
+            !uses_grammar(&mut cache, &large),
+            "lexer while the grammar works"
+        );
+        assert!(cache.job.is_some());
+        cache.finish_highlight();
+        assert!(uses_grammar(&mut cache, &large));
+        // A small edit is highlighted right away.
+        let edited = large.replacen("let x", "let y", 1);
+        assert!(uses_grammar(&mut cache, &edited));
+        assert!(cache.job.is_none());
+    }
 
     #[test]
     fn unchanged_pages_reuse_layout_and_all_visual_inputs_invalidate_it() {
