@@ -100,3 +100,48 @@ fn formatting_settings_map_to_editorconfig_rules() {
     restored.set_defaults(&defaults);
     assert_eq!(restored.syntax_specific, settings.syntax_specific);
 }
+
+#[test]
+fn fonts_are_found_by_family_name_preferring_the_regular_style() {
+    let directory = tempfile::tempdir().unwrap();
+    let nested = directory.path().join("truetype/jetbrains");
+    std::fs::create_dir_all(&nested).unwrap();
+    for name in [
+        "JetBrainsMono-Bold.ttf",
+        "JetBrainsMono-Italic.ttf",
+        "JetBrainsMono-Regular.ttf",
+        "JetBrainsMonoNL-Regular.ttf",
+        "JetBrainsMono-Regular.txt",
+    ] {
+        std::fs::write(nested.join(name), "font").unwrap();
+    }
+    let dirs = [directory.path().to_owned()];
+    let found = hedit::fonts::find("JetBrains Mono", &dirs).unwrap();
+    assert_eq!(found.file_name().unwrap(), "JetBrainsMono-Regular.ttf");
+    assert!(hedit::fonts::find("No Such Font", &dirs)
+        .unwrap_err()
+        .contains("No installed font"));
+    // A file path is used as is.
+    let path = nested.join("JetBrainsMono-Bold.ttf");
+    assert_eq!(
+        hedit::fonts::find(path.to_str().unwrap(), &dirs).unwrap(),
+        path
+    );
+    assert!(Settings::parse(r#"{"caret_width": 9}"#)
+        .unwrap_err()
+        .contains("caret_width"));
+    assert!(Settings::parse(r#"{"line_padding": -1}"#)
+        .unwrap_err()
+        .contains("line_padding"));
+}
+
+#[test]
+#[ignore = "depends on fonts installed on this machine"]
+fn installed_font_lookup() {
+    for name in ["JetBrains Mono", "DejaVu Sans Mono", "Noto Sans Mono"] {
+        println!(
+            "{name}: {:?}",
+            hedit::fonts::find(name, &hedit::fonts::font_dirs())
+        );
+    }
+}

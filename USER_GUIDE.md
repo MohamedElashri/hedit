@@ -706,7 +706,11 @@ you fix it.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
+| `font_face` | `""` | An installed font family, such as `"JetBrains Mono"`, or a `.ttf`/`.otf` path; empty uses the built-in font |
 | `font_size` | `14` | Editor font size, 10–28 |
+| `line_padding` | `0` | Extra space between lines, 0–20 |
+| `caret_width`, `caret_blink` | `1.5`, `true` | Cursor width (1–4) and blinking |
+| `scroll_past_end` | `true` | Let the last line scroll up to the top of the editor |
 | `word_wrap` | `false` | Wrap long lines |
 | `wrap_width` | `0` | Wrap column; `0` wraps at the window edge |
 | `rulers` | `[]` | Up to 8 ruler columns, such as `[80, 120]` |

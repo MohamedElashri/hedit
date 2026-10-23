@@ -61,6 +61,8 @@ enum Action {
     SaveTo(u64, PathBuf),
     ThemeImported(Theme),
     DebugProgram(PathBuf),
+    /// A font loaded for the `font_face` setting.
+    Font(String, Vec<u8>),
     Notice(String),
     Nothing,
 }
@@ -126,6 +128,8 @@ pub struct HeditApp {
     settings_files: settings_store::SettingsFiles,
     /// The command whose shortcut is being recorded on the Key Bindings page.
     key_capture: Option<Command>,
+    /// The `font_face` in use, or being loaded.
+    font_applied: String,
     key_filter: String,
     panes: panes::Panes,
     rectangle_start: Option<(usize, usize)>,
@@ -251,6 +255,7 @@ impl HeditApp {
             settings,
             settings_files,
             key_capture: None,
+            font_applied: String::new(),
             key_filter: String::new(),
             rectangle_start: None,
             panes,
@@ -816,6 +821,11 @@ impl HeditApp {
                     }
                 }
                 Ok(Action::ThemeImported(theme)) => self.add_imported_theme(ctx, theme),
+                Ok(Action::Font(name, bytes)) => {
+                    if self.settings.font_face == name {
+                        settings_store::set_editor_font(ctx, Some(bytes));
+                    }
+                }
                 Ok(Action::DebugProgram(path)) => {
                     self.debug_program = path.to_string_lossy().into_owned();
                 }
@@ -1059,6 +1069,7 @@ impl HeditApp {
         }
     }
     fn editor(&mut self, ctx: &egui::Context) {
+        self.apply_editor_style(ctx);
         let theme = self.theme.clone();
         egui::CentralPanel::default()
             .frame(
@@ -1245,12 +1256,25 @@ impl HeditApp {
         } else {
             &mut self.secondary_layout
         };
+        let row_height = ui.fonts(|f| f.row_height(&FontId::monospace(font_size)));
+        let line_height =
+            (self.settings.line_padding > 0.0).then(|| row_height + self.settings.line_padding);
+        // Like Sublime, the last line can scroll up to the top: the editor is a
+        // window's height taller than its text, so clicks there place the cursor.
+        let rows = if self.settings.scroll_past_end && !buffer.follow {
+            let lines = memchr::memchr_iter(b'\n', buffer.page.text.as_bytes()).count() + 1;
+            let visible = (ui.available_height() / line_height.unwrap_or(row_height)) as usize;
+            lines + visible.saturating_sub(2)
+        } else {
+            30
+        };
         let mut layouter = move |ui: &egui::Ui, text: &str, wrap_width: f32| {
             layout_cache.layout(
                 ui,
                 text,
                 language,
                 font_size,
+                line_height,
                 if wrap {
                     wrap_width.min(wrap_limit)
                 } else {
@@ -1320,7 +1344,7 @@ impl HeditApp {
                             .code_editor()
                             .lock_focus(true)
                             .frame(false)
-                            .desired_rows(30)
+                            .desired_rows(rows)
                             .desired_width(if wrap {
                                 ui.available_width()
                             } else {
@@ -1496,7 +1520,10 @@ impl HeditApp {
                                 ui.painter().vline(
                                     left.left(),
                                     left.y_range(),
-                                    egui::Stroke::new(1.5, self.theme.accent.color()),
+                                    egui::Stroke::new(
+                                        self.settings.caret_width,
+                                        self.theme.accent.color(),
+                                    ),
                                 );
                             } else {
                                 for row in a.rcursor.row..=b.rcursor.row {
@@ -3210,6 +3237,8 @@ mod tests {
         let ctx = egui::Context::default();
         let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
         app.execute(&ctx, Command::Indent2);
+        // The editor keeps Tab for itself once it has held focus for a frame.
+        frame(&ctx, &mut app, vec![]);
         frame(&ctx, &mut app, vec![]);
         frame(&ctx, &mut app, vec![key(Key::Tab, Modifiers::NONE)]);
         assert_eq!(app.active().page.text, "  ");

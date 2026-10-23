@@ -369,3 +369,54 @@ impl HeditApp {
         Ok(())
     }
 }
+
+/// Put the editor font first in the monospace family, or restore egui's own.
+pub(super) fn set_editor_font(ctx: &egui::Context, bytes: Option<Vec<u8>>) {
+    let mut fonts = egui::FontDefinitions::default();
+    if let Some(bytes) = bytes {
+        fonts.font_data.insert(
+            "editor".into(),
+            std::sync::Arc::new(egui::FontData::from_owned(bytes)),
+        );
+        fonts
+            .families
+            .entry(egui::FontFamily::Monospace)
+            .or_default()
+            .insert(0, "editor".into());
+    }
+    ctx.set_fonts(fonts);
+}
+
+impl HeditApp {
+    /// Apply the cursor and font settings once they settle.
+    pub(super) fn apply_editor_style(&mut self, ctx: &egui::Context) {
+        let (width, blink) = (self.settings.caret_width, self.settings.caret_blink);
+        let cursor = ctx.style().visuals.text_cursor.clone();
+        if cursor.stroke.width != width || cursor.blink != blink {
+            ctx.all_styles_mut(|style| {
+                style.visuals.text_cursor.stroke.width = width;
+                style.visuals.text_cursor.blink = blink;
+            });
+        }
+        // Wait for typing in the font field to settle before searching.
+        if self.font_applied == self.settings.font_face || self.settings_files.changed_at.is_some()
+        {
+            return;
+        }
+        self.font_applied = self.settings.font_face.clone();
+        let name = self.font_applied.trim().to_owned();
+        if name.is_empty() {
+            set_editor_font(ctx, None);
+            return;
+        }
+        let tx = self.tx.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            let result = hedit::fonts::load(&name)
+                .map(|bytes| Action::Font(name.clone(), bytes))
+                .map_err(|e| format!("Font “{name}”: {e} Using the built-in font."));
+            let _ = tx.send(result);
+            ctx.request_repaint();
+        });
+    }
+}

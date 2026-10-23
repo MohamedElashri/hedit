@@ -24,6 +24,10 @@
   files and syntax changes apply the formatting settings.
 - The status bar's indentation, line endings, and encoding are clickable.
 - “Set syntax: …” entries in the command palette.
+- Editor font family (`font_face`, an installed family name or a font file), extra
+  line spacing (`line_padding`), cursor width and blinking (`caret_width`,
+  `caret_blink`), and scrolling the last line up to the top (`scroll_past_end`,
+  on by default).
 
 ### Changed
 

@@ -64,7 +64,15 @@ impl FormatSettings {
 #[serde(default)]
 pub struct Settings {
     // Editor
+    /// A font family name or font file path; empty uses the built-in font.
+    pub font_face: String,
     pub font_size: f32,
+    /// Extra space between lines, in points.
+    pub line_padding: f32,
+    pub caret_width: f32,
+    pub caret_blink: bool,
+    /// Scroll the last line up to the top of the editor.
+    pub scroll_past_end: bool,
     pub word_wrap: bool,
     /// Wrap at this column; 0 wraps at the window edge.
     pub wrap_width: u16,
@@ -115,7 +123,12 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            font_face: String::new(),
             font_size: 14.0,
+            line_padding: 0.0,
+            caret_width: 1.5,
+            caret_blink: true,
+            scroll_past_end: true,
             word_wrap: false,
             wrap_width: 0,
             rulers: vec![],
@@ -202,6 +215,12 @@ impl Settings {
     pub fn validate(&self) -> Result<(), String> {
         if !FONT_SIZES.contains(&self.font_size) {
             return Err("font_size must be between 10 and 28.".into());
+        }
+        if !(0.0..=20.0).contains(&self.line_padding) {
+            return Err("line_padding must be between 0 and 20.".into());
+        }
+        if !(1.0..=4.0).contains(&self.caret_width) {
+            return Err("caret_width must be between 1 and 4.".into());
         }
         if self.wrap_width > MAX_COLUMN {
             return Err(format!("wrap_width must be 0–{MAX_COLUMN}."));

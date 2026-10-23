@@ -249,6 +249,14 @@ impl HeditApp {
     fn editor_preferences(&mut self, ui: &mut egui::Ui) {
         let s = &mut self.settings;
         section(ui, "Text");
+        row(ui, "Font", |ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut s.font_face)
+                    .hint_text("Built-in (Hack)")
+                    .desired_width(200.0),
+            )
+            .on_hover_text("An installed font family, such as JetBrains Mono, or a .ttf/.otf path");
+        });
         row(ui, "Font size", |ui| {
             ui.add(
                 egui::Slider::new(&mut s.font_size, hedit::settings::FONT_SIZES)
@@ -261,6 +269,22 @@ impl HeditApp {
             Command::ZoomIn.shortcut(),
             Command::ZoomOut.shortcut()
         ));
+        row(ui, "Line spacing", |ui| {
+            ui.add(
+                egui::Slider::new(&mut s.line_padding, 0.0..=20.0)
+                    .step_by(1.0)
+                    .suffix(" px"),
+            );
+        });
+        row(ui, "Cursor width", |ui| {
+            ui.add(
+                egui::Slider::new(&mut s.caret_width, 1.0..=4.0)
+                    .step_by(0.5)
+                    .suffix(" px"),
+            );
+        });
+        ui.checkbox(&mut s.caret_blink, "Blink the cursor");
+        ui.checkbox(&mut s.scroll_past_end, "Scroll past the last line");
         ui.checkbox(&mut s.line_numbers, "Show line numbers");
         ui.checkbox(&mut s.highlight_line, "Highlight the current line");
         ui.checkbox(&mut s.draw_white_space, "Show whitespace");
@@ -334,6 +358,11 @@ impl HeditApp {
             let d = Settings::default();
             let s = &mut self.settings;
             s.font_size = d.font_size;
+            s.font_face = d.font_face;
+            s.line_padding = d.line_padding;
+            s.caret_width = d.caret_width;
+            s.caret_blink = d.caret_blink;
+            s.scroll_past_end = d.scroll_past_end;
             s.line_numbers = d.line_numbers;
             s.highlight_line = d.highlight_line;
             s.draw_white_space = d.draw_white_space;

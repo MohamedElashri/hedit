@@ -98,3 +98,36 @@ fn set_syntax_from_the_palette_applies_its_formatting() {
     assert_eq!(app.active().language(), syntax::Language::Makefile);
     assert_eq!(app.active().view.indent.as_deref(), Some("tabs"));
 }
+
+#[test]
+fn display_settings_change_cursor_and_line_spacing() {
+    let text = (1..=40).map(|n| format!("line {n}\n")).collect::<String>();
+    let (_directory, ctx, mut app) = app_with(&text);
+    app.settings.caret_width = 3.0;
+    app.settings.caret_blink = false;
+    frame(&ctx, &mut app, vec![]);
+    let cursor = ctx.style().visuals.text_cursor.clone();
+    assert_eq!(cursor.stroke.width, 3.0);
+    assert!(!cursor.blink);
+    // Line spacing makes each laid-out row taller.
+    frame(&ctx, &mut app, vec![]);
+    let tight = app.editor_layout.row_height().unwrap();
+    app.settings.line_padding = 6.0;
+    frame(&ctx, &mut app, vec![]);
+    let loose = app.editor_layout.row_height().unwrap();
+    assert!(loose >= tight + 5.0, "{tight} → {loose}");
+}
+
+#[test]
+fn tab_keeps_focus_in_a_long_file() {
+    let text = (1..=200).map(|n| format!("line {n}\n")).collect::<String>();
+    let (_directory, ctx, mut app) = app_with(&text);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![key(Key::Tab, Modifiers::NONE)]);
+    frame(&ctx, &mut app, vec![key(Key::Tab, Modifiers::NONE)]);
+    assert!(
+        app.active().page.text.starts_with("        line 1"),
+        "{:?}",
+        &app.active().page.text[..20]
+    );
+}

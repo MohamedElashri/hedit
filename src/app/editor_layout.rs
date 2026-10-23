@@ -16,6 +16,7 @@ pub(super) struct LayoutCache {
 struct Entry {
     language: Language,
     font_size: f32,
+    line_height: Option<f32>,
     wrap_width: f32,
     pixels_per_point: f32,
     atlas: Weak<FontAtlas>,
@@ -24,12 +25,19 @@ struct Entry {
 }
 
 impl LayoutCache {
+    /// The height of the first laid-out row.
+    #[cfg(test)]
+    pub(super) fn row_height(&self) -> Option<f32> {
+        let entry = self.entry.as_ref()?;
+        entry.galley.rows.first().map(|row| row.rect.height())
+    }
     pub(super) fn layout(
         &mut self,
         ui: &egui::Ui,
         text: &str,
         language: Language,
         font_size: f32,
+        line_height: Option<f32>,
         wrap_width: f32,
         theme: &Theme,
     ) -> Arc<Galley> {
@@ -40,6 +48,7 @@ impl LayoutCache {
         if let Some(entry) = &self.entry {
             if entry.language == language
                 && entry.font_size == font_size
+                && entry.line_height == line_height
                 && entry.wrap_width == wrap_width
                 && entry.pixels_per_point == pixels_per_point
                 && entry.atlas.ptr_eq(&Arc::downgrade(&atlas))
@@ -49,14 +58,17 @@ impl LayoutCache {
                 return Arc::clone(&entry.galley);
             }
         }
-        let galley = ui.fonts(|fonts| {
-            fonts.layout_job(syntax::highlight_language(
-                text, font_size, wrap_width, language, theme,
-            ))
-        });
+        let mut job = syntax::highlight_language(text, font_size, wrap_width, language, theme);
+        if line_height.is_some() {
+            for section in &mut job.sections {
+                section.format.line_height = line_height;
+            }
+        }
+        let galley = ui.fonts(|fonts| fonts.layout_job(job));
         self.entry = Some(Entry {
             language,
             font_size,
+            line_height,
             wrap_width,
             pixels_per_point,
             atlas: Arc::downgrade(&atlas),
@@ -79,24 +91,29 @@ mod tests {
             egui::CentralPanel::default().show(ctx, |ui| {
                 let theme = Theme::default();
                 let source = "let n = 42; // λ\n".repeat(4000);
-                let first = cache.layout(ui, &source, Language::Rust, 14.0, 800.0, &theme);
+                let first = cache.layout(ui, &source, Language::Rust, 14.0, None, 800.0, &theme);
                 for _ in 0..20 {
-                    let reused = cache.layout(ui, &source, Language::Rust, 14.0, 800.0, &theme);
+                    let reused =
+                        cache.layout(ui, &source, Language::Rust, 14.0, None, 800.0, &theme);
                     assert!(Arc::ptr_eq(&first, &reused));
                 }
                 let edited = source.replacen("42", "43", 1);
-                let changed = cache.layout(ui, &edited, Language::Rust, 14.0, 800.0, &theme);
+                let changed = cache.layout(ui, &edited, Language::Rust, 14.0, None, 800.0, &theme);
                 assert!(!Arc::ptr_eq(&first, &changed));
                 assert_eq!(changed.job.text, edited);
-                let plain = cache.layout(ui, &edited, Language::PlainText, 14.0, 800.0, &theme);
+                let plain =
+                    cache.layout(ui, &edited, Language::PlainText, 14.0, None, 800.0, &theme);
                 assert!(!Arc::ptr_eq(&changed, &plain));
                 assert_eq!(plain.job.sections.len(), 1);
-                let zoomed = cache.layout(ui, &edited, Language::PlainText, 16.0, 800.0, &theme);
+                let zoomed =
+                    cache.layout(ui, &edited, Language::PlainText, 16.0, None, 800.0, &theme);
                 assert!(!Arc::ptr_eq(&plain, &zoomed));
-                let wrapped = cache.layout(ui, &edited, Language::PlainText, 16.0, 120.0, &theme);
+                let wrapped =
+                    cache.layout(ui, &edited, Language::PlainText, 16.0, None, 120.0, &theme);
                 assert!(!Arc::ptr_eq(&zoomed, &wrapped));
                 let paper = Theme::paper();
-                let recolored = cache.layout(ui, &edited, Language::PlainText, 16.0, 120.0, &paper);
+                let recolored =
+                    cache.layout(ui, &edited, Language::PlainText, 16.0, None, 120.0, &paper);
                 assert!(!Arc::ptr_eq(&wrapped, &recolored));
                 assert_eq!(recolored.job.sections[0].format.color, paper.text.color());
             });
@@ -116,6 +133,7 @@ mod tests {
                         "let n = 1;",
                         Language::Rust,
                         14.0,
+                        None,
                         800.0,
                         &Theme::default(),
                     );
@@ -145,6 +163,7 @@ mod tests {
                         "let n = 1;",
                         Language::Rust,
                         14.0,
+                        None,
                         800.0,
                         &Theme::default(),
                     );
