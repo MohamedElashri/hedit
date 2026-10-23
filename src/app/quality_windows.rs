@@ -16,6 +16,11 @@ const NAV_FORWARD: (Modifiers, Key) = (
     },
     Key::Minus,
 );
+// Cmd+Space is Spotlight on macOS.
+#[cfg(target_os = "macos")]
+const COMPLETE: (Modifiers, Key) = (Modifiers::CTRL, Key::Space);
+#[cfg(not(target_os = "macos"))]
+const COMPLETE: (Modifiers, Key) = (Modifiers::COMMAND, Key::Space);
 #[cfg(not(target_os = "macos"))]
 const NAV_BACK: (Modifiers, Key) = (Modifiers::ALT, Key::ArrowLeft);
 #[cfg(not(target_os = "macos"))]
@@ -223,7 +228,7 @@ impl HeditApp {
             (Modifiers::COMMAND, Key::R, Command::Symbols),
             (NAV_BACK.0, NAV_BACK.1, Command::NavBack),
             (NAV_FORWARD.0, NAV_FORWARD.1, Command::NavForward),
-            (Modifiers::COMMAND, Key::Space, Command::Complete),
+            (COMPLETE.0, COMPLETE.1, Command::Complete),
         ] {
             if !self.overridden(command) && ctx.input_mut(|i| i.consume_key(modifiers, key)) {
                 self.execute(ctx, command);

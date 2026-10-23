@@ -131,3 +131,37 @@ fn tab_keeps_focus_in_a_long_file() {
         &app.active().page.text[..20]
     );
 }
+
+#[test]
+fn quit_and_zoom_shortcuts_follow_the_platform() {
+    let (_directory, ctx, mut app) = app_with("text");
+    let zoom = ctx.zoom_factor();
+    frame(&ctx, &mut app, vec![key(Key::Plus, Modifiers::COMMAND)]);
+    frame(&ctx, &mut app, vec![key(Key::Equals, Modifiers::COMMAND)]);
+    assert_eq!(app.settings.font_size, 16.0);
+    assert_eq!(ctx.zoom_factor(), zoom, "the interface does not zoom");
+    frame(&ctx, &mut app, vec![key(Key::Num0, Modifiers::COMMAND)]);
+    assert_eq!(app.settings.font_size, 14.0);
+    assert_eq!(ctx.zoom_factor(), zoom);
+    assert_eq!(
+        Command::Quit.shortcut(),
+        if cfg!(target_os = "macos") {
+            "Cmd+Q"
+        } else {
+            "Ctrl+Q"
+        }
+    );
+    assert_eq!(
+        Command::Replace.shortcut(),
+        if cfg!(target_os = "macos") {
+            "Cmd+Option+F"
+        } else {
+            "Ctrl+H"
+        }
+    );
+    frame(&ctx, &mut app, vec![key(Key::Q, Modifiers::COMMAND)]);
+    assert!(
+        app.closing,
+        "Ctrl/Cmd+Q quits through the recovery checkpoint"
+    );
+}

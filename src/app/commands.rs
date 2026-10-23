@@ -424,6 +424,8 @@ impl Command {
             Self::NavForward if cfg!(target_os = "macos") => "Control+Shift+-",
             Self::NavBack => "Alt+Left",
             Self::NavForward => "Alt+Right",
+            // Cmd+Space is Spotlight on macOS; Sublime uses Control+Space there.
+            Self::Complete if cfg!(target_os = "macos") => "Control+Space",
             Self::Complete => "Ctrl+Space",
             Self::NextOccurrence => "Ctrl+D",
             Self::AllOccurrences => "Ctrl+Shift+L",
@@ -458,10 +460,17 @@ impl Command {
             Self::Indent => "Ctrl+]",
             Self::Unindent => "Ctrl+[",
             Self::ToggleComment => "Ctrl+/",
+            // macOS reserves F11; use its Control+Cmd+F convention.
+            Self::Fullscreen if cfg!(target_os = "macos") => "Control+Ctrl+F",
+            Self::DistractionFree if cfg!(target_os = "macos") => "Control+Shift+Ctrl+F",
             Self::Fullscreen => "F11",
             Self::DistractionFree => "Shift+F11",
+            Self::Quit => "Ctrl+Q",
+            Self::ResetZoom => "Ctrl+0",
 
             Self::Find => "Ctrl+F",
+            // Cmd+H hides the app on macOS; Sublime uses Cmd+Option+F there.
+            Self::Replace if cfg!(target_os = "macos") => "Ctrl+Alt+F",
             Self::Replace => "Ctrl+H",
             Self::Goto => "Ctrl+G",
             Self::Switcher => "Ctrl+P",

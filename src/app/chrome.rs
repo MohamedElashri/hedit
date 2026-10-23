@@ -41,7 +41,7 @@ impl HeditApp {
             .inner_margin(egui::Margin::symmetric(8, 3))).show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 for (title, groups) in [
-                    ("File", vec![vec![Command::New, Command::Open, Command::OpenFolder], vec![Command::RefreshFolder, Command::CloseFolder], vec![Command::Save, Command::SaveAs, Command::Rename, Command::Encoding], vec![Command::Close, Command::Reopen, Command::Shelf], vec![Command::Quit]]),
+                    ("File", vec![vec![Command::New, Command::Open, Command::OpenFolder], vec![Command::RefreshFolder, Command::CloseFolder], vec![Command::Save, Command::SaveAs, Command::Rename, Command::Encoding], vec![Command::Close, Command::Reopen, Command::Shelf], if cfg!(target_os = "macos") { vec![] } else { vec![Command::Quit] }]),
                     ("Edit", vec![]),
                     ("Find", vec![vec![Command::Find, Command::Replace, Command::FindPrevious, Command::ReplaceAll, Command::FindFiles]]),
                     ("View", vec![]),
@@ -49,7 +49,8 @@ impl HeditApp {
                     ("Project", vec![vec![Command::OpenProject,Command::SaveProject,Command::SaveProjectAs,Command::RecentProjects],vec![Command::ProjectSettings]]),
                     ("Tools", vec![vec![Command::Palette, Command::Gpu, Command::GitDiff, Command::CompareDisk, Command::Complete, Command::Snippets], vec![Command::Checkpoint]]),
                     ("Preferences", vec![vec![Command::Settings, Command::Appearance, Command::ToolSettings, Command::KeyBindings]]),
-                    ("Help", vec![vec![Command::Updates, Command::About]]),
+                    // macOS's own app menu already has About and Quit.
+                    ("Help", vec![if cfg!(target_os = "macos") { vec![Command::Updates] } else { vec![Command::Updates, Command::About] }]),
                 ] {
                     // egui does not mark the open menu's title, so keep it filled
                     // like a hovered title while its menu is showing.
@@ -63,7 +64,7 @@ impl HeditApp {
                         ui.set_min_width(245.0);
                         if title == "Edit" { self.edit_menu(ui, &mut action); return; }
                         if title == "View" { self.view_menu(ui, &mut action); return; }
-                        for (index, group) in groups.iter().enumerate() {
+                        for (index, group) in groups.iter().filter(|g| !g.is_empty()).enumerate() {
                             if index > 0 { ui.separator(); }
                             for &command in group {
                                 if menu_item(ui, self, command) { action = Some(command); ui.close_menu(); }

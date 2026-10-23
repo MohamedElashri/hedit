@@ -209,6 +209,8 @@ impl HeditApp {
             None => Theme::default(),
         };
         theme.apply(ctx);
+        // Ctrl/Cmd +, -, and 0 change the editor font, not the whole interface.
+        ctx.options_mut(|o| o.zoom_with_keyboard = false);
         let appearance = themes::Appearance::load(storage, &theme);
         let (tx, rx) = mpsc::channel();
         let (checkpoint_tx, checkpoint_rx) = mpsc::channel();
@@ -953,6 +955,26 @@ impl HeditApp {
         let cmd = Modifiers::COMMAND;
         let shift = Modifiers { shift: true, ..cmd };
         let take = |m, k| ctx.input_mut(|i| i.consume_key(m, k));
+        // macOS's Control+Cmd+F shortcuts first, since a Cmd+F or Cmd+Shift+F
+        // pattern also matches them.
+        if cfg!(target_os = "macos") {
+            let control = Modifiers { ctrl: true, ..cmd };
+            for (modifiers, command) in [
+                (
+                    Modifiers {
+                        shift: true,
+                        ..control
+                    },
+                    Command::DistractionFree,
+                ),
+                (control, Command::Fullscreen),
+                (Modifiers { alt: true, ..cmd }, Command::Replace),
+            ] {
+                if !self.overridden(command) && take(modifiers, Key::F) {
+                    self.execute(ctx, command);
+                }
+            }
+        }
         self.quality_shortcuts(ctx);
         self.filter_overridden_clipboard(ctx);
         if self.overridden(Command::SelectAll) {
@@ -990,7 +1012,8 @@ impl HeditApp {
             (shift, Key::R, Command::Rename),
             (cmd, Key::Comma, Command::Settings),
             (cmd, Key::F, Command::Find),
-            (cmd, Key::H, Command::Replace),
+            (cmd, Key::Q, Command::Quit),
+            (cmd, Key::Num0, Command::ResetZoom),
             (cmd, Key::G, Command::Goto),
             (shift, Key::W, Command::Wrap),
         ] {
@@ -998,10 +1021,15 @@ impl HeditApp {
                 self.execute(ctx, command);
             }
         }
-        if !self.overridden(Command::DistractionFree) && take(Modifiers::SHIFT, Key::F11) {
-            self.execute(ctx, Command::DistractionFree);
-        } else if !self.overridden(Command::Fullscreen) && take(Modifiers::NONE, Key::F11) {
-            self.execute(ctx, Command::Fullscreen);
+        if !cfg!(target_os = "macos") {
+            if !self.overridden(Command::Replace) && take(cmd, Key::H) {
+                self.execute(ctx, Command::Replace);
+            }
+            if !self.overridden(Command::DistractionFree) && take(Modifiers::SHIFT, Key::F11) {
+                self.execute(ctx, Command::DistractionFree);
+            } else if !self.overridden(Command::Fullscreen) && take(Modifiers::NONE, Key::F11) {
+                self.execute(ctx, Command::Fullscreen);
+            }
         }
         // Let single-line search and debugger inputs keep their own undo history.
         let mut editor_id = egui::Id::new((

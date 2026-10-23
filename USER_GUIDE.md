@@ -610,7 +610,7 @@ loaded file, and when hedit's window regains focus. Hover a marker for its inlin
 opens a comparison of editor text with HEAD, including staged and unsaved changes.
 These operations do not stage, commit, or otherwise modify the repository.
 
-**Tools → Complete word…** (**Ctrl+Space**) offers words from open files.
+**Tools → Complete word…** (**Ctrl+Space**, **Control+Space** on macOS) offers words from open files.
 **Tools → Insert snippet…** inserts a configured template into the current selection.
 Alternatively, type its trigger and press Tab. Templates support `${SELECTION}`
 and `$0` for the final cursor; a `language` value restricts them to a syntax ID.
@@ -960,6 +960,14 @@ the graphical window cannot start.
 
 ## Keyboard shortcuts
 
+On macOS, use Cmd for Ctrl and Option for Alt, with these exceptions that follow
+macOS and Sublime Text conventions: Replace is **Cmd+Option+F** (Cmd+H hides the
+app), full screen is **Control+Cmd+F**, distraction-free mode is
+**Control+Shift+Cmd+F**, Complete word is **Control+Space** (Cmd+Space opens
+Spotlight), and navigate back/forward is **Control+-** / **Control+Shift+-**. About
+and Quit are in macOS's own hedit menu. Change any shortcut under
+**Settings → Key Bindings**.
+
 | Shortcut | Action |
 | --- | --- |
 | Ctrl+N / Ctrl+O | New file / open file |
@@ -980,8 +988,9 @@ the graphical window cannot start.
 | Ctrl+Shift+[ / Ctrl+Shift+] | Fold / unfold |
 | F11 / Shift+F11 | Full screen / distraction-free mode |
 | Ctrl+Shift+W | Toggle wrap |
-| Ctrl++ or Ctrl+= / Ctrl+- | Increase / decrease editor font |
-| Ctrl+, | Preferences |
+| Ctrl++ or Ctrl+= / Ctrl+- / Ctrl+0 | Increase / decrease / reset editor font |
+| Ctrl+, | Settings |
+| Ctrl+Q | Quit (after a final recovery checkpoint) |
 | Ctrl+F2 | Toggle a bookmark at the cursor |
 | F2 / Shift+F2 | Next / previous bookmark |
 | Esc | Close the topmost window or the search panel, then the error banner, then extra cursors |

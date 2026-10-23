@@ -63,6 +63,13 @@
   named in `settings.json` (`color_theme`, `follow_system_appearance`,
   `dark_color_theme`, `light_color_theme`).
 
+- Ctrl+Q quits on Linux, and Ctrl+0 / Cmd+0 resets the editor font size; these
+  keys no longer zoom the whole interface.
+- On macOS, Replace is Cmd+Option+F (Cmd+H hides the app), full screen is
+  Control+Cmd+F, distraction-free mode is Control+Shift+Cmd+F, and Complete word
+  is Control+Space (Cmd+Space opens Spotlight). About and Quit appear only in
+  macOS's own app menu instead of twice.
+
 ### Fixed
 
 - Menu-bar titles, menu entries, and buttons now show a visible highlight under
