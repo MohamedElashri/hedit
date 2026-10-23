@@ -250,6 +250,167 @@ pub fn detect_indentation(text: &str) -> (bool, u8) {
         .unwrap();
     (tabs > spaces, width as u8)
 }
+/// Indentation found in the text: tabs or spaces, and the space width. `None`
+/// when no line is indented, so settings decide instead.
+pub fn found_indentation(text: &str) -> Option<(bool, Option<u8>)> {
+    let indented = text
+        .lines()
+        .take(10000)
+        .any(|line| line.starts_with([' ', '\t']) && !line.trim().is_empty());
+    indented.then(|| {
+        let (tabs, width) = detect_indentation(text);
+        (tabs, (!tabs).then_some(width))
+    })
+}
+
+const OPENERS: [char; 3] = ['(', '[', '{'];
+const CLOSERS: [char; 3] = [')', ']', '}'];
+
+fn closer(open: char) -> Option<char> {
+    OPENERS
+        .iter()
+        .position(|&c| c == open)
+        .map(|i| CLOSERS[i])
+        .or(matches!(open, '"' | '\'' | '`').then_some(open))
+}
+
+/// Typing `typed` with automatic pairing, as in Sublime Text: an opening
+/// bracket or quote inserts its closer, wraps a selection, and typing a closer
+/// that is already next steps over it. `None` when pairing does not apply to
+/// every cursor, so the character is inserted normally.
+pub fn pair(
+    text: &str,
+    selections: &[Selection],
+    typed: char,
+    single_quotes: bool,
+) -> Option<Batch> {
+    if typed == '\'' && !single_quotes {
+        return None;
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let ranges = normalize(selections, chars.len());
+    let quote = matches!(typed, '"' | '\'' | '`');
+    let opening = OPENERS.contains(&typed) || quote;
+    let closing = CLOSERS.contains(&typed) || quote;
+    enum Action {
+        Wrap(char),
+        Pair(char),
+        Skip,
+    }
+    let mut actions = Vec::with_capacity(ranges.len());
+    for range in &ranges {
+        let next = chars.get(range.end()).copied();
+        let previous = range.start().checked_sub(1).map(|i| chars[i]);
+        let action = if range.start() != range.end() {
+            Action::Wrap(closer(typed).filter(|_| opening)?)
+        } else if closing && next == Some(typed) {
+            Action::Skip
+        } else if opening
+            && next
+                .is_none_or(|c| c.is_whitespace() || CLOSERS.contains(&c) || matches!(c, ';' | ','))
+            && !(quote && previous.is_some_and(|c| c.is_alphanumeric() || c == typed))
+        {
+            Action::Pair(closer(typed)?)
+        } else {
+            return None;
+        };
+        actions.push(action);
+    }
+    let mut output = String::with_capacity(text.len() + 2 * ranges.len());
+    let mut cursors = Vec::with_capacity(ranges.len());
+    let mut previous = 0;
+    let mut length = 0;
+    for (range, action) in ranges.iter().zip(actions) {
+        let kept: String = chars[previous..range.start()].iter().collect();
+        length += previous.abs_diff(range.start());
+        output.push_str(&kept);
+        let selected: String = chars[range.start()..range.end()].iter().collect();
+        match action {
+            Action::Wrap(close) => {
+                output.push(typed);
+                output.push_str(&selected);
+                output.push(close);
+                cursors.push(Selection {
+                    anchor: length + 1,
+                    head: length + 1 + selected.chars().count(),
+                });
+                length += selected.chars().count() + 2;
+                previous = range.end();
+            }
+            Action::Pair(close) => {
+                output.push(typed);
+                output.push(close);
+                cursors.push(Selection::caret(length + 1));
+                length += 2;
+                previous = range.end();
+            }
+            Action::Skip => {
+                output.push(typed);
+                cursors.push(Selection::caret(length + 1));
+                length += 1;
+                previous = range.end() + 1;
+            }
+        }
+    }
+    output.extend(&chars[previous..]);
+    Some(Batch {
+        text: output,
+        selections: cursors,
+    })
+}
+
+/// Whether the cursor sits inside an empty pair such as `(|)`, which
+/// Backspace removes together.
+pub fn inside_empty_pair(text: &str, cursor: usize) -> bool {
+    let mut around = text.chars().skip(cursor.saturating_sub(1));
+    cursor > 0
+        && around
+            .next()
+            .and_then(closer)
+            .is_some_and(|close| around.next() == Some(close))
+}
+
+/// The bracket next to the cursor and its partner, as character indices.
+/// Scans at most `limit` characters and ignores brackets of other kinds.
+pub fn matching_bracket(text: &str, cursor: usize, limit: usize) -> Option<(usize, usize)> {
+    let at = byte(text, cursor);
+    let candidates = [
+        text[..at]
+            .chars()
+            .next_back()
+            .map(|c| (c, cursor - 1, at - c.len_utf8())),
+        text[at..].chars().next().map(|c| (c, cursor, at)),
+    ];
+    for (c, index, offset) in candidates.into_iter().flatten() {
+        if let Some(i) = OPENERS.iter().position(|&o| o == c) {
+            let mut depth = 0usize;
+            for (n, current) in text[offset..].chars().take(limit).enumerate() {
+                if current == c {
+                    depth += 1;
+                } else if current == CLOSERS[i] {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some((index, index + n));
+                    }
+                }
+            }
+        } else if let Some(i) = CLOSERS.iter().position(|&o| o == c) {
+            let mut depth = 0usize;
+            let end = offset + c.len_utf8();
+            for (n, current) in text[..end].chars().rev().take(limit).enumerate() {
+                if current == c {
+                    depth += 1;
+                } else if current == OPENERS[i] {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some((index, index - n));
+                    }
+                }
+            }
+        }
+    }
+    None
+}
 pub fn newline(
     text: &str,
     selection: Selection,

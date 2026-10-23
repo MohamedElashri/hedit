@@ -362,9 +362,9 @@ impl Command {
             Self::ToCrlf => "Convert to CRLF (Windows)",
             Self::IndentSpaces => "Indent using spaces",
             Self::IndentTabs => "Indent using tabs",
-            Self::Indent2 => "2 spaces",
-            Self::Indent4 => "4 spaces",
-            Self::Indent8 => "8 spaces",
+            Self::Indent2 => "Tab width: 2",
+            Self::Indent4 => "Tab width: 4",
+            Self::Indent8 => "Tab width: 8",
             Self::Tabs => "Show tabs",
             Self::StatusBar => "Show status bar",
             Self::CurrentLine => "Highlight current line",
@@ -698,6 +698,9 @@ impl HeditApp {
             }
             Command::New => {
                 let r = self.workspace.new_buffer();
+                if r.is_ok() {
+                    self.apply_format_preferences();
+                }
                 self.report(r);
             }
             Command::Open => self.open(ctx, None),
@@ -920,6 +923,7 @@ impl HeditApp {
             Buffer(usize),
             File(String),
             Command(Command),
+            Syntax(syntax::Language),
         }
         let commands = self.commands_only || self.palette_query.starts_with('>');
         let down = ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowDown));
@@ -974,6 +978,15 @@ impl HeditApp {
                             command.shortcut(),
                             Item::Command(command),
                         ));
+                    }
+                }
+                // Like Sublime's “Set Syntax: …” commands.
+                if !filter.is_empty() {
+                    for language in syntax::Language::ALL {
+                        let label = format!("Set syntax: {}", language.label());
+                        if label.to_lowercase().contains(&filter) {
+                            items.push((label, String::new(), Item::Syntax(language)));
+                        }
                     }
                 }
             } else {
@@ -1079,6 +1092,7 @@ impl HeditApp {
                 }
                 Item::File(path) => self.open(ctx, Some(path.into())),
                 Item::Command(command) => self.execute(ctx, command),
+                Item::Syntax(language) => self.set_syntax(Some(language)),
             }
         }
     }

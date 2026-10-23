@@ -17,6 +17,13 @@
 - Syntax colors for functions, types, constants, operators, properties and keys,
   and preprocessor directives, attributes, and decorators.
 - Partial theme files can start from a built-in theme with `base`.
+- Brackets and quotes close automatically, wrap a selection, and are stepped over
+  when typed again; Backspace removes an empty pair (`auto_match_enabled`).
+- The bracket matching the one beside the cursor is outlined (`match_brackets`).
+- Files open with the indentation they already use (`detect_indentation`); new
+  files and syntax changes apply the formatting settings.
+- The status bar's indentation, line endings, and encoding are clickable.
+- “Set syntax: …” entries in the command palette.
 
 ### Changed
 
@@ -25,6 +32,7 @@
 - Editing a built-in theme names the result “*name* (modified)” instead of
   “My theme”.
 - Theme files are now version 2. Version 1 files still load and look the same.
+- The tab width menu items read “Tab width: 2/4/8” instead of “2/4/8 spaces”.
 - Settings live in one readable `settings.json` file, like Sublime Text, in the
   configuration folder (`~/.config/hedit/` on Linux, `~/Library/Application
   Support/hedit.hedit/` on macOS, or `HEDIT_CONFIG_DIR`). Comments and trailing

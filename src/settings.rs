@@ -78,6 +78,12 @@ pub struct Settings {
     pub smart_indent: bool,
     /// Backspace in leading whitespace removes one indentation level.
     pub smart_backspace: bool,
+    /// Insert closing brackets and quotes, wrap selections, and step over closers.
+    pub auto_match_enabled: bool,
+    /// Highlight the bracket matching the one beside the cursor.
+    pub match_brackets: bool,
+    /// Use the indentation a file already has instead of the defaults.
+    pub detect_indentation: bool,
     // Window
     pub show_tab_bar: bool,
     pub show_status_bar: bool,
@@ -121,6 +127,9 @@ impl Default for Settings {
             auto_indent: true,
             smart_indent: true,
             smart_backspace: true,
+            auto_match_enabled: true,
+            match_brackets: true,
+            detect_indentation: true,
             show_tab_bar: true,
             show_status_bar: true,
             show_sidebar: true,

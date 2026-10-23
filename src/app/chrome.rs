@@ -296,6 +296,7 @@ impl HeditApp {
         if !self.settings.show_status_bar || self.distraction_free {
             return;
         }
+        let mut status_action = None;
         let theme = self.theme.clone();
         egui::TopBottomPanel::bottom("status")
             .frame(
@@ -379,19 +380,86 @@ impl HeditApp {
                         self.language_menu(ui);
                         let info = &self.active().page.info;
                         ui.label(
-                            RichText::new(format!(
-                                "{}{} · {} · {}",
-                                info.encoding,
-                                if info.bom { " BOM" } else { "" },
-                                info.eol,
-                                format_bytes(info.size)
-                            ))
-                            .size(11.0)
-                            .color(theme.muted.color()),
+                            RichText::new(format_bytes(info.size))
+                                .size(11.0)
+                                .color(theme.muted.color()),
                         );
+                        self.status_menus(ui, &mut status_action);
                     });
                 });
             });
+        if let Some(command) = status_action {
+            self.execute(ctx, command);
+        }
+    }
+    /// Indentation, line ending, and encoding, each clickable, like Sublime.
+    fn status_menus(&self, ui: &mut egui::Ui, action: &mut Option<Command>) {
+        let muted = self.theme.muted.color();
+        let small = |text: String| {
+            egui::Button::new(RichText::new(text).size(11.0).color(muted)).frame(false)
+        };
+        let info = &self.active().page.info;
+        if ui
+            .add(small(format!(
+                "{}{}",
+                info.encoding,
+                if info.bom { " BOM" } else { "" }
+            )))
+            .on_hover_text("Reopen or save with another encoding")
+            .clicked()
+        {
+            *action = Some(Command::Encoding);
+        }
+        egui::menu::menu_custom_button(ui, small(info.eol.to_owned()), |ui| {
+            for command in [Command::ToLf, Command::ToCrlf] {
+                if menu_item(ui, self, command) {
+                    *action = Some(command);
+                    ui.close_menu();
+                }
+            }
+        })
+        .response
+        .on_hover_text("Line endings");
+        let view = &self.active().view;
+        let width = view.tab_size.unwrap_or(4);
+        let indent = if view.indent.as_deref() == Some("tabs") {
+            format!("Tab width: {width}")
+        } else {
+            format!("Spaces: {width}")
+        };
+        egui::menu::menu_custom_button(ui, small(indent), |ui| {
+            ui.set_min_width(220.0);
+            for command in [Command::IndentSpaces, Command::IndentTabs] {
+                if menu_item(ui, self, command) {
+                    *action = Some(command);
+                    ui.close_menu();
+                }
+            }
+            ui.separator();
+            for command in [Command::Indent2, Command::Indent4, Command::Indent8] {
+                if menu_item(ui, self, command) {
+                    *action = Some(command);
+                    ui.close_menu();
+                }
+            }
+            ui.separator();
+            for command in [Command::DetectIndent, Command::ToSpaces, Command::ToTabs] {
+                if menu_item(ui, self, command) {
+                    *action = Some(command);
+                    ui.close_menu();
+                }
+            }
+        })
+        .response
+        .on_hover_text("Indentation");
+    }
+    /// Choose the active file's syntax (`None` detects it from the name) and
+    /// apply that syntax's formatting rules.
+    pub(super) fn set_syntax(&mut self, language: Option<syntax::Language>) {
+        if self.workspace.open[self.workspace.active].set_language(language) {
+            self.changed();
+            self.apply_format_preferences();
+        }
     }
     fn language_menu(&mut self, ui: &mut egui::Ui) {
         let buffer = self.active();
@@ -520,9 +588,7 @@ impl HeditApp {
         );
         if let Some(language) = choice {
             ui.memory_mut(|memory| memory.close_popup());
-            if self.workspace.open[self.workspace.active].set_language(language) {
-                self.changed();
-            }
+            self.set_syntax(language);
             self.focus_editor = true;
         }
         if !ui.memory(|memory| memory.is_popup_open(popup_id)) {

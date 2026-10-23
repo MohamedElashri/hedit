@@ -324,6 +324,11 @@ impl HeditApp {
             &mut s.smart_backspace,
             "Backspace removes one indentation level",
         );
+        ui.checkbox(
+            &mut s.auto_match_enabled,
+            "Close brackets and quotes automatically",
+        );
+        ui.checkbox(&mut s.match_brackets, "Highlight matching brackets");
         ui.add_space(14.0);
         if ui.button("Restore defaults").clicked() {
             let d = Settings::default();
@@ -340,6 +345,8 @@ impl HeditApp {
             s.auto_indent = d.auto_indent;
             s.smart_indent = d.smart_indent;
             s.smart_backspace = d.smart_backspace;
+            s.auto_match_enabled = d.auto_match_enabled;
+            s.match_brackets = d.match_brackets;
         }
     }
     fn tool_preferences(&mut self, ui: &mut egui::Ui) {

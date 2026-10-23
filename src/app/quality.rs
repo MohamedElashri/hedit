@@ -401,6 +401,14 @@ impl HeditApp {
         &self,
         target: Option<&Path>,
     ) -> Result<projects::Formatting, String> {
+        self.formatting_with(target, &self.settings.defaults())
+    }
+    /// Formatting from `defaults`, then the project, then .editorconfig.
+    fn formatting_with(
+        &self,
+        target: Option<&Path>,
+        defaults: &projects::Defaults,
+    ) -> Result<projects::Formatting, String> {
         let b = self.active();
         let path = target
             .map(PathBuf::from)
@@ -421,13 +429,30 @@ impl HeditApp {
         projects::formatting(
             &path,
             language.id(),
-            &self.settings.defaults(),
+            defaults,
             Some(&self.quality.project_settings),
         )
     }
+    /// Set the active buffer's indentation from settings, the indentation the
+    /// file already uses (with `detect_indentation`), and then project and
+    /// .editorconfig rules, each overriding the previous.
     pub(super) fn apply_format_preferences(&mut self) {
+        let explicit = self.formatting_with(None, &projects::Defaults::default());
         match self.formatting() {
-            Ok(format) => {
+            Ok(mut format) => {
+                let detected = self
+                    .settings
+                    .detect_indentation
+                    .then(|| hedit::advanced::found_indentation(&self.active().page.text))
+                    .flatten();
+                if let (Some((tabs, width)), Ok(explicit)) = (detected, &explicit) {
+                    if explicit.indent_style.is_none() {
+                        format.indent_style = Some(if tabs { "tabs" } else { "spaces" }.into());
+                    }
+                    if explicit.indent_size.is_none() && width.is_some() {
+                        format.indent_size = width;
+                    }
+                }
                 let b = &mut self.workspace.open[self.workspace.active];
                 if let Some(style) = format.indent_style {
                     b.view.indent = Some(

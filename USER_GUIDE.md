@@ -629,6 +629,19 @@ a command.
 body, and can add, remove, or restore the default snippets. They are saved in
 `snippets.json`.
 
+### Brackets and indentation
+
+Typing an opening bracket or quote also inserts its closer, typing a selected
+text's quote or bracket wraps the selection, and typing a closer that is already
+next to the cursor steps over it. Backspace between an empty pair removes both.
+Single quotes are not paired in plain text, Markdown, LaTeX, logs, or Rust, where
+they are usually apostrophes or lifetimes. The bracket matching the one beside
+the cursor is outlined. Turn either off under **Settings → Editor**.
+
+When a file opens, hedit uses the indentation it already has; your `tab_size` and
+`translate_tabs_to_spaces` settings apply to new files and files without indented
+lines. Project settings and `.editorconfig` rules still take precedence.
+
 ### Encodings and persistent undo
 
 UTF-8 remains the default. BOM-marked UTF-16LE/BE opens automatically. Use
@@ -705,6 +718,9 @@ you fix it.
 | `auto_indent` | `true` | Keep the previous line's indentation on Enter |
 | `smart_indent` | `true` | Indent after an opening bracket or colon |
 | `smart_backspace` | `true` | Backspace in leading whitespace removes one level |
+| `auto_match_enabled` | `true` | Close brackets and quotes, wrap selections in them, and step over closers |
+| `match_brackets` | `true` | Outline the bracket matching the one beside the cursor |
+| `detect_indentation` | `true` | Use the indentation a file already has instead of `tab_size` and `translate_tabs_to_spaces` |
 | `show_tab_bar`, `show_status_bar` | `true` | Show the tab bar and status bar |
 | `show_sidebar`, `show_folders` | `true` | Show the sidebar and its folder section |
 | `tab_size` | unset | Indentation width, 1–8 |
@@ -727,8 +743,12 @@ Unset formatting keys leave each file's own style alone. A project's settings an
 matching `.editorconfig` rules override these defaults.
 
 View commands provide quick toggles for the same editor settings. The status bar
-shows the cursor position, language, encoding, and recovery state; click the
-language to select syntax or the recovery status to open its preferences page.
+shows the cursor position, indentation, line endings, encoding, size, syntax, and
+recovery state. Click the indentation to switch between spaces and tabs, change
+the tab width, detect it from the file, or convert it; the line endings to convert
+them; the encoding to reopen or save with another one; the syntax to change it;
+or the recovery status to open its settings. In the command palette, type
+`set syntax` to choose a syntax by name.
 For paged files, gutter line numbers
 and **Page Ln** refer to the displayed page. The sidebar lists open files and
 provides a **Closed Files** link. Right-click a tab for its context menu, or

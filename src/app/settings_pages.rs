@@ -134,6 +134,10 @@ impl HeditApp {
     pub(super) fn formatting_preferences(&mut self, ui: &mut egui::Ui) {
         ui.weak("Defaults for every file. A project or .editorconfig can override them. Unset options leave each file's style alone.");
         section(ui, "All files");
+        ui.checkbox(
+            &mut self.settings.detect_indentation,
+            "Use the indentation each file already has",
+        );
         format_fields(ui, "all", &mut self.settings.format);
         section(ui, "Per syntax");
         ui.weak("Rules for one syntax override the defaults above.");
@@ -178,6 +182,7 @@ impl HeditApp {
         if ui.button("Restore defaults").clicked() {
             self.settings.format = FormatSettings::default();
             self.settings.syntax_specific.clear();
+            self.settings.detect_indentation = Settings::default().detect_indentation;
         }
     }
     pub(super) fn folder_preferences(&mut self, ui: &mut egui::Ui) {

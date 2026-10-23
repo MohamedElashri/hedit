@@ -138,3 +138,65 @@ fn invalid_fold_metadata_and_selections_are_bounded() {
         }
     }
 }
+
+#[test]
+fn typing_brackets_and_quotes_pairs_wraps_and_steps_over() {
+    use hedit::advanced::{inside_empty_pair, pair, Selection};
+    let typed = |text: &str, at: usize, c: char| {
+        pair(text, &[Selection::caret(at)], c, true).map(|b| (b.text, b.selections[0].head))
+    };
+    assert_eq!(typed("f", 1, '('), Some(("f()".into(), 2)));
+    assert_eq!(typed("x = ;", 4, '['), Some(("x = [];".into(), 5)));
+    // Next to a word, an opening bracket is inserted on its own.
+    assert_eq!(typed("word", 0, '('), None);
+    // A closer that is already there is stepped over.
+    assert_eq!(typed("f()", 2, ')'), Some(("f()".into(), 3)));
+    assert_eq!(typed("\"\"", 1, '"'), Some(("\"\"".into(), 2)));
+    // Apostrophes after letters are not quotes.
+    assert_eq!(typed("don", 3, '\''), None);
+    assert_eq!(
+        pair("it", &[Selection::caret(2)], '\'', false).map(|b| b.text),
+        None
+    );
+    // A selection is wrapped and stays selected.
+    let wrapped = pair("a b", &[Selection { anchor: 0, head: 1 }], '"', true).unwrap();
+    assert_eq!(wrapped.text, "\"a\" b");
+    assert_eq!(
+        (wrapped.selections[0].anchor, wrapped.selections[0].head),
+        (1, 2)
+    );
+    // Every cursor gets the same treatment.
+    let many = pair(
+        "a\nb\n",
+        &[Selection::caret(1), Selection::caret(3)],
+        '{',
+        true,
+    )
+    .unwrap();
+    assert_eq!(many.text, "a{}\nb{}\n");
+    assert!(inside_empty_pair("f()", 2));
+    assert!(!inside_empty_pair("f(x)", 2));
+    assert!(!inside_empty_pair("()", 0));
+}
+
+#[test]
+fn matching_brackets_skip_nested_pairs_and_other_kinds() {
+    use hedit::advanced::matching_bracket;
+    let text = "f(a[1], (b)) {}";
+    assert_eq!(matching_bracket(text, 2, 1000), Some((1, 11)));
+    assert_eq!(matching_bracket(text, 12, 1000), Some((11, 1)));
+    assert_eq!(matching_bracket(text, 4, 1000), Some((3, 5)));
+    assert_eq!(matching_bracket("(((", 1, 1000), None);
+    assert_eq!(matching_bracket("abc", 1, 1000), None);
+    assert_eq!(matching_bracket("λ(é)", 2, 1000), Some((1, 3)));
+    // The scan is bounded.
+    assert_eq!(matching_bracket("(aaaa)", 0, 3), None);
+}
+
+#[test]
+fn found_indentation_is_none_without_indented_lines() {
+    use hedit::advanced::found_indentation;
+    assert_eq!(found_indentation("a\nb\n"), None);
+    assert_eq!(found_indentation("a\n\tb\n"), Some((true, None)));
+    assert_eq!(found_indentation("a\n  b\n    c\n"), Some((false, Some(2))));
+}

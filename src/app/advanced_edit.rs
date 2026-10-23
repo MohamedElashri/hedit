@@ -98,6 +98,13 @@ impl HeditApp {
                 continue;
             }
             let mut replacement = None;
+            if let egui::Event::Text(typed) = event {
+                if let Some(batch) = self.auto_pair(typed) {
+                    self.batch(batch);
+                    consumed.push(i);
+                    continue;
+                }
+            }
             match event {
                 egui::Event::Text(text) | egui::Event::Paste(text) if multiple => {
                     replacement = Some(text.clone())
@@ -163,6 +170,13 @@ impl HeditApp {
                                 s.anchor = advanced::at_column(text, line, 0, width);
                             } else if modifiers.command || modifiers.ctrl || modifiers.alt {
                                 s.anchor = advanced::word_boundary(text, s.head, false);
+                            } else if self.settings.auto_match_enabled
+                                && advanced::inside_empty_pair(text, s.head)
+                            {
+                                // Backspace in `(|)` removes both halves.
+                                special = true;
+                                s.anchor = s.head - 1;
+                                s.head += 1;
                             } else {
                                 let before: String = text.chars().take(s.head).collect();
                                 let leading = before.rsplit('\n').next().unwrap_or("");
@@ -321,6 +335,28 @@ impl HeditApp {
                 keep
             });
         });
+    }
+    /// Bracket and quote pairing for one typed character, when it applies.
+    fn auto_pair(&self, typed: &str) -> Option<Batch> {
+        let mut chars = typed.chars();
+        let (Some(c), None) = (chars.next(), chars.next()) else {
+            return None;
+        };
+        if !self.settings.auto_match_enabled {
+            return None;
+        }
+        use syntax::Language::*;
+        // Apostrophes in prose and Rust lifetimes are not quotes.
+        let single_quotes = !matches!(
+            self.active().language(),
+            PlainText | Markdown | Latex | Log | Rust
+        );
+        advanced::pair(
+            &self.active().page.text,
+            &self.selections(),
+            c,
+            single_quotes,
+        )
     }
     fn insert_smart_newline(&mut self) {
         let b = self.active();

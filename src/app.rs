@@ -2,6 +2,8 @@ mod advanced_edit;
 mod chrome;
 mod commands;
 mod edit_actions;
+#[cfg(test)]
+mod editing_tests;
 mod editor_layout;
 #[cfg(test)]
 mod overlay_tests;
@@ -1445,6 +1447,36 @@ impl HeditApp {
                         let unfocused = (!output.response.has_focus()
                             && primary.start() != primary.end())
                         .then_some(primary);
+                        if self.settings.match_brackets && primary.start() == primary.end() {
+                            let pair =
+                                hedit::advanced::matching_bracket(&old, primary.head, 100_000);
+                            for at in pair.into_iter().flat_map(|(a, b)| [a, b]) {
+                                let display = projection.display(at);
+                                if projection.source(display) != at {
+                                    continue; // Folded away.
+                                }
+                                let rect = |index| {
+                                    let cursor =
+                                        output.galley.from_ccursor(egui::text::CCursor::new(index));
+                                    output
+                                        .galley
+                                        .pos_from_cursor(&cursor)
+                                        .translate(output.galley_pos.to_vec2())
+                                };
+                                let (left, right) = (rect(display), rect(display + 1));
+                                if right.left() > left.left() {
+                                    ui.painter().rect_stroke(
+                                        egui::Rect::from_min_max(
+                                            left.left_top(),
+                                            egui::pos2(right.left(), left.bottom()),
+                                        ),
+                                        2.0,
+                                        egui::Stroke::new(1.0, self.theme.accent.color()),
+                                        egui::StrokeKind::Inside,
+                                    );
+                                }
+                            }
+                        }
                         for selection in buffer.view.selections.iter().chain(unfocused.iter()) {
                             let a = output.galley.from_ccursor(egui::text::CCursor::new(
                                 projection.display(selection.start()),
