@@ -325,7 +325,13 @@ fn install_lock_and_external_changes_are_detected() {
     let lock = installation.lock().unwrap();
     assert!(installation.lock().is_err());
     drop(lock);
-    assert!(installation.lock().is_ok());
+    // A child process forked by another test thread shares the lock until it
+    // starts its program, so allow the release a moment to land.
+    let started = std::time::Instant::now();
+    while installation.lock().is_err() {
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
     fs::write(fixture.root.join("bin/hedit"), "externally replaced").unwrap();
     assert!(installation.lock().is_err());
 }

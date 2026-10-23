@@ -10,7 +10,7 @@ Shortcuts use Linux labels below; on macOS, substitute **Cmd** for **Ctrl** and
 - [Files and unsaved changes](#files-and-unsaved-changes)
 - [Logs and bookmarks](#logs-and-bookmarks)
 - [Editing and navigation](#editing-and-navigation)
-- [Preferences](#preferences)
+- [Settings](#settings)
 - [Appearance](#appearance)
 - [CUDA tools](#cuda-tools)
 - [Command line](#command-line)
@@ -258,10 +258,10 @@ and choose **Remove folder from workspace** to remove just that root, or choose
 **File → Close all folders** to remove all trees. Both actions keep tabs open
 and leave files on disk untouched.
 
-Click **×** beside FOLDERS or use **View → Side bar → Show folder sidebar** (**Ctrl+Alt+B**)
+Click **×** beside FOLDERS or use **View → Side bar → Show folders in the sidebar** (**Ctrl+Alt+B**)
 to hide or reveal the folder section independently of Open Files. **View → Side bar →
 Show sidebar** (**Ctrl+B**) toggles the entire sidebar. Both options are also in
-**Preferences → Settings… → Editor**.
+**Preferences → Settings… → General**.
 
 Directory listings show at most 2,000 entries per directory. Quick open returns
 up to 80 folder matches, scanning at most 50,000 entries or about one second.
@@ -333,7 +333,7 @@ Toggle wrap through **View → Editor → Word wrap** (**Ctrl+Shift+W**). Long l
 horizontally when wrap is off. **Ctrl++** and **Ctrl+-** change font size. Wrap,
 font size, line numbers, tabs, status bar, current-line highlighting, whitespace
 markers, and sidebar visibility are kept between launches.
-Use **Preferences → Settings… → Editor** to manage them together.
+Use **Preferences → Settings…** to manage them together.
 
 ### Edit commands
 
@@ -581,8 +581,8 @@ shelf. A full shelf of unsaved work must be saved before switching. Workspace
 snapshots support 200 tabs, 16 MiB per unsaved tab, and 32 MiB of unsaved text.
 
 **Project → Project settings…** edits project formatting defaults and per-language
-overrides. **Preferences → Keyboard, snippets and formatting…** edits user defaults
-in `editor-settings.json` in the session directory. Formatting properties are
+overrides. Your own defaults are under **Preferences → Settings… → Formatting** and
+in [the settings file](#the-settings-file). Project formatting properties are
 `indent_style` (`spaces` or `tabs`), `indent_size` (1–8), `end_of_line` (`lf`/`crlf`),
 `insert_final_newline`, `trim_trailing_whitespace`, and `charset`.
 
@@ -604,8 +604,8 @@ symbols. **Alt+Left/Right** (**Control+-** / **Control+Shift+-** on macOS, where
 Option+arrows move by word) navigates back/forward through up to 200 recorded
 locations, reopening shelved files when needed.
 
-With Git installed, changed-line markers refresh about every two seconds for the
-active fully loaded file. Hover a marker for its inline hunk. **Tools → Git changes…**
+With Git installed, changed-line markers refresh as you edit the active fully
+loaded file, and when hedit's window regains focus. Hover a marker for its inline hunk. **Tools → Git changes…**
 opens a comparison of editor text with HEAD, including staged and unsaved changes.
 These operations do not stage, commit, or otherwise modify the repository.
 
@@ -615,13 +615,12 @@ Alternatively, type its trigger and press Tab. Templates support `${SELECTION}`
 and `$0` for the final cursor; a `language` value restricts them to a syntax ID.
 Completion and snippets operate on fully loaded files.
 
-The keyboard/snippet settings window edits JSON and lists command identifiers.
-For example, a `keybindings` entry can be
+**Preferences → Key bindings and snippets…** edits `keybindings.json` and
+`snippets.json` together as JSON and lists command identifiers. For example, a
+`keybindings` entry can be
 `{"command":"find_files","shortcut":"Primary+Shift+F","editor_only":false}`.
 `Primary` means Ctrl on Linux and Command on macOS. An empty shortcut unbinds a
 command; duplicate overrides and conflicting custom shortcuts are rejected.
-User formatting lives under `defaults.formatting`, with language overrides under
-`defaults.languages` using IDs such as `python`, `rust`, and `cpp`.
 
 ### Encodings and persistent undo
 
@@ -650,17 +649,68 @@ outside closes either. Go to line, Bookmarks, and Closed files also close when y
 click elsewhere.
 The menus show the same commands and keyboard shortcuts.
 
-## Preferences
+## Settings
 
-Choose **Preferences → Settings…** or press **Ctrl+,**. Settings are grouped in
-one window:
+Choose **Preferences → Settings…** or press **Ctrl+,** (**Cmd+,** on macOS).
+Settings are grouped in one window, and every change saves automatically:
 
 | Page | Settings and actions |
 | --- | --- |
-| Editor | Wrap, line numbers, sidebar/folders, tabs, status bar, current line, whitespace, font size, restore defaults |
+| General | Tab bar, status bar, sidebar, folders in the sidebar, update checks with GitHub CLI |
+| Editor | Font size, line numbers, current line, whitespace, indentation guides, minimap, wrapping, rulers, typing behavior |
+| Formatting | Indentation, tab size, whitespace and final newline on save, line endings, encoding, per-syntax rules |
 | Appearance | Theme gallery, system light/dark switching, custom colors, saved themes, import/export |
+| Key Bindings | Key binding and snippet editor, and their files |
 | CUDA Tools (Linux) | CUDA-GDB path and a shortcut to the tool panel |
 | Recovery | Checkpoint status, checkpoint now, closed files, recovery guidance |
+
+Each page has **Restore defaults** for its own settings.
+
+### The settings file
+
+Like Sublime Text, hedit keeps its settings in a readable file. Click **Open
+settings.json** to edit it in a tab; saving it applies the changes immediately.
+hedit also picks up edits made in another editor when its window regains focus.
+
+The file lives in `~/.config/hedit/` on Linux and
+`~/Library/Application Support/hedit.hedit/` on macOS, next to `keybindings.json`,
+`snippets.json`, and your saved themes. Set `HEDIT_CONFIG_DIR` to use another folder.
+The first launch after updating imports your earlier preferences into these files.
+
+Comments (`//` and `/* */`) and trailing commas are allowed. Delete a key to restore
+its default; hedit reports unknown keys and ignores them. If the file has an error,
+hedit shows it, keeps your previous settings, and does not overwrite the file until
+you fix it.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `font_size` | `14` | Editor font size, 10–28 |
+| `word_wrap` | `false` | Wrap long lines |
+| `wrap_width` | `0` | Wrap column; `0` wraps at the window edge |
+| `rulers` | `[]` | Up to 8 ruler columns, such as `[80, 120]` |
+| `line_numbers` | `true` | Show the line number gutter |
+| `highlight_line` | `true` | Highlight the current line |
+| `draw_white_space` | `false` | Show spaces and tabs |
+| `draw_indent_guides` | `true` | Show indentation guides |
+| `show_minimap` | `false` | Show the minimap |
+| `auto_indent` | `true` | Keep the previous line's indentation on Enter |
+| `smart_indent` | `true` | Indent after an opening bracket or colon |
+| `smart_backspace` | `true` | Backspace in leading whitespace removes one level |
+| `show_tab_bar`, `show_status_bar` | `true` | Show the tab bar and status bar |
+| `show_sidebar`, `show_folders` | `true` | Show the sidebar and its folder section |
+| `tab_size` | unset | Indentation width, 1–8 |
+| `translate_tabs_to_spaces` | unset | Indent with spaces (`true`) or tabs (`false`) |
+| `trim_trailing_white_space_on_save` | unset | Remove trailing whitespace when saving |
+| `ensure_newline_at_eof_on_save` | unset | End files with a newline when saving |
+| `line_ending` | unset | Convert to `"lf"` or `"crlf"` when saving |
+| `encoding` | unset | Convert to an encoding such as `"utf-8"` when saving |
+| `syntax_specific` | `{}` | Formatting keys per syntax ID, such as `{"python": {"tab_size": 4}}` |
+| `find_case_sensitive`, `find_regex`, `find_whole_word` | `true`, `false`, `false` | Find options, remembered as you change them |
+| `cuda_gdb_path` | `"cuda-gdb"` | CUDA-GDB executable (Linux) |
+| `update_with_github_cli` | `false` | Check for updates through GitHub CLI |
+
+Unset formatting keys leave each file's own style alone. A project's settings and
+matching `.editorconfig` rules override these defaults.
 
 View commands provide quick toggles for the same editor settings. The status bar
 shows the cursor position, language, encoding, and recovery state; click the

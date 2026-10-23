@@ -13,6 +13,9 @@ mod quality;
 #[cfg(test)]
 mod quality_tests;
 mod quality_windows;
+mod settings_store;
+#[cfg(test)]
+mod settings_tests;
 mod themes;
 mod tree_row;
 mod updates;
@@ -116,26 +119,12 @@ pub struct HeditApp {
     notice: String,
     /// The notice on display in the status bar and when it appeared.
     notice_shown: (String, Instant),
-    wrap: bool,
-    auto_indent: bool,
-    smart_indent: bool,
-    soft_tabs: bool,
-    indent_guides: bool,
-    minimap: bool,
+    settings: hedit::settings::Settings,
+    settings_files: settings_store::SettingsFiles,
     panes: panes::Panes,
     rectangle_start: Option<(usize, usize)>,
     secondary_layout: editor_layout::LayoutCache,
     projections: [editor_layout::ProjectionCache; 2],
-    font_size: f32,
-    sidebar: bool,
-    folder_sidebar: bool,
-    line_numbers: bool,
-    show_tabs: bool,
-    show_status: bool,
-    highlight_line: bool,
-    show_whitespace: bool,
-    ruler_column: u16,
-    wrap_column: u16,
     distraction_free: bool,
     fullscreen: bool,
     distraction_was_fullscreen: bool,
@@ -164,7 +153,6 @@ pub struct HeditApp {
     debug: Option<DebugSession>,
     debug_program: String,
     debug_args: String,
-    debugger: String,
     breakpoint: String,
     console: String,
     sanitizer: String,
@@ -214,24 +202,14 @@ impl HeditApp {
         let appearance = themes::Appearance::load(storage, &theme);
         let (tx, rx) = mpsc::channel();
         let (checkpoint_tx, checkpoint_rx) = mpsc::channel();
-        let wrap = storage
-            .and_then(|s| eframe::get_value(s, "wrap"))
-            .unwrap_or(false);
-        let font_size = storage
-            .and_then(|s| eframe::get_value::<f32>(s, "font_size"))
-            .filter(|size| size.is_finite())
-            .unwrap_or(14.0)
-            .clamp(10.0, 28.0);
         let project = project::ProjectBrowser::new(&workspace.folders);
-        let sidebar = storage
-            .and_then(|s| eframe::get_value(s, "sidebar"))
-            .unwrap_or(true);
-        let folder_sidebar = workspace
-            .folders
-            .first()
-            .map(|f| f.visible)
-            .or_else(|| storage.and_then(|s| eframe::get_value(s, "folder_sidebar")))
-            .unwrap_or(true);
+        let (mut settings, config, settings_files, setting_errors) =
+            settings_store::load(storage, workspace.store.directory());
+        errors.extend(setting_errors);
+        // The session remembers whether this workspace's folders were shown.
+        if let Some(folder) = workspace.folders.first() {
+            settings.show_folders = folder.visible;
+        }
         let mut panes: panes::Panes = storage
             .and_then(|s| eframe::get_value(s, "panes"))
             .unwrap_or_default();
@@ -264,52 +242,12 @@ impl HeditApp {
             },
             notice: "Ready.".into(),
             notice_shown: ("Ready.".into(), Instant::now()),
-            wrap,
-            auto_indent: storage
-                .and_then(|s| eframe::get_value(s, "auto_indent"))
-                .unwrap_or(true),
-            smart_indent: storage
-                .and_then(|s| eframe::get_value(s, "smart_indent"))
-                .unwrap_or(true),
-            soft_tabs: storage
-                .and_then(|s| eframe::get_value(s, "soft_tabs"))
-                .unwrap_or(true),
-            indent_guides: storage
-                .and_then(|s| eframe::get_value(s, "indent_guides"))
-                .unwrap_or(true),
-            minimap: storage
-                .and_then(|s| eframe::get_value(s, "minimap"))
-                .unwrap_or(false),
+            settings,
+            settings_files,
             rectangle_start: None,
             panes,
             secondary_layout: editor_layout::LayoutCache::default(),
             projections: Default::default(),
-            font_size,
-            sidebar,
-            folder_sidebar,
-            line_numbers: storage
-                .and_then(|s| eframe::get_value(s, "line_numbers"))
-                .unwrap_or(true),
-            show_tabs: storage
-                .and_then(|s| eframe::get_value(s, "show_tabs"))
-                .unwrap_or(true),
-            show_status: storage
-                .and_then(|s| eframe::get_value(s, "show_status"))
-                .unwrap_or(true),
-            highlight_line: storage
-                .and_then(|s| eframe::get_value(s, "highlight_line"))
-                .unwrap_or(true),
-            show_whitespace: storage
-                .and_then(|s| eframe::get_value(s, "show_whitespace"))
-                .unwrap_or(false),
-            ruler_column: storage
-                .and_then(|s| eframe::get_value(s, "ruler_column"))
-                .filter(|column| [0, 80, 100, 120].contains(column))
-                .unwrap_or(0),
-            wrap_column: storage
-                .and_then(|s| eframe::get_value(s, "wrap_column"))
-                .filter(|column| [0, 80, 100, 120].contains(column))
-                .unwrap_or(0),
             distraction_free: false,
             fullscreen: false,
             distraction_was_fullscreen: false,
@@ -333,10 +271,6 @@ impl HeditApp {
             debug: None,
             debug_program: String::new(),
             debug_args: "[]".into(),
-            debugger: storage
-                .and_then(|s| s.get_string("debugger"))
-                .filter(|s| !s.trim().is_empty())
-                .unwrap_or_else(|| "cuda-gdb".into()),
             breakpoint: String::new(),
             console: String::new(),
             sanitizer: "memcheck".into(),
@@ -364,6 +298,8 @@ impl HeditApp {
             ),
         };
         app.init_quality(storage);
+        app.quality.config = config;
+        app.apply_settings();
         app
     }
     fn changed(&mut self) {
@@ -837,6 +773,8 @@ impl HeditApp {
                 }
                 Ok(Action::SaveTo(id, path)) => self.save_to_path(ctx, id, Some(path)),
                 Ok(Action::Saved(id, info)) => {
+                    let settings_file =
+                        info.path.as_deref().map(PathBuf::from) == self.settings_path();
                     let new_path = self
                         .workspace
                         .open
@@ -860,6 +798,9 @@ impl HeditApp {
                     }
                     self.notice = "File saved.".into();
                     self.changed();
+                    if settings_file {
+                        self.reload_settings();
+                    }
                 }
                 Ok(Action::ThemeImported(theme)) => self.add_imported_theme(ctx, theme),
                 Ok(Action::DebugProgram(path)) => {
@@ -938,6 +879,7 @@ impl HeditApp {
             self.active()
                 .follow
                 .then(|| due(self.poll_at, Duration::from_secs(1))),
+            self.settings_due(),
             (!self.quality.git_pending && self.git_stale(ctx)).then(|| {
                 self.quality
                     .git_at
@@ -1081,7 +1023,7 @@ impl HeditApp {
                 self.insert_indentation();
             }
             self.advanced_input(ctx);
-            if !self.auto_indent
+            if !self.settings.auto_indent
                 && self.active().page.info.eol == "CRLF"
                 && take(Modifiers::NONE, Key::Enter)
             {
@@ -1094,10 +1036,10 @@ impl HeditApp {
             }
         }
         if !self.overridden(Command::ZoomIn) && (take(cmd, Key::Equals) || take(cmd, Key::Plus)) {
-            self.font_size = (self.font_size + 1.0).min(28.0);
+            self.settings.font_size = (self.settings.font_size + 1.0).min(28.0);
         }
         if !self.overridden(Command::ZoomOut) && take(cmd, Key::Minus) {
-            self.font_size = (self.font_size - 1.0).max(10.0);
+            self.settings.font_size = (self.settings.font_size - 1.0).max(10.0);
         }
     }
     fn editor(&mut self, ctx: &egui::Context) {
@@ -1140,8 +1082,10 @@ impl HeditApp {
     fn editor_pane(&mut self, ui: &mut egui::Ui, pane_id: usize) {
         if self.distraction_free {
             let mut rect = ui.available_rect_before_wrap();
-            let width =
-                ui.fonts(|f| f.glyph_width(&FontId::monospace(self.font_size), ' ')) * 100.0 + 60.0;
+            let width = ui
+                .fonts(|f| f.glyph_width(&FontId::monospace(self.settings.font_size), ' '))
+                * 100.0
+                + 60.0;
             if rect.width() > width {
                 let margin = (rect.width() - width) / 2.0;
                 rect.min.x += margin;
@@ -1268,17 +1212,17 @@ impl HeditApp {
             self.rectangle_start = Some((pane_id, original_selection.head));
         }
         let language = buffer.language();
-        let font_size = self.font_size;
-        let wrap = self.wrap || self.distraction_free;
+        let font_size = self.settings.font_size;
+        let wrap = self.settings.word_wrap || self.distraction_free;
         let column_width = ui.fonts(|fonts| fonts.glyph_width(&FontId::monospace(font_size), ' '));
-        let wrap_limit = if self.wrap_column == 0 {
+        let wrap_limit = if self.settings.wrap_width == 0 {
             if self.distraction_free {
                 column_width * 100.0
             } else {
                 f32::INFINITY
             }
         } else {
-            column_width * f32::from(self.wrap_column)
+            column_width * f32::from(self.settings.wrap_width)
         };
         let layout_cache = if pane_id == 0 {
             &mut self.editor_layout
@@ -1314,7 +1258,7 @@ impl HeditApp {
                 .horizontal_scroll_offset(buffer.view.scroll_left as f32);
         }
         let restore = buffer.restore_cursor;
-        let gutter = if self.line_numbers {
+        let gutter = if self.settings.line_numbers {
             let digits = (memchr::memchr_iter(b'\n', buffer.page.text.as_bytes()).count() + 1)
                 .to_string()
                 .len();
@@ -1330,7 +1274,7 @@ impl HeditApp {
             memchr::memchr_iter(b'\n', &buffer.page.text.as_bytes()[..head_byte]).count() + 1;
         let map_area = ui.available_rect_before_wrap();
         let mut editor_area = map_area;
-        if self.minimap && map_area.width() > 300.0 {
+        if self.settings.show_minimap && map_area.width() > 300.0 {
             editor_area.max.x -= 76.0;
         }
         // Move the text out for this frame instead of copying a page of up to
@@ -1390,7 +1334,7 @@ impl HeditApp {
                         }
                         let line_background = ui.painter().add(egui::Shape::Noop);
                         let mut output = edit.show(ui);
-                        if self.highlight_line {
+                        if self.settings.highlight_line {
                             if let Some(range) = &output.cursor_range {
                                 let caret = output
                                     .galley
@@ -1447,7 +1391,7 @@ impl HeditApp {
                                 self.generation = self.generation.wrapping_add(1);
                             }
                         }
-                        if self.indent_guides {
+                        if self.settings.draw_indent_guides {
                             let mut first = true;
                             for row in &output.galley.rows {
                                 if first
@@ -1534,9 +1478,8 @@ impl HeditApp {
                                 }
                             }
                         }
-                        if self.ruler_column > 0 {
-                            let x =
-                                output.galley_pos.x + column_width * f32::from(self.ruler_column);
+                        for &column in &self.settings.rulers {
+                            let x = output.galley_pos.x + column_width * f32::from(column);
                             ui.painter().vline(
                                 x,
                                 ui.clip_rect().y_range(),
@@ -1546,7 +1489,7 @@ impl HeditApp {
                                 ),
                             );
                         }
-                        if self.show_whitespace {
+                        if self.settings.draw_white_space {
                             let source_chars: Vec<_> = old.chars().collect();
                             let mut row_start = 0;
                             for row in &output.galley.rows {
@@ -1774,7 +1717,7 @@ impl HeditApp {
             }
         };
         let mut minimap_target = None;
-        if self.minimap && map_area.width() > 300.0 {
+        if self.settings.show_minimap && map_area.width() > 300.0 {
             let map = egui::Rect::from_min_max(
                 egui::pos2(map_area.right() - 68.0, map_area.top()),
                 map_area.max,
@@ -1900,7 +1843,7 @@ impl HeditApp {
                     }
                     if ui.button("Start CUDA-GDB").clicked() {
                         let result = serde_json::from_str::<Vec<String>>(&self.debug_args).map_err(|e| format!("Arguments must be a JSON array of strings: {e}"))
-                            .and_then(|args| DebugSession::launch(&self.debugger, &PathBuf::from(&self.debug_program), &args, None));
+                            .and_then(|args| DebugSession::launch(&self.settings.cuda_gdb_path, &PathBuf::from(&self.debug_program), &args, None));
                         match result { Ok(session) => self.debug = Some(session), Err(e) => self.error = Some(e) }
                     }
                     egui::ComboBox::from_id_salt("sanitizer").selected_text(&self.sanitizer).show_ui(ui, |ui| {
@@ -2275,6 +2218,9 @@ impl eframe::App for HeditApp {
             self.closing = true;
         }
         self.sync_appearance(ctx);
+        if quality::refocused(ctx) {
+            self.reload_settings();
+        }
         self.shortcuts(ctx);
         let title = format!(
             "{}{}{} — hedit",
@@ -2320,6 +2266,7 @@ impl eframe::App for HeditApp {
                 .collect()
         });
         self.pending_paths.extend(paths);
+        self.persist_settings();
         if let Some(after) = self.next_wake(ctx) {
             ctx.request_repaint_after(after);
         }
@@ -2328,25 +2275,7 @@ impl eframe::App for HeditApp {
         eframe::set_value(storage, "recent_projects", &self.quality.recent);
         eframe::set_value(storage, "project_path", &self.quality.project_path);
         eframe::set_value(storage, "project_settings", &self.quality.project_settings);
-        eframe::set_value(storage, "auto_indent", &self.auto_indent);
-        eframe::set_value(storage, "smart_indent", &self.smart_indent);
-        eframe::set_value(storage, "soft_tabs", &self.soft_tabs);
-        eframe::set_value(storage, "indent_guides", &self.indent_guides);
-        eframe::set_value(storage, "minimap", &self.minimap);
         eframe::set_value(storage, "panes", &self.panes);
-        eframe::set_value(storage, "wrap", &self.wrap);
-        eframe::set_value(storage, "font_size", &self.font_size);
-        eframe::set_value(storage, "sidebar", &self.sidebar);
-        eframe::set_value(storage, "folder_sidebar", &self.folder_sidebar);
-        eframe::set_value(storage, "line_numbers", &self.line_numbers);
-        eframe::set_value(storage, "show_tabs", &self.show_tabs);
-        eframe::set_value(storage, "show_status", &self.show_status);
-        eframe::set_value(storage, "highlight_line", &self.highlight_line);
-        eframe::set_value(storage, "show_whitespace", &self.show_whitespace);
-        eframe::set_value(storage, "ruler_column", &self.ruler_column);
-        eframe::set_value(storage, "wrap_column", &self.wrap_column);
-        storage.set_string("debugger", self.debugger.clone());
-        eframe::set_value(storage, "update_github_cli", &self.updates.use_github_cli);
         let mut theme = self.theme.clone();
         if theme.name.trim().is_empty() {
             theme.name = "My theme".into();
@@ -2355,6 +2284,7 @@ impl eframe::App for HeditApp {
             storage.set_string("theme", json);
         }
         self.appearance.save(storage);
+        self.flush_settings();
     }
     fn auto_save_interval(&self) -> Duration {
         Duration::from_secs(2)
@@ -2571,7 +2501,7 @@ mod tests {
         let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
         for size in [egui::vec2(1280.0, 820.0), egui::vec2(720.0, 480.0)] {
             for sidebar in [true, false] {
-                app.sidebar = sidebar;
+                app.settings.show_sidebar = sidebar;
                 for _ in 0..3 {
                     frame_size(&ctx, &mut app, vec![], size);
                 }
@@ -2645,8 +2575,11 @@ mod tests {
                 },
             )],
         );
-        assert!(app.sidebar, "hiding folders keeps the open-files sidebar");
-        assert!(!app.folder_sidebar);
+        assert!(
+            app.settings.show_sidebar,
+            "hiding folders keeps the open-files sidebar"
+        );
+        assert!(!app.settings.show_folders);
         let output = frame(&ctx, &mut app, vec![]);
         assert!(!output
             .shapes
@@ -2669,7 +2602,7 @@ mod tests {
         let (workspace, errors) = Workspace::restore(directory.path().join("session")).unwrap();
         assert!(errors.is_empty());
         let mut app = HeditApp::from_context(&ctx, Some(&storage), workspace, vec![], vec![]);
-        assert!(!app.folder_sidebar);
+        assert!(!app.settings.show_folders);
         assert_eq!(app.workspace.folders.len(), 2);
         assert!(app.workspace.folders[0].collapsed);
         frame(
@@ -2683,9 +2616,9 @@ mod tests {
                 },
             )],
         );
-        assert!(app.folder_sidebar);
+        assert!(app.settings.show_folders);
         frame(&ctx, &mut app, vec![key(Key::B, Modifiers::COMMAND)]);
-        assert!(!app.sidebar);
+        assert!(!app.settings.show_sidebar);
         frame(
             &ctx,
             &mut app,
@@ -2698,7 +2631,7 @@ mod tests {
             )],
         );
         assert!(
-            app.sidebar && app.folder_sidebar,
+            app.settings.show_sidebar && app.settings.show_folders,
             "folder toggle can reveal a hidden sidebar"
         );
     }
@@ -2734,7 +2667,7 @@ mod tests {
         frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)]);
         finish_app_job(&mut app, &ctx);
         assert_eq!(app.active().page.text, "server");
-        assert!(!app.folder_sidebar);
+        assert!(!app.settings.show_folders);
     }
 
     #[test]
@@ -2828,7 +2761,7 @@ mod tests {
         assert!(app.workspace.closed.is_empty());
     }
     #[derive(Default)]
-    struct MemoryStorage(std::collections::HashMap<String, String>);
+    pub(super) struct MemoryStorage(pub(super) std::collections::HashMap<String, String>);
     #[test]
     fn multiple_cursors_type_delete_undo_and_recover_as_one_document() {
         let directory = tempfile::tempdir().unwrap();
@@ -3259,6 +3192,9 @@ mod tests {
     #[test]
     fn view_preferences_survive_restart_and_distraction_free_restores_layout() {
         let directory = tempfile::tempdir().unwrap();
+        // View settings now live in settings.json in the configuration folder.
+        settings_store::TEST_CONFIG_DIR
+            .with(|dir| *dir.borrow_mut() = Some(directory.path().join("config")));
         let (workspace, _) = Workspace::restore(directory.path().into()).unwrap();
         let ctx = egui::Context::default();
         let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
@@ -3267,14 +3203,25 @@ mod tests {
         app.execute(&ctx, Command::Whitespace);
         app.execute(&ctx, Command::Ruler100);
         app.execute(&ctx, Command::Wrap80);
-        let flags = (app.sidebar, app.show_tabs, app.show_status);
+        let flags = (
+            app.settings.show_sidebar,
+            app.settings.show_tab_bar,
+            app.settings.show_status_bar,
+        );
         app.execute(&ctx, Command::DistractionFree);
         let output = frame(&ctx, &mut app, vec![]);
         assert!(!output
             .shapes
             .iter()
             .any(|s| text_rect(&s.shape, "OPEN FILES").is_some()));
-        assert_eq!((app.sidebar, app.show_tabs, app.show_status), flags);
+        assert_eq!(
+            (
+                app.settings.show_sidebar,
+                app.settings.show_tab_bar,
+                app.settings.show_status_bar
+            ),
+            flags
+        );
         app.execute(&ctx, Command::DistractionFree);
         let output = frame(&ctx, &mut app, vec![]);
         assert!(output
@@ -3286,13 +3233,16 @@ mod tests {
         drop(app);
         let (workspace, _) = Workspace::restore(directory.path().into()).unwrap();
         let restored = HeditApp::from_context(&ctx, Some(&storage), workspace, vec![], vec![]);
-        assert!(!restored.show_tabs);
-        assert!(!restored.highlight_line);
-        assert!(restored.show_status && restored.show_whitespace);
-        assert_eq!(restored.ruler_column, 100);
-        assert_eq!(restored.wrap_column, 80);
-        assert!(restored.wrap);
+        assert!(!restored.settings.show_tab_bar);
+        assert!(!restored.settings.highlight_line);
+        assert!(restored.settings.show_status_bar && restored.settings.draw_white_space);
+        assert_eq!(restored.settings.rulers, [100]);
+        assert_eq!(restored.settings.wrap_width, 80);
+        assert!(restored.settings.word_wrap);
         assert!(!restored.distraction_free);
+        let file = std::fs::read_to_string(directory.path().join("config/settings.json")).unwrap();
+        assert!(file.contains("\"rulers\": [\n    100\n  ]"), "{file}");
+        settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
     }
 
     #[cfg(target_os = "macos")]
@@ -3748,8 +3698,8 @@ mod tests {
         click_label(&ctx, &mut app, "Settings…");
         assert!(app.preferences_open);
         click_label(&ctx, &mut app, "Editor");
-        click_label(&ctx, &mut app, "Word wrap");
-        assert!(app.wrap);
+        click_label(&ctx, &mut app, "Wrap long lines");
+        assert!(app.settings.word_wrap);
         click_label(&ctx, &mut app, "Appearance");
         app.appearance.query = "paper".into();
         click_label(&ctx, &mut app, "Hedit Paper");
@@ -3765,24 +3715,27 @@ mod tests {
     #[test]
     fn preferences_restore_layout_and_debugger_path() {
         let directory = tempfile::tempdir().unwrap();
+        settings_store::TEST_CONFIG_DIR
+            .with(|dir| *dir.borrow_mut() = Some(directory.path().join("config")));
         let (workspace, _) = Workspace::restore(directory.path().into()).unwrap();
         let ctx = egui::Context::default();
         let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
-        app.wrap = true;
-        app.sidebar = false;
-        app.line_numbers = false;
-        app.font_size = 19.0;
-        app.debugger = "/opt/cuda/bin/cuda-gdb".into();
+        app.settings.word_wrap = true;
+        app.settings.show_sidebar = false;
+        app.settings.line_numbers = false;
+        app.settings.font_size = 19.0;
+        app.settings.cuda_gdb_path = "/opt/cuda/bin/cuda-gdb".into();
         let mut storage = MemoryStorage::default();
         eframe::App::save(&mut app, &mut storage);
         drop(app);
         let (workspace, _) = Workspace::restore(directory.path().into()).unwrap();
         let app = HeditApp::from_context(&ctx, Some(&storage), workspace, vec![], vec![]);
-        assert!(app.wrap);
-        assert!(!app.sidebar);
-        assert!(!app.line_numbers);
-        assert_eq!(app.font_size, 19.0);
-        assert_eq!(app.debugger, "/opt/cuda/bin/cuda-gdb");
+        assert!(app.settings.word_wrap);
+        assert!(!app.settings.show_sidebar);
+        assert!(!app.settings.line_numbers);
+        assert_eq!(app.settings.font_size, 19.0);
+        assert_eq!(app.settings.cuda_gdb_path, "/opt/cuda/bin/cuda-gdb");
+        settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
     }
     #[test]
     fn command_palette_accepts_typed_command_with_enter() {
@@ -3978,7 +3931,7 @@ mod tests {
         workspace.edit(0, "").unwrap();
         let ctx = egui::Context::default();
         let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
-        app.wrap = true;
+        app.settings.word_wrap = true;
         let mut output = frame(&ctx, &mut app, vec![]);
         for _ in 0..3 {
             output = frame(&ctx, &mut app, vec![]);
@@ -3990,8 +3943,11 @@ mod tests {
                 .find_map(|shape| text_rect(&shape.shape, label))
                 .unwrap()
         };
-        assert!(position(&output, "2").top() - position(&output, "1").top() > app.font_size * 2.0);
-        app.wrap = false;
+        assert!(
+            position(&output, "2").top() - position(&output, "1").top()
+                > app.settings.font_size * 2.0
+        );
+        app.settings.word_wrap = false;
         frame(&ctx, &mut app, vec![]);
         let unscrolled = frame(&ctx, &mut app, vec![]);
         app.workspace.open[0].view.scroll_left = 120.0;
@@ -4037,11 +3993,11 @@ mod tests {
             click_label_sized(&ctx, &mut app, command.label(), size);
         }
         assert_eq!(app.active().view.tab_size, Some(2));
-        assert!(app.show_whitespace);
-        assert!(!app.sidebar);
+        assert!(app.settings.draw_white_space);
+        assert!(!app.settings.show_sidebar);
         assert_eq!(app.active().page.info.eol, "CRLF");
-        assert_eq!(app.ruler_column, 80);
-        assert_eq!(app.wrap_column, 100);
+        assert_eq!(app.settings.rulers, [80]);
+        assert_eq!(app.settings.wrap_width, 100);
     }
 
     #[test]
@@ -4073,7 +4029,7 @@ mod tests {
                 let ctx = egui::Context::default();
                 let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
                 app.set_theme(&ctx, preset.clone());
-                app.show_whitespace = true;
+                app.settings.draw_white_space = true;
                 if name == "split" {
                     app.execute(&ctx, Command::SplitColumns);
                     app.execute(&ctx, Command::Minimap);
@@ -4280,6 +4236,21 @@ mod tests {
                     "preferences-editor",
                     [1280.0, 820.0],
                     Some(PreferencesPage::Editor),
+                ),
+                (
+                    "preferences-general",
+                    [1280.0, 820.0],
+                    Some(PreferencesPage::General),
+                ),
+                (
+                    "preferences-formatting",
+                    [1280.0, 820.0],
+                    Some(PreferencesPage::Formatting),
+                ),
+                (
+                    "preferences-keys",
+                    [720.0, 480.0],
+                    Some(PreferencesPage::Keys),
                 ),
                 (
                     "preferences-tools",

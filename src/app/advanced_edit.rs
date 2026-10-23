@@ -132,7 +132,7 @@ impl HeditApp {
                     modifiers,
                     ..
                 } if !modifiers.command && !modifiers.alt => {
-                    if self.auto_indent {
+                    if self.settings.auto_indent {
                         self.insert_smart_newline();
                         consumed.push(i);
                     } else if multiple {
@@ -172,7 +172,7 @@ impl HeditApp {
                                 } else if before.ends_with('\t') {
                                     special = true;
                                     1
-                                } else if self.soft_tabs
+                                } else if self.settings.smart_backspace
                                     && !leading.is_empty()
                                     && leading.chars().all(|c| c == ' ')
                                 {
@@ -330,7 +330,7 @@ impl HeditApp {
         let mut text = b.page.text.clone();
         let mut cursors: Vec<Selection> = vec![];
         for s in self.selections().into_iter().rev() {
-            let edit = advanced::newline(&text, s, width, tabs, self.smart_indent, crlf);
+            let edit = advanced::newline(&text, s, width, tabs, self.settings.smart_indent, crlf);
             let delta = edit.text.chars().count() as isize - text.chars().count() as isize;
             for p in &mut cursors {
                 p.anchor = p.anchor.saturating_add_signed(delta);

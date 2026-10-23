@@ -10,17 +10,16 @@ pub(super) struct Binding {
     #[serde(default)]
     pub editor_only: bool,
 }
+/// Key bindings and snippets, saved as keybindings.json and snippets.json.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub(super) struct Config {
-    pub defaults: projects::Defaults,
     pub keybindings: Vec<Binding>,
     pub snippets: Vec<intelligence::Snippet>,
 }
 impl Default for Config {
     fn default() -> Self {
         Self {
-            defaults: Default::default(),
             keybindings: vec![],
             snippets: intelligence::default_snippets(),
         }
@@ -130,17 +129,6 @@ impl HeditApp {
         if let Some(path) = &self.quality.project_path {
             if let Ok((project, _)) = projects::load(path) {
                 self.quality.project_settings = project.settings;
-            }
-        }
-        let path = self
-            .workspace
-            .store
-            .directory()
-            .join("editor-settings.json");
-        if path.exists() {
-            match projects::read_json(&path, 1024 * 1024) {
-                Ok(config) => self.quality.config = config,
-                Err(e) => self.error = Some(format!("Editor settings: {e}")),
             }
         }
     }
@@ -373,8 +361,8 @@ impl HeditApp {
                     })
                     .collect();
                 self.project = project::ProjectBrowser::new(&self.workspace.folders);
-                self.folder_sidebar = true;
-                self.sidebar = true;
+                self.settings.show_folders = true;
+                self.settings.show_sidebar = true;
                 self.quality.project_settings = project.settings;
                 self.quality.project_path = Some(path.clone());
                 self.recent_project(path);
@@ -389,9 +377,9 @@ impl HeditApp {
                         self.panes = panes;
                     }
                 }
-                self.wrap = state.wrap;
+                self.settings.word_wrap = state.wrap;
                 if state.font_size.is_finite() && state.font_size >= 10.0 {
-                    self.font_size = state.font_size.min(28.0);
+                    self.settings.font_size = state.font_size.min(28.0);
                 }
                 self.quality.preview = None;
                 self.quality.navigation.clear();
@@ -433,7 +421,7 @@ impl HeditApp {
         projects::formatting(
             &path,
             language.id(),
-            &self.quality.config.defaults,
+            &self.settings.defaults(),
             Some(&self.quality.project_settings),
         )
     }
@@ -842,8 +830,8 @@ impl HeditApp {
                 .panes
                 .secondary_id()
                 .and_then(|id| self.workspace.open.iter().position(|b| b.view.id == id)),
-            wrap: self.wrap,
-            font_size: self.font_size,
+            wrap: self.settings.word_wrap,
+            font_size: self.settings.font_size,
             pane_views: serde_json::to_value(&self.panes).ok(),
         })
     }

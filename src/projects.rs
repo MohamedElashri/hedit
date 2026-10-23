@@ -97,6 +97,13 @@ pub fn atomic_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
     temp.persist(path).map_err(|e| e.to_string())?;
     Ok(())
 }
+/// Read a UTF-8 text file of at most `limit` bytes.
+pub fn read_text(path: &Path, limit: u64) -> Result<String, String> {
+    if std::fs::metadata(path).map_err(|e| e.to_string())?.len() > limit {
+        return Err("Settings/workspace file is too large.".into());
+    }
+    std::fs::read_to_string(path).map_err(|e| e.to_string())
+}
 pub fn read_json<T: serde::de::DeserializeOwned>(path: &Path, limit: u64) -> Result<T, String> {
     if std::fs::metadata(path).map_err(|e| e.to_string())?.len() > limit {
         return Err("Settings/workspace file is too large.".into());

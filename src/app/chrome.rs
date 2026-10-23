@@ -92,7 +92,7 @@ impl HeditApp {
         self.tabs(ctx);
     }
     fn tabs(&mut self, ctx: &egui::Context) {
-        if !self.show_tabs || self.distraction_free {
+        if !self.settings.show_tab_bar || self.distraction_free {
             return;
         }
         let theme = self.theme.clone();
@@ -293,7 +293,7 @@ impl HeditApp {
         }
     }
     fn status_bar(&mut self, ctx: &egui::Context) {
-        if !self.show_status || self.distraction_free {
+        if !self.settings.show_status_bar || self.distraction_free {
             return;
         }
         let theme = self.theme.clone();
@@ -539,7 +539,7 @@ impl HeditApp {
         ));
     }
     fn buffer_sidebar(&mut self, ctx: &egui::Context) {
-        if !self.sidebar || self.distraction_free {
+        if !self.settings.show_sidebar || self.distraction_free {
             return;
         }
         let theme = self.theme.clone();
@@ -564,7 +564,7 @@ impl HeditApp {
                 egui::ScrollArea::vertical()
                     .id_salt("buffer-list")
                     .max_height(
-                        if !self.workspace.folders.is_empty() && self.folder_sidebar {
+                        if !self.workspace.folders.is_empty() && self.settings.show_folders {
                             (ui.available_height() * 0.28).clamp(60.0, 180.0)
                         } else {
                             (ui.available_height() - 115.0).max(60.0)

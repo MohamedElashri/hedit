@@ -1,33 +1,85 @@
 use super::*;
 
+use hedit::settings::{FormatSettings, Settings, MAX_COLUMN};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PreferencesPage {
+    General,
     Editor,
+    Formatting,
     Appearance,
+    Keys,
     Tools,
     Recovery,
 }
 impl PreferencesPage {
+    pub(super) const ALL: [Self; 7] = [
+        Self::General,
+        Self::Editor,
+        Self::Formatting,
+        Self::Appearance,
+        Self::Keys,
+        Self::Tools,
+        Self::Recovery,
+    ];
     fn title(self) -> &'static str {
         match self {
+            Self::General => "General",
             Self::Editor => "Editor",
+            Self::Formatting => "Formatting",
             Self::Appearance => "Appearance",
+            Self::Keys => "Key Bindings",
             Self::Tools => "CUDA Tools",
             Self::Recovery => "Recovery",
         }
     }
+    fn available(self) -> bool {
+        self != Self::Tools || hedit::debugger::LOCAL_TOOLS_SUPPORTED
+    }
+}
+
+/// A row of a settings page: a fixed-width label, then the control.
+fn row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
+    ui.horizontal(|ui| {
+        ui.allocate_ui_with_layout(
+            egui::vec2(170.0, 20.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.set_min_width(170.0);
+                ui.add(egui::Label::new(label).truncate());
+            },
+        );
+        add(ui);
+    });
+}
+
+fn section(ui: &mut egui::Ui, title: &str) {
+    ui.add_space(10.0);
+    ui.label(RichText::new(title).strong());
+    ui.add_space(2.0);
+}
+
+/// Parse a comma-separated column list such as `80, 120`.
+fn parse_columns(text: &str) -> Option<Vec<u16>> {
+    let mut columns: Vec<u16> = text
+        .split([',', ' '])
+        .filter(|s| !s.is_empty())
+        .map(|s| s.parse().ok().filter(|&c| (1..=MAX_COLUMN).contains(&c)))
+        .collect::<Option<_>>()?;
+    columns.sort_unstable();
+    columns.dedup();
+    (columns.len() <= 8).then_some(columns)
 }
 impl HeditApp {
     pub(super) fn open_preferences(&mut self, page: PreferencesPage) {
         if !self.preferences_open {
             self.appearance.original = self.theme.clone();
         }
-        self.preferences_page =
-            if page == PreferencesPage::Tools && !hedit::debugger::LOCAL_TOOLS_SUPPORTED {
-                PreferencesPage::Editor
-            } else {
-                page
-            };
+        self.preferences_page = if page.available() {
+            page
+        } else {
+            PreferencesPage::General
+        };
         self.preferences_open = true;
         self.focus_editor = false;
     }
@@ -37,7 +89,7 @@ impl HeditApp {
             let mut open = true;
             let body_height = (ctx.screen_rect().height() - 190.0).clamp(190.0, 520.0);
             let width = (ctx.screen_rect().width() - 64.0).clamp(540.0, 780.0);
-            egui::Window::new("Preferences")
+            egui::Window::new("Settings")
                 .id(egui::Id::new("preferences"))
                 .open(&mut open)
                 .fixed_size(egui::vec2(width, body_height + 74.0))
@@ -50,15 +102,8 @@ impl HeditApp {
                         ui.vertical(|ui| {
                             ui.set_width(120.0);
                             ui.add_space(8.0);
-                            for page in [
-                                PreferencesPage::Editor,
-                                PreferencesPage::Appearance,
-                                PreferencesPage::Tools,
-                                PreferencesPage::Recovery,
-                            ] {
-                                if page == PreferencesPage::Tools
-                                    && !hedit::debugger::LOCAL_TOOLS_SUPPORTED
-                                {
+                            for page in PreferencesPage::ALL {
+                                if !page.available() {
                                     continue;
                                 }
                                 if ui
@@ -82,7 +127,10 @@ impl HeditApp {
                                 .id_salt(("preferences-body", self.preferences_page as u8))
                                 .max_height(body_height - 40.0)
                                 .show(ui, |ui| match self.preferences_page {
+                                    PreferencesPage::General => self.general_preferences(ui),
                                     PreferencesPage::Editor => self.editor_preferences(ui),
+                                    PreferencesPage::Formatting => self.formatting_preferences(ui),
+                                    PreferencesPage::Keys => self.key_preferences(ui, ctx),
                                     PreferencesPage::Appearance => self.theme_preferences(ui, ctx),
                                     PreferencesPage::Tools => self.tool_preferences(ui),
                                     PreferencesPage::Recovery => self.recovery_preferences(ui, ctx),
@@ -91,7 +139,20 @@ impl HeditApp {
                     });
                     ui.separator();
                     ui.horizontal(|ui| {
-                        ui.weak("Preferences save automatically on this device.");
+                        if ui
+                            .add_enabled(
+                                self.settings_files.dir.is_some(),
+                                egui::Button::new("Open settings.json"),
+                            )
+                            .on_hover_text(
+                                self.settings_path()
+                                    .map_or("".into(), |p| p.display().to_string()),
+                            )
+                            .clicked()
+                        {
+                            self.open_settings_file(ctx);
+                        }
+                        ui.weak("Changes save automatically.");
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui.button("Done").clicked() {
                                 self.preferences_open = false;
@@ -142,107 +203,256 @@ impl HeditApp {
             self.about_open = open;
         }
     }
-    fn editor_preferences(&mut self, ui: &mut egui::Ui) {
-        ui.weak("Choose how your workspace and text are displayed.");
-        ui.add_space(12.0);
-        ui.checkbox(&mut self.wrap, "Word wrap");
-        ui.checkbox(&mut self.line_numbers, "Show line numbers");
-        ui.checkbox(&mut self.show_tabs, "Show tabs");
-        ui.checkbox(&mut self.show_status, "Show status bar");
-        ui.checkbox(&mut self.highlight_line, "Highlight current line");
-        ui.checkbox(&mut self.show_whitespace, "Show whitespace");
-        ui.checkbox(&mut self.indent_guides, "Show indentation guides");
-        ui.checkbox(&mut self.minimap, "Show minimap");
-        ui.checkbox(&mut self.auto_indent, "Automatic indentation");
-        ui.checkbox(&mut self.smart_indent, "Smart indentation");
-        ui.checkbox(&mut self.soft_tabs, "Backspace to indentation stops");
-        ui.horizontal(|ui| {
-            ui.label("Column ruler");
-            egui::ComboBox::from_id_salt("ruler-column")
-                .selected_text(if self.ruler_column == 0 {
-                    "None".into()
-                } else {
-                    self.ruler_column.to_string()
-                })
-                .show_ui(ui, |ui| {
-                    for column in [0, 80, 100, 120] {
-                        ui.selectable_value(
-                            &mut self.ruler_column,
-                            column,
-                            if column == 0 {
-                                "None".into()
-                            } else {
-                                column.to_string()
-                            },
-                        );
-                    }
-                });
-        });
-        ui.horizontal(|ui| {
-            ui.label("Word wrap column");
-            egui::ComboBox::from_id_salt("wrap-column")
-                .selected_text(if self.wrap_column == 0 {
-                    "Window".into()
-                } else {
-                    self.wrap_column.to_string()
-                })
-                .show_ui(ui, |ui| {
-                    for column in [0, 80, 100, 120] {
-                        if ui
-                            .selectable_value(
-                                &mut self.wrap_column,
-                                column,
-                                if column == 0 {
-                                    "Window".into()
-                                } else {
-                                    column.to_string()
-                                },
-                            )
-                            .changed()
-                        {
-                            self.wrap = true;
-                        }
-                    }
-                });
-        });
-        ui.checkbox(&mut self.sidebar, "Show sidebar");
-        if ui
-            .checkbox(&mut self.folder_sidebar, "Show folders in sidebar")
-            .changed()
-        {
+    fn general_preferences(&mut self, ui: &mut egui::Ui) {
+        let s = &mut self.settings;
+        section(ui, "Window");
+        ui.checkbox(&mut s.show_tab_bar, "Show tab bar");
+        ui.checkbox(&mut s.show_status_bar, "Show status bar");
+        ui.checkbox(&mut s.show_sidebar, "Show sidebar");
+        let folders = ui.checkbox(&mut s.show_folders, "Show folders in the sidebar");
+        section(ui, "Updates");
+        ui.checkbox(
+            &mut self.updates.use_github_cli,
+            "Check for updates with GitHub CLI (for private repositories)",
+        );
+        ui.add_space(14.0);
+        if ui.button("Restore defaults").clicked() {
+            let d = Settings::default();
+            let s = &mut self.settings;
+            (
+                s.show_tab_bar,
+                s.show_status_bar,
+                s.show_sidebar,
+                s.show_folders,
+            ) = (
+                d.show_tab_bar,
+                d.show_status_bar,
+                d.show_sidebar,
+                d.show_folders,
+            );
+            self.updates.use_github_cli = d.update_with_github_cli;
+            self.sync_folder_view();
+        } else if folders.changed() {
+            // Same as View → Side bar → Show folders: showing them shows the sidebar.
+            self.settings.show_sidebar |= self.settings.show_folders;
             self.sync_folder_view();
         }
-        ui.add_space(14.0);
-        ui.label("Editor font size");
-        ui.add(
-            egui::Slider::new(&mut self.font_size, 10.0..=28.0)
-                .step_by(1.0)
-                .suffix(" px"),
-        );
+    }
+    fn editor_preferences(&mut self, ui: &mut egui::Ui) {
+        let s = &mut self.settings;
+        section(ui, "Text");
+        row(ui, "Font size", |ui| {
+            ui.add(
+                egui::Slider::new(&mut s.font_size, hedit::settings::FONT_SIZES)
+                    .step_by(1.0)
+                    .suffix(" px"),
+            );
+        });
         ui.weak(format!(
-            "{} and {} adjust the editor font while you work.",
+            "{} and {} also change it while you work.",
             Command::ZoomIn.shortcut(),
             Command::ZoomOut.shortcut()
         ));
-        ui.add_space(18.0);
-        if ui.button("Restore editor defaults").clicked() {
-            self.wrap = false;
-            self.line_numbers = true;
-            self.show_tabs = true;
-            self.show_status = true;
-            self.highlight_line = true;
-            self.show_whitespace = false;
-            self.indent_guides = true;
-            self.minimap = false;
-            self.auto_indent = true;
-            self.smart_indent = true;
-            self.soft_tabs = true;
-            self.ruler_column = 0;
-            self.wrap_column = 0;
-            self.sidebar = true;
-            self.folder_sidebar = true;
-            self.font_size = 14.0;
-            self.sync_folder_view();
+        ui.checkbox(&mut s.line_numbers, "Show line numbers");
+        ui.checkbox(&mut s.highlight_line, "Highlight the current line");
+        ui.checkbox(&mut s.draw_white_space, "Show whitespace");
+        ui.checkbox(&mut s.draw_indent_guides, "Show indentation guides");
+        ui.checkbox(&mut s.show_minimap, "Show minimap");
+        section(ui, "Wrapping and rulers");
+        ui.checkbox(&mut s.word_wrap, "Wrap long lines");
+        row(ui, "Wrap at column", |ui| {
+            ui.add_enabled(
+                s.word_wrap,
+                egui::DragValue::new(&mut s.wrap_width).range(0..=MAX_COLUMN),
+            );
+            ui.weak(if s.wrap_width == 0 {
+                "0 wraps at the window edge"
+            } else {
+                "columns"
+            });
+        });
+        row(ui, "Rulers", |ui| {
+            let id = ui.make_persistent_id("rulers-text");
+            let mut text = ui.data_mut(|d| {
+                d.get_temp::<String>(id).unwrap_or_else(|| {
+                    s.rulers
+                        .iter()
+                        .map(u16::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+            });
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut text)
+                    .desired_width(120.0)
+                    .hint_text("80, 120"),
+            );
+            let parsed = parse_columns(&text);
+            if response.changed() {
+                if let Some(columns) = &parsed {
+                    s.rulers = columns.clone();
+                }
+            }
+            if response.lost_focus() || !response.has_focus() {
+                ui.data_mut(|d| d.remove::<String>(id));
+            } else {
+                ui.data_mut(|d| d.insert_temp(id, text));
+            }
+            if parsed.is_none() {
+                ui.colored_label(self.theme.warning.color(), "Use up to 8 columns, 1–400");
+            }
+        });
+        section(ui, "Typing");
+        let s = &mut self.settings;
+        ui.checkbox(
+            &mut s.auto_indent,
+            "Keep the indentation of the previous line",
+        );
+        ui.checkbox(
+            &mut s.smart_indent,
+            "Indent after an opening bracket or colon",
+        );
+        ui.checkbox(
+            &mut s.smart_backspace,
+            "Backspace removes one indentation level",
+        );
+        ui.add_space(14.0);
+        if ui.button("Restore defaults").clicked() {
+            let d = Settings::default();
+            let s = &mut self.settings;
+            s.font_size = d.font_size;
+            s.line_numbers = d.line_numbers;
+            s.highlight_line = d.highlight_line;
+            s.draw_white_space = d.draw_white_space;
+            s.draw_indent_guides = d.draw_indent_guides;
+            s.show_minimap = d.show_minimap;
+            s.word_wrap = d.word_wrap;
+            s.wrap_width = d.wrap_width;
+            s.rulers = d.rulers;
+            s.auto_indent = d.auto_indent;
+            s.smart_indent = d.smart_indent;
+            s.smart_backspace = d.smart_backspace;
+        }
+    }
+    fn formatting_preferences(&mut self, ui: &mut egui::Ui) {
+        ui.weak("Defaults for every file. A project or .editorconfig can override them. Unset options leave each file's style alone.");
+        let f = &mut self.settings.format;
+        section(ui, "Indentation");
+        row(ui, "Indent with", |ui| {
+            egui::ComboBox::from_id_salt("indent-with")
+                .selected_text(match f.translate_tabs_to_spaces {
+                    None => "Keep each file's style",
+                    Some(true) => "Spaces",
+                    Some(false) => "Tabs",
+                })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(
+                        &mut f.translate_tabs_to_spaces,
+                        None,
+                        "Keep each file's style",
+                    );
+                    ui.selectable_value(&mut f.translate_tabs_to_spaces, Some(true), "Spaces");
+                    ui.selectable_value(&mut f.translate_tabs_to_spaces, Some(false), "Tabs");
+                });
+        });
+        row(ui, "Tab size", |ui| {
+            egui::ComboBox::from_id_salt("tab-size")
+                .selected_text(
+                    f.tab_size
+                        .map_or("Keep each file's size".into(), |n| n.to_string()),
+                )
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut f.tab_size, None, "Keep each file's size");
+                    for n in [2, 3, 4, 8] {
+                        ui.selectable_value(&mut f.tab_size, Some(n), n.to_string());
+                    }
+                });
+        });
+        section(ui, "On save");
+        let mut trim = f.trim_trailing_white_space_on_save == Some(true);
+        if ui.checkbox(&mut trim, "Trim trailing whitespace").changed() {
+            f.trim_trailing_white_space_on_save = trim.then_some(true);
+        }
+        let mut newline = f.ensure_newline_at_eof_on_save == Some(true);
+        if ui
+            .checkbox(&mut newline, "End the file with a newline")
+            .changed()
+        {
+            f.ensure_newline_at_eof_on_save = newline.then_some(true);
+        }
+        row(ui, "Line endings", |ui| {
+            egui::ComboBox::from_id_salt("line-ending")
+                .selected_text(match f.line_ending.as_deref() {
+                    Some("lf") => "LF (Unix, macOS)",
+                    Some("crlf") => "CRLF (Windows)",
+                    _ => "Keep each file's",
+                })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut f.line_ending, None, "Keep each file's");
+                    ui.selectable_value(&mut f.line_ending, Some("lf".into()), "LF (Unix, macOS)");
+                    ui.selectable_value(&mut f.line_ending, Some("crlf".into()), "CRLF (Windows)");
+                });
+        });
+        row(ui, "Encoding", |ui| {
+            egui::ComboBox::from_id_salt("encoding")
+                .selected_text(f.encoding.as_deref().unwrap_or("Keep each file's"))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut f.encoding, None, "Keep each file's");
+                    for label in [
+                        "utf-8",
+                        "utf-8-bom",
+                        "windows-1252",
+                        "iso-8859-1",
+                        "shift_jis",
+                        "utf-16le",
+                    ] {
+                        ui.selectable_value(&mut f.encoding, Some(label.into()), label);
+                    }
+                });
+        });
+        section(ui, "Per syntax");
+        let specific = &mut self.settings.syntax_specific;
+        if specific.is_empty() {
+            ui.weak("No syntax-specific rules. Add them under syntax_specific in settings.json, for example \"python\": { \"tab_size\": 4 }.");
+        }
+        let mut remove = None;
+        for (syntax, rules) in specific.iter() {
+            ui.horizontal(|ui| {
+                ui.monospace(syntax);
+                ui.weak(describe(rules));
+                if ui.small_button("Remove").clicked() {
+                    remove = Some(syntax.clone());
+                }
+            });
+        }
+        if let Some(syntax) = remove {
+            specific.remove(&syntax);
+        }
+        ui.add_space(14.0);
+        if ui.button("Restore defaults").clicked() {
+            self.settings.format = FormatSettings::default();
+            self.settings.syntax_specific.clear();
+        }
+    }
+    fn key_preferences(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        ui.weak("Override any command's shortcut, and add snippets that expand with Tab.");
+        ui.add_space(8.0);
+        if ui.button("Edit key bindings and snippets…").clicked() {
+            self.execute(ctx, Command::KeyBindings);
+        }
+        if let Some(dir) = self.settings_files.dir.clone() {
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                for file in [
+                    settings_store::KEYBINDINGS_FILE,
+                    settings_store::SNIPPETS_FILE,
+                ] {
+                    if ui.button(format!("Open {file}")).clicked() {
+                        self.close_transient(ctx);
+                        self.open(ctx, Some(dir.join(file)));
+                    }
+                }
+            });
         }
     }
     fn tool_preferences(&mut self, ui: &mut egui::Ui) {
@@ -259,7 +469,7 @@ impl HeditApp {
             .is_some_and(|d| d.state != State::Exited);
         ui.add_enabled(
             !live,
-            egui::TextEdit::singleline(&mut self.debugger)
+            egui::TextEdit::singleline(&mut self.settings.cuda_gdb_path)
                 .desired_width(f32::INFINITY)
                 .hint_text("cuda-gdb or /path/to/cuda-gdb"),
         );
@@ -363,4 +573,28 @@ impl HeditApp {
             self.focus_editor = true;
         }
     }
+}
+
+/// A one-line summary of a syntax rule set, such as `tab size 2 · spaces`.
+fn describe(rules: &FormatSettings) -> String {
+    let mut parts = Vec::new();
+    if let Some(size) = rules.tab_size {
+        parts.push(format!("tab size {size}"));
+    }
+    if let Some(spaces) = rules.translate_tabs_to_spaces {
+        parts.push(if spaces { "spaces" } else { "tabs" }.into());
+    }
+    if rules.trim_trailing_white_space_on_save == Some(true) {
+        parts.push("trim whitespace".into());
+    }
+    if rules.ensure_newline_at_eof_on_save == Some(true) {
+        parts.push("final newline".into());
+    }
+    if let Some(eol) = &rules.line_ending {
+        parts.push(eol.to_uppercase());
+    }
+    if let Some(encoding) = &rules.encoding {
+        parts.push(encoding.clone());
+    }
+    parts.join(" · ")
 }

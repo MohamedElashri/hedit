@@ -181,8 +181,8 @@ impl HeditApp {
         self.project
             .listings
             .insert(listing.path.clone(), std::sync::Arc::new(Ok(listing)));
-        self.sidebar = true;
-        self.folder_sidebar = true;
+        self.settings.show_sidebar = true;
+        self.settings.show_folders = true;
         self.sync_folder_view();
     }
     pub(super) fn refresh_folder(&mut self) {
@@ -217,7 +217,7 @@ impl HeditApp {
                 .filter(|path| std::path::Path::new(path).starts_with(&folder.path))
                 .cloned()
                 .collect();
-            folder.visible = self.folder_sidebar;
+            folder.visible = self.settings.show_folders;
         }
         self.changed();
     }
@@ -230,7 +230,7 @@ impl HeditApp {
         });
     }
     pub(super) fn folder_tree(&mut self, ui: &mut egui::Ui) {
-        if !self.folder_sidebar {
+        if !self.settings.show_folders {
             return;
         }
         self.project.poll();
@@ -265,11 +265,11 @@ impl HeditApp {
                 ))
                 .clicked()
             {
-                self.folder_sidebar = false;
+                self.settings.show_folders = false;
                 self.sync_folder_view();
             }
         });
-        if !self.folder_sidebar {
+        if !self.settings.show_folders {
             return;
         }
         if self.workspace.folders.is_empty() {

@@ -25,6 +25,21 @@
 - Editing a built-in theme names the result “*name* (modified)” instead of
   “My theme”.
 - Theme files are now version 2. Version 1 files still load and look the same.
+- Settings live in one readable `settings.json` file, like Sublime Text, in the
+  configuration folder (`~/.config/hedit/` on Linux, `~/Library/Application
+  Support/hedit.hedit/` on macOS, or `HEDIT_CONFIG_DIR`). Comments and trailing
+  commas are allowed, unknown keys are reported, and a broken file is never
+  overwritten. Saving it in hedit, or returning to hedit after editing it
+  elsewhere, applies it. Earlier preferences are imported on first launch.
+- The Settings window has General, Editor, Formatting, Appearance, Key Bindings,
+  CUDA Tools, and Recovery pages, each with its own Restore defaults, and an
+  **Open settings.json** button.
+- Formatting defaults (tab size, indentation, whitespace and newline on save,
+  line endings, encoding) can be set in Settings instead of raw JSON.
+- Rulers accept any columns, up to eight at once.
+- Find options (case sensitivity, regex, whole words) are remembered.
+- Key bindings and snippets move to `keybindings.json` and `snippets.json` in the
+  configuration folder.
 
 ### Fixed
 

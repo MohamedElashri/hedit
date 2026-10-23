@@ -450,13 +450,13 @@ impl HeditApp {
         let mut open = true;
         let mut save = false;
         let project = self.quality.settings_project;
-        egui::Window::new(if project{"Project formatting settings"}else{"Keyboard, snippets and formatting"}).open(&mut open).max_width((ctx.screen_rect().width()-32.0).max(300.0)).max_height((ctx.screen_rect().height()-32.0).max(220.0)).vscroll(true).collapsible(false).default_width(740.0).show(ctx,|ui|{
+        egui::Window::new(if project{"Project formatting settings"}else{"Key bindings and snippets"}).open(&mut open).max_width((ctx.screen_rect().width()-32.0).max(300.0)).max_height((ctx.screen_rect().height()-32.0).max(220.0)).vscroll(true).collapsible(false).default_width(740.0).show(ctx,|ui|{
             if !project{
                 ui.label("Keybindings override defaults. Use Primary for Ctrl/Cmd, e.g. Primary+Shift+F. An empty shortcut unbinds a command.");
                 ui.label("Snippets support ${SELECTION} and $0 for the final cursor. Type a trigger then Tab, or use Tools → Insert snippet.");
                 ui.collapsing("Command identifiers",|ui|{egui::ScrollArea::vertical().max_height(120.0).show(ui,|ui|{for command in Command::ALL{ui.label(format!("{} — {}",serde_json::to_value(command).unwrap().as_str().unwrap(),command.label()));}});});
             }
-            ui.label("Formatting: indent_style, indent_size, end_of_line, insert_final_newline, trim_trailing_whitespace, charset. Per-language entries use syntax identifiers such as rust, python and cpp.");
+            if project{ui.label("Formatting: indent_style, indent_size, end_of_line, insert_final_newline, trim_trailing_whitespace, charset. Per-language entries use syntax identifiers such as rust, python and cpp.");}else{ui.label("Formatting defaults are under Settings → Formatting.");}
             egui::ScrollArea::vertical().max_height((ctx.screen_rect().height()-260.0).clamp(100.0,380.0)).show(ui,|ui|{ui.add(egui::TextEdit::multiline(&mut self.quality.settings_json).code_editor().desired_rows(18).desired_width(f32::INFINITY));});
             save=ui.add_enabled(!self.busy,egui::Button::new("Save settings")).clicked();
         });
@@ -480,10 +480,6 @@ impl HeditApp {
                 } else {
                     let config: Config = serde_json::from_str(&self.quality.settings_json)
                         .map_err(|e| e.to_string())?;
-                    config.defaults.formatting.validate()?;
-                    for f in config.defaults.languages.values() {
-                        f.validate()?;
-                    }
                     let mut commands = std::collections::HashSet::new();
                     let mut shortcuts = Vec::new();
                     for binding in &config.keybindings {
@@ -505,15 +501,7 @@ impl HeditApp {
                     {
                         return Err("Snippet collection exceeds supported limits.".into());
                     }
-                    projects::atomic_json(
-                        &self
-                            .workspace
-                            .store
-                            .directory()
-                            .join("editor-settings.json"),
-                        &config,
-                    )?;
-                    self.quality.config = config;
+                    self.save_config(config)?;
                 }
                 Ok(())
             })();

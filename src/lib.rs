@@ -9,6 +9,7 @@ pub mod ipc;
 pub mod projects;
 pub mod search;
 pub mod session;
+pub mod settings;
 pub mod syntax;
 pub mod text_encoding;
 pub mod theme;

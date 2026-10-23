@@ -294,7 +294,7 @@ impl Command {
             Self::NavForward => "Navigate forward",
             Self::CompareDisk => "Compare with disk…",
             Self::GitDiff => "Git changes…",
-            Self::KeyBindings => "Keyboard, snippets and formatting…",
+            Self::KeyBindings => "Key bindings and snippets…",
             Self::Encoding => "File encoding…",
             Self::Complete => "Complete word…",
             Self::Snippets => "Insert snippet…",
@@ -386,7 +386,7 @@ impl Command {
             Self::Switcher => "Go to file…",
             Self::Palette => "Command palette…",
             Self::Sidebar => "Show sidebar",
-            Self::FolderSidebar => "Show folder sidebar",
+            Self::FolderSidebar => "Show folders in the sidebar",
             Self::Wrap => "Word wrap",
             Self::LineNumbers => "Show line numbers",
             Self::ZoomIn => "Increase font size",
@@ -545,39 +545,39 @@ impl HeditApp {
     pub(super) fn command_selected(&self, command: Command) -> bool {
         match command {
             Command::PinTab => self.active().view.pinned,
-            Command::AutoIndent => self.auto_indent,
-            Command::SmartIndent => self.smart_indent,
-            Command::SoftTabs => self.soft_tabs,
-            Command::IndentGuides => self.indent_guides,
-            Command::Minimap => self.minimap,
+            Command::AutoIndent => self.settings.auto_indent,
+            Command::SmartIndent => self.settings.smart_indent,
+            Command::SoftTabs => self.settings.smart_backspace,
+            Command::IndentGuides => self.settings.draw_indent_guides,
+            Command::Minimap => self.settings.show_minimap,
             Command::SinglePane => self.panes.mode == 0,
             Command::SplitColumns => self.panes.mode == 1,
             Command::SplitRows => self.panes.mode == 2,
-            Command::Sidebar => self.sidebar,
-            Command::FolderSidebar => self.sidebar && self.folder_sidebar,
-            Command::Tabs => self.show_tabs,
-            Command::StatusBar => self.show_status,
-            Command::CurrentLine => self.highlight_line,
-            Command::Whitespace => self.show_whitespace,
+            Command::Sidebar => self.settings.show_sidebar,
+            Command::FolderSidebar => self.settings.show_sidebar && self.settings.show_folders,
+            Command::Tabs => self.settings.show_tab_bar,
+            Command::StatusBar => self.settings.show_status_bar,
+            Command::CurrentLine => self.settings.highlight_line,
+            Command::Whitespace => self.settings.draw_white_space,
             Command::ToLf => self.active().page.info.eol == "LF",
             Command::ToCrlf => self.active().page.info.eol == "CRLF",
             Command::Fullscreen => self.fullscreen,
             Command::DistractionFree => self.distraction_free,
-            Command::RulerNone => self.ruler_column == 0,
-            Command::Ruler80 => self.ruler_column == 80,
-            Command::Ruler100 => self.ruler_column == 100,
-            Command::Ruler120 => self.ruler_column == 120,
-            Command::WrapWindow => self.wrap_column == 0,
-            Command::Wrap80 => self.wrap_column == 80,
-            Command::Wrap100 => self.wrap_column == 100,
-            Command::Wrap120 => self.wrap_column == 120,
+            Command::RulerNone => self.settings.rulers.is_empty(),
+            Command::Ruler80 => self.settings.rulers == [80],
+            Command::Ruler100 => self.settings.rulers == [100],
+            Command::Ruler120 => self.settings.rulers == [120],
+            Command::WrapWindow => self.settings.wrap_width == 0,
+            Command::Wrap80 => self.settings.wrap_width == 80,
+            Command::Wrap100 => self.settings.wrap_width == 100,
+            Command::Wrap120 => self.settings.wrap_width == 120,
             Command::IndentTabs => self.active().view.indent.as_deref() == Some("tabs"),
             Command::IndentSpaces => self.active().view.indent.as_deref() != Some("tabs"),
             Command::Indent2 => self.active().view.tab_size == Some(2),
             Command::Indent4 => self.active().view.tab_size.unwrap_or(4) == 4,
             Command::Indent8 => self.active().view.tab_size == Some(8),
-            Command::Wrap => self.wrap,
-            Command::LineNumbers => self.line_numbers,
+            Command::Wrap => self.settings.word_wrap,
+            Command::LineNumbers => self.settings.line_numbers,
             Command::Follow => self.active().follow,
             Command::Gpu => self.gpu_open,
             _ => false,
@@ -667,11 +667,13 @@ impl HeditApp {
             Command::SplitRows => self.split(2),
             Command::FocusPane => self.focus_pane(true),
             Command::MovePane => self.focus_pane(false),
-            Command::AutoIndent => self.auto_indent = !self.auto_indent,
-            Command::SmartIndent => self.smart_indent = !self.smart_indent,
-            Command::SoftTabs => self.soft_tabs = !self.soft_tabs,
-            Command::IndentGuides => self.indent_guides = !self.indent_guides,
-            Command::Minimap => self.minimap = !self.minimap,
+            Command::AutoIndent => self.settings.auto_indent = !self.settings.auto_indent,
+            Command::SmartIndent => self.settings.smart_indent = !self.settings.smart_indent,
+            Command::SoftTabs => self.settings.smart_backspace = !self.settings.smart_backspace,
+            Command::IndentGuides => {
+                self.settings.draw_indent_guides = !self.settings.draw_indent_guides
+            }
+            Command::Minimap => self.settings.show_minimap = !self.settings.show_minimap,
             Command::DetectIndent => self.detect_indent(),
             Command::Fold => self.fold(false),
             Command::FoldAll => self.fold(true),
@@ -826,18 +828,19 @@ impl HeditApp {
                 self.palette_focus = true;
                 self.palette_index = 0;
             }
-            Command::Sidebar => self.sidebar = !self.sidebar,
+            Command::Sidebar => self.settings.show_sidebar = !self.settings.show_sidebar,
             Command::FolderSidebar => {
-                self.folder_sidebar = !(self.sidebar && self.folder_sidebar);
-                if self.folder_sidebar {
-                    self.sidebar = true;
+                self.settings.show_folders =
+                    !(self.settings.show_sidebar && self.settings.show_folders);
+                if self.settings.show_folders {
+                    self.settings.show_sidebar = true;
                 }
                 self.sync_folder_view();
             }
-            Command::Tabs => self.show_tabs = !self.show_tabs,
-            Command::StatusBar => self.show_status = !self.show_status,
-            Command::CurrentLine => self.highlight_line = !self.highlight_line,
-            Command::Whitespace => self.show_whitespace = !self.show_whitespace,
+            Command::Tabs => self.settings.show_tab_bar = !self.settings.show_tab_bar,
+            Command::StatusBar => self.settings.show_status_bar = !self.settings.show_status_bar,
+            Command::CurrentLine => self.settings.highlight_line = !self.settings.highlight_line,
+            Command::Whitespace => self.settings.draw_white_space = !self.settings.draw_white_space,
             Command::Fullscreen => {
                 self.fullscreen = !self.fullscreen;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(self.fullscreen));
@@ -852,18 +855,18 @@ impl HeditApp {
                 self.distraction_free = !self.distraction_free;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(self.fullscreen));
             }
-            Command::RulerNone => self.ruler_column = 0,
-            Command::Ruler80 => self.ruler_column = 80,
-            Command::Ruler100 => self.ruler_column = 100,
-            Command::Ruler120 => self.ruler_column = 120,
+            Command::RulerNone => self.settings.rulers.clear(),
+            Command::Ruler80 => self.settings.rulers = vec![80],
+            Command::Ruler100 => self.settings.rulers = vec![100],
+            Command::Ruler120 => self.settings.rulers = vec![120],
             Command::WrapWindow | Command::Wrap80 | Command::Wrap100 | Command::Wrap120 => {
-                self.wrap_column = match command {
+                self.settings.wrap_width = match command {
                     Command::Wrap80 => 80,
                     Command::Wrap100 => 100,
                     Command::Wrap120 => 120,
                     _ => 0,
                 };
-                self.wrap = true;
+                self.settings.word_wrap = true;
             }
             Command::IndentSpaces
             | Command::IndentTabs
@@ -880,11 +883,11 @@ impl HeditApp {
                 }
                 self.changed();
             }
-            Command::Wrap => self.wrap = !self.wrap,
-            Command::LineNumbers => self.line_numbers = !self.line_numbers,
-            Command::ZoomIn => self.font_size = (self.font_size + 1.0).min(28.0),
-            Command::ZoomOut => self.font_size = (self.font_size - 1.0).max(10.0),
-            Command::ResetZoom => self.font_size = 14.0,
+            Command::Wrap => self.settings.word_wrap = !self.settings.word_wrap,
+            Command::LineNumbers => self.settings.line_numbers = !self.settings.line_numbers,
+            Command::ZoomIn => self.settings.font_size = (self.settings.font_size + 1.0).min(28.0),
+            Command::ZoomOut => self.settings.font_size = (self.settings.font_size - 1.0).max(10.0),
+            Command::ResetZoom => self.settings.font_size = 14.0,
             Command::Bookmark => self.toggle_bookmark(),
             Command::NextBookmark => self.adjacent_bookmark(ctx, true),
             Command::PreviousBookmark => self.adjacent_bookmark(ctx, false),

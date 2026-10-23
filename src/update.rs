@@ -261,12 +261,25 @@ fn run_tool(
     timeout: Duration,
 ) -> Result<(), String> {
     let stderr = tempfile::tempfile().map_err(error)?;
-    let mut child = command
+    command
         .stdin(Stdio::null())
         .stdout(output.try_clone().map_err(error)?)
-        .stderr(stderr.try_clone().map_err(error)?)
-        .spawn()
-        .map_err(|e| format!("Could not start {:?}: {e}", command.get_program()))?;
+        .stderr(stderr.try_clone().map_err(error)?);
+    // A just-written executable can briefly be "text file busy" while another
+    // thread's fork still holds it open; retry as Cargo does.
+    let mut attempts = 0;
+    let mut child = loop {
+        match command.spawn() {
+            Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy && attempts < 20 => {
+                attempts += 1;
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            result => {
+                break result
+                    .map_err(|e| format!("Could not start {:?}: {e}", command.get_program()))?
+            }
+        }
+    };
     let started = Instant::now();
     loop {
         let oversized = output.metadata().map_err(error)?.len() > limit
