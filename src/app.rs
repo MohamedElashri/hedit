@@ -1,4 +1,5 @@
 mod advanced_edit;
+mod chords;
 mod chrome;
 mod commands;
 mod edit_actions;
@@ -135,6 +136,10 @@ pub struct HeditApp {
     settings_files: settings_store::SettingsFiles,
     /// The command whose shortcut is being recorded on the Key Bindings page.
     key_capture: Option<Command>,
+    /// The first key of a shortcut being recorded, and when it was pressed.
+    capture_first: Option<(String, Instant)>,
+    /// The first key of a two-key shortcut that is waiting for its second.
+    chord: Option<egui::KeyboardShortcut>,
     /// Selection history for Undo/Redo selection change: (view, cursors).
     soft_history: (Vec<SoftState>, Vec<SoftState>, Option<SoftState>),
     live_find: find_live::LiveFind,
@@ -269,6 +274,8 @@ impl HeditApp {
             settings,
             settings_files,
             key_capture: None,
+            capture_first: None,
+            chord: None,
             soft_history: Default::default(),
             live_find: Default::default(),
             goto_origin: None,
@@ -964,6 +971,9 @@ impl HeditApp {
             return;
         }
         self.track_selection();
+        if !self.busy && !self.closing && self.handle_chords(ctx) {
+            return;
+        }
         // Escape still closes windows while a background job runs.
         self.escape(ctx);
         if self.busy || self.closing {

@@ -452,6 +452,11 @@ impl Command {
             Self::Complete if cfg!(target_os = "macos") => "Control+Space",
             Self::Complete => "Ctrl+Space",
             Self::NextOccurrence => "Ctrl+D",
+            Self::SkipOccurrence => "Ctrl+K, Ctrl+D",
+            Self::Uppercase => "Ctrl+K, Ctrl+U",
+            Self::Lowercase => "Ctrl+K, Ctrl+L",
+            Self::FoldAll => "Ctrl+K, Ctrl+1",
+            Self::UnfoldAll => "Ctrl+K, Ctrl+J",
             // Sublime: Alt+F3 on Linux, Control+Cmd+G on macOS.
             Self::AllOccurrences if cfg!(target_os = "macos") => "Control+Ctrl+G",
             Self::AllOccurrences => "Alt+F3",

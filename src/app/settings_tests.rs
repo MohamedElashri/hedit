@@ -194,6 +194,12 @@ fn key_bindings_are_recorded_by_pressing_keys_and_saved() {
     // A shortcut that another command uses moves, and that command is unbound.
     app.key_capture = Some(Command::Goto);
     frame(&ctx, &mut app, vec![key(Key::F, Modifiers::COMMAND)]);
+    // With no second key, the single key is used once the chord wait ends.
+    app.capture_first = app
+        .capture_first
+        .take()
+        .map(|(first, _)| (first, Instant::now() - Duration::from_secs(5)));
+    frame(&ctx, &mut app, vec![]);
     assert!(!app.find_open, "the recorded keys do not run Find");
     assert_eq!(app.shortcut_text(Command::Goto), Command::Find.shortcut());
     assert_eq!(app.shortcut_text(Command::Find), "");

@@ -228,3 +228,78 @@ fn selection_shortcuts_follow_sublime() {
     assert_eq!(ranges(&app), [(10, 11), (18, 19)]);
     assert_eq!(app.active().page.text, "call(one, two)\nnext line\n");
 }
+
+#[test]
+fn two_key_shortcuts_run_commands_and_can_be_recorded() {
+    let (_directory, ctx, mut app) = app_with("abc def\nsecond\n");
+    // Press and release, as a keyboard does; a held key repeats instead.
+    let ctrl = |key| {
+        let press = super::tests::key(key, Modifiers::COMMAND);
+        let egui::Event::Key { key, modifiers, .. } = press.clone() else {
+            unreachable!()
+        };
+        vec![
+            press,
+            egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: false,
+                repeat: false,
+                modifiers,
+            },
+        ]
+    };
+    app.set_selections(vec![hedit::advanced::Selection { anchor: 0, head: 3 }]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, ctrl(Key::K));
+    assert!(app.chord.is_some());
+    assert!(app.notice.contains("Waiting for the second key"));
+    frame(&ctx, &mut app, ctrl(Key::U));
+    assert_eq!(app.active().page.text, "ABC def\nsecond\n");
+    assert!(app.chord.is_none());
+    finish_app_job(&mut app, &ctx);
+    // Escape cancels, and an unknown second key is reported, not typed.
+    frame(&ctx, &mut app, ctrl(Key::K));
+    frame(&ctx, &mut app, vec![key(Key::Escape, Modifiers::NONE)]);
+    assert!(app.chord.is_none());
+    assert_eq!(app.notice, "Shortcut cancelled.");
+    frame(&ctx, &mut app, ctrl(Key::K));
+    frame(&ctx, &mut app, ctrl(Key::X));
+    assert!(app.notice.contains("not followed by that key"));
+    assert_eq!(app.active().page.text, "ABC def\nsecond\n");
+    // Ctrl+Shift+K is not mistaken for the start of a chord.
+    frame(&ctx, &mut app, vec![]);
+    frame(
+        &ctx,
+        &mut app,
+        vec![key(
+            Key::K,
+            Modifiers {
+                shift: true,
+                ..Modifiers::COMMAND
+            },
+        )],
+    );
+    assert!(app.chord.is_none());
+    assert_eq!(app.active().page.text, "second\n");
+    let release = egui::Event::Key {
+        key: Key::K,
+        physical_key: None,
+        pressed: false,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    };
+    frame(&ctx, &mut app, vec![release]);
+    // Recording: a second key soon after the first makes a chord.
+    app.open_preferences(PreferencesPage::Keys);
+    app.key_capture = Some(Command::Goto);
+    frame(&ctx, &mut app, ctrl(Key::K));
+    frame(&ctx, &mut app, ctrl(Key::G));
+    assert_eq!(app.key_capture, None);
+    assert_eq!(app.shortcut_text(Command::Goto), "Ctrl+K, Ctrl+G");
+    app.preferences_open = false;
+    frame(&ctx, &mut app, ctrl(Key::K));
+    frame(&ctx, &mut app, ctrl(Key::G));
+    assert!(app.goto_open, "the recorded chord runs Go to line");
+}

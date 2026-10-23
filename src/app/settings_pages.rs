@@ -246,7 +246,20 @@ impl HeditApp {
                     ui.label(command.label());
                     let capturing = self.key_capture == Some(*command);
                     let text = if capturing {
-                        "Press keys…".to_owned()
+                        match &self.capture_first {
+                            Some((first, _)) => format!(
+                                "{}, …",
+                                first.replace(
+                                    "Primary",
+                                    if cfg!(target_os = "macos") {
+                                        "Cmd"
+                                    } else {
+                                        "Ctrl"
+                                    }
+                                )
+                            ),
+                            None => "Press keys…".to_owned(),
+                        }
                     } else if shortcut.is_empty() {
                         "—".to_owned()
                     } else {
@@ -375,13 +388,38 @@ impl HeditApp {
             i.events
                 .retain(|e| !matches!(e, egui::Event::Key { .. } | egui::Event::Text(_)))
         });
+        // A second key soon after the first records a two-key shortcut.
+        const CHORD_WAIT: Duration = Duration::from_millis(900);
         match pressed {
-            Some((Key::Escape, m)) if m.is_none() => self.key_capture = None,
-            Some((key, modifiers)) => {
+            Some((Key::Escape, m)) if m.is_none() => {
                 self.key_capture = None;
-                self.set_binding(command, Some(binding_text(modifiers, key)));
+                self.capture_first = None;
             }
-            None => {}
+            Some((key, modifiers)) => {
+                let text = binding_text(modifiers, key);
+                match self.capture_first.take() {
+                    Some((first, _)) => {
+                        self.key_capture = None;
+                        self.set_binding(command, Some(format!("{first}, {text}")));
+                    }
+                    None => {
+                        self.capture_first = Some((text, Instant::now()));
+                        ctx.request_repaint_after(CHORD_WAIT);
+                    }
+                }
+            }
+            None => {
+                if let Some((first, at)) = &self.capture_first {
+                    if at.elapsed() >= CHORD_WAIT {
+                        let first = first.clone();
+                        self.capture_first = None;
+                        self.key_capture = None;
+                        self.set_binding(command, Some(first));
+                    } else {
+                        ctx.request_repaint_after(CHORD_WAIT - at.elapsed());
+                    }
+                }
+            }
         }
         true
     }

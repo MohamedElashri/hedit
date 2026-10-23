@@ -44,6 +44,10 @@
   brackets (Ctrl+Shift+M), Expand to indentation (Ctrl+Shift+J), Jump to matching
   bracket (Ctrl+M), Split into lines (Ctrl+Shift+L), Skip occurrence, and undo or
   redo of selection changes (Ctrl+U, Ctrl+Shift+U).
+- Two-key shortcuts as in Sublime, such as Ctrl+K, Ctrl+D (skip occurrence),
+  Ctrl+K, Ctrl+U / Ctrl+K, Ctrl+L (upper/lowercase), and Ctrl+K, Ctrl+1 /
+  Ctrl+K, Ctrl+J (fold/unfold all). They can be recorded on the Key Bindings page
+  and written in keybindings.json as `"Primary+K, Primary+D"`.
 
 ### Changed
 

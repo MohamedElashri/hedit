@@ -634,13 +634,21 @@ and `$0` for the final cursor; a `language` value restricts them to a syntax ID.
 Completion and snippets operate on fully loaded files.
 
 **Settings → Key Bindings** lists every command with its shortcut. Click a
-shortcut and press the new keys; **Esc** cancels. If another command used those
+shortcut and press the new keys; **Esc** cancels. Press a second key within about
+a second to record a two-key shortcut such as **Ctrl+K, Ctrl+G**. If another command used those
 keys, it is unbound and the status bar says so. **Reset** restores a default, and
 **Unbind** removes a shortcut. Bindings are saved in `keybindings.json`, where an
 entry looks like
 `{"command":"find_files","shortcut":"Primary+Shift+F","editor_only":false}`.
 `Primary` means Ctrl on Linux and Command on macOS, and an empty shortcut unbinds
-a command.
+a command. Separate the keys of a two-key shortcut with a comma:
+`"Primary+K, Primary+D"`.
+
+Like Sublime, some commands use two keys: press the first, then the second. The
+status bar shows that hedit is waiting for the second key; **Esc** cancels. The
+defaults are **Ctrl+K, Ctrl+D** (skip occurrence), **Ctrl+K, Ctrl+U** /
+**Ctrl+K, Ctrl+L** (uppercase / lowercase), and **Ctrl+K, Ctrl+1** /
+**Ctrl+K, Ctrl+J** (fold / unfold all).
 
 **Settings → Snippets** edits each snippet's trigger, description, syntax, and
 body, and can add, remove, or restore the default snippets. They are saved in
@@ -1011,6 +1019,9 @@ and Quit are in macOS's own hedit menu. Change any shortcut under
 | Ctrl+Shift+Space / Ctrl+Shift+M / Ctrl+Shift+J | Expand selection / to brackets / to indentation |
 | Ctrl+M | Jump to the matching bracket |
 | Ctrl+U / Ctrl+Shift+U | Undo / redo a selection change |
+| Ctrl+K, Ctrl+D | Skip occurrence |
+| Ctrl+K, Ctrl+U / Ctrl+K, Ctrl+L | Uppercase / lowercase |
+| Ctrl+K, Ctrl+1 / Ctrl+K, Ctrl+J | Fold / unfold all |
 | Alt+click / Alt+Shift+drag | Add a cursor / rectangular selection |
 | Ctrl+Alt+Right | Focus the other editor group |
 | Ctrl+Alt+Shift+Right | Show the current file in the other group |
