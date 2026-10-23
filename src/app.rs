@@ -1258,7 +1258,7 @@ impl HeditApp {
         };
         let row_height = ui.fonts(|f| f.row_height(&FontId::monospace(font_size)));
         let line_height =
-            (self.settings.line_padding > 0.0).then(|| row_height + self.settings.line_padding);
+            (self.settings.line_padding > 0.0).then_some(row_height + self.settings.line_padding);
         // Like Sublime, the last line can scroll up to the top: the editor is a
         // window's height taller than its text, so clicks there place the cursor.
         let rows = if self.settings.scroll_past_end && !buffer.follow {
@@ -1273,8 +1273,10 @@ impl HeditApp {
                 ui,
                 text,
                 language,
-                font_size,
-                line_height,
+                editor_layout::Font {
+                    size: font_size,
+                    line_height,
+                },
                 if wrap {
                     wrap_width.min(wrap_limit)
                 } else {
