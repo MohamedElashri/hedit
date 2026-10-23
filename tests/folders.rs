@@ -213,3 +213,38 @@ fn single_folder_manifests_migrate_to_multiple_roots_without_losing_buffers() {
     assert!(!workspace.folders[0].visible);
     assert_eq!(workspace.open[0].page.text, "old unsaved notes");
 }
+
+#[test]
+fn exclusion_patterns_hide_folders_and_files_everywhere() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join("zz-hidden-build/deep")).unwrap();
+    std::fs::write(root.path().join("zz-hidden-build/deep/inner.txt"), "x").unwrap();
+    std::fs::write(root.path().join("keep.txt"), "x").unwrap();
+    std::fs::write(root.path().join("notes.zzlog"), "x").unwrap();
+    let defaults = |extra_folder: &[&str], extra_file: &[&str]| {
+        let folders: Vec<String> = folder::DEFAULT_FOLDER_EXCLUDES
+            .iter()
+            .chain(extra_folder)
+            .map(|s| s.to_string())
+            .collect();
+        let files: Vec<String> = folder::DEFAULT_FILE_EXCLUDES
+            .iter()
+            .chain(extra_file)
+            .map(|s| s.to_string())
+            .collect();
+        folder::set_excludes(&folders, &files).unwrap();
+    };
+    // Keep the defaults so concurrent tests in this binary see no change.
+    defaults(&["zz-hidden-*"], &["*.zzlog"]);
+    let listing = folder::read_directory(root.path().into()).unwrap();
+    let names: Vec<_> = listing.entries.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(names, ["keep.txt"]);
+    let all = folder::quick_open(root.path().into(), "").unwrap();
+    assert!(all.entries.iter().all(|e| e.name == "keep.txt"));
+    assert!(folder::set_excludes(&["[".into()], &[])
+        .unwrap_err()
+        .contains("Invalid pattern"));
+    defaults(&[], &[]);
+    let listing = folder::read_directory(root.path().into()).unwrap();
+    assert_eq!(listing.entries.len(), 3);
+}

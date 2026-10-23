@@ -135,9 +135,9 @@ pub fn walk(roots: &[PathBuf], filter: &str, cancel: &AtomicBool) -> Result<Vec<
             {
                 return false;
             }
-            !matches!(
-                entry.file_name().to_str(),
-                Some(".git" | ".hg" | ".svn" | "node_modules" | "target" | ".venv" | "__pycache__")
+            !crate::folder::excluded(
+                &entry.file_name().to_string_lossy(),
+                entry.file_type().is_some_and(|t| t.is_dir()),
             )
         });
     if filter.len() > 4096 {

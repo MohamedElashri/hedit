@@ -55,7 +55,7 @@ pub fn completions(text: &str, cursor: usize) -> (std::ops::Range<usize>, Vec<St
     }
     (start..byte, words.into_iter().collect())
 }
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Snippet {
     pub trigger: String,
     pub description: String,

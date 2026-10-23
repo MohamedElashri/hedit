@@ -1,24 +1,28 @@
 use super::*;
 
-use hedit::settings::{FormatSettings, Settings, MAX_COLUMN};
+use hedit::settings::{Settings, MAX_COLUMN};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PreferencesPage {
     General,
     Editor,
     Formatting,
+    Folders,
     Appearance,
     Keys,
+    Snippets,
     Tools,
     Recovery,
 }
 impl PreferencesPage {
-    pub(super) const ALL: [Self; 7] = [
+    pub(super) const ALL: [Self; 9] = [
         Self::General,
         Self::Editor,
         Self::Formatting,
+        Self::Folders,
         Self::Appearance,
         Self::Keys,
+        Self::Snippets,
         Self::Tools,
         Self::Recovery,
     ];
@@ -27,8 +31,10 @@ impl PreferencesPage {
             Self::General => "General",
             Self::Editor => "Editor",
             Self::Formatting => "Formatting",
+            Self::Folders => "Folders & Search",
             Self::Appearance => "Appearance",
             Self::Keys => "Key Bindings",
+            Self::Snippets => "Snippets",
             Self::Tools => "CUDA Tools",
             Self::Recovery => "Recovery",
         }
@@ -39,7 +45,7 @@ impl PreferencesPage {
 }
 
 /// A row of a settings page: a fixed-width label, then the control.
-fn row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
+pub(super) fn row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
     ui.horizontal(|ui| {
         ui.allocate_ui_with_layout(
             egui::vec2(170.0, 20.0),
@@ -53,7 +59,7 @@ fn row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
     });
 }
 
-fn section(ui: &mut egui::Ui, title: &str) {
+pub(super) fn section(ui: &mut egui::Ui, title: &str) {
     ui.add_space(10.0);
     ui.label(RichText::new(title).strong());
     ui.add_space(2.0);
@@ -100,7 +106,7 @@ impl HeditApp {
                     ui.horizontal_top(|ui| {
                         ui.set_height(body_height);
                         ui.vertical(|ui| {
-                            ui.set_width(120.0);
+                            ui.set_width(130.0);
                             ui.add_space(8.0);
                             for page in PreferencesPage::ALL {
                                 if !page.available() {
@@ -108,7 +114,7 @@ impl HeditApp {
                                 }
                                 if ui
                                     .add_sized(
-                                        [120.0, 30.0],
+                                        [130.0, 26.0],
                                         egui::Button::new(page.title())
                                             .selected(self.preferences_page == page),
                                     )
@@ -130,7 +136,9 @@ impl HeditApp {
                                     PreferencesPage::General => self.general_preferences(ui),
                                     PreferencesPage::Editor => self.editor_preferences(ui),
                                     PreferencesPage::Formatting => self.formatting_preferences(ui),
+                                    PreferencesPage::Folders => self.folder_preferences(ui),
                                     PreferencesPage::Keys => self.key_preferences(ui, ctx),
+                                    PreferencesPage::Snippets => self.snippet_preferences(ui),
                                     PreferencesPage::Appearance => self.theme_preferences(ui, ctx),
                                     PreferencesPage::Tools => self.tool_preferences(ui),
                                     PreferencesPage::Recovery => self.recovery_preferences(ui, ctx),
@@ -334,127 +342,6 @@ impl HeditApp {
             s.smart_backspace = d.smart_backspace;
         }
     }
-    fn formatting_preferences(&mut self, ui: &mut egui::Ui) {
-        ui.weak("Defaults for every file. A project or .editorconfig can override them. Unset options leave each file's style alone.");
-        let f = &mut self.settings.format;
-        section(ui, "Indentation");
-        row(ui, "Indent with", |ui| {
-            egui::ComboBox::from_id_salt("indent-with")
-                .selected_text(match f.translate_tabs_to_spaces {
-                    None => "Keep each file's style",
-                    Some(true) => "Spaces",
-                    Some(false) => "Tabs",
-                })
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(
-                        &mut f.translate_tabs_to_spaces,
-                        None,
-                        "Keep each file's style",
-                    );
-                    ui.selectable_value(&mut f.translate_tabs_to_spaces, Some(true), "Spaces");
-                    ui.selectable_value(&mut f.translate_tabs_to_spaces, Some(false), "Tabs");
-                });
-        });
-        row(ui, "Tab size", |ui| {
-            egui::ComboBox::from_id_salt("tab-size")
-                .selected_text(
-                    f.tab_size
-                        .map_or("Keep each file's size".into(), |n| n.to_string()),
-                )
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut f.tab_size, None, "Keep each file's size");
-                    for n in [2, 3, 4, 8] {
-                        ui.selectable_value(&mut f.tab_size, Some(n), n.to_string());
-                    }
-                });
-        });
-        section(ui, "On save");
-        let mut trim = f.trim_trailing_white_space_on_save == Some(true);
-        if ui.checkbox(&mut trim, "Trim trailing whitespace").changed() {
-            f.trim_trailing_white_space_on_save = trim.then_some(true);
-        }
-        let mut newline = f.ensure_newline_at_eof_on_save == Some(true);
-        if ui
-            .checkbox(&mut newline, "End the file with a newline")
-            .changed()
-        {
-            f.ensure_newline_at_eof_on_save = newline.then_some(true);
-        }
-        row(ui, "Line endings", |ui| {
-            egui::ComboBox::from_id_salt("line-ending")
-                .selected_text(match f.line_ending.as_deref() {
-                    Some("lf") => "LF (Unix, macOS)",
-                    Some("crlf") => "CRLF (Windows)",
-                    _ => "Keep each file's",
-                })
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut f.line_ending, None, "Keep each file's");
-                    ui.selectable_value(&mut f.line_ending, Some("lf".into()), "LF (Unix, macOS)");
-                    ui.selectable_value(&mut f.line_ending, Some("crlf".into()), "CRLF (Windows)");
-                });
-        });
-        row(ui, "Encoding", |ui| {
-            egui::ComboBox::from_id_salt("encoding")
-                .selected_text(f.encoding.as_deref().unwrap_or("Keep each file's"))
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut f.encoding, None, "Keep each file's");
-                    for label in [
-                        "utf-8",
-                        "utf-8-bom",
-                        "windows-1252",
-                        "iso-8859-1",
-                        "shift_jis",
-                        "utf-16le",
-                    ] {
-                        ui.selectable_value(&mut f.encoding, Some(label.into()), label);
-                    }
-                });
-        });
-        section(ui, "Per syntax");
-        let specific = &mut self.settings.syntax_specific;
-        if specific.is_empty() {
-            ui.weak("No syntax-specific rules. Add them under syntax_specific in settings.json, for example \"python\": { \"tab_size\": 4 }.");
-        }
-        let mut remove = None;
-        for (syntax, rules) in specific.iter() {
-            ui.horizontal(|ui| {
-                ui.monospace(syntax);
-                ui.weak(describe(rules));
-                if ui.small_button("Remove").clicked() {
-                    remove = Some(syntax.clone());
-                }
-            });
-        }
-        if let Some(syntax) = remove {
-            specific.remove(&syntax);
-        }
-        ui.add_space(14.0);
-        if ui.button("Restore defaults").clicked() {
-            self.settings.format = FormatSettings::default();
-            self.settings.syntax_specific.clear();
-        }
-    }
-    fn key_preferences(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        ui.weak("Override any command's shortcut, and add snippets that expand with Tab.");
-        ui.add_space(8.0);
-        if ui.button("Edit key bindings and snippets…").clicked() {
-            self.execute(ctx, Command::KeyBindings);
-        }
-        if let Some(dir) = self.settings_files.dir.clone() {
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                for file in [
-                    settings_store::KEYBINDINGS_FILE,
-                    settings_store::SNIPPETS_FILE,
-                ] {
-                    if ui.button(format!("Open {file}")).clicked() {
-                        self.close_transient(ctx);
-                        self.open(ctx, Some(dir.join(file)));
-                    }
-                }
-            });
-        }
-    }
     fn tool_preferences(&mut self, ui: &mut egui::Ui) {
         if !hedit::debugger::LOCAL_TOOLS_SUPPORTED {
             ui.label("CUDA source editing is available. Local CUDA tools are disabled on macOS.");
@@ -573,28 +460,4 @@ impl HeditApp {
             self.focus_editor = true;
         }
     }
-}
-
-/// A one-line summary of a syntax rule set, such as `tab size 2 · spaces`.
-fn describe(rules: &FormatSettings) -> String {
-    let mut parts = Vec::new();
-    if let Some(size) = rules.tab_size {
-        parts.push(format!("tab size {size}"));
-    }
-    if let Some(spaces) = rules.translate_tabs_to_spaces {
-        parts.push(if spaces { "spaces" } else { "tabs" }.into());
-    }
-    if rules.trim_trailing_white_space_on_save == Some(true) {
-        parts.push("trim whitespace".into());
-    }
-    if rules.ensure_newline_at_eof_on_save == Some(true) {
-        parts.push("final newline".into());
-    }
-    if let Some(eol) = &rules.line_ending {
-        parts.push(eol.to_uppercase());
-    }
-    if let Some(encoding) = &rules.encoding {
-        parts.push(encoding.clone());
-    }
-    parts.join(" · ")
 }

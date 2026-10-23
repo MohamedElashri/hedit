@@ -40,6 +40,13 @@
 - Find options (case sensitivity, regex, whole words) are remembered.
 - Key bindings and snippets move to `keybindings.json` and `snippets.json` in the
   configuration folder.
+- Settings → Key Bindings lists every command; click a shortcut and press keys to
+  change it, with Reset and Unbind. Keys taken from another command unbind it.
+- Settings → Snippets edits snippets in place instead of as JSON.
+- Formatting rules can be added per syntax from the Formatting page.
+- Settings → Folders & Search sets which folders and files are hidden from the
+  folder tree, Go to file, and Find in folders (`folder_exclude_patterns`,
+  `file_exclude_patterns`). `*.pyc` and `.DS_Store` files are now hidden by default.
 
 ### Fixed
 

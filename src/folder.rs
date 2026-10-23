@@ -1,6 +1,67 @@
 use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock};
+
+/// Folder and file name patterns hidden from the folder tree, Go to file, and
+/// Find in folders, like Sublime's `folder_exclude_patterns`.
+pub const DEFAULT_FOLDER_EXCLUDES: [&str; 7] = [
+    ".git",
+    ".hg",
+    ".svn",
+    "node_modules",
+    "target",
+    ".venv",
+    "__pycache__",
+];
+pub const DEFAULT_FILE_EXCLUDES: [&str; 2] = ["*.pyc", ".DS_Store"];
+
+struct Excludes {
+    folders: globset::GlobSet,
+    files: globset::GlobSet,
+}
+
+fn glob_set(patterns: &[impl AsRef<str>]) -> Result<globset::GlobSet, String> {
+    let mut builder = globset::GlobSetBuilder::new();
+    for pattern in patterns {
+        let pattern = pattern.as_ref();
+        builder.add(
+            globset::GlobBuilder::new(pattern)
+                .literal_separator(true)
+                .build()
+                .map_err(|e| format!("Invalid pattern “{pattern}”: {e}"))?,
+        );
+    }
+    builder.build().map_err(|e| e.to_string())
+}
+
+static EXCLUDES: RwLock<Option<Arc<Excludes>>> = RwLock::new(None);
+
+/// Check exclusion patterns without applying them.
+pub fn validate_excludes(folders: &[String], files: &[String]) -> Result<(), String> {
+    glob_set(folders).and(glob_set(files)).map(|_| ())
+}
+
+/// Replace the exclusion patterns used by every folder walk in this process.
+pub fn set_excludes(folders: &[String], files: &[String]) -> Result<(), String> {
+    let excludes = Excludes {
+        folders: glob_set(folders)?,
+        files: glob_set(files)?,
+    };
+    *EXCLUDES.write().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(excludes));
+    Ok(())
+}
+
+/// Whether a folder or file with this name is hidden from folder walks.
+pub fn excluded(name: &str, directory: bool) -> bool {
+    let current = EXCLUDES.read().unwrap_or_else(|e| e.into_inner()).clone();
+    match current {
+        Some(excludes) if directory => excludes.folders.is_match(name),
+        Some(excludes) => excludes.files.is_match(name),
+        None if directory => DEFAULT_FOLDER_EXCLUDES.contains(&name),
+        None => name == ".DS_Store" || name.ends_with(".pyc"),
+    }
+}
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -49,7 +110,9 @@ pub fn read_directory(path: PathBuf) -> Result<FolderListing, String> {
         } else {
             (kind.is_dir(), kind.is_file())
         };
-        if is_directory || is_file {
+        if (is_directory || is_file)
+            && !excluded(&entry.file_name().to_string_lossy(), is_directory)
+        {
             entries.push(FolderEntry {
                 name: entry.file_name().to_string_lossy().into_owned(),
                 path: entry.path().to_string_lossy().into_owned(),
@@ -195,23 +258,15 @@ pub fn quick_open_roots(roots: &[PathBuf], query: &str) -> Result<QuickOpen, Str
                 truncated = true;
                 continue;
             }
+            let name = entry.file_name().to_string_lossy().into_owned();
             if kind.is_dir() {
-                if matches!(
-                    entry.file_name().to_str(),
-                    Some(
-                        ".git"
-                            | ".hg"
-                            | ".svn"
-                            | "node_modules"
-                            | "target"
-                            | ".venv"
-                            | "__pycache__"
-                    )
-                ) {
+                if excluded(&name, true) {
                     continue;
                 }
                 directories.push_back(path);
-            } else if kind.is_file() || (kind.is_symlink() && path.is_file()) {
+            } else if (kind.is_file() || (kind.is_symlink() && path.is_file()))
+                && !excluded(&name, false)
+            {
                 if !visited_files.insert(path.clone()) {
                     continue;
                 }

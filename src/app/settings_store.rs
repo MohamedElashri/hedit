@@ -28,6 +28,11 @@ pub(super) struct SettingsFiles {
     pub stamp: Option<SystemTime>,
     /// The file could not be parsed; do not overwrite it until it is fixed.
     pub broken: bool,
+    /// Key bindings and snippets as last written, and when they changed.
+    pub config_saved: Config,
+    pub config_changed_at: Option<Instant>,
+    /// The exclusion patterns folder walks currently use.
+    pub excludes: Option<(Vec<String>, Vec<String>)>,
 }
 
 /// The pre-0.1.4 editor-settings.json, which also held formatting defaults.
@@ -125,6 +130,9 @@ pub(super) fn load(
         changed_at: None,
         stamp: None,
         broken: false,
+        config_saved: Config::default(),
+        config_changed_at: None,
+        excludes: None,
     };
     let Some(dir) = dir else {
         return (settings, config, files, errors);
@@ -170,6 +178,7 @@ pub(super) fn load(
         Ok(snippets) => config.snippets = snippets,
         Err(error) => errors.push(format!("{SNIPPETS_FILE}: {error}")),
     }
+    files.config_saved = config.clone();
     (settings, config, files, errors)
 }
 
@@ -190,6 +199,8 @@ impl HeditApp {
         self.write_settings(true);
     }
     fn write_settings(&mut self, now: bool) {
+        self.apply_excludes();
+        self.write_config(now);
         self.settings.find_case_sensitive = self.quality.options.case_sensitive;
         self.settings.find_regex = self.quality.options.regex;
         self.settings.find_whole_word = self.quality.options.whole_word;
@@ -215,12 +226,61 @@ impl HeditApp {
             Err(error) => self.error = Some(format!("Cannot save settings: {error}")),
         }
     }
-    /// How long until pending settings should be written.
+    /// How long until pending settings, key bindings, or snippets are written.
     pub(super) fn settings_due(&self) -> Option<Duration> {
-        self.settings_files
-            .changed_at
-            .map(|at| SETTLE.saturating_sub(at.elapsed()))
-            .or_else(|| (self.settings != self.settings_files.saved).then_some(SETTLE))
+        let due = |at: Option<Instant>, changed: bool| {
+            at.map(|at| SETTLE.saturating_sub(at.elapsed()))
+                .or_else(|| changed.then_some(SETTLE))
+        };
+        let files = &self.settings_files;
+        [
+            due(files.changed_at, self.settings != files.saved),
+            due(
+                files.config_changed_at,
+                self.quality.config != files.config_saved,
+            ),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
+    }
+    /// Use new folder and file exclusion patterns once they are valid.
+    fn apply_excludes(&mut self) {
+        let wanted = (
+            self.settings.folder_exclude_patterns.clone(),
+            self.settings.file_exclude_patterns.clone(),
+        );
+        if self.settings_files.excludes.as_ref() == Some(&wanted)
+            || hedit::folder::set_excludes(&wanted.0, &wanted.1).is_err()
+        {
+            return;
+        }
+        let first = self.settings_files.excludes.is_none();
+        self.settings_files.excludes = Some(wanted);
+        if !first {
+            self.project.invalidate();
+            self.refresh_folder();
+        }
+    }
+    /// Write key bindings and snippets once edits settle.
+    fn write_config(&mut self, now: bool) {
+        if self.quality.config == self.settings_files.config_saved {
+            self.settings_files.config_changed_at = None;
+            return;
+        }
+        let changed = *self
+            .settings_files
+            .config_changed_at
+            .get_or_insert_with(Instant::now);
+        if !now && changed.elapsed() < SETTLE {
+            return;
+        }
+        self.settings_files.config_changed_at = None;
+        let config = self.quality.config.clone();
+        self.settings_files.config_saved = config.clone();
+        if let Err(error) = self.save_config(config) {
+            self.error = Some(format!("Cannot save key bindings or snippets: {error}"));
+        }
     }
     /// Apply settings that other parts of the app copy at startup.
     pub(super) fn apply_settings(&mut self) {
@@ -228,6 +288,7 @@ impl HeditApp {
         self.quality.options.regex = self.settings.find_regex;
         self.quality.options.whole_word = self.settings.find_whole_word;
         self.updates.use_github_cli = self.settings.update_with_github_cli;
+        self.apply_excludes();
         self.sync_folder_view();
     }
     /// Re-read settings.json when it changed on disk, such as after saving it

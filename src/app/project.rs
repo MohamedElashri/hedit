@@ -65,7 +65,7 @@ impl ProjectBrowser {
             create: None,
         }
     }
-    fn invalidate(&mut self) {
+    pub(super) fn invalidate(&mut self) {
         self.generation = self.generation.wrapping_add(1);
         self.listings.clear();
         self.pending.clear();

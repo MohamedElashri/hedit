@@ -13,6 +13,7 @@ mod quality;
 #[cfg(test)]
 mod quality_tests;
 mod quality_windows;
+mod settings_pages;
 mod settings_store;
 #[cfg(test)]
 mod settings_tests;
@@ -121,6 +122,9 @@ pub struct HeditApp {
     notice_shown: (String, Instant),
     settings: hedit::settings::Settings,
     settings_files: settings_store::SettingsFiles,
+    /// The command whose shortcut is being recorded on the Key Bindings page.
+    key_capture: Option<Command>,
+    key_filter: String,
     panes: panes::Panes,
     rectangle_start: Option<(usize, usize)>,
     secondary_layout: editor_layout::LayoutCache,
@@ -244,6 +248,8 @@ impl HeditApp {
             notice_shown: ("Ready.".into(), Instant::now()),
             settings,
             settings_files,
+            key_capture: None,
+            key_filter: String::new(),
             rectangle_start: None,
             panes,
             secondary_layout: editor_layout::LayoutCache::default(),
@@ -919,6 +925,9 @@ impl HeditApp {
         }
     }
     fn shortcuts(&mut self, ctx: &egui::Context) {
+        if self.capture_binding(ctx) {
+            return;
+        }
         // Escape still closes windows while a background job runs.
         self.escape(ctx);
         if self.busy || self.closing {
@@ -4249,8 +4258,18 @@ mod tests {
                 ),
                 (
                     "preferences-keys",
-                    [720.0, 480.0],
+                    [1280.0, 820.0],
                     Some(PreferencesPage::Keys),
+                ),
+                (
+                    "preferences-snippets",
+                    [1280.0, 820.0],
+                    Some(PreferencesPage::Snippets),
+                ),
+                (
+                    "preferences-folders",
+                    [720.0, 480.0],
+                    Some(PreferencesPage::Folders),
                 ),
                 (
                     "preferences-tools",

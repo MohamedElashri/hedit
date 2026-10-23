@@ -3,7 +3,7 @@ use hedit::{intelligence, projects, search};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct Binding {
     pub command: Command,
     pub shortcut: String,
@@ -11,7 +11,7 @@ pub(super) struct Binding {
     pub editor_only: bool,
 }
 /// Key bindings and snippets, saved as keybindings.json and snippets.json.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub(super) struct Config {
     pub keybindings: Vec<Binding>,

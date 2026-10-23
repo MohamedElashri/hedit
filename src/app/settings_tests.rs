@@ -1,5 +1,5 @@
 //! settings.json: migration, saving, reloading, and broken files.
-use super::tests::{finish_app_job, frame, MemoryStorage};
+use super::tests::{finish_app_job, frame, key, MemoryStorage};
 use super::*;
 use eframe::Storage;
 use std::path::Path;
@@ -153,5 +153,59 @@ fn saving_settings_json_in_hedit_applies_it() {
     finish_app_job(&mut app, &ctx);
     frame(&ctx, &mut app, vec![]);
     assert!(!app.settings.line_numbers);
+    settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
+}
+
+#[test]
+fn recorded_shortcuts_parse_back_to_the_same_keys() {
+    for (modifiers, key) in [
+        (Modifiers::COMMAND, Key::K),
+        (
+            Modifiers {
+                shift: true,
+                ..Modifiers::COMMAND
+            },
+            Key::F5,
+        ),
+        (Modifiers::ALT, Key::Comma),
+        (Modifiers::NONE, Key::F9),
+    ] {
+        let text = settings_pages::binding_text(modifiers, key);
+        let parsed = quality_windows::shortcut(&text).unwrap().unwrap();
+        assert_eq!(parsed.logical_key, key, "{text}");
+        assert_eq!(parsed.modifiers.command, modifiers.command, "{text}");
+        assert_eq!(parsed.modifiers.shift, modifiers.shift, "{text}");
+        assert_eq!(parsed.modifiers.alt, modifiers.alt, "{text}");
+    }
+}
+
+#[test]
+fn key_bindings_are_recorded_by_pressing_keys_and_saved() {
+    let directory = tempfile::tempdir().unwrap();
+    let (ctx, mut app) = app_in(directory.path(), None);
+    app.open_preferences(PreferencesPage::Keys);
+    frame(&ctx, &mut app, vec![]);
+    // Escape while recording cancels the recording, not the Settings window.
+    app.key_capture = Some(Command::Goto);
+    frame(&ctx, &mut app, vec![key(Key::Escape, Modifiers::NONE)]);
+    assert_eq!(app.key_capture, None);
+    assert!(app.preferences_open);
+    assert!(!app.overridden(Command::Goto));
+    // A shortcut that another command uses moves, and that command is unbound.
+    app.key_capture = Some(Command::Goto);
+    frame(&ctx, &mut app, vec![key(Key::F, Modifiers::COMMAND)]);
+    assert!(!app.find_open, "the recorded keys do not run Find");
+    assert_eq!(app.shortcut_text(Command::Goto), Command::Find.shortcut());
+    assert_eq!(app.shortcut_text(Command::Find), "");
+    assert!(app.notice.contains("Find"));
+    app.flush_settings();
+    let saved = std::fs::read_to_string(directory.path().join("config/keybindings.json")).unwrap();
+    assert!(
+        saved.contains("\"goto\"") && saved.contains("Primary+F"),
+        "{saved}"
+    );
+    // Reset restores the default.
+    app.set_binding(Command::Find, None);
+    assert_eq!(app.shortcut_text(Command::Find), Command::Find.shortcut());
     settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
 }

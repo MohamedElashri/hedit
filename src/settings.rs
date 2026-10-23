@@ -89,7 +89,11 @@ pub struct Settings {
     /// Formatting per syntax ID, such as `"python"` or `"makefile"`.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub syntax_specific: BTreeMap<String, FormatSettings>,
-    // Find
+    // Folders and find
+    /// Folder names hidden from the folder tree, Go to file, and Find in folders.
+    pub folder_exclude_patterns: Vec<String>,
+    /// File names hidden from the folder tree, Go to file, and Find in folders.
+    pub file_exclude_patterns: Vec<String>,
     pub find_case_sensitive: bool,
     pub find_regex: bool,
     pub find_whole_word: bool,
@@ -118,6 +122,12 @@ impl Default for Settings {
             show_folders: true,
             format: FormatSettings::default(),
             syntax_specific: BTreeMap::new(),
+            folder_exclude_patterns: crate::folder::DEFAULT_FOLDER_EXCLUDES
+                .map(String::from)
+                .to_vec(),
+            file_exclude_patterns: crate::folder::DEFAULT_FILE_EXCLUDES
+                .map(String::from)
+                .to_vec(),
             find_case_sensitive: true,
             find_regex: false,
             find_whole_word: false,
@@ -183,6 +193,10 @@ impl Settings {
                 "rulers takes up to 8 columns from 1 to {MAX_COLUMN}."
             ));
         }
+        crate::folder::validate_excludes(
+            &self.folder_exclude_patterns,
+            &self.file_exclude_patterns,
+        )?;
         if self.cuda_gdb_path.trim().is_empty() {
             return Err("cuda_gdb_path cannot be empty.".into());
         }

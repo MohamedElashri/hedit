@@ -247,9 +247,10 @@ the folder sidebar is hidden. With multiple roots, result paths include the root
 name; roots with the same name use full paths to distinguish them.
 Letters can be nonconsecutive: `srcprj` can find `src/project.rs`. Open files
 appear first; folder results show paths so matching filenames are distinguishable.
-Use **Up/Down** and **Enter**, or click a result. Search skips `.git`, `.hg`,
-`.svn`, `node_modules`, `target`, `.venv`, and `__pycache__`, and does not follow
-directory symlinks. These directories remain available in the tree.
+Use **Up/Down** and **Enter**, or click a result. Search skips the hidden folders and
+files set under **Settings → Folders & Search** (by default `.git`, `.hg`, `.svn`,
+`node_modules`, `target`, `.venv`, `__pycache__`, `*.pyc`, and `.DS_Store`), and does not follow
+directory symlinks. Hidden folders and files are left out of the folder tree too.
 
 Folder paths, expanded directories, collapsed roots, and folder-sidebar visibility
 survive restart. If a folder is moved or unavailable, its tree shows an error
@@ -615,12 +616,18 @@ Alternatively, type its trigger and press Tab. Templates support `${SELECTION}`
 and `$0` for the final cursor; a `language` value restricts them to a syntax ID.
 Completion and snippets operate on fully loaded files.
 
-**Preferences → Key bindings and snippets…** edits `keybindings.json` and
-`snippets.json` together as JSON and lists command identifiers. For example, a
-`keybindings` entry can be
+**Settings → Key Bindings** lists every command with its shortcut. Click a
+shortcut and press the new keys; **Esc** cancels. If another command used those
+keys, it is unbound and the status bar says so. **Reset** restores a default, and
+**Unbind** removes a shortcut. Bindings are saved in `keybindings.json`, where an
+entry looks like
 `{"command":"find_files","shortcut":"Primary+Shift+F","editor_only":false}`.
-`Primary` means Ctrl on Linux and Command on macOS. An empty shortcut unbinds a
-command; duplicate overrides and conflicting custom shortcuts are rejected.
+`Primary` means Ctrl on Linux and Command on macOS, and an empty shortcut unbinds
+a command.
+
+**Settings → Snippets** edits each snippet's trigger, description, syntax, and
+body, and can add, remove, or restore the default snippets. They are saved in
+`snippets.json`.
 
 ### Encodings and persistent undo
 
@@ -658,9 +665,11 @@ Settings are grouped in one window, and every change saves automatically:
 | --- | --- |
 | General | Tab bar, status bar, sidebar, folders in the sidebar, update checks with GitHub CLI |
 | Editor | Font size, line numbers, current line, whitespace, indentation guides, minimap, wrapping, rulers, typing behavior |
-| Formatting | Indentation, tab size, whitespace and final newline on save, line endings, encoding, per-syntax rules |
+| Formatting | Indentation, tab size, whitespace and final newline on save, line endings, encoding, and the same rules per syntax |
+| Folders & Search | Folders and files hidden from the folder tree and searches, default find options |
 | Appearance | Theme gallery, system light/dark switching, custom colors, saved themes, import/export |
-| Key Bindings | Key binding and snippet editor, and their files |
+| Key Bindings | Every command's shortcut; press keys to change one |
+| Snippets | Snippet triggers, descriptions, syntaxes, and bodies |
 | CUDA Tools (Linux) | CUDA-GDB path and a shortcut to the tool panel |
 | Recovery | Checkpoint status, checkpoint now, closed files, recovery guidance |
 
@@ -705,6 +714,8 @@ you fix it.
 | `line_ending` | unset | Convert to `"lf"` or `"crlf"` when saving |
 | `encoding` | unset | Convert to an encoding such as `"utf-8"` when saving |
 | `syntax_specific` | `{}` | Formatting keys per syntax ID, such as `{"python": {"tab_size": 4}}` |
+| `folder_exclude_patterns` | `[".git", ".hg", ".svn", "node_modules", "target", ".venv", "__pycache__"]` | Folder names or globs hidden from the folder tree and searches |
+| `file_exclude_patterns` | `["*.pyc", ".DS_Store"]` | File names or globs hidden from the folder tree and searches |
 | `find_case_sensitive`, `find_regex`, `find_whole_word` | `true`, `false`, `false` | Find options, remembered as you change them |
 | `cuda_gdb_path` | `"cuda-gdb"` | CUDA-GDB executable (Linux) |
 | `update_with_github_cli` | `false` | Check for updates through GitHub CLI |

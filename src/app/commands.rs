@@ -614,12 +614,7 @@ impl HeditApp {
             Command::NavForward => self.navigate(ctx, true),
             Command::CompareDisk => self.compare_disk(ctx, false),
             Command::GitDiff => self.compare_disk(ctx, true),
-            Command::KeyBindings => {
-                self.quality.settings_project = false;
-                self.quality.settings_json =
-                    serde_json::to_string_pretty(&self.quality.config).unwrap_or_default();
-                self.quality.settings_open = true;
-            }
+            Command::KeyBindings => self.open_preferences(PreferencesPage::Keys),
             Command::Encoding => {
                 self.quality.encoding = self.active().page.info.encoding.clone();
                 self.quality.encoding_open = true;
