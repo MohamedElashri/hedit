@@ -13,6 +13,10 @@ jobs:
     timeout-minutes: 40
     env:
       MACOSX_DEPLOYMENT_TARGET: '11.0'
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.92.0
@@ -24,14 +28,15 @@ jobs:
           python-version: '3.12'
       - name: Static checks
         run: |
-          make fmt-check policy docs scripts-check
+          make static
           python3 scripts/test-macos-package.py
-      - name: Check and lint both architecture slices
-        run: |
-          for target in aarch64-apple-darwin x86_64-apple-darwin; do
-            cargo check --locked --all-targets --target "$target"
-            cargo clippy --locked --all-targets --target "$target" -- -D warnings
-          done
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-universal
+      # Clippy also type-checks; the Intel slice is compiled by the release
+      # build below, so lint the runner's native Apple Silicon slice only.
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
       - name: Native editor and recovery tests
         run: >-
           cargo test --locked --bin hedit --test buffer_tools --test debugger

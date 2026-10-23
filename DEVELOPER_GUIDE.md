@@ -65,8 +65,7 @@ does not require Python. Run `make` or `make help` to list the available command
 make ci
 ```
 
-Run `make ci` **before committing**. Both the pull-request workflow and each
-release build run this exact target. It checks formatting, clippy warnings,
+Run `make ci` **before committing**. It checks formatting, clippy warnings,
 the native-only policy, documentation links, Python/shell syntax, Rust tests,
 and offline installer tests. It then builds a release, creates the archive and
 checksum, and verifies package extraction, installation to a temporary prefix,
@@ -80,7 +79,9 @@ Use narrower targets while working:
 | `make dev` / `make build` | Debug / release build |
 | `make run ARGS='--new'` | Run the editor with arguments |
 | `make fmt` / `make fmt-check` | Apply / check Rust formatting |
-| `make lint` | All static checks, including clippy with warnings denied |
+| `make static` | Quick checks that need no compiling: formatting, policy, docs, scripts |
+| `make clippy` | Clippy with warnings denied |
+| `make lint` | `make static`, then clippy |
 | `make docs` | Check links, images, and local headings |
 | `make test` | Rust tests and offline release-installer tests |
 | `make check` | Lint and tests without a release build |
@@ -426,8 +427,17 @@ installed paths consistent. Update `scripts/smoke-package.py` when changing the
 archive or documentation layout. `scripts/check-docs.py` validates document links
 and local section anchors.
 
-The Linux CI workflow and Linux release matrix both call `make ci`; keep checks
-in the Makefile instead of duplicating their commands in workflow YAML. Workflow
+Workflows call the same Makefile targets as `make ci`, ordered from cheapest to
+slowest so a failure costs as little time as possible: `make static` (seconds,
+no compiling), then `make clippy`, then `make test`. The Linux CI workflow stops
+there; the release matrix then runs `make package smoke`, which builds the
+optimized executable. Keep checks in the Makefile instead of duplicating their
+commands in workflow YAML.
+
+CI cancels a run when a newer push reaches the same branch or pull request.
+`Swatinem/rust-cache` keeps compiled dependencies between runs: the main branch
+saves the cache and other branches reuse it. Workflows disable incremental
+compilation and debug info, which only slow down and enlarge CI builds. Workflow
 steps set up dependencies and the pinned Rust/Python versions. Offline installer tests cover public
 and authenticated downloads, version/architecture selection, checksum rejection,
 failed downloads, and preservation of an existing installation on download failure.

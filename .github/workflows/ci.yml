@@ -4,20 +4,41 @@ on:
     branches:
       - '**'
   pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
+# A newer push to the same branch or pull request replaces an older run.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+env:
+  CARGO_TERM_COLOR: always
+  # Incremental artifacts and debug info only slow down and bloat CI caches.
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
 jobs:
   check:
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.92.0
         with:
           components: rustfmt, clippy
-      - name: Install native build dependencies
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libx11-dev libxkbcommon-dev libwayland-dev libegl1-mesa-dev
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Lint, test, package, and verify installation
-        run: make ci
+      # Seconds, no compiling: fail here before spending minutes on builds.
+      - name: Format, documentation, policy, and script checks
+        run: make static
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libx11-dev libxkbcommon-dev libwayland-dev libegl1-mesa-dev
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Only the default branch saves caches; other branches reuse them.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Clippy
+        run: make clippy
+      - name: Tests
+        run: make test

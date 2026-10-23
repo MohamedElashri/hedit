@@ -12,6 +12,12 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
+
 jobs:
   build:
     name: Linux ${{ matrix.arch }}
@@ -38,10 +44,19 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.92.0
         with:
           components: rustfmt, clippy
+      - name: Format, documentation, policy, and script checks
+        run: make static
       - name: Install native build dependencies
         run: sudo apt-get update && sudo apt-get install -y pkg-config libx11-dev libxkbcommon-dev libwayland-dev libegl1-mesa-dev
-      - name: Lint, test, package, and verify installation
-        run: make ci
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.arch }}
+      - name: Clippy
+        run: make clippy
+      - name: Tests
+        run: make test
+      - name: Package and verify installation
+        run: make package smoke
       - uses: actions/upload-artifact@v4
         with:
           name: hedit-linux-${{ matrix.arch }}
