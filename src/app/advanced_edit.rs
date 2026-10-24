@@ -75,6 +75,33 @@ impl HeditApp {
             return;
         }
     }
+    /// Add a cursor on the line above or below. Repeated presses keep the
+    /// first cursor's column, even past shorter lines.
+    pub(super) fn add_line_cursor(&mut self, below: bool) {
+        let b = self.active();
+        let width = b.view.tab_size.unwrap_or(4) as usize;
+        let current = self.selections();
+        let goal = match &self.line_cursor_goal {
+            Some((selections, column)) if *selections == current => *column,
+            _ => advanced::line_column(&b.page.text, b.view.head, width).1,
+        };
+        let ranges =
+            advanced::add_line_selections(&b.page.text, &current, below, width, Some(goal));
+        self.set_selections(ranges);
+        // Show the newest cursor: the first one when adding above.
+        if !below {
+            let b = &mut self.workspace.open[self.workspace.active];
+            if let Some(top) = b.view.selections.first_mut() {
+                let primary = Selection {
+                    anchor: b.view.anchor,
+                    head: b.view.head,
+                };
+                (b.view.anchor, b.view.head) = (top.anchor, top.head);
+                *top = primary;
+            }
+        }
+        self.line_cursor_goal = Some((self.selections(), goal));
+    }
     pub(super) fn occurrence(&mut self, all: bool) {
         let ranges = advanced::occurrences(&self.active().page.text, &self.selections(), all);
         self.set_selections(ranges);

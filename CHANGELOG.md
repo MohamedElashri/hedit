@@ -7,6 +7,8 @@
 - Switch tabs from the keyboard: Ctrl+Tab and Ctrl+Shift+Tab go through recently
   used files (hold Ctrl to go further back), Ctrl+PageDown and Ctrl+PageUp go
   through the tab strip, and Alt+1–9 (Cmd+1–9 on macOS) choose a tab by position.
+- Add a cursor on the line above or below with Alt+Shift+Up and Alt+Shift+Down
+  (Control+Shift+Up/Down on macOS); repeated presses keep the starting column.
 - Right-to-left text: Arabic and Hebrew follow the Unicode Bidirectional
   Algorithm, Arabic letters join (including lam-alef), and right-to-left text
   mixes with English and numbers on the same line. Clicks, the caret, Left and

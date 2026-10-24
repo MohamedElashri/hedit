@@ -157,6 +157,8 @@ pub struct HeditApp {
     /// Selection history for Undo/Redo selection change: (view, cursors).
     soft_history: (Vec<SoftState>, Vec<SoftState>, Option<SoftState>),
     tab_cycle: tab_switch::TabCycle,
+    /// Cursors made by Add cursor above/below and the column they keep.
+    line_cursor_goal: Option<(Vec<hedit::advanced::Selection>, usize)>,
     live_find: find_live::LiveFind,
     /// Where the cursor was before Go to Anything previewed a result.
     goto_origin: Option<goto_anything::Origin>,
@@ -298,6 +300,7 @@ impl HeditApp {
             chord: None,
             soft_history: Default::default(),
             tab_cycle: Default::default(),
+            line_cursor_goal: None,
             live_find: Default::default(),
             goto_origin: None,
             font_applied: String::new(),
@@ -1237,6 +1240,19 @@ impl HeditApp {
             ctx.memory_mut(|m| m.request_focus(editor_id));
         }
         if ctx.memory(|m| m.has_focus(editor_id)) {
+            let line_cursor = if cfg!(target_os = "macos") {
+                Modifiers::CTRL | Modifiers::SHIFT
+            } else {
+                Modifiers::ALT | Modifiers::SHIFT
+            };
+            for (key, command) in [
+                (Key::ArrowUp, Command::AddCursorAbove),
+                (Key::ArrowDown, Command::AddCursorBelow),
+            ] {
+                if !self.overridden(command) && tab_switch::take_exact(ctx, line_cursor, key) {
+                    self.execute(ctx, command);
+                }
+            }
             for (modifiers, key, command) in [
                 (shift, Key::D, Command::Duplicate),
                 (cmd, Key::D, Command::NextOccurrence),

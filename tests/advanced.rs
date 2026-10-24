@@ -259,3 +259,35 @@ fn cursors_jump_split_and_skip() {
     let ranges: Vec<_> = skipped.iter().map(|s| (s.start(), s.end())).collect();
     assert_eq!(ranges, [(0, 1), (8, 9)]);
 }
+
+#[test]
+fn line_selections_add_carets_and_ranges_on_neighboring_lines() {
+    let text = "abcdef\nab\nabcdef\n\tx";
+    // Below a caret at column 4: line 2 is short, so the caret stops at its end.
+    let below = a::add_line_selections(text, &[S::caret(4)], true, 4, None);
+    assert_eq!(below, vec![S::caret(4), S::caret(9)]);
+    // With the goal column kept, the next press returns to column 4.
+    let again = a::add_line_selections(text, &below, true, 4, Some(4));
+    assert_eq!(again, vec![S::caret(4), S::caret(9), S::caret(14)]);
+    // Tabs count to the next tab stop: column 4 on "\tx" is after the tab.
+    let last = a::add_line_selections(text, &[S::caret(14)], true, 4, None);
+    assert_eq!(last.last(), Some(&S::caret(18)));
+    // Nothing above the first line or below the last.
+    assert_eq!(
+        a::add_line_selections(text, &[S::caret(2)], false, 4, None),
+        vec![S::caret(2)]
+    );
+    assert_eq!(
+        a::add_line_selections(text, &[S::caret(19)], true, 4, None),
+        vec![S::caret(19)]
+    );
+    // A selection within a line is repeated at the same columns.
+    let range = S {
+        anchor: 10,
+        head: 12,
+    };
+    assert_eq!(
+        a::add_line_selections(text, &[range], false, 4, None),
+        vec![S { anchor: 7, head: 9 }, range]
+    );
+}

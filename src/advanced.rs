@@ -1007,3 +1007,67 @@ pub fn skip_occurrence(text: &str, selections: &[Selection]) -> Vec<Selection> {
     }));
     normalize(&ranges, text.chars().count())
 }
+
+/// Add a selection on the line above or below each one, at the same columns.
+/// A caret uses `goal` when given, so a column survives passing a short line.
+pub fn add_line_selections(
+    text: &str,
+    selections: &[Selection],
+    below: bool,
+    width: usize,
+    goal: Option<usize>,
+) -> Vec<Selection> {
+    let chars: Vec<char> = text.chars().collect();
+    let width = width.max(1);
+    let mut starts = vec![0];
+    starts.extend(
+        chars
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| **c == '\n')
+            .map(|(i, _)| i + 1),
+    );
+    let line_of = |at: usize| starts.partition_point(|&s| s <= at) - 1;
+    let column = |line: usize, at: usize| {
+        chars[starts[line]..at].iter().fold(0, |col, ch| match ch {
+            '\r' => col,
+            '\t' => col + width - col % width,
+            _ => col + 1,
+        })
+    };
+    let at_column = |line: usize, target: usize| {
+        let mut col = 0;
+        let mut at = starts[line];
+        while at < chars.len() && chars[at] != '\n' && chars[at] != '\r' && col < target {
+            col += if chars[at] == '\t' {
+                width - col % width
+            } else {
+                1
+            };
+            at += 1;
+        }
+        at
+    };
+    let mut out = selections.to_vec();
+    for s in normalize(selections, chars.len()) {
+        let line = line_of(s.head);
+        let Some(next) = (if below {
+            Some(line + 1).filter(|&l| l < starts.len())
+        } else {
+            line.checked_sub(1)
+        }) else {
+            continue;
+        };
+        let head_column = column(line, s.head);
+        let added = if s.anchor == s.head || line_of(s.anchor) != line {
+            Selection::caret(at_column(next, goal.unwrap_or(head_column)))
+        } else {
+            Selection {
+                anchor: at_column(next, column(line, s.anchor)),
+                head: at_column(next, head_column),
+            }
+        };
+        out.push(added);
+    }
+    normalize(&out, chars.len())
+}

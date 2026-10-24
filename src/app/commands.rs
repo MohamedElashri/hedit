@@ -50,6 +50,8 @@ pub(super) enum Command {
     ExpandToIndentation,
     JumpToBracket,
     SplitLines,
+    AddCursorAbove,
+    AddCursorBelow,
     SoftUndo,
     SoftRedo,
     AllOccurrences,
@@ -211,6 +213,8 @@ impl Command {
         Self::ExpandToIndentation,
         Self::JumpToBracket,
         Self::SplitLines,
+        Self::AddCursorAbove,
+        Self::AddCursorBelow,
         Self::SoftUndo,
         Self::SoftRedo,
         Self::AllOccurrences,
@@ -400,6 +404,8 @@ impl Command {
             Self::ExpandToIndentation => "Expand selection to indentation",
             Self::JumpToBracket => "Jump to matching bracket",
             Self::SplitLines => "Split selection into lines",
+            Self::AddCursorAbove => "Add cursor above",
+            Self::AddCursorBelow => "Add cursor below",
             Self::SoftUndo => "Undo selection change",
             Self::SoftRedo => "Redo selection change",
             Self::AllOccurrences => "Select all occurrences",
@@ -576,6 +582,10 @@ impl Command {
             Self::AllOccurrences if cfg!(target_os = "macos") => "Control+Ctrl+G",
             Self::AllOccurrences => "Alt+F3",
             Self::SplitLines => "Ctrl+Shift+L",
+            Self::AddCursorAbove if cfg!(target_os = "macos") => "Control+Shift+Up",
+            Self::AddCursorBelow if cfg!(target_os = "macos") => "Control+Shift+Down",
+            Self::AddCursorAbove => "Alt+Shift+Up",
+            Self::AddCursorBelow => "Alt+Shift+Down",
             Self::ExpandSelection => "Ctrl+Shift+Space",
             Self::ExpandToBrackets => "Ctrl+Shift+M",
             Self::ExpandToIndentation => "Ctrl+Shift+J",
@@ -712,6 +722,8 @@ impl HeditApp {
             | Command::ExpandToIndentation
             | Command::JumpToBracket
             | Command::SplitLines
+            | Command::AddCursorAbove
+            | Command::AddCursorBelow
             | Command::Rectangle
             | Command::Fold
             | Command::FoldAll => !self.active().page.info.paged,
@@ -897,6 +909,8 @@ impl HeditApp {
                     hedit::advanced::split_into_lines(&self.active().page.text, &self.selections());
                 self.set_selections(ranges);
             }
+            Command::AddCursorAbove => self.add_line_cursor(false),
+            Command::AddCursorBelow => self.add_line_cursor(true),
             Command::SoftUndo => self.soft_undo(false),
             Command::SoftRedo => self.soft_undo(true),
             Command::AllOccurrences => {

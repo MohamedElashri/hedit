@@ -393,7 +393,9 @@ them, then the next pair out), **Ctrl+Shift+J** selects the surrounding lines at
 the same or deeper indentation, and **Ctrl+M** jumps between matching brackets.
 **Ctrl+U** and **Ctrl+Shift+U** step back and forward through selection changes,
 like Sublime's soft undo for cursor movement.
-Use **Alt+click** to add a cursor. Drag with **Alt+Shift** to select a rectangle,
+Use **Alt+click** to add a cursor. **Alt+Shift+Up** and **Alt+Shift+Down**
+(**Control+Shift+Up/Down** on macOS) add a cursor on the line above or below at the
+same column; pressing again keeps that column even past shorter lines. Drag with **Alt+Shift** to select a rectangle,
 or make a normal selection and choose **Edit → Selection → Rectangular selection**.
 Short lines clamp to their ends. **Esc** or **Single selection** keeps just the
 primary cursor.
@@ -1125,6 +1127,7 @@ and Quit are in macOS's own hedit menu. Change any shortcut under
 | Ctrl+K, Ctrl+U / Ctrl+K, Ctrl+L | Uppercase / lowercase |
 | Ctrl+K, Ctrl+1 / Ctrl+K, Ctrl+J | Fold / unfold all |
 | Alt+click / Alt+Shift+drag | Add a cursor / rectangular selection |
+| Alt+Shift+Up / Alt+Shift+Down | Add a cursor on the line above / below |
 | Ctrl+Alt+Right / Ctrl+1–4 | Focus the next editor group / group 1–4 |
 | Alt+Shift+1–5, 8, 9 | Layout: 1–4 columns, grid of four, 2 or 3 rows |
 | Ctrl+Alt+Shift+Right | Show the current file in the other group |

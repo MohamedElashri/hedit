@@ -517,6 +517,28 @@ fn an_empty_extra_window_removes_its_session_on_close() {
 }
 
 #[test]
+fn add_cursor_below_keeps_its_column_and_types_on_every_line() {
+    let (_directory, ctx, mut app) = app_with("abcdef\nab\nabcdef\n");
+    app.set_selections(vec![hedit::advanced::Selection::caret(4)]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![]);
+    let add = if cfg!(target_os = "macos") {
+        Modifiers::CTRL | Modifiers::SHIFT
+    } else {
+        Modifiers::ALT | Modifiers::SHIFT
+    };
+    frame(&ctx, &mut app, vec![key(Key::ArrowDown, add)]);
+    frame(&ctx, &mut app, vec![key(Key::ArrowDown, add)]);
+    type_text(&ctx, &mut app, "|");
+    assert_eq!(app.active().page.text, "abcd|ef\nab|\nabcd|ef\n");
+    // Above, from a single cursor, the new cursor becomes the one in view.
+    frame(&ctx, &mut app, vec![key(Key::Escape, Modifiers::NONE)]);
+    app.execute(&ctx, Command::AddCursorAbove);
+    assert_eq!(app.selections().len(), 2);
+    assert!(app.active().view.head < app.active().view.selections[0].head);
+}
+
+#[test]
 fn repeated_arrow_shortcuts_keep_the_editor_focused() {
     let (_directory, ctx, mut app) = app_with("one\ntwo\nthree\nfour\n");
     app.set_selections(vec![hedit::advanced::Selection::caret(0)]);
