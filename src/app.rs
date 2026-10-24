@@ -160,6 +160,8 @@ pub struct HeditApp {
     font_applied: String,
     /// The `font_face` font file, kept to rebuild the fonts when fallbacks load.
     editor_font: Option<Vec<u8>>,
+    /// An input method is composing text (it sent a non-empty preedit).
+    ime_composing: bool,
     key_filter: String,
     panes: panes::Panes,
     rectangle_start: Option<(usize, usize)>,
@@ -295,6 +297,7 @@ impl HeditApp {
             goto_origin: None,
             font_applied: String::new(),
             editor_font: None,
+            ime_composing: false,
             key_filter: String::new(),
             rectangle_start: None,
             panes,
@@ -1012,7 +1015,35 @@ impl HeditApp {
             }
         }
     }
+    /// Keyboard layouts such as Arabic on GNOME commit each letter through the
+    /// input method without composing first. egui only accepts a commit at the
+    /// caret where composition began, so after the first letter it dropped
+    /// them all; type such commits as plain text instead.
+    fn plain_ime_commits(&mut self, ctx: &egui::Context) {
+        ctx.input_mut(|input| {
+            for event in &mut input.events {
+                let egui::Event::Ime(ime) = event else {
+                    continue;
+                };
+                match ime {
+                    egui::ImeEvent::Preedit(text) => self.ime_composing = !text.is_empty(),
+                    egui::ImeEvent::Commit(text) => {
+                        if !std::mem::take(&mut self.ime_composing)
+                            && !text.is_empty()
+                            && text != "\n"
+                            && text != "\r"
+                        {
+                            *event = egui::Event::Text(std::mem::take(text));
+                        }
+                    }
+                    egui::ImeEvent::Disabled => self.ime_composing = false,
+                    egui::ImeEvent::Enabled => {}
+                }
+            }
+        });
+    }
     fn shortcuts(&mut self, ctx: &egui::Context) {
+        self.plain_ime_commits(ctx);
         if self.capture_binding(ctx) {
             return;
         }

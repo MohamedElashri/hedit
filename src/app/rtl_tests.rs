@@ -179,3 +179,38 @@ fn export_rtl_editor() {
         std::fs::write(output_dir.join(format!("rtl-editor-{name}.ppm")), ppm).unwrap();
     }
 }
+
+#[test]
+fn input_method_commits_without_composing_all_reach_the_editor() {
+    // GNOME's Arabic layout on Wayland: one commit per letter, no preedit.
+    let (_directory, ctx, mut app) = app_with("");
+    for c in "سلام".chars() {
+        frame(
+            &ctx,
+            &mut app,
+            vec![
+                egui::Event::Ime(egui::ImeEvent::Commit(c.into())),
+                egui::Event::Ime(egui::ImeEvent::Disabled),
+            ],
+        );
+    }
+    assert_eq!(app.active().page.text, "سلام");
+    // A composing input method (Chinese, Japanese) still works as before.
+    frame(
+        &ctx,
+        &mut app,
+        vec![
+            egui::Event::Ime(egui::ImeEvent::Enabled),
+            egui::Event::Ime(egui::ImeEvent::Preedit("ni".into())),
+        ],
+    );
+    frame(
+        &ctx,
+        &mut app,
+        vec![
+            egui::Event::Ime(egui::ImeEvent::Commit("你".into())),
+            egui::Event::Ime(egui::ImeEvent::Disabled),
+        ],
+    );
+    assert_eq!(app.active().page.text, "سلام你");
+}

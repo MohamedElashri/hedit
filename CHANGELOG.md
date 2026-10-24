@@ -16,6 +16,9 @@
 - Arabic, Hebrew, Chinese, Japanese, Korean, Devanagari, Thai, and other scripts
   missing from the built-in fonts showed empty boxes; hedit now uses the system's
   fonts for them.
+- With keyboard layouts that type through the input method without composing,
+  such as Arabic on GNOME with Wayland, only the first letter appeared; every
+  letter now reaches the editor and text fields.
 
 ## [0.1.4] - 2026-10-24
 
