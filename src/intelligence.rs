@@ -96,7 +96,11 @@ pub fn git_diff(path: &Path, text: &str) -> Result<String, String> {
     let parent = path.parent().ok_or("No file directory.")?;
     let root = git_output(parent, &["rev-parse", "--show-toplevel"])?;
     let root = PathBuf::from(root.trim_end_matches(['\r', '\n']));
-    let relative = path.strip_prefix(&root).map_err(|e| e.to_string())?;
+    // Git reports the real location; resolve symlinks (such as /var → /private/var
+    // on macOS) in the file path too, so the repository prefix matches.
+    let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
+    let root = std::fs::canonicalize(&root).unwrap_or(root);
+    let relative = resolved.strip_prefix(&root).map_err(|e| e.to_string())?;
     let relative = relative
         .to_str()
         .ok_or("Git paths must be UTF-8.")?

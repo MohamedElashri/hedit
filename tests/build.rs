@@ -130,6 +130,12 @@ fn cancelling_stops_the_commands_a_build_started() {
     }
     let started = Instant::now();
     running.cancel();
+    // Temporary diagnostics for macOS.
+    std::thread::sleep(Duration::from_millis(300));
+    let ps = std::process::Command::new("ps").args(["-axo", "pid,ppid,pgid,stat,command"]).output().unwrap();
+    for line in String::from_utf8_lossy(&ps.stdout).lines().filter(|l| l.contains("sleep 30") || l.contains("started;")) {
+        eprintln!("DBG {line}");
+    }
     let (output, code) = collect(&running);
     assert!(started.elapsed() < Duration::from_secs(5));
     assert!(!output.contains("late"));

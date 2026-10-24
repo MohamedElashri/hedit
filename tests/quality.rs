@@ -243,7 +243,11 @@ fn project_definitions_resolve_relative_roots_and_preserve_personal_state() {
     )
     .unwrap();
     let (project, state) = projects::load(&path).unwrap();
-    assert_eq!(project.folders, [directory.path().join("src")]);
+    // Project folders are resolved, like /var → /private/var on macOS.
+    assert_eq!(
+        project.folders,
+        [std::fs::canonicalize(directory.path().join("src")).unwrap()]
+    );
     assert_eq!(state.pane_mode, 2);
     assert!(state.wrap);
     assert!(projects::read_json::<projects::Project>(&path, 1).is_err());
