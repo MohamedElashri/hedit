@@ -210,6 +210,8 @@ editing, and line-comment commands remain available. NVIDIA identifies CUDA
 | `src/advanced.rs` | Multi-selection edits, indentation heuristics, folding/tab projections |
 | `src/app/panes.rs` | Shared-document split views and independent view positions |
 | `src/app/tab_switch.rs` | Recently used, sequential, and positional tab switching |
+| `src/app/snippet_fields.rs` | Snippet field navigation, following edits through a bounded diff |
+| `src/app/paste_history.rs` | Recent copies for Paste from history |
 | `src/app/advanced_edit.rs` | Occurrence commands, multi-cursor input, and folding |
 | `src/editing.rs` | Unicode-safe line/text transformations used by Edit commands |
 | `src/text_commands.rs` | Block comments, paragraph wrapping, transpose, case changes, line-edge deletion, bracket reindent |

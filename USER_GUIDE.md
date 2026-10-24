@@ -683,6 +683,18 @@ These operations do not stage, commit, or otherwise modify the repository.
 **Tools → Insert snippet…** inserts a configured template into the current selection.
 Alternatively, type its trigger and press Tab. Templates support `${SELECTION}`
 and `$0` for the final cursor; a `language` value restricts them to a syntax ID.
+
+Snippets can have fields to fill in: `$1`, `$2`, … mark places, and
+`${1:text}` gives one a starting text, which may contain other fields. After
+inserting, the first field is selected; type to replace it, then press **Tab**
+for the next field or **Shift+Tab** for the previous one. The last **Tab** moves
+to `$0` (or the end of the snippet). A number used more than once is filled in
+everywhere at once, so `for (${1:i} = 0; $1 < ${2:n}; $1++)` renames the loop
+variable in all three places. **Esc**, or moving the cursor out of the field,
+stops field navigation. Write `\$` for a literal dollar sign before a number,
+and `\}` inside a field's text. Lines after the first take the indentation of
+the line the snippet is inserted on, and a tab at the start of a body line
+becomes the file's indentation.
 Completion and snippets operate on fully loaded files.
 
 **Settings → Key Bindings** lists every command with its shortcut. Click a

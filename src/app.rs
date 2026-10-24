@@ -30,6 +30,7 @@ mod settings_pages;
 mod settings_store;
 #[cfg(test)]
 mod settings_tests;
+mod snippet_fields;
 mod tab_switch;
 #[cfg(test)]
 mod tab_tests;
@@ -162,6 +163,8 @@ pub struct HeditApp {
     paste_history: Vec<String>,
     /// The palette lists `paste_history` instead of files or commands.
     paste_palette: bool,
+    /// Tab moves through the fields of the snippet inserted last.
+    snippet: Option<snippet_fields::SnippetSession>,
     /// Cursors made by Add cursor above/below and the column they keep.
     line_cursor_goal: Option<(Vec<hedit::advanced::Selection>, usize)>,
     live_find: find_live::LiveFind,
@@ -307,6 +310,7 @@ impl HeditApp {
             tab_cycle: Default::default(),
             paste_history: Vec::new(),
             paste_palette: false,
+            snippet: None,
             line_cursor_goal: None,
             live_find: Default::default(),
             goto_origin: None,
@@ -1064,6 +1068,7 @@ impl HeditApp {
         }
         self.track_selection();
         self.track_recent_tabs(ctx);
+        self.sync_snippet();
         if !self.busy && !self.closing && self.handle_chords(ctx) {
             return;
         }
@@ -1321,8 +1326,10 @@ impl HeditApp {
                 }
             }
             if take(Modifiers::SHIFT, Key::Tab) {
-                self.execute(ctx, Command::Unindent);
-            } else if take(Modifiers::NONE, Key::Tab) {
+                if !self.next_field(true) {
+                    self.execute(ctx, Command::Unindent);
+                }
+            } else if take(Modifiers::NONE, Key::Tab) && !self.next_field(false) {
                 self.insert_indentation();
             }
             self.advanced_input(ctx);

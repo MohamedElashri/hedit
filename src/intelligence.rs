@@ -62,18 +62,161 @@ pub struct Snippet {
     pub body: String,
     pub language: Option<String>,
 }
+/// Expand a snippet body and return the text with the final cursor position.
 pub fn expand(body: &str, selection: &str) -> (String, usize) {
-    let mut segments = body.split("$0");
-    let first = segments
-        .next()
-        .unwrap_or_default()
-        .replace("${SELECTION}", selection);
-    let cursor = first.chars().count();
-    let mut text = first;
-    for segment in segments {
-        text.push_str(&segment.replace("${SELECTION}", selection));
+    let expansion = expand_fields(body, selection);
+    let cursor = expansion.fields.last().map_or(0, |f| f[0].0);
+    (expansion.text, cursor)
+}
+
+/// A snippet body after expansion: its text, and its fields in the order Tab
+/// visits them. Each field lists every place it appears as character ranges;
+/// the last field is where the cursor ends (`$0`, or the end of the text).
+#[derive(Debug, PartialEq, Eq)]
+pub struct Expansion {
+    pub text: String,
+    pub fields: Vec<Vec<(usize, usize)>>,
+}
+
+/// Expand `$1`, `${1:default}` (fields may nest, and a number used again
+/// mirrors the first one's text), `$0`, and `${SELECTION}`. `\$`, `\}`, and
+/// `\\` are literal, as is a `$` that starts none of these.
+pub fn expand_fields(body: &str, selection: &str) -> Expansion {
+    let chars: Vec<char> = body.chars().collect();
+    let mut first = FieldParser {
+        chars: &chars,
+        selection,
+        defaults: Default::default(),
+        text: String::new(),
+        count: 0,
+        fields: Default::default(),
+    };
+    first.parse(&mut 0, false);
+    // A bare `$1` before `${1:text}` still shows `text`.
+    let mut parser = FieldParser {
+        defaults: first.defaults,
+        text: String::new(),
+        count: 0,
+        fields: Default::default(),
+        ..first
+    };
+    parser.parse(&mut 0, false);
+    let FieldParser {
+        text,
+        count,
+        mut fields,
+        ..
+    } = parser;
+    let last = fields.remove(&0).unwrap_or_else(|| vec![(count, count)]);
+    let mut fields: Vec<_> = fields.into_values().collect();
+    fields.push(last);
+    Expansion { text, fields }
+}
+
+struct FieldParser<'a> {
+    chars: &'a [char],
+    selection: &'a str,
+    defaults: std::collections::HashMap<u32, String>,
+    text: String,
+    /// Characters in `text`.
+    count: usize,
+    fields: std::collections::BTreeMap<u32, Vec<(usize, usize)>>,
+}
+
+impl FieldParser<'_> {
+    fn push(&mut self, text: &str) {
+        self.text.push_str(text);
+        self.count += text.chars().count();
     }
-    (text, cursor)
+    fn number(&self, at: &mut usize) -> Option<u32> {
+        let digits = self.chars[*at..]
+            .iter()
+            .take_while(|c| c.is_ascii_digit())
+            .count();
+        let number = self.chars[*at..*at + digits]
+            .iter()
+            .collect::<String>()
+            .parse()
+            .ok()?;
+        *at += digits;
+        Some(number)
+    }
+    fn field(&mut self, number: u32, start: usize) {
+        self.fields
+            .entry(number)
+            .or_default()
+            .push((start, self.count));
+    }
+    /// Parse until the end, or until an unescaped `}` when `nested`.
+    fn parse(&mut self, at: &mut usize, nested: bool) {
+        let chars = self.chars;
+        while *at < chars.len() {
+            let c = chars[*at];
+            match c {
+                '\\' if matches!(chars.get(*at + 1), Some('$' | '}' | '\\')) => {
+                    self.push(&chars[*at + 1].to_string());
+                    *at += 2;
+                }
+                '}' if nested => {
+                    *at += 1;
+                    return;
+                }
+                '$' => {
+                    let mut next = *at + 1;
+                    if let Some(number) = self.number(&mut next) {
+                        let start = self.count;
+                        if let Some(default) = self.defaults.get(&number).cloned() {
+                            self.push(&default);
+                        }
+                        self.field(number, start);
+                        *at = next;
+                        continue;
+                    }
+                    if chars.get(next) == Some(&'{') {
+                        let rest: String = chars[next..].iter().take(12).collect();
+                        if rest.starts_with("{SELECTION}") {
+                            let selection = self.selection;
+                            self.push(selection);
+                            *at = next + "{SELECTION}".len();
+                            continue;
+                        }
+                        let mut inner = next + 1;
+                        if let Some(number) = self.number(&mut inner) {
+                            match chars.get(inner) {
+                                Some('}') => {
+                                    let start = self.count;
+                                    if let Some(default) = self.defaults.get(&number).cloned() {
+                                        self.push(&default);
+                                    }
+                                    self.field(number, start);
+                                    *at = inner + 1;
+                                    continue;
+                                }
+                                Some(':') => {
+                                    let start = self.count;
+                                    let byte = self.text.len();
+                                    *at = inner + 1;
+                                    self.parse(at, true);
+                                    let default = self.text[byte..].to_owned();
+                                    self.defaults.entry(number).or_insert(default);
+                                    self.field(number, start);
+                                    continue;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    self.push("$");
+                    *at += 1;
+                }
+                c => {
+                    self.text.push(c);
+                    self.count += 1;
+                    *at += 1;
+                }
+            }
+        }
+    }
 }
 pub fn default_snippets() -> Vec<Snippet> {
     vec![

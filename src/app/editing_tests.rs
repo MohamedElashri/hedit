@@ -665,6 +665,90 @@ fn paste_history_lists_copies_and_pastes_at_every_cursor() {
 }
 
 #[test]
+fn tab_moves_through_snippet_fields_and_mirrors_follow_typing() {
+    let (_directory, ctx, mut app) = app_with("    fori");
+    app.set_syntax(Some(syntax::Language::C));
+    app.workspace.open[0].view.indent = Some("spaces".into());
+    app.quality.config.snippets = vec![hedit::intelligence::Snippet {
+        trigger: "fori".into(),
+        description: "for loop".into(),
+        body: "for (${1:i} = 0; $1 < ${2:n}; $1++) {\n\t$0\n}".into(),
+        language: None,
+    }];
+    app.set_selections(vec![hedit::advanced::Selection::caret(8)]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![key(Key::Tab, Modifiers::NONE)]);
+    assert_eq!(
+        app.active().page.text,
+        "    for (i = 0; i < n; i++) {\n        \n    }"
+    );
+    assert_eq!(app.selections().len(), 3, "field 1 and its mirrors");
+    type_text(&ctx, &mut app, "k");
+    assert_eq!(
+        app.active().page.text,
+        "    for (k = 0; k < n; k++) {\n        \n    }"
+    );
+    frame(&ctx, &mut app, vec![key(Key::Tab, Modifiers::NONE)]);
+    type_text(&ctx, &mut app, "len");
+    assert_eq!(
+        app.active().page.text,
+        "    for (k = 0; k < len; k++) {\n        \n    }"
+    );
+    // Shift+Tab goes back to the first field.
+    frame(&ctx, &mut app, vec![key(Key::Tab, Modifiers::SHIFT)]);
+    assert_eq!(app.selections().len(), 3);
+    frame(&ctx, &mut app, vec![key(Key::Tab, Modifiers::NONE)]);
+    frame(&ctx, &mut app, vec![key(Key::Tab, Modifiers::NONE)]);
+    // The last Tab ends at $0, and the next one indents as usual.
+    assert_eq!(app.selections(), [hedit::advanced::Selection::caret(40)]);
+    assert!(app.snippet.is_none());
+    frame(&ctx, &mut app, vec![key(Key::Tab, Modifiers::NONE)]);
+    assert_eq!(
+        app.active().page.text,
+        "    for (k = 0; k < len; k++) {\n            \n    }"
+    );
+}
+
+#[test]
+fn escape_or_moving_away_ends_snippet_fields() {
+    let (_directory, ctx, mut app) = app_with("");
+    app.insert_snippet(
+        hedit::intelligence::Snippet {
+            trigger: String::new(),
+            description: String::new(),
+            body: "${1:a}, ${2:b}".into(),
+            language: None,
+        },
+        false,
+    );
+    frame(&ctx, &mut app, vec![]);
+    assert!(app.snippet.is_some());
+    frame(&ctx, &mut app, vec![key(Key::Escape, Modifiers::NONE)]);
+    assert!(app.snippet.is_none());
+    frame(&ctx, &mut app, vec![key(Key::Tab, Modifiers::NONE)]);
+    assert_eq!(
+        app.active().page.text,
+        "    a, b",
+        "Tab indents again after Escape"
+    );
+    app.insert_snippet(
+        hedit::intelligence::Snippet {
+            trigger: String::new(),
+            description: String::new(),
+            body: "${1:x}${2:y}".into(),
+            language: None,
+        },
+        false,
+    );
+    frame(&ctx, &mut app, vec![]);
+    assert!(app.snippet.is_some());
+    app.set_selections(vec![hedit::advanced::Selection::caret(2)]);
+    frame(&ctx, &mut app, vec![]);
+    assert!(app.snippet.is_none(), "the cursor left the field");
+}
+
+#[test]
 fn escape_keeps_typing_in_the_editor() {
     let (_directory, ctx, mut app) = app_with("");
     type_text(&ctx, &mut app, "a");

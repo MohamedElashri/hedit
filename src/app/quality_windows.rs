@@ -471,7 +471,7 @@ impl HeditApp {
         egui::Window::new(if project{"Project formatting settings"}else{"Key bindings and snippets"}).open(&mut open).max_width((ctx.screen_rect().width()-32.0).max(300.0)).max_height((ctx.screen_rect().height()-32.0).max(220.0)).vscroll(true).collapsible(false).default_width(740.0).show(ctx,|ui|{
             if !project{
                 ui.label("Keybindings override defaults. Use Primary for Ctrl/Cmd, e.g. Primary+Shift+F. An empty shortcut unbinds a command.");
-                ui.label("Snippets support ${SELECTION} and $0 for the final cursor. Type a trigger then Tab, or use Tools → Insert snippet.");
+                ui.label("Snippets support ${SELECTION}, fields ($1, ${1:text}) visited with Tab, and $0 for the final cursor. Type a trigger then Tab, or use Tools → Insert snippet.");
                 ui.collapsing("Command identifiers",|ui|{egui::ScrollArea::vertical().max_height(120.0).show(ui,|ui|{for command in Command::ALL{ui.label(format!("{} — {}",serde_json::to_value(command).unwrap().as_str().unwrap(),command.label()));}});});
             }
             if project{ui.label("Formatting: indent_style, indent_size, end_of_line, insert_final_newline, trim_trailing_whitespace, charset. Per-language entries use syntax identifiers such as rust, python and cpp.");}else{ui.label("Formatting defaults are under Settings → Formatting.");}

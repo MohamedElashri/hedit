@@ -151,6 +151,11 @@ impl HeditApp {
             ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));
             return;
         }
+        if self.snippet.take().is_some() {
+            ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));
+            self.focus_editor = true;
+            return;
+        }
         // egui drops focus on Escape before this runs; give it back to the
         // editor so typing continues.
         ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));

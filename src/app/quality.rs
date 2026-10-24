@@ -1120,11 +1120,23 @@ impl HeditApp {
         if !old.is_char_boundary(start) {
             return;
         }
-        let (body, cursor) = intelligence::expand(&snippet.body, &old[start..end]);
-        let cursor = old[..start].chars().count() + cursor;
+        let line = old[..start].rfind('\n').map_or(0, |n| n + 1);
+        let indent: String = old[line..]
+            .chars()
+            .take_while(|&c| c == ' ' || c == '\t')
+            .collect();
+        let unit = if b.view.indent.as_deref() == Some("tabs") {
+            "\t".to_owned()
+        } else {
+            " ".repeat(b.view.tab_size.unwrap_or(4) as usize)
+        };
+        let body = snippet_fields::indent_body(&snippet.body, &indent, &unit);
+        let expansion = intelligence::expand_fields(&body, &old[start..end]);
+        let base = old[..start].chars().count();
+        let cursor = base + expansion.fields.last().map_or(0, |f| f[0].0);
         let mut text = old.clone();
-        text.replace_range(start..end, &body);
-        self.apply_edit(
+        text.replace_range(start..end, &expansion.text);
+        let inserted = self.apply_edit(
             hedit::editing::Edit {
                 text,
                 anchor: cursor,
@@ -1132,6 +1144,9 @@ impl HeditApp {
             },
             None,
         );
+        if inserted && expansion.fields.len() > 1 {
+            self.start_snippet(base, expansion.fields);
+        }
     }
     pub(super) fn expand_trigger(&mut self) -> bool {
         if self.active().view.anchor != self.active().view.head

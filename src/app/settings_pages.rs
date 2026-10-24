@@ -424,7 +424,7 @@ impl HeditApp {
         true
     }
     pub(super) fn snippet_preferences(&mut self, ui: &mut egui::Ui) {
-        ui.weak("Type a snippet's trigger and press Tab, or use Tools → Insert snippet…. ${SELECTION} inserts the selected text and $0 marks where the cursor ends.");
+        ui.weak("Type a snippet's trigger and press Tab, or use Tools → Insert snippet…. ${SELECTION} inserts the selected text, $1, $2, … or ${1:text} are fields that Tab moves through, and $0 marks where the cursor ends.");
         ui.add_space(6.0);
         let mut remove = None;
         let count = self.quality.config.snippets.len();

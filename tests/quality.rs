@@ -465,3 +465,31 @@ fn ipc_path_transport_preserves_non_utf8_bytes() {
     let restored: hedit::ipc::WirePath = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(restored.path(), path);
 }
+
+#[test]
+fn snippet_fields_expand_in_order_with_mirrors_and_escapes() {
+    let e = intelligence::expand_fields("for (${1:i} = 0; $1 < ${2:n}; $1++) {\n\t$0\n}", "");
+    assert_eq!(e.text, "for (i = 0; i < n; i++) {\n\t\n}");
+    assert_eq!(
+        e.fields,
+        vec![
+            vec![(5, 6), (12, 13), (19, 20)],
+            vec![(16, 17)],
+            vec![(27, 27)]
+        ]
+    );
+    // A mirror before the field with the text, nested fields, and no $0.
+    let e = intelligence::expand_fields("$1 ${1:a ${2:b}}!", "");
+    assert_eq!(e.text, "a b a b!");
+    assert_eq!(
+        e.fields,
+        vec![vec![(0, 3), (4, 7)], vec![(6, 7)], vec![(8, 8)]]
+    );
+    // Escapes and plain dollars stay literal; the selection is not parsed.
+    let e = intelligence::expand_fields("\\$1 $HOME ${x} \\} ${SELECTION}$0", "$2");
+    assert_eq!(e.text, "$1 $HOME ${x} } $2");
+    assert_eq!(e.fields, vec![vec![(18, 18)]]);
+    // Fields are visited by number, not position.
+    let e = intelligence::expand_fields("${2:b}${1}", "");
+    assert_eq!(e.fields, vec![vec![(1, 1)], vec![(0, 1)], vec![(1, 1)]]);
+}
