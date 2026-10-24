@@ -359,7 +359,7 @@ the first occurrence of each line and preserves their order.
 **Text → Uppercase/Lowercase** transforms the selection.
 **Trim trailing whitespace** affects selected lines or the whole file.
 
-Under **Indentation**, choose spaces or tabs and a 2/4/8-space indentation step
+Under **Indentation**, choose spaces or tabs and **Tab width: 2/4/8**
 for the current file. These choices survive restart. Conversions affect leading
 indentation on selected lines, or the whole file with no selection; tabs within
 code or strings stay intact. The indentation step controls inserted spaces and
@@ -443,6 +443,7 @@ whitespace markers, and wrap. Whitespace markers show spaces as dots and tabs as
 arrows without changing the file. **View → Font size** includes zoom and reset.
 
 **View → Ruler** shows a vertical guide at column 80, 100, or 120, or hides it.
+**Settings → Editor** (or `rulers` in `settings.json`) accepts up to eight columns.
 **View → Word wrap column** chooses 80, 100, 120, or the window width and enables
 wrap. A narrow window wraps earlier to fit. Turning **Word wrap** off keeps your
 chosen column for the next time you enable it. Ruler and wrap-column choices
@@ -453,8 +454,8 @@ hiding the sidebar, tabs, and status bar, entering full screen, and centering
 text within 100 columns. Toggle it again to restore your chosen layout and
 previous full-screen state. The menu remains available in both modes.
 
-UTF-8 text is supported, including an existing BOM and LF/CRLF bytes. UTF-16 and
-binary files are rejected. **Edit → Line endings** converts the entire loaded
+UTF-8 text is supported, including an existing BOM and LF/CRLF bytes. Binary files are
+rejected; see [Encodings](#encodings-and-persistent-undo) for UTF-16. **Edit → Line endings** converts the entire loaded
 file to **LF (Unix)** or **CRLF (Windows)**, regardless of the current selection.
 The conversion is undoable, preserves an existing BOM, and updates the status
 bar and recovery metadata. Enter follows the file's selected LF/CRLF policy;
@@ -576,7 +577,7 @@ when opened and adapts its height to smaller windows.
 
 Search wraps at the end. Enable **Regex**, **Case sensitive**, or **Whole words**;
 **Selection only** uses the selection captured when opening Find. Use **Previous**
-or **Shift+F3** to go backward. The panel shows match counts after searching.
+or **Shift+F3** to go backward. The panel shows the current match as “n of m” while you type.
 Regex replacements support capture groups such as `${1}`. **Replace all** is one
 undoable edit. **Esc** closes the panel. Advanced search supports up to 32 MiB
 and 20,000 matches; advanced replacement requires a fully loaded file. Literal,
@@ -892,7 +893,8 @@ When you edit a saved theme, **Save changes** updates it. Right-click a saved
 theme to export it or move it to the trash.
 
 **Revert to** *name* restores the theme that was active when Preferences opened.
-Preferences save automatically every two seconds and on normal exit.
+Settings, including the theme, save to `settings.json` shortly after each change
+and on exit.
 
 ### Theme files
 
@@ -1158,7 +1160,7 @@ long-term copies.
 | Recovery fails | Check disk space and permissions, keep hedit open, and use **Retry checkpoint** after fixing the cause. |
 | Save reports an external change | Use **Save as…** to keep your version. A clean file can reload the file. |
 | Open/Save dialog does not appear | Check that `xdg-desktop-portal` and your desktop's portal backend are installed and running in the same session. |
-| File is rejected | Convert a separate copy to UTF-8 if needed. UTF-16 and binary files are unsupported. |
+| File is rejected | Convert a separate copy to UTF-8 if needed. Binary files are unsupported. |
 | Theme is rejected | Check the version, name length, hex values, and 64 KiB limit. Your current palette stays active. |
 | Update check fails | Check the connection and access method; private releases need authenticated GitHub CLI. Read the error in the update dialog. |
 | Update installation is unavailable | Use a writable release installation or upgrade manually; source builds and managed/symlink layouts cannot update in place. |

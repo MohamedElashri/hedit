@@ -115,7 +115,10 @@ whenever you want a normal saved file.
 
 ## Everyday shortcuts
 
-On macOS, use **Cmd** in place of **Ctrl** and **Option** in place of **Alt**.
+On macOS, use **Cmd** in place of **Ctrl** and **Option** in place of **Alt**,
+except full screen (**Control+Cmd+F**) and distraction-free mode
+(**Control+Shift+Cmd+F**); the [user guide](USER_GUIDE.md#keyboard-shortcuts)
+lists the other macOS differences.
 
 | Shortcut | Action |
 | --- | --- |
@@ -127,7 +130,7 @@ On macOS, use **Cmd** in place of **Ctrl** and **Option** in place of **Alt**.
 | Ctrl+P / Ctrl+Shift+P | Find files / open the command palette |
 | Ctrl+F / Ctrl+G | Find text / go to a line |
 | Ctrl+W / Ctrl+Shift+T | Close a tab / reopen the latest closed tab |
-| Ctrl+, | Open preferences |
+| Ctrl+, | Open settings |
 | Ctrl+Shift+D / Ctrl+Shift+K | Duplicate selection or line / delete lines |
 | Ctrl+Shift+Up / Ctrl+Shift+Down | Move lines up / down |
 | Ctrl+/ | Toggle line comments |

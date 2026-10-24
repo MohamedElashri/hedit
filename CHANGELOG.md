@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.1.4] - Unreleased
+## [0.1.4] - 2026-10-24
 
 ### Added
 
@@ -51,7 +51,8 @@
   make (or your own `build_systems`), streaming output to a results panel; F4 and
   Shift+F4 visit the errors, and Ctrl+Shift+B chooses a build system.
 - Sublime's editor layouts: one to four columns, two or three rows, and a grid of
-  four (Alt+Shift+1–5, 8, 9), with Ctrl+1–4 to focus a group. Each group keeps its
+  four (Alt+Shift+1–5, 8, 9; Cmd+Option+1–5 on macOS), with Ctrl+1–4 (Control+1–4
+  on macOS) to focus a group. Each group keeps its
   own highlighting.
 - `hedit -w` (`--wait`) keeps the terminal waiting until the files are closed, so
   hedit can be the editor for `git commit` and other tools.
@@ -76,8 +77,8 @@
   commas are allowed, unknown keys are reported, and a broken file is never
   overwritten. Saving it in hedit, or returning to hedit after editing it
   elsewhere, applies it. Earlier preferences are imported on first launch.
-- The Settings window has General, Editor, Formatting, Appearance, Key Bindings,
-  CUDA Tools, and Recovery pages, each with its own Restore defaults, and an
+- The Settings window has General, Editor, Formatting, Folders & Search,
+  Appearance, Key Bindings, Snippets, CUDA Tools, and Recovery pages, each with its own Restore defaults, and an
   **Open settings.json** button.
 - Formatting defaults (tab size, indentation, whitespace and newline on save,
   line endings, encoding) can be set in Settings instead of raw JSON.
@@ -310,7 +311,8 @@ Initial release of hedit.
 - User and developer guides, plus Makefile commands for formatting, linting,
   tests, packaging, and CI validation.
 
-[0.1.3]: https://github.com/MohamedElashri/hedit/compare/v0.1.2...HEAD
+[0.1.4]: https://github.com/MohamedElashri/hedit/compare/v0.1.3...v0.1.4
+[0.1.3]: https://github.com/MohamedElashri/hedit/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/MohamedElashri/hedit/releases/tag/v0.1.2
 [0.1.1]: https://github.com/MohamedElashri/hedit/releases/tag/v0.1.1
 [0.1.0]: https://github.com/MohamedElashri/hedit/releases/tag/v0.1.0

@@ -86,6 +86,7 @@ Use narrower targets while working:
 | `make lint` | `make static`, then clippy |
 | `make docs` | Check links, images, and local headings |
 | `make test` | Rust tests and offline release-installer tests |
+| `make test-macos` | Tests that apply on macOS (used by the CI macOS job) |
 | `make check` | Lint and tests without a release build |
 | `make package` | Build and package a release under `dist/` |
 | `make smoke` | Build and test a package in a temporary installation |
@@ -161,16 +162,16 @@ available it also runs the Intel slice. Runner architectures are documented by
 [GitHub](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
 It does not create two Mac downloads.
 
-The native test list excludes the library updater suite, whose Unix tests still
-expect Linux installation layouts, GNU tar, and `scripts/package-linux.py`.
-Use the explicit test command in the workflow on macOS rather than `make ci`.
+Updater tests only build on Linux, since they expect Linux installation layouts,
+GNU tar, and `scripts/package-linux.py`. On macOS run `make test-macos` rather
+than `make ci`.
 Linux runs the full suite, offline installer tests, and mocked macOS packaging
 contract tests. Folder tests compare resolved paths, including temporary
 directories reached through symlinks.
 
 Linux source checks and strict Clippy checks pass for both Mac targets. These
-checks do not link Mach-O code or validate AppKit. The first native workflow run
-and GUI review are still pending; Linux remains the runtime-validated platform.
+checks do not link Mach-O code or validate AppKit. CI runs clippy and
+`make test-macos` natively on macOS for every push; GUI review is still pending; Linux remains the runtime-validated platform.
 Before calling Mac support stable, check Open/Save As, multiple folders, clipboard,
 Retina rendering, Cmd+Q recovery, Dock reopen, Finder document events, external
 changes, and atomic saves on APFS (including case-insensitive volumes), then
@@ -410,8 +411,9 @@ paths. The launcher keeps fixed brand colors; the in-app mark uses theme colors.
 Give the document most of the space. Use quiet borders, consistent controls,
 monospace editing/tool output, and proportional UI text. Active tabs and buffer
 rows need clear markers. Recovery must always have a written status as well as a
-color cue. Keep preferences in the unified Editor, Appearance, CUDA Tools, and
-Recovery pages. Menus, shortcuts, and the palette should route through the same
+color cue. Keep preferences in the Settings window's pages (General, Editor,
+Formatting, Folders & Search, Appearance, Key Bindings, Snippets, CUDA Tools,
+Recovery). Menus, shortcuts, and the palette should route through the same
 command dispatcher so availability and behavior stay consistent. The line-number
 gutter follows laid-out rows, skips wrap continuations, and remains fixed during
 horizontal scrolling; paged documents use page-relative line numbers.
@@ -431,8 +433,9 @@ and local section anchors.
 
 Workflows call the same Makefile targets as `make ci`, ordered from cheapest to
 slowest so a failure costs as little time as possible: `make static` (seconds,
-no compiling), then `make clippy`, then `make test`. The Linux CI workflow stops
-there; the release matrix then runs `make package smoke`, which builds the
+no compiling), then `make clippy`, then `make test`. The `CI` workflow runs a Linux
+job (static, clippy, test) and a macOS job (clippy, `make test-macos`) in parallel
+and stops there; the release matrix then runs `make package smoke`, which builds the
 optimized executable. Keep checks in the Makefile instead of duplicating their
 commands in workflow YAML.
 
