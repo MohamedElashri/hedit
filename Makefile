@@ -54,7 +54,7 @@ test: ## Run Rust tests and offline release-installer tests
 	$(PYTHON) scripts/test-macos-package.py
 
 test-macos: ## Run the tests that apply on macOS (Rust tests and the app bundle checks)
-	$(CARGO) test --locked
+	$(CARGO) test --locked --no-fail-fast
 	$(PYTHON) scripts/test-macos-package.py
 
 check: lint test ## Run static checks and tests without a release build

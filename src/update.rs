@@ -1,6 +1,7 @@
 //! Manual GitHub release checks and verified Linux updates. Nothing runs on startup.
 mod install;
-#[cfg(all(test, unix))]
+// Updates install Linux packages; macOS apps are replaced by hand.
+#[cfg(all(test, target_os = "linux"))]
 mod tests;
 
 pub use install::Installation;
