@@ -496,7 +496,7 @@ chosen column for the next time you enable it. Ruler and wrap-column choices
 survive restart and are also available in Editor preferences.
 
 **F11** toggles full screen. **Shift+F11** toggles distraction-free mode, which
-hides the sidebar, tabs, and status bar and centers wrapped text within 100
+hides the sidebar, tabs, status bar, and minimap and centers wrapped text within 100
 columns. The two are independent: use either alone or both together, and turning
 one off leaves the other as it is. Turning distraction-free mode off restores
 your chosen layout. The menu remains available in both modes.

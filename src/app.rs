@@ -1791,7 +1791,7 @@ impl HeditApp {
             memchr::memchr_iter(b'\n', &buffer.page.text.as_bytes()[..head_byte]).count() + 1;
         let map_area = ui.available_rect_before_wrap();
         let mut editor_area = map_area;
-        if self.settings.show_minimap && map_area.width() > 300.0 {
+        if self.settings.show_minimap && !self.distraction_free && map_area.width() > 300.0 {
             editor_area.max.x -= 76.0;
         }
         // Fold arrows: open blocks while the pointer is over the gutter, and
@@ -2555,7 +2555,7 @@ impl HeditApp {
             self.generation = self.generation.wrapping_add(1);
         }
         let mut minimap_target = None;
-        if self.settings.show_minimap && map_area.width() > 300.0 {
+        if self.settings.show_minimap && !self.distraction_free && map_area.width() > 300.0 {
             let map = egui::Rect::from_min_max(
                 egui::pos2(map_area.right() - 68.0, map_area.top()),
                 map_area.max,

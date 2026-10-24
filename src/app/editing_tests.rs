@@ -1733,3 +1733,26 @@ fn indentation_enter_added_goes_away_if_the_line_stays_empty() {
     frame(&ctx, &mut app, vec![enter()]);
     assert_eq!(app.active().page.text, "    a\n    b\n    \n    \n\n");
 }
+
+#[test]
+fn distraction_free_mode_hides_the_minimap() {
+    let text: String = (0..300).map(|n| format!("line {n}\n")).collect();
+    let (_directory, ctx, mut app) = app_with(&text);
+    app.settings.show_minimap = true;
+    // The minimap draws one short line per sampled text line at the right edge.
+    let map_lines = |ctx: &egui::Context, app: &mut HeditApp| {
+        frame(ctx, app, vec![]);
+        let output = frame(ctx, app, vec![]);
+        output
+            .shapes
+            .iter()
+            .filter(|s| matches!(&s.shape, egui::Shape::LineSegment { points, .. } if points[0].x > 1180.0 && points[0].y == points[1].y))
+            .count()
+    };
+    assert!(map_lines(&ctx, &mut app) > 50);
+    app.execute(&ctx, Command::DistractionFree);
+    assert_eq!(map_lines(&ctx, &mut app), 0);
+    assert!(app.settings.show_minimap, "the setting itself is kept");
+    app.execute(&ctx, Command::DistractionFree);
+    assert!(map_lines(&ctx, &mut app) > 50);
+}

@@ -70,6 +70,7 @@
 
 ### Changed
 
+- Distraction-free mode also hides the minimap.
 - With nothing selected, Copy and Cut take the whole line, and pasting a line
   copied that way puts it above the cursor's line (`copy_with_empty_selection`).
 - Change markers in the gutter also work for files outside Git, comparing with
