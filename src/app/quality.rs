@@ -1461,15 +1461,20 @@ impl HeditApp {
         let tx = self.tx.clone();
         let ctx = ctx.clone();
         let mode = self.settings.mini_diff.clone();
+        let encoding = b.page.info.encoding.clone();
         self.quality.git_at = Some(Instant::now());
         self.quality.git_pending = true;
         self.quality.git_key = Some((id, revision, dirty, mode.clone()));
         thread::spawn(move || {
             let path = Path::new(&path);
             // "auto" compares with Git's HEAD, or the saved file outside Git.
+            // The saved file in the encoding the editor reads it with.
             let saved = || {
                 let bytes = std::fs::read(path).ok()?;
-                hedit::text_encoding::decode(&bytes, hedit::text_encoding::detect(&bytes))
+                hedit::text_encoding::decode(&bytes, &encoding)
+                    .or_else(|_| {
+                        hedit::text_encoding::decode(&bytes, hedit::text_encoding::detect(&bytes))
+                    })
                     .ok()
                     .map(|(text, _)| text)
             };
@@ -1478,6 +1483,15 @@ impl HeditApp {
                 "saved" => saved(),
                 _ => intelligence::git_base(path).ok().or_else(saved),
             };
+            // Git may store LF where the file on disk uses CRLF; compare like
+            // with like, so only real changes are marked and reverted.
+            let base = base.map(|base| {
+                if text.contains("\r\n") && !base.contains('\r') {
+                    base.replace('\n', "\r\n")
+                } else {
+                    base
+                }
+            });
             let diff = base
                 .as_deref()
                 .map(|base| hedit::search::diff(base, &text, path))

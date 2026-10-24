@@ -649,22 +649,18 @@ fn changes_list_changed_blocks_with_their_original_lines() {
     let base = "a\nb\nc\nd\ne\n";
     let text = "a\nB\nc\ne\nf\n";
     let found = intelligence::changes(base, text);
-    assert_eq!(
-        found,
-        [
-            intelligence::Change {
-                new: 1..2,
-                old: "b\n".into()
-            },
-            intelligence::Change {
-                new: 3..3,
-                old: "d\n".into()
-            },
-            intelligence::Change {
-                new: 4..5,
-                old: String::new()
-            },
-        ]
-    );
+    let blocks: Vec<_> = found
+        .iter()
+        .map(|c| (c.line, c.bytes.clone(), c.old.as_str()))
+        .collect();
+    assert_eq!(blocks, [(1, 2..4, "b\n"), (3, 6..6, "d\n"), (4, 8..10, "")]);
     assert!(intelligence::changes(base, base).is_empty());
+    // A lone carriage return ends a line for the diff; nothing panics and the
+    // bytes still point at the changed text.
+    let found = intelligence::changes("a\rb\nc\n", "a\rb\nX\n");
+    assert_eq!(found.len(), 1);
+    assert_eq!(
+        (found[0].line, found[0].bytes.clone(), found[0].old.as_str()),
+        (1, 4..6, "c\n")
+    );
 }

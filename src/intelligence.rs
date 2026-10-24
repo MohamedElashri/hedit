@@ -347,27 +347,42 @@ pub fn git_base(path: &Path) -> Result<String, String> {
     Ok(base.strip_prefix('\u{feff}').unwrap_or(&base).to_owned())
 }
 
-/// A changed block: lines `new` of the current text (0-based, end exclusive;
-/// empty where lines were only deleted) were `old` in the base text.
+/// A changed block: the bytes `bytes` of the current text, starting on 0-based
+/// line `line` (empty where lines were only deleted), were `old` in the base.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Change {
-    pub new: std::ops::Range<usize>,
+    pub line: usize,
+    pub bytes: std::ops::Range<usize>,
     pub old: String,
 }
 
 /// The changed blocks between `base` and `text`, line by line, in order.
 pub fn changes(base: &str, text: &str) -> Vec<Change> {
-    let old: Vec<&str> = base.split_inclusive('\n').collect();
     let diff = similar::TextDiff::configure()
         .timeout(std::time::Duration::from_millis(250))
         .diff_lines(base, text);
+    // The diff's own lines, which also end at a lone carriage return.
+    let old: Vec<&str> = (0..diff.old_len())
+        .filter_map(|i| diff.old_slice(i))
+        .collect();
+    let mut offsets = Vec::with_capacity(diff.new_len() + 1);
+    let mut at = 0;
+    for line in (0..diff.new_len()).filter_map(|i| diff.new_slice(i)) {
+        offsets.push(at);
+        at += line.len();
+    }
+    offsets.push(at);
     diff.ops()
         .iter()
         .filter_map(|op| {
             let (_, old_range, new_range) = op.as_tag_tuple();
-            (op.tag() != similar::DiffTag::Equal).then(|| Change {
-                new: new_range,
-                old: old[old_range].concat(),
+            (op.tag() != similar::DiffTag::Equal).then(|| {
+                let start = offsets[new_range.start];
+                Change {
+                    line: memchr::memchr_iter(b'\n', &text.as_bytes()[..start]).count(),
+                    bytes: start..offsets[new_range.end],
+                    old: old[old_range].concat(),
+                }
             })
         })
         .collect()

@@ -183,6 +183,12 @@ fn font_families_parse_from_fontconfig_with_scripts() {
         Some(("/f/a.ttc".into(), 2))
     );
     assert_eq!(hedit::fonts::pick_face("/f/a.woff|0|Regular\n"), None);
+    // Other weights list "Regular" as an alias; the regular face still wins.
+    let faces = "/f/Mono-Black.ttf|0|Black,Regular\n/f/Mono-Thin.ttf|0|Thin,Regular\n/f/Mono-Regular.ttf|0|Regular\n";
+    assert_eq!(
+        hedit::fonts::pick_face(faces),
+        Some(("/f/Mono-Regular.ttf".into(), 0))
+    );
 }
 
 #[test]

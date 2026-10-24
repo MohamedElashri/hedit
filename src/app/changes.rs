@@ -27,20 +27,17 @@ impl HeditApp {
         };
         let line = self.cursor_line();
         let next = if forward {
-            changes
-                .iter()
-                .find(|c| c.new.start > line)
-                .or(changes.first())
+            changes.iter().find(|c| c.line > line).or(changes.first())
         } else {
             changes
                 .iter()
                 .rev()
-                .find(|c| c.new.end.max(c.new.start + 1) <= line)
+                .find(|c| c.line < line)
                 .or(changes.last())
         };
         match next {
             Some(change) => {
-                let line = change.new.start + 1;
+                let line = change.line + 1;
                 self.navigation_mark();
                 self.jump_to_line(ctx, line, None);
             }
@@ -53,27 +50,22 @@ impl HeditApp {
             self.notice = "No change markers for this file.".into();
             return;
         };
-        let line = self.cursor_line();
-        let Some(change) = changes
-            .into_iter()
-            .find(|c| c.new.contains(&line) || (c.new.is_empty() && c.new.start == line))
-        else {
+        let text = &self.active().page.text;
+        let head = hedit::advanced::byte(text, self.active().view.head);
+        let line_start = text[..head].rfind('\n').map_or(0, |n| n + 1);
+        // The block on the cursor's line: one it covers, or a deletion there.
+        let Some(change) = changes.into_iter().find(|c| {
+            (c.bytes.start <= head && head < c.bytes.end)
+                || (line_start <= c.bytes.start && c.bytes.start <= head.max(line_start))
+        }) else {
             self.notice = "The cursor is not on a change.".into();
             return;
         };
-        let text = &self.active().page.text;
-        let lines: Vec<&str> = text.split_inclusive('\n').collect();
-        let start: usize = lines[..change.new.start].iter().map(|l| l.len()).sum();
-        let end: usize = start
-            + lines[change.new.clone()]
-                .iter()
-                .map(|l| l.len())
-                .sum::<usize>();
         let mut reverted = String::with_capacity(text.len());
-        reverted.push_str(&text[..start]);
+        reverted.push_str(&text[..change.bytes.start]);
         reverted.push_str(&change.old);
-        reverted.push_str(&text[end..]);
-        let cursor = text[..start].chars().count();
+        reverted.push_str(&text[change.bytes.end..]);
+        let cursor = text[..change.bytes.start].chars().count();
         self.apply_edit(
             hedit::editing::Edit {
                 text: reverted,

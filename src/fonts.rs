@@ -109,16 +109,26 @@ pub fn pick_face(listing: &str) -> Option<(PathBuf, u32)> {
             if !readable(file) {
                 return None;
             }
+            // fontconfig lists other weights with "Regular" as an alias, as in
+            // "Black,Regular"; the face's own style is the first name.
             let style = style.to_ascii_lowercase();
-            let rank = if style
-                .split(',')
-                .any(|s| matches!(s.trim(), "regular" | "book" | "normal"))
-            {
+            let own = style.split(',').next().unwrap_or("").trim();
+            const OTHER: [&str; 11] = [
+                "bold",
+                "italic",
+                "oblique",
+                "black",
+                "heavy",
+                "thin",
+                "light",
+                "medium",
+                "condensed",
+                "narrow",
+                "semi",
+            ];
+            let rank = if matches!(own, "regular" | "book" | "normal" | "roman") {
                 0
-            } else if ["bold", "italic", "oblique"]
-                .iter()
-                .any(|s| style.contains(s))
-            {
+            } else if OTHER.iter().any(|s| own.contains(s)) {
                 2
             } else {
                 1
