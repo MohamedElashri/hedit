@@ -24,6 +24,10 @@
   `auto_complete_delay`, `auto_complete_commit_on_tab`). Words are collected in
   the background, so typing is never held up. Complete word (Ctrl+Space) opens
   the same list.
+- Go to definition (F12) and Go to references (Shift+F12) for the name at the
+  cursor, across open files and folders; one definition opens directly, several
+  are listed. Resting the pointer on a name lists its definitions
+  (`show_definitions`).
 - Right-to-left text: Arabic and Hebrew follow the Unicode Bidirectional
   Algorithm, Arabic letters join (including lam-alef), and right-to-left text
   mixes with English and numbers on the same line. Clicks, the caret, Left and

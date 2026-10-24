@@ -651,7 +651,7 @@ fn paste_history_lists_copies_and_pastes_at_every_cursor() {
     ]);
     frame(&ctx, &mut app, vec![]);
     app.execute(&ctx, Command::PasteHistory);
-    assert!(app.palette && app.paste_palette);
+    assert!(app.palette && app.pick_list.is_some());
     frame(&ctx, &mut app, vec![]);
     frame(&ctx, &mut app, vec![egui::Event::Text("bet".into())]);
     frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)]);
@@ -661,7 +661,7 @@ fn paste_history_lists_copies_and_pastes_at_every_cursor() {
     // The next palette is the ordinary one again.
     app.execute(&ctx, Command::Palette);
     frame(&ctx, &mut app, vec![]);
-    assert!(!app.paste_palette);
+    assert!(app.pick_list.is_none());
 }
 
 #[test]
@@ -872,4 +872,68 @@ fn nothing_is_indexed_until_a_word_is_typed() {
     type_text(&ctx, &mut app, "s");
     frame(&ctx, &mut app, vec![]);
     assert!(app.auto.wanted);
+}
+
+#[test]
+fn f12_jumps_to_a_definition_and_shift_f12_lists_references() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("project");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("lib.c"),
+        "int helper(int x) {\n    return x;\n}\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("blob.bin"), b"helper\0helper").unwrap();
+    let (mut workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+    workspace.open[0].page.text = "int main() {\n    return helper(1) + helper(2);\n}\n".into();
+    workspace.edit(0, "").unwrap();
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    app.set_folder(hedit::folder::read_directory(root.clone()).unwrap());
+    app.set_selections(vec![hedit::advanced::Selection::caret(26)]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![key(Key::F12, Modifiers::NONE)]);
+    finish_app_job(&mut app, &ctx);
+    frame(&ctx, &mut app, vec![]);
+    finish_app_job(&mut app, &ctx);
+    assert_eq!(app.active().view.name, "lib.c", "the only definition opens");
+    // Back returns to the call.
+    app.execute(&ctx, Command::NavBack);
+    finish_app_job(&mut app, &ctx);
+    assert_eq!(app.active().view.head, 26);
+    app.execute(&ctx, Command::GotoReferences);
+    finish_app_job(&mut app, &ctx);
+    let list = app.pick_list.as_ref().expect("references are listed");
+    assert!(list.title.contains("(2)"), "{}", list.title);
+    // The cursor on nothing gives a notice instead.
+    app.palette = false;
+    frame(&ctx, &mut app, vec![]);
+    app.set_selections(vec![hedit::advanced::Selection::caret(12)]);
+    app.execute(&ctx, Command::GotoDefinition);
+    assert!(app.notice.contains("cursor on a name"), "{}", app.notice);
+}
+
+#[test]
+fn resting_on_a_name_lists_its_definitions_from_open_files() {
+    let (_directory, ctx, mut app) = app_with("fn total() {}\nlet x = total();\n");
+    // `total` in the call, on line 2.
+    app.hover_target = Some((app.active().view.id, (22, 27), egui::pos2(100.0, 100.0)));
+    frame(&ctx, &mut app, vec![]);
+    let hover = app.hover.as_ref().expect("a definition is listed");
+    assert_eq!(hover.found_lines(), [1]);
+    // Moving the pointer away closes it; the definition itself lists nothing.
+    frame(
+        &ctx,
+        &mut app,
+        vec![egui::Event::PointerMoved(egui::pos2(600.0, 600.0))],
+    );
+    assert!(app.hover.is_none());
+    app.hover_target = Some((app.active().view.id, (3, 8), egui::pos2(100.0, 100.0)));
+    frame(&ctx, &mut app, vec![]);
+    assert!(app.hover.is_none());
+    app.settings.show_definitions = false;
+    app.hover_target = Some((app.active().view.id, (22, 27), egui::pos2(100.0, 100.0)));
+    frame(&ctx, &mut app, vec![]);
+    assert!(app.hover.is_none());
 }

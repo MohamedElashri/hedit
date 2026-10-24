@@ -32,6 +32,110 @@ pub fn symbols(text: &str, path: &Path) -> Vec<Symbol> {
         .take(10_000)
         .collect()
 }
+/// A place in a file: 1-based line and column, and the line's text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Place {
+    pub line: usize,
+    pub column: usize,
+    pub text: String,
+}
+
+fn place(line: usize, text: &str, byte: usize) -> Place {
+    Place {
+        line: line + 1,
+        column: text[..byte].chars().count() + 1,
+        text: text.trim().chars().take(160).collect(),
+    }
+}
+
+/// Where `name` is defined: functions, types, and other symbols, plus
+/// `#define`, `typedef`, and variable or constant declarations.
+pub fn definitions(text: &str, name: &str, path: &Path) -> Vec<Place> {
+    let word = regex::escape(name);
+    let Ok(other) = regex::Regex::new(&format!(
+        r"^\s*(?:#\s*define\s+({word})\b|typedef\b.*\b({word})\s*;|(?:(?:pub(?:\([^)]*\))?|export|static|final|private|public|protected)\s+)*(?:const|let|var|val|static|macro_rules!|using|alias)\s+(?:mut\s+)?({word})\b|({word})\s*=[^=]|((?:[\pL_][\pL\pN_:<>]*[\s*&]+)+)({word})\s*(?:=[^=]|;|\[|,))"
+    )) else {
+        return vec![];
+    };
+    let symbol_lines: std::collections::HashSet<usize> = symbols(text, path)
+        .into_iter()
+        .filter(|s| s.name == name)
+        .map(|s| s.line)
+        .collect();
+    let at_word = |line: &str| {
+        line.match_indices(name)
+            .find(|(i, _)| {
+                let before = line[..*i].chars().last();
+                let after = line[i + name.len()..].chars().next();
+                !before.is_some_and(is_word) && !after.is_some_and(is_word)
+            })
+            .map(|(i, _)| i)
+    };
+    text.lines()
+        .enumerate()
+        .filter_map(|(n, line)| {
+            if symbol_lines.contains(&(n + 1)) {
+                return at_word(line).map(|i| place(n, line, i));
+            }
+            let found = other.captures(line)?;
+            // `type name = …;` declarations, but not `return name;`.
+            if let Some(kind) = found.get(5) {
+                let first = kind.as_str().split_whitespace().next().unwrap_or("");
+                if matches!(
+                    first,
+                    "return"
+                        | "else"
+                        | "case"
+                        | "goto"
+                        | "delete"
+                        | "throw"
+                        | "new"
+                        | "yield"
+                        | "await"
+                        | "print"
+                        | "echo"
+                        | "assert"
+                        | "del"
+                        | "not"
+                        | "and"
+                        | "or"
+                ) {
+                    return None;
+                }
+            }
+            let m = [1, 2, 3, 4, 6].into_iter().find_map(|g| found.get(g))?;
+            Some(place(n, line, m.start()))
+        })
+        .take(1_000)
+        .collect()
+}
+
+fn is_word(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// Lines that use `name` as a whole word, with the first use on each line.
+pub fn references(text: &str, name: &str, limit: usize) -> Vec<Place> {
+    if name.is_empty() {
+        return vec![];
+    }
+    let mut found = vec![];
+    for (n, line) in text.lines().enumerate() {
+        if found.len() >= limit {
+            break;
+        }
+        let first = line.match_indices(name).find(|(i, _)| {
+            let before = line[..*i].chars().last();
+            let after = line[i + name.len()..].chars().next();
+            !before.is_some_and(is_word) && !after.is_some_and(is_word)
+        });
+        if let Some((i, _)) = first {
+            found.push(place(n, line, i));
+        }
+    }
+    found
+}
+
 pub fn completions(text: &str, cursor: usize) -> (std::ops::Range<usize>, Vec<String>) {
     let byte = crate::advanced::byte(text, cursor);
     let start = text[..byte]

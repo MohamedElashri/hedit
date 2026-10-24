@@ -6,6 +6,7 @@ mod chords;
 mod chrome;
 mod commands;
 mod controls;
+mod definitions;
 mod edit_actions;
 #[cfg(test)]
 mod editing_tests;
@@ -162,13 +163,16 @@ pub struct HeditApp {
     tab_cycle: tab_switch::TabCycle,
     /// Text copied or cut in hedit, newest first.
     paste_history: Vec<String>,
-    /// The palette lists `paste_history` instead of files or commands.
-    paste_palette: bool,
+    /// A list shown in the palette instead of files or commands.
+    pick_list: Option<commands::PickList>,
     /// Tab moves through the fields of the snippet inserted last.
     snippet: Option<snippet_fields::SnippetSession>,
     auto: auto_complete::AutoComplete,
     /// The focused editor's caret on screen, for the completion list.
     caret_screen: Option<egui::Rect>,
+    /// The view, name range, and pointer position of a name the pointer rests on.
+    hover_target: Option<(u64, (usize, usize), egui::Pos2)>,
+    hover: Option<definitions::Hover>,
     /// Cursors made by Add cursor above/below and the column they keep.
     line_cursor_goal: Option<(Vec<hedit::advanced::Selection>, usize)>,
     live_find: find_live::LiveFind,
@@ -313,10 +317,12 @@ impl HeditApp {
             soft_history: Default::default(),
             tab_cycle: Default::default(),
             paste_history: Vec::new(),
-            paste_palette: false,
+            pick_list: None,
             snippet: None,
             auto: Default::default(),
             caret_screen: None,
+            hover_target: None,
+            hover: None,
             line_cursor_goal: None,
             live_find: Default::default(),
             goto_origin: None,
@@ -1272,6 +1278,8 @@ impl HeditApp {
                 (line_cursor, Key::ArrowUp, Command::AddCursorAbove),
                 (line_cursor, Key::ArrowDown, Command::AddCursorBelow),
                 (Modifiers::COMMAND, Key::F9, Command::SortLines),
+                (Modifiers::SHIFT, Key::F12, Command::GotoReferences),
+                (Modifiers::NONE, Key::F12, Command::GotoDefinition),
                 (Modifiers::NONE, Key::F9, Command::SortLinesIgnoreCase),
             ];
             if mac {
@@ -2073,6 +2081,38 @@ impl HeditApp {
                                 output.response.request_focus();
                             }
                             self.focus_editor = false;
+                        }
+                        // A pointer resting on a name shows its definitions.
+                        let rested = ctx.input(|i| i.pointer.time_since_last_movement());
+                        if output.response.hovered()
+                            && self.settings.show_definitions
+                            && rested <= 0.6
+                        {
+                            ctx.request_repaint_after(Duration::from_secs_f32(0.61 - rested));
+                        }
+                        if output.response.hovered()
+                            && self.settings.show_definitions
+                            && ctx.input(|i| {
+                                !i.pointer.any_down() && i.pointer.time_since_last_movement() > 0.6
+                            })
+                        {
+                            if let Some(at) = ctx.pointer_hover_pos() {
+                                let relative = at - output.galley_pos;
+                                let index = bidi_view::hit(&output.galley, &bidi_rows, relative)
+                                    .unwrap_or_else(|| {
+                                        output.galley.cursor_from_pos(relative).ccursor.index
+                                    });
+                                // Only over the text itself, not the space after a line.
+                                let caret =
+                                    bidi_view::caret_rect(&output.galley, &bidi_rows, index);
+                                let close = (caret.center().x - relative.x).abs() < font_size;
+                                let source = projection.source(index);
+                                let word = hedit::advanced::word(&buffer.page.text, source);
+                                if close && word.start() < word.end() {
+                                    self.hover_target =
+                                        Some((buffer.view.id, (word.start(), word.end()), at));
+                                }
+                            }
                         }
                         if output.response.has_focus() {
                             self.caret_screen = output.cursor_range.and_then(|range| {

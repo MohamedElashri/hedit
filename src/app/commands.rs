@@ -12,6 +12,8 @@ pub(super) enum Command {
     RecentProjects,
     ProjectSettings,
     Symbols,
+    GotoDefinition,
+    GotoReferences,
     NavBack,
     NavForward,
     CompareDisk,
@@ -186,6 +188,8 @@ impl Command {
         Self::RecentProjects,
         Self::ProjectSettings,
         Self::Symbols,
+        Self::GotoDefinition,
+        Self::GotoReferences,
         Self::NavBack,
         Self::NavForward,
         Self::CompareDisk,
@@ -386,6 +390,8 @@ impl Command {
             Self::RecentProjects => "Recent projects…",
             Self::ProjectSettings => "Project settings…",
             Self::Symbols => "Go to symbol…",
+            Self::GotoDefinition => "Go to definition",
+            Self::GotoReferences => "Go to references…",
             Self::NavBack => "Navigate back",
             Self::NavForward => "Navigate forward",
             Self::CompareDisk => "Compare with disk…",
@@ -590,6 +596,8 @@ impl Command {
             Self::Tab9 => "Alt+9",
             Self::FindPrevious => "Shift+F3",
             Self::Symbols => "Ctrl+R",
+            Self::GotoDefinition => "F12",
+            Self::GotoReferences => "Shift+F12",
             // Option+arrows move by word on macOS, so use Sublime's Control+-.
             Self::NavBack if cfg!(target_os = "macos") => "Control+-",
             Self::NavForward if cfg!(target_os = "macos") => "Control+Shift+-",
@@ -744,7 +752,42 @@ impl Command {
         })
     }
 }
+/// What choosing an entry of a pick list does.
+#[derive(Clone, Debug)]
+pub(super) enum Pick {
+    Paste(String),
+    Location(definitions::Location),
+}
+
+/// A list shown in the palette in place of files or commands.
+pub(super) struct PickList {
+    pub title: String,
+    pub hint: &'static str,
+    pub items: Vec<(String, String, Pick)>,
+}
+
 impl HeditApp {
+    /// Show a list in the palette to choose from.
+    pub(super) fn open_pick_list(
+        &mut self,
+        ctx: &egui::Context,
+        title: impl Into<String>,
+        hint: &'static str,
+        items: Vec<(String, String, Pick)>,
+    ) {
+        self.cancel_theme_palette(ctx);
+        self.close_transient(ctx);
+        self.palette = true;
+        self.pick_list = Some(PickList {
+            title: title.into(),
+            hint,
+            items,
+        });
+        self.commands_only = false;
+        self.palette_query.clear();
+        self.palette_focus = true;
+        self.palette_index = 0;
+    }
     pub(super) fn command_enabled(&self, command: Command) -> bool {
         if self.busy || self.closing {
             return false;
@@ -896,6 +939,8 @@ impl HeditApp {
                 self.quality.settings_open = true;
             }
             Command::Symbols => self.list_symbols(ctx),
+            Command::GotoDefinition => self.look_up(ctx, false),
+            Command::GotoReferences => self.look_up(ctx, true),
             Command::NavBack => self.navigate(ctx, false),
             Command::NavForward => self.navigate(ctx, true),
             Command::CompareDisk => self.compare_disk(ctx, false),
@@ -937,7 +982,7 @@ impl HeditApp {
             Command::BuildWith => {
                 // Choose from "Build with: …" entries in the command palette.
                 self.palette = true;
-                self.paste_palette = false;
+                self.pick_list = None;
                 self.commands_only = true;
                 self.palette_query = "build with: ".into();
                 self.palette_focus = true;
@@ -1156,13 +1201,15 @@ impl HeditApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
             }
             Command::PasteHistory => {
-                self.cancel_theme_palette(ctx);
-                self.palette = true;
-                self.paste_palette = true;
-                self.commands_only = false;
-                self.palette_query.clear();
-                self.palette_focus = true;
-                self.palette_index = 0;
+                let items = self
+                    .paste_history
+                    .iter()
+                    .map(|text| {
+                        let (label, detail) = paste_history::label(text);
+                        (label, detail, Pick::Paste(text.clone()))
+                    })
+                    .collect();
+                self.open_pick_list(ctx, "Paste from history", "Filter copied text…", items);
             }
             Command::SelectAll => {
                 let index = self.workspace.active;
@@ -1202,7 +1249,7 @@ impl HeditApp {
             Command::Switcher | Command::Palette => {
                 self.cancel_theme_palette(ctx);
                 self.palette = true;
-                self.paste_palette = false;
+                self.pick_list = None;
                 self.commands_only = command == Command::Palette;
                 self.palette_query.clear();
                 self.palette_focus = true;
@@ -1295,7 +1342,7 @@ impl HeditApp {
     }
     pub(super) fn command_palette(&mut self, ctx: &egui::Context) {
         if !self.palette {
-            self.paste_palette = false;
+            self.pick_list = None;
             return;
         }
         if self.appearance.preview.is_some() {
@@ -1311,10 +1358,10 @@ impl HeditApp {
             BuildWith(String),
             /// A 1-based line and column in the current file.
             Line(usize, Option<usize>),
-            /// Text copied earlier, to paste.
-            Paste(String),
+            /// An entry from a pick list.
+            Pick(Pick),
         }
-        let paste = self.paste_palette;
+        let paste = self.pick_list.is_some();
         let commands = !paste && (self.commands_only || self.palette_query.starts_with('>'));
         let mut target: Option<goto_anything::Target> = None;
         let mut preview = None;
@@ -1322,8 +1369,9 @@ impl HeditApp {
         let up = ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowUp));
         let enter = ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter));
         let mut chosen = None;
-        let shown = egui::Window::new(if paste {
-            "Paste from history"
+        let title = self.pick_list.as_ref().map(|l| l.title.clone());
+        let shown = egui::Window::new(if let Some(title) = &title {
+            title.as_str()
         } else if commands {
             "Command palette"
         } else {
@@ -1336,8 +1384,8 @@ impl HeditApp {
         .default_width(520.0)
         .show(ctx, |ui| {
             let response = bidi_view::field(ui, &mut self.palette_query, |edit| {
-                edit.desired_width(f32::INFINITY).hint_text(if paste {
-                    "Filter copied text…"
+                edit.desired_width(f32::INFINITY).hint_text(if let Some(list) = &self.pick_list {
+                    list.hint
                 } else if commands {
                     "Type a command…"
                 } else {
@@ -1372,11 +1420,10 @@ impl HeditApp {
                 self.project.search(ctx, &roots, &filter);
             }
             let mut items = Vec::new();
-            if paste {
-                for text in &self.paste_history {
-                    if text.to_lowercase().contains(&filter) {
-                        let (label, detail) = paste_history::label(text);
-                        items.push((label, detail, Item::Paste(text.clone())));
+            if let Some(list) = &self.pick_list {
+                for (label, detail, pick) in &list.items {
+                    if format!("{label} {detail}").to_lowercase().contains(&filter) {
+                        items.push((label.clone(), detail.clone(), Item::Pick(pick.clone())));
                     }
                 }
             } else if commands {
@@ -1571,7 +1618,8 @@ impl HeditApp {
                 }
                 Item::File(path) => self.open(ctx, Some(path.into())),
                 Item::Command(command) => self.execute(ctx, command),
-                Item::Paste(text) => self.paste_entry(ctx, text),
+                Item::Pick(Pick::Paste(text)) => self.paste_entry(ctx, text),
+                Item::Pick(Pick::Location(location)) => self.open_location(ctx, location),
                 Item::Syntax(language) => self.set_syntax(Some(language)),
                 Item::BuildWith(name) => {
                     self.settings.build_system = if name == "Automatic" {

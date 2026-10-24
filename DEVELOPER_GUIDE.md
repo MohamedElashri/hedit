@@ -212,6 +212,7 @@ editing, and line-comment commands remain available. NVIDIA identifies CUDA
 | `src/app/tab_switch.rs` | Recently used, sequential, and positional tab switching |
 | `src/app/snippet_fields.rs` | Snippet field navigation, following edits through a bounded diff |
 | `src/app/paste_history.rs` | Recent copies for Paste from history |
+| `src/app/definitions.rs` | Go to definition/references searches, pick lists of locations, and hover definitions |
 | `src/completion.rs`, `src/app/auto_complete.rs` | Word index built off the UI thread, ranking, and the completion list at the cursor |
 | `src/app/advanced_edit.rs` | Occurrence commands, multi-cursor input, and folding |
 | `src/editing.rs` | Unicode-safe line/text transformations used by Edit commands |

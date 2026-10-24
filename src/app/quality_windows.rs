@@ -282,6 +282,7 @@ impl HeditApp {
             self.encoding_window(ctx);
         }
         self.completion_popup(ctx);
+        self.hover_definitions(ctx);
         if self.quality.snippets_open {
             self.snippets_window(ctx);
         }

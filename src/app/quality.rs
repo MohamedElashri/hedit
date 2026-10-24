@@ -100,6 +100,8 @@ pub(super) enum Event {
     Results(search::Results),
     Applied(Vec<(u64, Page)>, usize, Vec<String>),
     Symbols(Vec<intelligence::Symbol>),
+    /// Definitions (false) or references (true) of a name.
+    Locations(bool, String, Vec<definitions::Location>),
     Diff(u64, u64, String, String, bool),
     FileChanged(PathBuf, Option<PathBuf>),
     ProjectLoaded(
@@ -184,6 +186,9 @@ impl HeditApp {
                 }
             }
             Event::Symbols(symbols) => self.quality.symbols = symbols,
+            Event::Locations(references, name, found) => {
+                self.show_locations(ctx, references, name, found)
+            }
             Event::Diff(id, revision, disk, diff, git) => {
                 self.quality.diff = diff;
                 self.quality.diff_target = Some((id, revision, disk));

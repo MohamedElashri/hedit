@@ -359,6 +359,10 @@ impl HeditApp {
                 "Accept completions with Tab only; Enter starts a new line",
             ),
         );
+        ui.checkbox(
+            &mut s.show_definitions,
+            "Show definitions when the pointer rests on a name",
+        );
         ui.add_space(14.0);
         if ui.button("Restore defaults").clicked() {
             let d = Settings::default();
@@ -386,6 +390,7 @@ impl HeditApp {
             s.auto_complete = d.auto_complete;
             s.auto_complete_delay = d.auto_complete_delay;
             s.auto_complete_commit_on_tab = d.auto_complete_commit_on_tab;
+            s.show_definitions = d.show_definitions;
         }
     }
     fn tool_preferences(&mut self, ui: &mut egui::Ui) {

@@ -100,6 +100,8 @@ pub struct Settings {
     pub auto_complete_delay: u16,
     /// Only Tab accepts a completion; Enter starts a new line.
     pub auto_complete_commit_on_tab: bool,
+    /// List a name's definitions when the pointer rests on it.
+    pub show_definitions: bool,
     // Window
     pub show_tab_bar: bool,
     pub show_status_bar: bool,
@@ -161,6 +163,7 @@ impl Default for Settings {
             auto_complete: true,
             auto_complete_delay: 50,
             auto_complete_commit_on_tab: false,
+            show_definitions: true,
             show_tab_bar: true,
             show_status_bar: true,
             show_sidebar: true,

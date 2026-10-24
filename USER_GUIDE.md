@@ -674,6 +674,17 @@ symbols. **Alt+Left/Right** (**Control+-** / **Control+Shift+-** on macOS, where
 Option+arrows move by word) navigates back/forward through up to 200 recorded
 locations, reopening shelved files when needed.
 
+**Goto → Go to definition** (**F12**) finds where the name at the cursor is
+defined: functions, classes, and types, `#define` macros, `typedef`s, and
+variable and constant declarations. It searches the open files first, then the
+open folders, and jumps straight to a single result or lists several to choose
+from. **Goto → Go to references…** (**Shift+F12**) lists every line that uses the
+name as a whole word, up to 2,000. Both use the same source-line heuristics as
+Go to symbol, skip binary files and files over the folder-search size limit, and
+record where you were, so **Alt+Left** returns. Resting the pointer on a name for
+a moment lists its definitions from the open files; click one to go there
+(`show_definitions` turns this off).
+
 With Git installed, changed-line markers refresh as you edit the active fully
 loaded file, and when hedit's window regains focus. Hover a marker for its inline hunk. **Tools → Git changes…**
 opens a comparison of editor text with HEAD, including staged and unsaved changes.
@@ -894,6 +905,7 @@ you fix it.
 | `auto_complete` | `true` | Offer completions in a list while typing |
 | `auto_complete_delay` | `50` | Milliseconds after typing before the list opens, 0–2000 |
 | `auto_complete_commit_on_tab` | `false` | Accept completions with Tab only; Enter starts a new line |
+| `show_definitions` | `true` | List a name's definitions when the pointer rests on it |
 | `detect_indentation` | `true` | Use the indentation a file already has instead of `tab_size` and `translate_tabs_to_spaces` |
 | `show_tab_bar`, `show_status_bar` | `true` | Show the tab bar and status bar |
 | `show_sidebar`, `show_folders` | `true` | Show the sidebar and its folder section |
@@ -1197,6 +1209,7 @@ and Quit are in macOS's own hedit menu. Change any shortcut under
 | Ctrl++ or Ctrl+= / Ctrl+- / Ctrl+0 | Increase / decrease / reset editor font |
 | Ctrl+, | Settings |
 | Ctrl+Q | Quit (after a final recovery checkpoint) |
+| F12 / Shift+F12 | Go to definition / references |
 | Ctrl+F2 | Toggle a bookmark at the cursor |
 | F2 / Shift+F2 | Next / previous bookmark |
 | Esc | Close the topmost window or the search panel, then the error banner, then extra cursors |

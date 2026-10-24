@@ -493,3 +493,61 @@ fn snippet_fields_expand_in_order_with_mirrors_and_escapes() {
     let e = intelligence::expand_fields("${2:b}${1}", "");
     assert_eq!(e.fields, vec![vec![(1, 1)], vec![(0, 1)], vec![(1, 1)]]);
 }
+
+#[test]
+fn definitions_and_references_find_whole_words() {
+    let text = "#define LIMIT 10\nint limit_of(int x) {\n    return x + LIMIT;\n}\nstatic const int other = LIMIT;\ntypedef struct node Node;\nconst value = 1;\nLIMITED = 2\n";
+    let path = Path::new("a.c");
+    let lines = |places: Vec<intelligence::Place>| -> Vec<(usize, usize)> {
+        places.iter().map(|p| (p.line, p.column)).collect()
+    };
+    assert_eq!(
+        lines(intelligence::definitions(text, "LIMIT", path)),
+        [(1, 9)]
+    );
+    assert_eq!(
+        lines(intelligence::definitions(text, "limit_of", path)),
+        [(2, 5)]
+    );
+    assert_eq!(
+        lines(intelligence::definitions(text, "Node", path)),
+        [(6, 21)]
+    );
+    assert_eq!(
+        lines(intelligence::definitions(text, "value", path)),
+        [(7, 7)]
+    );
+    assert_eq!(
+        lines(intelligence::definitions(text, "other", path)),
+        [(5, 18)]
+    );
+    assert_eq!(
+        lines(intelligence::definitions(text, "LIMITED", path)),
+        [(8, 1)]
+    );
+    let refs = intelligence::references(text, "LIMIT", 100);
+    assert_eq!(lines(refs.clone()), [(1, 9), (3, 16), (5, 26)]);
+    assert_eq!(refs[1].text, "return x + LIMIT;");
+    assert_eq!(intelligence::references(text, "LIMIT", 1).len(), 1);
+    // Python definitions come from the symbol list.
+    let py = "class Thing:\n    def method(self):\n        return Thing()\n";
+    assert_eq!(
+        lines(intelligence::definitions(py, "method", Path::new("a.py"))),
+        [(2, 9)]
+    );
+}
+
+#[test]
+fn declarations_are_definitions_but_returns_are_not() {
+    let text = "int count = 0;\nreturn count;\nchar *name, other;\nfloat grid[4];\n";
+    let path = Path::new("a.c");
+    let lines = |name: &str| -> Vec<usize> {
+        intelligence::definitions(text, name, path)
+            .iter()
+            .map(|p| p.line)
+            .collect()
+    };
+    assert_eq!(lines("count"), [1]);
+    assert_eq!(lines("name"), [3]);
+    assert_eq!(lines("grid"), [4]);
+}
