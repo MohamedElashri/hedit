@@ -63,11 +63,12 @@ fn number_keys_choose_a_tab_by_position_without_typing() {
     };
     app.focus_editor = true;
     frame(&ctx, &mut app, vec![]);
-    frame(
-        &ctx,
-        &mut app,
-        vec![key(Key::Num3, position), egui::Event::Text("3".into())],
-    );
+    // Some Linux keyboard layouts also type the digit with Alt; Cmd never does.
+    let mut events = vec![key(Key::Num3, position)];
+    if !cfg!(target_os = "macos") {
+        events.push(egui::Event::Text("3".into()));
+    }
+    frame(&ctx, &mut app, events);
     assert_eq!(app.workspace.active, 2);
     assert!(app.workspace.open.iter().all(|b| b.page.text.is_empty()));
     frame(&ctx, &mut app, vec![key(Key::Num9, position)]);

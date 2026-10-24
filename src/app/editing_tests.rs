@@ -1666,6 +1666,12 @@ fn recent_files_reopen_from_a_list() {
 
 #[test]
 fn control_arrows_scroll_without_moving_the_cursor() {
+    // Control+Option on macOS, where Cmd+Up and Cmd+Down go to the file's ends.
+    let scroll = if cfg!(target_os = "macos") {
+        Modifiers::CTRL | Modifiers::ALT
+    } else {
+        Modifiers::COMMAND
+    };
     let text: String = (0..200).map(|n| format!("line {n}\n")).collect();
     let (_directory, ctx, mut app) = app_with(&text);
     app.set_selections(vec![hedit::advanced::Selection::caret(3)]);
@@ -1687,11 +1693,7 @@ fn control_arrows_scroll_without_moving_the_cursor() {
         });
     }
     for _ in 0..3 {
-        frame(
-            &ctx,
-            &mut app,
-            vec![key(Key::ArrowDown, Modifiers::COMMAND)],
-        );
+        frame(&ctx, &mut app, vec![key(Key::ArrowDown, scroll)]);
     }
     frame(&ctx, &mut app, vec![]);
     assert!(
@@ -1700,7 +1702,7 @@ fn control_arrows_scroll_without_moving_the_cursor() {
         app.active().view.scroll_top
     );
     assert_eq!(app.active().view.head, 3);
-    frame(&ctx, &mut app, vec![key(Key::ArrowUp, Modifiers::COMMAND)]);
+    frame(&ctx, &mut app, vec![key(Key::ArrowUp, scroll)]);
     frame(&ctx, &mut app, vec![]);
     assert_eq!(app.active().view.head, 3);
 }
