@@ -1296,3 +1296,22 @@ fn undo_replacements_leaves_files_edited_since_alone() {
     );
     assert_eq!(app.active().page.text, "xnew\n");
 }
+
+#[test]
+fn full_screen_and_distraction_free_turn_on_and_off_separately() {
+    let (_directory, ctx, mut app) = app_with("text");
+    app.execute(&ctx, Command::DistractionFree);
+    assert!(
+        app.distraction_free && !app.fullscreen,
+        "it leaves full screen alone"
+    );
+    app.execute(&ctx, Command::Fullscreen);
+    assert!(app.distraction_free && app.fullscreen);
+    app.execute(&ctx, Command::DistractionFree);
+    assert!(
+        !app.distraction_free && app.fullscreen,
+        "full screen stays on"
+    );
+    app.execute(&ctx, Command::Fullscreen);
+    assert!(!app.distraction_free && !app.fullscreen);
+}

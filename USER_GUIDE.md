@@ -478,10 +478,11 @@ wrap. A narrow window wraps earlier to fit. Turning **Word wrap** off keeps your
 chosen column for the next time you enable it. Ruler and wrap-column choices
 survive restart and are also available in Editor preferences.
 
-**F11** toggles full screen. **Shift+F11** toggles distraction-free mode, temporarily
-hiding the sidebar, tabs, and status bar, entering full screen, and centering
-text within 100 columns. Toggle it again to restore your chosen layout and
-previous full-screen state. The menu remains available in both modes.
+**F11** toggles full screen. **Shift+F11** toggles distraction-free mode, which
+hides the sidebar, tabs, and status bar and centers wrapped text within 100
+columns. The two are independent: use either alone or both together, and turning
+one off leaves the other as it is. Turning distraction-free mode off restores
+your chosen layout. The menu remains available in both modes.
 
 UTF-8 text is supported, including an existing BOM and LF/CRLF bytes. Binary files are
 rejected; see [Encodings](#encodings-and-persistent-undo) for UTF-16. **Edit → Line endings** converts the entire loaded

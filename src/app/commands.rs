@@ -1299,20 +1299,17 @@ impl HeditApp {
             Command::StatusBar => self.settings.show_status_bar = !self.settings.show_status_bar,
             Command::CurrentLine => self.settings.highlight_line = !self.settings.highlight_line,
             Command::Whitespace => self.settings.draw_white_space = !self.settings.draw_white_space,
+            // Full screen and distraction-free mode are independent: one is the
+            // window's size, the other what the window shows.
             Command::Fullscreen => {
-                self.fullscreen = !self.fullscreen;
+                // Ask the window, which may have left full screen by itself.
+                let now = ctx
+                    .input(|i| i.viewport().fullscreen)
+                    .unwrap_or(self.fullscreen);
+                self.fullscreen = !now;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(self.fullscreen));
             }
-            Command::DistractionFree => {
-                if !self.distraction_free {
-                    self.distraction_was_fullscreen = self.fullscreen;
-                    self.fullscreen = true;
-                } else {
-                    self.fullscreen = self.distraction_was_fullscreen;
-                }
-                self.distraction_free = !self.distraction_free;
-                ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(self.fullscreen));
-            }
+            Command::DistractionFree => self.distraction_free = !self.distraction_free,
             Command::RulerNone => self.settings.rulers.clear(),
             Command::Ruler80 => self.settings.rulers = vec![80],
             Command::Ruler100 => self.settings.rulers = vec![100],

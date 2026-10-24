@@ -195,7 +195,6 @@ pub struct HeditApp {
     projections: [editor_layout::ProjectionCache; panes::MAX_GROUPS],
     distraction_free: bool,
     fullscreen: bool,
-    distraction_was_fullscreen: bool,
     preferences_page: PreferencesPage,
     goto_open: bool,
     goto_focus: bool,
@@ -342,7 +341,6 @@ impl HeditApp {
             projections: Default::default(),
             distraction_free: false,
             fullscreen: false,
-            distraction_was_fullscreen: false,
             preferences_page: PreferencesPage::Editor,
             goto_open: false,
             goto_focus: false,
@@ -3025,6 +3023,10 @@ impl eframe::App for HeditApp {
             self.closing = true;
         }
         self.sync_appearance(ctx);
+        // Follow full screen changes made outside hedit, such as by the window manager.
+        if let Some(fullscreen) = ctx.input(|i| i.viewport().fullscreen) {
+            self.fullscreen = fullscreen;
+        }
         if quality::refocused(ctx) {
             self.reload_settings(ctx);
         }

@@ -65,6 +65,9 @@
 
 ### Fixed
 
+- Distraction-free mode no longer switches the window to full screen, and full
+  screen no longer depends on it: each turns on and off by itself. F11 also works
+  on the first press after the window left full screen by other means.
 - Arabic, Hebrew, Chinese, Japanese, Korean, Devanagari, Thai, and other scripts
   missing from the built-in fonts showed empty boxes; hedit now uses the system's
   fonts for them.
