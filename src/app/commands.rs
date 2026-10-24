@@ -37,6 +37,13 @@ pub(super) enum Command {
     PinTab,
     CloseOthers,
     CloseRight,
+    OpenRecent,
+    CloseAll,
+    CloseUnmodified,
+    SelectBookmarks,
+    ClearBookmarks,
+    ScrollLineUp,
+    ScrollLineDown,
     CopyPath,
     RevealInSidebar,
     NextTab,
@@ -231,6 +238,13 @@ impl Command {
         Self::PinTab,
         Self::CloseOthers,
         Self::CloseRight,
+        Self::OpenRecent,
+        Self::CloseAll,
+        Self::CloseUnmodified,
+        Self::SelectBookmarks,
+        Self::ClearBookmarks,
+        Self::ScrollLineUp,
+        Self::ScrollLineDown,
         Self::CopyPath,
         Self::RevealInSidebar,
         Self::NextTab,
@@ -413,6 +427,7 @@ impl Command {
                 | Self::Snippets
                 | Self::RecentProjects
                 | Self::PasteHistory
+                | Self::OpenRecent
                 | Self::SaveMacro
                 | Self::RunMacro
         )
@@ -453,6 +468,13 @@ impl Command {
             Self::PinTab => "Pin tab",
             Self::CloseOthers => "Close other tabs",
             Self::CloseRight => "Close tabs to the right",
+            Self::OpenRecent => "Open recent file…",
+            Self::CloseAll => "Close all tabs",
+            Self::CloseUnmodified => "Close unmodified tabs",
+            Self::SelectBookmarks => "Select all bookmarks",
+            Self::ClearBookmarks => "Clear bookmarks",
+            Self::ScrollLineUp => "Scroll up one line",
+            Self::ScrollLineDown => "Scroll down one line",
             Self::CopyPath => "Copy file path",
             Self::RevealInSidebar => "Reveal in sidebar",
             Self::NextTab => "Next tab",
@@ -623,6 +645,13 @@ impl Command {
     fn shortcut_label(self) -> &'static str {
         match self {
             Self::FindFiles => "Ctrl+Shift+F",
+            Self::CloseAll => "Ctrl+K, Ctrl+W",
+            Self::SelectBookmarks => "Alt+F2",
+            Self::ClearBookmarks => "Ctrl+Shift+F2",
+            Self::ScrollLineUp if cfg!(target_os = "macos") => "Control+Alt+Up",
+            Self::ScrollLineDown if cfg!(target_os = "macos") => "Control+Alt+Down",
+            Self::ScrollLineUp => "Ctrl+Up",
+            Self::ScrollLineDown => "Ctrl+Down",
             Self::RecordMacro if cfg!(target_os = "macos") => "Control+Q",
             Self::PlayMacro if cfg!(target_os = "macos") => "Control+Shift+Q",
             Self::RecordMacro => "Ctrl+Alt+Q",
@@ -871,6 +900,8 @@ fn highlighted(ui: &egui::Ui, label: &str, filter: &str, color: egui::Color32) -
 #[derive(Clone, Debug)]
 pub(super) enum Pick {
     Paste(String),
+    /// A file to open.
+    File(PathBuf),
     /// A saved macro, by name.
     Macro(String),
     Location(definitions::Location),
@@ -972,6 +1003,11 @@ impl HeditApp {
             Command::CloseFolder | Command::RefreshFolder => !self.workspace.folders.is_empty(),
             Command::Rename => self.active().page.info.path.is_none(),
             Command::CopyPath | Command::RevealInSidebar => self.active().page.info.path.is_some(),
+            Command::OpenRecent => !self.recent_files.is_empty(),
+            Command::SelectBookmarks => {
+                !self.active().view.bookmarks.is_empty() && !self.active().page.info.paged
+            }
+            Command::ClearBookmarks => !self.active().view.bookmarks.is_empty(),
             Command::PlayMacro | Command::SaveMacro => {
                 !self.macros.last.is_empty() && self.macros.recording.is_none()
             }
@@ -1126,6 +1162,13 @@ impl HeditApp {
             }
             Command::CloseOthers => self.close_tab_group(false),
             Command::CloseRight => self.close_tab_group(true),
+            Command::OpenRecent => self.open_recent(ctx),
+            Command::CloseAll => self.close_tabs(false),
+            Command::CloseUnmodified => self.close_tabs(true),
+            Command::SelectBookmarks => self.select_bookmarks(),
+            Command::ClearBookmarks => self.clear_bookmarks(),
+            Command::ScrollLineUp => self.scroll_lines(ctx, -1.0),
+            Command::ScrollLineDown => self.scroll_lines(ctx, 1.0),
             Command::CopyPath => {
                 if let Some(path) = self.active().page.info.path.clone() {
                     ctx.copy_text(path);
@@ -1792,6 +1835,7 @@ impl HeditApp {
                 Item::File(path) => self.open(ctx, Some(path.into())),
                 Item::Command(command) => self.execute(ctx, command),
                 Item::Pick(Pick::Paste(text)) => self.paste_entry(ctx, text),
+                Item::Pick(Pick::File(path)) => self.open(ctx, Some(path)),
                 Item::Pick(Pick::Macro(name)) => {
                     let steps = self
                         .quality

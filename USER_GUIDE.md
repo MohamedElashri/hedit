@@ -199,6 +199,10 @@ to the next or previous tab in the tab strip, and **Alt+1** to **Alt+9** choose 
 tab by its position. On macOS these are **Control+Tab**, **Control+PageDown**,
 and **Cmd+1** to **Cmd+9**.
 
+**File → Open recent file…** lists the last 20 files you used. **File → Close all
+tabs** (**Ctrl+K, Ctrl+W**) and **Close unmodified tabs** close many tabs at once;
+pinned tabs stay, and files with unsaved changes go to the shelf as usual.
+
 Drag a tab to reorder it. Its context menu offers **Pin tab**, **Close other tabs**,
 **Close tabs to the right**, **Copy file path**, and **Reveal in sidebar**, which
 opens the folders above the file in the folder tree and scrolls to it; group
@@ -312,6 +316,8 @@ Press **Ctrl+F2** to toggle a bookmark at the cursor. **F2** goes to the next on
 **Shift+F2** goes to the previous one, wrapping within the current file.
 **Goto → Bookmarks…** lists saved positions
 by text label. Navigate to a bookmark and press **Ctrl+F2** again to remove it.
+**Alt+F2** puts a cursor on every bookmark in the file, and **Ctrl+Shift+F2**
+removes them all.
 
 Each file can hold 1,000 bookmarks. They survive restarts and moves to the
 shelf. Labels are captured when added. Bookmarks store byte positions and adjust
@@ -332,6 +338,9 @@ to paste one at every cursor. The pasted text also goes back on the clipboard.
 The history lasts until hedit quits. **Ctrl+Z**
 undoes; **Ctrl+Shift+Z** or **Ctrl+Y** redoes. Up to 256 edit steps per file are
 kept during the current process. Undo history is not restored after restart.
+
+**Ctrl+Up** and **Ctrl+Down** (**Control+Option+Up/Down** on macOS) scroll the view
+one line without moving the cursor.
 
 Toggle wrap through **View → Editor → Word wrap** (**Ctrl+Shift+W**). Long lines scroll
 horizontally when wrap is off. **Ctrl++** and **Ctrl+-** change font size. Wrap,
@@ -1268,6 +1277,9 @@ and Quit are in macOS's own hedit menu. Change any shortcut under
 | Ctrl+K, Ctrl+. / Ctrl+K, Ctrl+, / Ctrl+K, Ctrl+Z | Next / previous change / revert change |
 | F6 / Ctrl+F6 / Ctrl+Shift+F6 | Spell check / next / previous misspelling |
 | Ctrl+F2 | Toggle a bookmark at the cursor |
+| Alt+F2 / Ctrl+Shift+F2 | Select all bookmarks / clear bookmarks |
+| Ctrl+Up / Ctrl+Down | Scroll one line without moving the cursor |
+| Ctrl+K, Ctrl+W | Close all tabs |
 | F2 / Shift+F2 | Next / previous bookmark |
 | Esc | Close the topmost window or the search panel, then the error banner, then extra cursors |
 

@@ -1584,3 +1584,118 @@ fn paste_and_indent_fits_lines_to_the_cursor_line() {
         "fn f() {\n    if a {\n      b();\n    }\n}\n"
     );
 }
+
+#[test]
+fn bookmarks_can_all_be_selected_or_cleared() {
+    let (_directory, ctx, mut app) = app_with("one\nλtwo\nthree\n");
+    for at in [0, 4, 9] {
+        app.set_selections(vec![hedit::advanced::Selection::caret(at)]);
+        app.execute(&ctx, Command::Bookmark);
+    }
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![key(Key::F2, Modifiers::ALT)]);
+    let carets: Vec<usize> = app.selections().iter().map(|s| s.head).collect();
+    assert_eq!(carets, [0, 4, 9]);
+    frame(
+        &ctx,
+        &mut app,
+        vec![key(Key::F2, Modifiers::COMMAND | Modifiers::SHIFT)],
+    );
+    assert!(app.active().view.bookmarks.is_empty());
+    assert!(!app.command_enabled(Command::SelectBookmarks));
+}
+
+#[test]
+fn close_all_and_unmodified_keep_pinned_and_changed_files() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut workspace, _) = Workspace::restore(directory.path().into()).unwrap();
+    for _ in 0..3 {
+        workspace.new_buffer().unwrap();
+    }
+    workspace.open[1].page.text = "changed".into();
+    workspace.edit(1, "").unwrap();
+    workspace.open[2].view.pinned = true;
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    let count = |app: &HeditApp| {
+        app.workspace
+            .open
+            .iter()
+            .filter(|b| !b.page.text.is_empty() || b.view.pinned)
+            .count()
+    };
+    app.execute(&ctx, Command::CloseUnmodified);
+    assert_eq!(count(&app), 2, "the changed and the pinned files stay");
+    app.execute(&ctx, Command::CloseAll);
+    assert_eq!(
+        app.workspace.open.iter().filter(|b| b.view.pinned).count(),
+        1
+    );
+    assert!(app.workspace.open.iter().all(|b| b.page.text.is_empty()));
+    assert!(
+        !app.workspace.closed.is_empty(),
+        "the changed file is on the shelf"
+    );
+}
+
+#[test]
+fn recent_files_reopen_from_a_list() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("notes.txt");
+    std::fs::write(&path, "notes").unwrap();
+    let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    app.open(&ctx, Some(path.clone()));
+    finish_app_job(&mut app, &ctx);
+    frame(&ctx, &mut app, vec![]);
+    app.execute(&ctx, Command::CloseAll);
+    frame(&ctx, &mut app, vec![]);
+    assert!(app.recent_files[0].ends_with("notes.txt"));
+    app.execute(&ctx, Command::OpenRecent);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)]);
+    finish_app_job(&mut app, &ctx);
+    assert_eq!(app.active().page.text, "notes");
+}
+
+#[test]
+fn control_arrows_scroll_without_moving_the_cursor() {
+    let text: String = (0..200).map(|n| format!("line {n}\n")).collect();
+    let (_directory, ctx, mut app) = app_with(&text);
+    app.set_selections(vec![hedit::advanced::Selection::caret(3)]);
+    // Let the scroll to the cursor finish animating.
+    for n in 0..30 {
+        let input = egui::RawInput {
+            time: Some(n as f64 * 0.1),
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1280.0, 820.0),
+            )),
+            focused: true,
+            ..Default::default()
+        };
+        let _ = ctx.run(input, |ctx| {
+            app.shortcuts(ctx);
+            app.chrome(ctx);
+            app.editor(ctx);
+        });
+    }
+    for _ in 0..3 {
+        frame(
+            &ctx,
+            &mut app,
+            vec![key(Key::ArrowDown, Modifiers::COMMAND)],
+        );
+    }
+    frame(&ctx, &mut app, vec![]);
+    assert!(
+        app.active().view.scroll_top > 40.0,
+        "{}",
+        app.active().view.scroll_top
+    );
+    assert_eq!(app.active().view.head, 3);
+    frame(&ctx, &mut app, vec![key(Key::ArrowUp, Modifiers::COMMAND)]);
+    frame(&ctx, &mut app, vec![]);
+    assert_eq!(app.active().view.head, 3);
+}

@@ -49,6 +49,13 @@
 - Next and previous change (Ctrl+K, Ctrl+. and Ctrl+K, Ctrl+,) move between the
   blocks marked as changed in the gutter, and Revert change (Ctrl+K, Ctrl+Z) puts
   the block at the cursor back as one undoable edit.
+- File → Open recent file lists the last 20 files used, and Close all tabs
+  (Ctrl+K, Ctrl+W) and Close unmodified tabs close many tabs at once, keeping
+  pinned tabs.
+- Select all bookmarks (Alt+F2) puts a cursor on every bookmark, and Clear
+  bookmarks (Ctrl+Shift+F2) removes them.
+- Ctrl+Up and Ctrl+Down (Control+Option+Up/Down on macOS) scroll one line
+  without moving the cursor.
 - Paste and indent (Ctrl+Shift+V) fits pasted lines to the indentation of the
   line they land on.
 - Paste from history (Ctrl+K, Ctrl+V) lists the last 15 pieces of text copied or

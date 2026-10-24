@@ -45,6 +45,7 @@ mod tab_tests;
 mod themes;
 mod tree_row;
 mod updates;
+mod view_commands;
 mod wait;
 
 use commands::Command;
@@ -186,6 +187,10 @@ pub struct HeditApp {
     line_clip: Option<String>,
     /// The next paste is Paste and indent.
     paste_indent: bool,
+    /// Files used recently, newest first.
+    recent_files: Vec<String>,
+    /// A scroll position for a view, applied without moving its cursor.
+    scroll_request: Option<(u64, f64)>,
     /// Cursors made by Add cursor above/below and the column they keep.
     line_cursor_goal: Option<(Vec<hedit::advanced::Selection>, usize)>,
     live_find: find_live::LiveFind,
@@ -340,6 +345,10 @@ impl HeditApp {
             macros: Default::default(),
             line_clip: None,
             paste_indent: false,
+            scroll_request: None,
+            recent_files: storage
+                .and_then(|s| eframe::get_value(s, "recent_files"))
+                .unwrap_or_default(),
             line_cursor_goal: None,
             live_find: Default::default(),
             goto_origin: None,
@@ -1094,6 +1103,7 @@ impl HeditApp {
         }
         self.track_selection();
         self.track_recent_tabs(ctx);
+        self.track_recent_file();
         self.sync_snippet();
         self.update_completion(ctx);
         self.update_spelling(ctx);
@@ -1196,6 +1206,18 @@ impl HeditApp {
             }
         }
         self.tab_shortcuts(ctx);
+        // Before Ctrl+F2 and F2, which would also take these.
+        for (modifiers, command) in [
+            (
+                Modifiers::COMMAND | Modifiers::SHIFT,
+                Command::ClearBookmarks,
+            ),
+            (Modifiers::ALT, Command::SelectBookmarks),
+        ] {
+            if !self.overridden(command) && tab_switch::take_exact(ctx, modifiers, Key::F2) {
+                self.execute(ctx, command);
+            }
+        }
         let (record, play) = macros::macro_keys();
         for (modifiers, command) in [(play, Command::PlayMacro), (record, Command::RecordMacro)] {
             if !self.overridden(command) && tab_switch::take_exact(ctx, modifiers, Key::Q) {
@@ -1305,6 +1327,12 @@ impl HeditApp {
             };
             let mac = cfg!(target_os = "macos");
             let shifted = Modifiers::COMMAND | Modifiers::SHIFT;
+            // Cmd+Up goes to the top of the file on macOS.
+            let scroll = if mac {
+                Modifiers::CTRL | Modifiers::ALT
+            } else {
+                Modifiers::COMMAND
+            };
             for (modifiers, command) in [
                 (shifted, Command::PreviousMisspelling),
                 (Modifiers::COMMAND, Command::NextMisspelling),
@@ -1319,6 +1347,8 @@ impl HeditApp {
                 (line_cursor, Key::ArrowUp, Command::AddCursorAbove),
                 (line_cursor, Key::ArrowDown, Command::AddCursorBelow),
                 (Modifiers::COMMAND, Key::F9, Command::SortLines),
+                (scroll, Key::ArrowUp, Command::ScrollLineUp),
+                (scroll, Key::ArrowDown, Command::ScrollLineDown),
                 (shifted, Key::F3, Command::QuickFindPrevious),
                 (Modifiers::COMMAND, Key::F3, Command::QuickFindNext),
                 (shifted, Key::E, Command::UseSelectionForReplace),
@@ -1732,6 +1762,12 @@ impl HeditApp {
             scroll = scroll
                 .vertical_scroll_offset(buffer.view.scroll_top as f32)
                 .horizontal_scroll_offset(buffer.view.scroll_left as f32);
+        } else if let Some(top) = self
+            .scroll_request
+            .take_if(|(view, _)| *view == buffer.view.id)
+        {
+            // Scrolling alone leaves the cursor where it is, even off screen.
+            scroll = scroll.vertical_scroll_offset(top.1 as f32);
         }
         let restore = buffer.restore_cursor;
         let gutter = if self.settings.line_numbers {
@@ -3118,6 +3154,7 @@ impl eframe::App for HeditApp {
     }
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, "recent_projects", &self.quality.recent);
+        eframe::set_value(storage, "recent_files", &self.recent_files);
         eframe::set_value(storage, "project_path", &self.quality.project_path);
         eframe::set_value(storage, "project_settings", &self.quality.project_settings);
         eframe::set_value(storage, "panes", &self.panes);
