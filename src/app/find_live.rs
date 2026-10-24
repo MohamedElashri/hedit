@@ -165,15 +165,15 @@ impl HeditApp {
 pub(super) fn paint_ranges(
     painter: &egui::Painter,
     galley: &Galley,
+    bidi: &super::bidi_view::BidiRows,
     origin: egui::Pos2,
     clip: egui::Rect,
     ranges: &[(usize, usize)],
-    fill: egui::Color32,
-    stroke: egui::Stroke,
+    (fill, stroke): (egui::Color32, egui::Stroke),
 ) {
     let mut first = 0;
     let mut row_start = 0;
-    for row in &galley.rows {
+    for (index, row) in galley.rows.iter().enumerate() {
         let row_end = row_start + row.char_count_including_newline();
         let top = origin.y + row.rect.top();
         let bottom = origin.y + row.rect.bottom();
@@ -185,13 +185,18 @@ pub(super) fn paint_ranges(
                 if b <= row_start {
                     continue;
                 }
-                let x0 = row.x_offset(a.max(row_start) - row_start);
-                let x1 = row.x_offset(b.min(row_end) - row_start).max(x0 + 2.0);
-                let rect = egui::Rect::from_min_max(
-                    egui::pos2(origin.x + x0, top),
-                    egui::pos2(origin.x + x1, bottom),
-                );
-                painter.rect(rect, 2.0, fill, stroke, egui::StrokeKind::Inside);
+                for (x0, x1) in super::bidi_view::spans(
+                    row,
+                    bidi.row(index),
+                    a.max(row_start) - row_start,
+                    b.min(row_end) - row_start,
+                ) {
+                    let rect = egui::Rect::from_min_max(
+                        egui::pos2(origin.x + x0, top),
+                        egui::pos2(origin.x + x1.max(x0 + 2.0), bottom),
+                    );
+                    painter.rect(rect, 2.0, fill, stroke, egui::StrokeKind::Inside);
+                }
             }
         }
         while first < ranges.len() && ranges[first].1 <= row_end {

@@ -39,6 +39,8 @@ struct Entry {
     /// The grammar colors used, or `None` for the lexer's.
     runs: Option<Runs>,
     galley: Arc<Galley>,
+    /// Glyph directions of rows with right-to-left text.
+    bidi: Arc<super::bidi_view::BidiRows>,
 }
 
 impl LayoutCache {
@@ -47,6 +49,11 @@ impl LayoutCache {
     pub(super) fn row_height(&self) -> Option<f32> {
         let entry = self.entry.as_ref()?;
         entry.galley.rows.first().map(|row| row.rect.height())
+    }
+    /// The latest layout and its row directions.
+    pub(super) fn last(&self) -> Option<(Arc<Galley>, Arc<super::bidi_view::BidiRows>)> {
+        let entry = self.entry.as_ref()?;
+        Some((Arc::clone(&entry.galley), Arc::clone(&entry.bidi)))
     }
     pub(super) fn layout(
         &mut self,
@@ -92,7 +99,14 @@ impl LayoutCache {
                 section.format.line_height = line_height;
             }
         }
-        let galley = ui.fonts(|fonts| fonts.layout_job(job));
+        let (galley, bidi) = ui.fonts(|fonts| {
+            let galley = fonts.layout_job(job);
+            super::bidi_view::apply(
+                fonts,
+                galley,
+                super::bidi_view::Base::for_language(language),
+            )
+        });
         self.entry = Some(Entry {
             language,
             font,
@@ -102,6 +116,7 @@ impl LayoutCache {
             theme: theme.clone(),
             runs,
             galley: Arc::clone(&galley),
+            bidi: Arc::new(bidi),
         });
         galley
     }

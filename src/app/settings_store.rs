@@ -370,7 +370,33 @@ impl HeditApp {
     }
 }
 
-/// Put the editor font first in the monospace family, or restore egui's own.
+/// System fonts for scripts egui's own fonts lack, found once per process.
+static FALLBACKS: std::sync::OnceLock<Vec<(String, &'static [u8], u32)>> =
+    std::sync::OnceLock::new();
+
+/// Find the fallback fonts, once; this reads font files.
+pub(super) fn fallback_fonts() -> &'static [(String, &'static [u8], u32)] {
+    FALLBACKS.get_or_init(|| {
+        hedit::fonts::fallbacks()
+            .into_iter()
+            // Kept for the whole run, so egui can share them without copies.
+            .map(|f| (f.name, &*Vec::leak(f.bytes), f.index))
+            .collect()
+    })
+}
+
+/// Find fallback fonts off the UI thread, then apply them with the editor font.
+pub(super) fn load_fallback_fonts(tx: mpsc::Sender<Result<Action, String>>, ctx: &egui::Context) {
+    let ctx = ctx.clone();
+    thread::spawn(move || {
+        fallback_fonts();
+        let _ = tx.send(Ok(Action::FallbackFonts));
+        ctx.request_repaint();
+    });
+}
+
+/// Put the editor font first in the monospace family, or restore egui's own,
+/// and let both families fall back to system fonts for other scripts.
 pub(super) fn set_editor_font(ctx: &egui::Context, bytes: Option<Vec<u8>>) {
     let mut fonts = egui::FontDefinitions::default();
     if let Some(bytes) = bytes {
@@ -383,6 +409,18 @@ pub(super) fn set_editor_font(ctx: &egui::Context, bytes: Option<Vec<u8>>) {
             .entry(egui::FontFamily::Monospace)
             .or_default()
             .insert(0, "editor".into());
+    }
+    for (name, bytes, index) in FALLBACKS.get().into_iter().flatten() {
+        fonts.font_data.insert(
+            name.clone(),
+            std::sync::Arc::new(egui::FontData {
+                index: *index,
+                ..egui::FontData::from_static(bytes)
+            }),
+        );
+        for family in [egui::FontFamily::Monospace, egui::FontFamily::Proportional] {
+            fonts.families.entry(family).or_default().push(name.clone());
+        }
     }
     ctx.set_fonts(fonts);
 }
@@ -406,6 +444,7 @@ impl HeditApp {
         self.font_applied = self.settings.font_face.clone();
         let name = self.font_applied.trim().to_owned();
         if name.is_empty() {
+            self.editor_font = None;
             set_editor_font(ctx, None);
             return;
         }

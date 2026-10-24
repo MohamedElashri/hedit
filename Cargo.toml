@@ -24,6 +24,8 @@ similar = "3.2.0"
 globset = "0.4.20"
 syntect = { version = "5.3.0", default-features = false, features = ["default-onig"] }
 two-face = { version = "0.5.2", default-features = false, features = ["syntect-default-onig"] }
+unicode-bidi = "0.3"
+ab_glyph = "0.2.32"
 
 [target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
 rustix = { version = "1", features = ["fs", "process"] }

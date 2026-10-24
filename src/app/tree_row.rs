@@ -109,10 +109,11 @@ pub(super) fn show(ui: &mut egui::Ui, theme: &Theme, row: Row<'_>) -> egui::Resp
                     );
                 }
             }
+            let name = hedit::bidi::display(row.name);
             let name = if row.symlink {
-                format!("{} ↗", row.name)
+                format!("{name} ↗")
             } else {
-                row.name.to_owned()
+                name.into_owned()
             };
             let galley = egui::WidgetText::from(name).into_galley(
                 ui,

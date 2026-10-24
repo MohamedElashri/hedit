@@ -731,6 +731,33 @@ is trimmed; paged-file undo remains available during the current process.
 Closing to the shelf preserves retained history as well as text. The previous
 release's recovery snapshots remain readable, with no historical undo to restore.
 
+### Arabic, Hebrew, and other scripts
+
+hedit finds system fonts for scripts its built-in fonts lack, such as Arabic,
+Persian, Urdu, Hebrew, Devanagari, Thai, Chinese, Japanese, and Korean, so their
+text appears instead of empty boxes. On Linux it asks fontconfig and prefers Noto
+fonts; on macOS it uses the system fonts. Install a font package such as
+`fonts-noto` if a script still shows boxes.
+
+Right-to-left text follows the Unicode Bidirectional Algorithm, and Arabic letters
+join into their connected forms, including the lam-alef ligature. The file keeps
+the text in the order you typed it; only the display changes, so copying,
+searching, and saving work on the text as written.
+
+- In plain text, Markdown, and LaTeX, each line reads in the direction of its first
+  letter: a line that starts in Arabic runs right to left, and numbers and English
+  words inside it stay left to right.
+- In code, every line runs left to right, so an Arabic comment keeps `//` at its
+  start and Arabic strings stay between their quotes.
+- Clicking places the caret where you click, and **Left** and **Right** move by
+  what is on screen. Where Arabic meets English, the caret has two places, as in
+  GTK: the full-height caret shows where the next letter you type in the current
+  direction appears, and a short one marks the other side.
+- Lines are always aligned to the left.
+
+Find, Replace, the command palette, tab titles, and the folder sidebar show
+Arabic text joined and in order too.
+
 ### Go to a line or switch files
 
 Press **Ctrl+G**, enter a positive, one-based line number, and click **Go**. This

@@ -115,7 +115,10 @@ impl HeditApp {
                         ui.horizontal(|ui| {
                             for (index, buffer) in self.workspace.open.iter().enumerate() {
                                 let active = index == self.workspace.active;
-                                let title: String = buffer.view.name.chars().take(30).collect();
+                                let title: String = hedit::bidi::display(&buffer.view.name)
+                                    .chars()
+                                    .take(30)
+                                    .collect();
                                 let title = if buffer.view.name.chars().count() > 30 {
                                     format!("{title}…")
                                 } else {
@@ -643,7 +646,7 @@ impl HeditApp {
                             let text = format!(
                                 "{}  {}",
                                 if buffer.page.info.dirty { "●" } else { "·" },
-                                buffer.view.name
+                                hedit::bidi::display(&buffer.view.name)
                             );
                             let response = ui
                                 .add(
@@ -722,12 +725,11 @@ impl HeditApp {
                         focused && ui.input_mut(|i| i.consume_key(Modifiers::SHIFT, Key::Enter));
                     let enter =
                         focused && ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter));
-                    let response = ui.add(
-                        egui::TextEdit::singleline(&mut self.query)
-                            .id(input_id)
+                    let response = bidi_view::field(ui, &mut self.query, |edit| {
+                        edit.id(input_id)
                             .desired_width(width)
-                            .hint_text("Search text or regular expression"),
-                    );
+                            .hint_text("Search text or regular expression")
+                    });
                     if response.changed() {
                         self.find_as_you_type();
                     }
@@ -772,11 +774,10 @@ impl HeditApp {
                 if self.replace_open {
                     ui.horizontal(|ui| {
                         ui.label("With");
-                        let response = ui.add(
-                            egui::TextEdit::singleline(&mut self.replacement)
-                                .desired_width((ui.available_width() - 150.0).max(100.0))
-                                .hint_text("Replacement text"),
-                        );
+                        let width = (ui.available_width() - 150.0).max(100.0);
+                        let response = bidi_view::field(ui, &mut self.replacement, |edit| {
+                            edit.desired_width(width).hint_text("Replacement text")
+                        });
                         if response.lost_focus()
                             && ui.input(|i| i.key_pressed(Key::Enter))
                             && !self.busy

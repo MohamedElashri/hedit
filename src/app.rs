@@ -1,4 +1,5 @@
 mod advanced_edit;
+mod bidi_view;
 mod build_panel;
 mod chords;
 mod chrome;
@@ -22,6 +23,8 @@ mod quality;
 #[cfg(test)]
 mod quality_tests;
 mod quality_windows;
+#[cfg(test)]
+mod rtl_tests;
 mod settings_pages;
 mod settings_store;
 #[cfg(test)]
@@ -73,6 +76,8 @@ enum Action {
     OpenAt(PathBuf),
     /// A font loaded for the `font_face` setting.
     Font(String, Vec<u8>),
+    /// System fonts for other scripts are ready.
+    FallbackFonts,
     Notice(String),
     Nothing,
 }
@@ -153,6 +158,8 @@ pub struct HeditApp {
     goto_origin: Option<goto_anything::Origin>,
     /// The `font_face` in use, or being loaded.
     font_applied: String,
+    /// The `font_face` font file, kept to rebuild the fonts when fallbacks load.
+    editor_font: Option<Vec<u8>>,
     key_filter: String,
     panes: panes::Panes,
     rectangle_start: Option<(usize, usize)>,
@@ -287,6 +294,7 @@ impl HeditApp {
             live_find: Default::default(),
             goto_origin: None,
             font_applied: String::new(),
+            editor_font: None,
             key_filter: String::new(),
             rectangle_start: None,
             panes,
@@ -341,6 +349,10 @@ impl HeditApp {
                     .unwrap_or(false),
             ),
         };
+        // Tests stay on egui's own fonts unless they load fallbacks themselves.
+        if !cfg!(test) {
+            settings_store::load_fallback_fonts(app.tx.clone(), ctx);
+        }
         app.init_quality(storage);
         app.quality.config = config;
         app.apply_settings();
@@ -708,8 +720,15 @@ impl HeditApp {
     }
     fn receive(&mut self, ctx: &egui::Context) {
         while let Ok(event) = self.rx.try_recv() {
-            if !matches!(&event,Ok(Action::Quality(event)) if matches!(&**event,quality::Event::GitMarkers(..)))
-            {
+            // Fonts and Git markers load beside jobs, not as them.
+            let side = match &event {
+                Ok(Action::Quality(event)) => {
+                    matches!(&**event, quality::Event::GitMarkers(..))
+                }
+                Ok(Action::Font(..) | Action::FallbackFonts) => true,
+                _ => false,
+            };
+            if !side {
                 self.busy = false;
             }
             match event {
@@ -869,8 +888,12 @@ impl HeditApp {
                 Ok(Action::ThemeImported(theme)) => self.add_imported_theme(ctx, theme),
                 Ok(Action::Font(name, bytes)) => {
                     if self.settings.font_face == name {
-                        settings_store::set_editor_font(ctx, Some(bytes));
+                        self.editor_font = Some(bytes);
+                        settings_store::set_editor_font(ctx, self.editor_font.clone());
                     }
+                }
+                Ok(Action::FallbackFonts) => {
+                    settings_store::set_editor_font(ctx, self.editor_font.clone());
                 }
                 Ok(Action::OpenAt(path)) => self.pending_paths.push_back(path),
                 Ok(Action::DebugProgram(path)) => {
@@ -1396,6 +1419,43 @@ impl HeditApp {
             anchor: buffer.view.anchor,
             head: buffer.view.head,
         };
+        // Lines with right-to-left text are drawn by hedit; see bidi_view.
+        let rtl_layout = if pane_id == 0 {
+            &self.editor_layout
+        } else {
+            &self.extra_layouts[pane_id - 1]
+        }
+        .last()
+        .filter(|(galley, bidi)| bidi.any() && galley.text() == projection.text);
+        if let Some((galley, bidi)) = &rtl_layout {
+            // Left and Right move across right-to-left text as it appears.
+            let display_head = projection.display(buffer.view.head);
+            let step = ctx.input(|i| {
+                i.events.iter().find_map(|event| match event {
+                    egui::Event::Key {
+                        key: key @ (Key::ArrowLeft | Key::ArrowRight),
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } if !modifiers.ctrl && !modifiers.alt && !modifiers.command => {
+                        Some((*key, *modifiers))
+                    }
+                    _ => None,
+                })
+            });
+            if let Some((key, modifiers)) = step.filter(|_| ctx.memory(|m| m.has_focus(id))) {
+                if let Some(next) =
+                    bidi_view::visual_step(galley, bidi, display_head, key == Key::ArrowRight)
+                {
+                    ctx.input_mut(|i| i.consume_key(modifiers, key));
+                    buffer.view.head = projection.source(next);
+                    if !modifiers.shift {
+                        buffer.view.anchor = buffer.view.head;
+                    }
+                }
+            }
+        }
+        let rtl_text = rtl_layout.is_some();
         {
             let mut state = egui::TextEdit::load_state(ctx, id).unwrap_or_default();
             state.clear_undoer();
@@ -1451,8 +1511,10 @@ impl HeditApp {
         } else {
             30
         };
-        let mut layouter = move |ui: &egui::Ui, text: &str, wrap_width: f32| {
-            layout_cache.layout(
+        // Row directions of the latest layout, for drawing right-to-left text.
+        let latest_bidi = std::cell::RefCell::new(Arc::default());
+        let mut layouter = |ui: &egui::Ui, text: &str, wrap_width: f32| {
+            let galley = layout_cache.layout(
                 ui,
                 text,
                 language,
@@ -1466,7 +1528,11 @@ impl HeditApp {
                     f32::INFINITY
                 },
                 &theme,
-            )
+            );
+            if let Some((_, bidi)) = layout_cache.last() {
+                *latest_bidi.borrow_mut() = bidi;
+            }
+            galley
         };
         let mut scroll = egui::ScrollArea::both()
             .id_salt((
@@ -1558,7 +1624,32 @@ impl HeditApp {
                             ctx.memory_mut(|m| m.request_focus(id));
                         }
                         let line_background = ui.painter().add(egui::Shape::Noop);
+                        let selection_background = ui.painter().add(egui::Shape::Noop);
+                        let caret_color = ui.visuals().text_cursor.stroke.color;
+                        let selection_color = ui.visuals().selection.bg_fill;
+                        if rtl_text {
+                            // egui places these by character index; draw them below instead.
+                            ui.visuals_mut().text_cursor.stroke.color = egui::Color32::TRANSPARENT;
+                            ui.visuals_mut().selection.bg_fill = egui::Color32::TRANSPARENT;
+                        }
                         let mut output = edit.show(ui);
+                        let bidi_rows: Arc<bidi_view::BidiRows> = latest_bidi.take();
+                        if bidi_rows.any() {
+                            bidi_view::interact(
+                                ui,
+                                &mut output,
+                                &bidi_rows,
+                                selection_background,
+                                bidi_view::Look {
+                                    caret: egui::Stroke::new(
+                                        self.settings.caret_width,
+                                        caret_color,
+                                    ),
+                                    blink: self.settings.caret_blink,
+                                    selection: selection_color,
+                                },
+                            );
+                        }
                         if self.settings.highlight_line {
                             if let Some(range) = &output.cursor_range {
                                 let caret = output
@@ -1687,11 +1778,11 @@ impl HeditApp {
                                 find_live::paint_ranges(
                                     ui.painter(),
                                     &output.galley,
+                                    &bidi_rows,
                                     output.galley_pos,
                                     ui.clip_rect(),
                                     &shown,
-                                    fill,
-                                    stroke,
+                                    (fill, stroke),
                                 );
                             }
                         }
@@ -1703,21 +1794,11 @@ impl HeditApp {
                                 if projection.source(display) != at {
                                     continue; // Folded away.
                                 }
-                                let rect = |index| {
-                                    let cursor =
-                                        output.galley.from_ccursor(egui::text::CCursor::new(index));
-                                    output
-                                        .galley
-                                        .pos_from_cursor(&cursor)
-                                        .translate(output.galley_pos.to_vec2())
-                                };
-                                let (left, right) = (rect(display), rect(display + 1));
-                                if right.left() > left.left() {
+                                let glyph = bidi_view::glyph_rect(&output.galley, display)
+                                    .filter(|r| r.width() > 0.0);
+                                if let Some(glyph) = glyph {
                                     ui.painter().rect_stroke(
-                                        egui::Rect::from_min_max(
-                                            left.left_top(),
-                                            egui::pos2(right.left(), left.bottom()),
-                                        ),
+                                        glyph.translate(output.galley_pos.to_vec2()),
                                         2.0,
                                         egui::Stroke::new(1.0, self.theme.accent.color()),
                                         egui::StrokeKind::Inside,
@@ -1726,49 +1807,27 @@ impl HeditApp {
                             }
                         }
                         for selection in buffer.view.selections.iter().chain(unfocused.iter()) {
-                            let a = output.galley.from_ccursor(egui::text::CCursor::new(
-                                projection.display(selection.start()),
-                            ));
-                            let b = output.galley.from_ccursor(egui::text::CCursor::new(
-                                projection.display(selection.end()),
-                            ));
-                            let mut left = output
-                                .galley
-                                .pos_from_cursor(&a)
-                                .translate(output.galley_pos.to_vec2());
-                            let right = output
-                                .galley
-                                .pos_from_cursor(&b)
-                                .translate(output.galley_pos.to_vec2());
-                            if selection.start() == selection.end() {
+                            let start = projection.display(selection.start());
+                            let end = projection.display(selection.end());
+                            let offset = output.galley_pos.to_vec2();
+                            if start == end {
+                                let caret =
+                                    bidi_view::caret_rect(&output.galley, &bidi_rows, start)
+                                        .translate(offset);
                                 ui.painter().vline(
-                                    left.left(),
-                                    left.y_range(),
+                                    caret.left(),
+                                    caret.y_range(),
                                     egui::Stroke::new(
                                         self.settings.caret_width,
                                         self.theme.accent.color(),
                                     ),
                                 );
                             } else {
-                                for row in a.rcursor.row..=b.rcursor.row {
-                                    let r = &output.galley.rows[row];
-                                    let y = output.galley_pos.y + r.rect.top();
-                                    let x = if row == a.rcursor.row {
-                                        left.left()
-                                    } else {
-                                        output.galley_pos.x
-                                    };
-                                    let end = if row == b.rcursor.row {
-                                        right.left()
-                                    } else {
-                                        output.galley_pos.x + r.rect.right()
-                                    };
-                                    left = egui::Rect::from_min_max(
-                                        egui::pos2(x, y),
-                                        egui::pos2(end, y + r.rect.height()),
-                                    );
+                                for rect in
+                                    bidi_view::range_rects(&output.galley, &bidi_rows, start, end)
+                                {
                                     ui.painter().rect_filled(
-                                        left,
+                                        rect.translate(offset),
                                         0.0,
                                         self.theme.accent.color().gamma_multiply(0.22),
                                     );
@@ -1913,10 +1972,12 @@ impl HeditApp {
                         }
                         if restore && buffer.reveal_cursor {
                             if let Some(range) = output.cursor_range {
-                                let rect = output
-                                    .galley
-                                    .pos_from_cursor(&range.primary)
-                                    .translate(output.galley_pos.to_vec2());
+                                let rect = bidi_view::caret_rect(
+                                    &output.galley,
+                                    &bidi_rows,
+                                    range.primary.ccursor.index,
+                                )
+                                .translate(output.galley_pos.to_vec2());
                                 ui.scroll_to_rect(rect, Some(egui::Align::Center));
                             }
                         }

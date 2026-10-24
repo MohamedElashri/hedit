@@ -4,6 +4,12 @@
 
 ### Added
 
+- Right-to-left text: Arabic and Hebrew follow the Unicode Bidirectional
+  Algorithm, Arabic letters join (including lam-alef), and right-to-left text
+  mixes with English and numbers on the same line. Clicks, the caret, Left and
+  Right, selections, and Find highlights follow the text on screen, while the
+  file keeps the typed order. Plain text, Markdown, and LaTeX lines take their
+  direction from their first letter; code lines run left to right.
 - Eighteen built-in themes, including One Dark, One Light, Dracula, Monokai, Nord,
   Gruvbox, Solarized, Tokyo Night, Catppuccin, GitHub, and Rosé Pine, alongside
   Hedit Ink and Hedit Paper.
@@ -113,6 +119,9 @@
 
 ### Fixed
 
+- Arabic, Hebrew, Chinese, Japanese, Korean, Devanagari, Thai, and other scripts
+  missing from the built-in fonts showed empty boxes; hedit now uses the system's
+  fonts for them.
 - On Linux desktops that leave window decorations to the app, such as GNOME on
   Wayland, the window now has a GNOME-style title bar with standard close,
   maximize, and minimize buttons instead of a bare gray frame.

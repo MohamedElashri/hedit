@@ -1147,15 +1147,13 @@ impl HeditApp {
         .anchor(egui::Align2::CENTER_TOP, [0.0, 70.0])
         .default_width(520.0)
         .show(ctx, |ui| {
-            let response = ui.add(
-                egui::TextEdit::singleline(&mut self.palette_query)
-                    .desired_width(f32::INFINITY)
-                    .hint_text(if commands {
-                        "Type a command…"
-                    } else {
-                        "File name, then @symbol, :line, or #text; > for commands…"
-                    }),
-            );
+            let response = bidi_view::field(ui, &mut self.palette_query, |edit| {
+                edit.desired_width(f32::INFINITY).hint_text(if commands {
+                    "Type a command…"
+                } else {
+                    "File name, then @symbol, :line, or #text; > for commands…"
+                })
+            });
             if self.palette_focus {
                 response.request_focus();
                 self.palette_focus = false;
@@ -1321,7 +1319,7 @@ impl HeditApp {
                 .show(ui, |ui| {
                     for (index, (label, shortcut, item)) in items.iter().enumerate() {
                         let response = ui.add(
-                            egui::Button::new(label)
+                            egui::Button::new(hedit::bidi::display(label))
                                 .selected(index == self.palette_index)
                                 .shortcut_text(shortcut)
                                 .min_size(egui::vec2(ui.available_width(), 28.0)),

@@ -162,6 +162,8 @@ kill or power loss can lose edits since the last completed checkpoint. Keep
 independent saved copies and backups for important work.
 
 hedit supports UTF-8 and BOM-marked UTF-16, with explicit legacy encoding choices.
+Arabic and Hebrew display right to left with joined letters, mixed freely with
+left-to-right text, and other scripts use the system's fonts.
 Fully loaded buffers retain bounded undo/redo history across restarts;
 multiple cursors, rectangular selections, split panes, indentation folding, guides,
 and a minimap are available. Read the
