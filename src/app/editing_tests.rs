@@ -627,3 +627,39 @@ fn text_command_shortcuts_edit_the_file_as_one_undo_step() {
     app.set_syntax(Some(syntax::Language::Python));
     assert!(!app.command_enabled(Command::Reindent));
 }
+
+#[test]
+fn paste_history_lists_copies_and_pastes_at_every_cursor() {
+    let (_directory, ctx, mut app) = app_with("alpha beta\n\n");
+    assert!(!app.command_enabled(Command::PasteHistory));
+    for range in [(0, 5), (6, 10), (0, 5)] {
+        app.set_selections(vec![hedit::advanced::Selection {
+            anchor: range.0,
+            head: range.1,
+        }]);
+        frame(&ctx, &mut app, vec![]);
+        frame(&ctx, &mut app, vec![egui::Event::Copy]);
+    }
+    assert_eq!(
+        app.paste_history,
+        ["alpha", "beta"],
+        "newest first, no repeats"
+    );
+    app.set_selections(vec![
+        hedit::advanced::Selection::caret(11),
+        hedit::advanced::Selection::caret(12),
+    ]);
+    frame(&ctx, &mut app, vec![]);
+    app.execute(&ctx, Command::PasteHistory);
+    assert!(app.palette && app.paste_palette);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![egui::Event::Text("bet".into())]);
+    frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)]);
+    assert!(!app.palette);
+    assert_eq!(app.active().page.text, "alpha beta\nbeta\nbeta");
+    assert_eq!(app.paste_history[0], "beta", "the pasted entry is newest");
+    // The next palette is the ordinary one again.
+    app.execute(&ctx, Command::Palette);
+    frame(&ctx, &mut app, vec![]);
+    assert!(!app.paste_palette);
+}

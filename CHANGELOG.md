@@ -14,6 +14,8 @@
   characters or selections (Ctrl+T), Title case and Swap case, delete to the
   start or end of a line (Ctrl+Shift+Backspace, Ctrl+K, Ctrl+K), reindent lines by
   their brackets, and sort lines ignoring case (F9; Ctrl+F9 sorts exactly).
+- Paste from history (Ctrl+K, Ctrl+V) lists the last 15 pieces of text copied or
+  cut in hedit, with filtering, and pastes the chosen one at every cursor.
 - Right-to-left text: Arabic and Hebrew follow the Unicode Bidirectional
   Algorithm, Arabic letters join (including lam-alef), and right-to-left text
   mixes with English and numbers on the same line. Clicks, the caret, Left and

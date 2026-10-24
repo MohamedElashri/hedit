@@ -98,6 +98,7 @@ pub(super) enum Command {
     Cut,
     Copy,
     Paste,
+    PasteHistory,
     SelectAll,
     SelectLine,
     Duplicate,
@@ -269,6 +270,7 @@ impl Command {
         Self::Cut,
         Self::Copy,
         Self::Paste,
+        Self::PasteHistory,
         Self::SelectAll,
         Self::SelectLine,
         Self::Duplicate,
@@ -371,6 +373,7 @@ impl Command {
                 | Self::Complete
                 | Self::Snippets
                 | Self::RecentProjects
+                | Self::PasteHistory
         )
     }
     pub(super) fn label(self) -> &'static str {
@@ -470,6 +473,7 @@ impl Command {
             Self::Cut => "Cut",
             Self::Copy => "Copy",
             Self::Paste => "Paste",
+            Self::PasteHistory => "Paste from history…",
             Self::SelectAll => "Select all",
             Self::SelectLine => "Select line",
             Self::Duplicate => "Duplicate selection or line",
@@ -663,6 +667,7 @@ impl Command {
             Self::Cut => "Ctrl+X",
             Self::Copy => "Ctrl+C",
             Self::Paste => "Ctrl+V",
+            Self::PasteHistory => "Ctrl+K, Ctrl+V",
             Self::SelectAll => "Ctrl+A",
             Self::SelectLine => "Ctrl+L",
             Self::Duplicate => "Ctrl+Shift+D",
@@ -808,6 +813,11 @@ impl HeditApp {
             Command::Follow => {
                 self.active().page.info.path.is_some() && !self.active().page.info.dirty
             }
+            Command::PasteHistory => {
+                !self.paste_history.is_empty()
+                    && !self.active().follow
+                    && !self.active().page.info.paged
+            }
             Command::Undo | Command::Redo | Command::Cut | Command::Paste | Command::Replace => {
                 !self.active().follow
             }
@@ -928,6 +938,7 @@ impl HeditApp {
             Command::BuildWith => {
                 // Choose from "Build with: …" entries in the command palette.
                 self.palette = true;
+                self.paste_palette = false;
                 self.commands_only = true;
                 self.palette_query = "build with: ".into();
                 self.palette_focus = true;
@@ -1145,6 +1156,15 @@ impl HeditApp {
                 self.focus_editor = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
             }
+            Command::PasteHistory => {
+                self.cancel_theme_palette(ctx);
+                self.palette = true;
+                self.paste_palette = true;
+                self.commands_only = false;
+                self.palette_query.clear();
+                self.palette_focus = true;
+                self.palette_index = 0;
+            }
             Command::SelectAll => {
                 let index = self.workspace.active;
                 let buffer = &mut self.workspace.open[index];
@@ -1183,6 +1203,7 @@ impl HeditApp {
             Command::Switcher | Command::Palette => {
                 self.cancel_theme_palette(ctx);
                 self.palette = true;
+                self.paste_palette = false;
                 self.commands_only = command == Command::Palette;
                 self.palette_query.clear();
                 self.palette_focus = true;
@@ -1275,6 +1296,7 @@ impl HeditApp {
     }
     pub(super) fn command_palette(&mut self, ctx: &egui::Context) {
         if !self.palette {
+            self.paste_palette = false;
             return;
         }
         if self.appearance.preview.is_some() {
@@ -1290,15 +1312,20 @@ impl HeditApp {
             BuildWith(String),
             /// A 1-based line and column in the current file.
             Line(usize, Option<usize>),
+            /// Text copied earlier, to paste.
+            Paste(String),
         }
-        let commands = self.commands_only || self.palette_query.starts_with('>');
+        let paste = self.paste_palette;
+        let commands = !paste && (self.commands_only || self.palette_query.starts_with('>'));
         let mut target: Option<goto_anything::Target> = None;
         let mut preview = None;
         let down = ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowDown));
         let up = ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowUp));
         let enter = ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter));
         let mut chosen = None;
-        let shown = egui::Window::new(if commands {
+        let shown = egui::Window::new(if paste {
+            "Paste from history"
+        } else if commands {
             "Command palette"
         } else {
             "Go to file"
@@ -1310,7 +1337,9 @@ impl HeditApp {
         .default_width(520.0)
         .show(ctx, |ui| {
             let response = bidi_view::field(ui, &mut self.palette_query, |edit| {
-                edit.desired_width(f32::INFINITY).hint_text(if commands {
+                edit.desired_width(f32::INFINITY).hint_text(if paste {
+                    "Filter copied text…"
+                } else if commands {
                     "Type a command…"
                 } else {
                     "File name, then @symbol, :line, or #text; > for commands…"
@@ -1324,14 +1353,14 @@ impl HeditApp {
             if changed {
                 self.palette_index = 0;
             }
-            let commands = self.commands_only || self.palette_query.starts_with('>');
+            let commands = !paste && (self.commands_only || self.palette_query.starts_with('>'));
             let filter = self
                 .palette_query
                 .trim_start_matches('>')
                 .trim()
                 .to_lowercase();
             // Go to Anything: `file@symbol`, `file:line`, `file#text`.
-            let (file_filter, goto) = if commands {
+            let (file_filter, goto) = if commands || paste {
                 (filter.as_str(), None)
             } else {
                 goto_anything::parse(&filter)
@@ -1339,12 +1368,19 @@ impl HeditApp {
             let filter = file_filter.to_owned();
             let here = goto.is_some() && filter.is_empty();
             target = goto.clone();
-            if !commands && !here && !self.workspace.folders.is_empty() {
+            if !commands && !paste && !here && !self.workspace.folders.is_empty() {
                 let roots: Vec<_> = self.workspace.folders.iter().map(|f| PathBuf::from(&f.path)).collect();
                 self.project.search(ctx, &roots, &filter);
             }
             let mut items = Vec::new();
-            if commands {
+            if paste {
+                for text in &self.paste_history {
+                    if text.to_lowercase().contains(&filter) {
+                        let (label, detail) = paste_history::label(text);
+                        items.push((label, detail, Item::Paste(text.clone())));
+                    }
+                }
+            } else if commands {
                 for &command in Command::ALL {
                     if command.label().to_lowercase().contains(&filter)
                         && self.command_enabled(command)
@@ -1428,7 +1464,7 @@ impl HeditApp {
                     }
                 }
             }
-            if !commands && !here && !self.workspace.folders.is_empty() {
+            if !commands && !paste && !here && !self.workspace.folders.is_empty() {
                 match &self.project.search {
                     Some(Ok(results)) => {
                         for entry in &results.entries {
@@ -1536,6 +1572,7 @@ impl HeditApp {
                 }
                 Item::File(path) => self.open(ctx, Some(path.into())),
                 Item::Command(command) => self.execute(ctx, command),
+                Item::Paste(text) => self.paste_entry(ctx, text),
                 Item::Syntax(language) => self.set_syntax(Some(language)),
                 Item::BuildWith(name) => {
                     self.settings.build_system = if name == "Automatic" {

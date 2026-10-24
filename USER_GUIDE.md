@@ -333,7 +333,11 @@ sits at a saved position.
 
 ## Editing and navigation
 
-Use one or more selections for clipboard operations and indentation. **Ctrl+Z**
+Use one or more selections for clipboard operations and indentation.
+**Edit → Paste from history…** (**Ctrl+K, Ctrl+V**) lists the last 15 pieces of
+text copied or cut in hedit, newest first; type to filter, then press **Enter**
+to paste one at every cursor. The pasted text also goes back on the clipboard.
+The history lasts until hedit quits. **Ctrl+Z**
 undoes; **Ctrl+Shift+Z** or **Ctrl+Y** redoes. Up to 256 edit steps per file are
 kept during the current process. Undo history is not restored after restart.
 
@@ -1145,6 +1149,7 @@ and Quit are in macOS's own hedit menu. Change any shortcut under
 | Ctrl+F / Ctrl+H / Ctrl+G | Find / Replace / Go to line |
 | Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y | Undo / redo |
 | Ctrl+C / Ctrl+X / Ctrl+V | Copy / cut / paste |
+| Ctrl+K, Ctrl+V | Paste from history |
 | Ctrl+A | Select all in the focused text field |
 | Ctrl+D / Alt+F3 | Select next / all occurrences |
 | Ctrl+Shift+L | Split the selection into lines |

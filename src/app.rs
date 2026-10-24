@@ -17,6 +17,7 @@ mod goto_tests;
 mod overlay_tests;
 mod overlays;
 mod panes;
+mod paste_history;
 mod preferences;
 mod project;
 mod quality;
@@ -157,6 +158,10 @@ pub struct HeditApp {
     /// Selection history for Undo/Redo selection change: (view, cursors).
     soft_history: (Vec<SoftState>, Vec<SoftState>, Option<SoftState>),
     tab_cycle: tab_switch::TabCycle,
+    /// Text copied or cut in hedit, newest first.
+    paste_history: Vec<String>,
+    /// The palette lists `paste_history` instead of files or commands.
+    paste_palette: bool,
     /// Cursors made by Add cursor above/below and the column they keep.
     line_cursor_goal: Option<(Vec<hedit::advanced::Selection>, usize)>,
     live_find: find_live::LiveFind,
@@ -300,6 +305,8 @@ impl HeditApp {
             chord: None,
             soft_history: Default::default(),
             tab_cycle: Default::default(),
+            paste_history: Vec::new(),
+            paste_palette: false,
             line_cursor_goal: None,
             live_find: Default::default(),
             goto_origin: None,
@@ -2728,6 +2735,7 @@ impl eframe::App for HeditApp {
         self.folder_dialog(ctx);
         self.updates_window(ctx);
         self.quality_windows(ctx);
+        self.record_copies(ctx);
         let paths: Vec<_> = ctx.input(|i| {
             i.raw
                 .dropped_files
@@ -2836,6 +2844,7 @@ mod tests {
             app.buffer_tools(ctx);
             app.folder_dialog(ctx);
             app.quality_windows(ctx);
+            app.record_copies(ctx);
         });
         assert!(!output.shapes.is_empty());
         output

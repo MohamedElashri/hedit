@@ -837,7 +837,12 @@ impl HeditApp {
             }
         }
         ui.separator();
-        for command in [Command::Cut, Command::Copy, Command::Paste] {
+        for command in [
+            Command::Cut,
+            Command::Copy,
+            Command::Paste,
+            Command::PasteHistory,
+        ] {
             if menu_item(ui, self, command) {
                 *action = Some(command);
                 ui.close_menu();
