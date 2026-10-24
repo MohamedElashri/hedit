@@ -2,7 +2,7 @@
 
 This guide covers hedit on Linux and macOS. Shortcuts are written for Linux; on
 macOS use **Cmd** for **Ctrl** and **Option** for **Alt** (the exceptions are
-listed under [macOS shortcuts](#macos-shortcuts)). The menus always show
+listed under [Keyboard shortcuts](#keyboard-shortcuts)). The menus always show
 your platform's keys.
 
 - [Installation](#installation)
@@ -567,60 +567,48 @@ files go to the open window.
 Change any shortcut under **Settings → Key Bindings**. Two-key shortcuts such as
 **Ctrl+K, Ctrl+D** mean: press the first, then the second.
 
-| Shortcut | Action |
-| --- | --- |
-| Ctrl+N / Ctrl+O / Ctrl+Shift+N | New file / open file / new window |
-| Ctrl+S / Ctrl+Shift+S | Save / save as |
-| Ctrl+W / Ctrl+Shift+T / Ctrl+K, Ctrl+W | Close tab / reopen closed tab / close all tabs |
-| Ctrl+Tab / Ctrl+PageDown / Alt+1–9 | Recent tab / next tab / tab by position |
-| Ctrl+Shift+O / Ctrl+K, Ctrl+B / Ctrl+Alt+B | Add folder / sidebar / folder section |
-| Ctrl+P / Ctrl+Shift+P / Ctrl+G / Ctrl+R | Go to file / commands / line / symbol |
-| Ctrl+F / Ctrl+H / Ctrl+Shift+F | Find / replace / find in folders |
-| Alt+Enter / Ctrl+E / Ctrl+F3 | Select all matches / use selection for Find / quick find |
-| F12 / Shift+F12 / Alt+Left | Go to definition / references / back |
-| Ctrl+D / Alt+F3 / Ctrl+Shift+L | Next occurrence / all occurrences / split into lines |
-| Ctrl+Shift+Space / Ctrl+Shift+M / Ctrl+M | Expand selection / to brackets / jump to bracket |
-| Ctrl+C / Ctrl+X / Ctrl+V / Ctrl+Shift+V / Ctrl+K, Ctrl+V | Copy / cut / paste / paste and indent / paste from history |
-| Ctrl+Z / Ctrl+Shift+Z / Ctrl+U | Undo / redo / undo selection change |
-| Ctrl+Space | Complete word |
-| Ctrl+Alt+Q / Ctrl+Alt+Shift+Q | Record macro / play macro |
-| F6 / Ctrl+F6 | Spell check / next misspelling |
-| Ctrl+K, Ctrl+. / Ctrl+K, Ctrl+Z | Next change / revert change |
-| Ctrl+F2 / F2 / Alt+F2 | Bookmark / next bookmark / select all bookmarks |
-| Ctrl+B / Ctrl+Shift+B / F4 | Build / build with / next error or match |
-| Alt+Shift+1–5, 8, 9 / Ctrl+1–4 | Layouts / focus a group |
-| Ctrl+Shift+[ / Ctrl+Shift+] | Fold / unfold |
-| F11 / Shift+F11 / Ctrl+Shift+W | Full screen / distraction-free / wrap |
-| Ctrl++ / Ctrl+- / Ctrl+0 / Ctrl+Up | Bigger / smaller / reset font / scroll a line |
-| Ctrl+, / Ctrl+Q | Settings / quit |
-| Esc | Close the newest window or panel, then extra cursors |
-
-### macOS shortcuts
-
-macOS reserves some of the usual keys, so these shortcuts differ:
-
 | Action | Linux | macOS |
 | --- | --- | --- |
+| New file / open file / new window | Ctrl+N / Ctrl+O / Ctrl+Shift+N | Cmd+N / Cmd+O / Cmd+Shift+N |
+| Save / save as | Ctrl+S / Ctrl+Shift+S | Cmd+S / Cmd+Shift+S |
+| Close tab / reopen closed tab / close all tabs | Ctrl+W / Ctrl+Shift+T / Ctrl+K, Ctrl+W | Cmd+W / Cmd+Shift+T / Cmd+K, Cmd+W |
+| Recent tab / next and previous tab | Ctrl+Tab / Ctrl+PageDown, Ctrl+PageUp | Control+Tab / Control+PageDown, Control+PageUp |
+| Tabs 1–9 | Alt+1–9 | Cmd+1–9 |
+| Add folder / sidebar / folder section | Ctrl+Shift+O / Ctrl+K, Ctrl+B / Ctrl+Alt+B | Cmd+Shift+O / Cmd+K, Cmd+B / Cmd+Option+B |
+| Go to file / commands / line / symbol | Ctrl+P / Ctrl+Shift+P / Ctrl+G / Ctrl+R | Cmd+P / Cmd+Shift+P / Cmd+G / Cmd+R |
+| Find / find in folders | Ctrl+F / Ctrl+Shift+F | Cmd+F / Cmd+Shift+F |
 | Replace | Ctrl+H | Cmd+Option+F |
-| Full screen / distraction-free | F11 / Shift+F11 | Control+Cmd+F / Control+Shift+Cmd+F |
-| Complete word | Ctrl+Space | Control+Space |
-| Select all occurrences | Alt+F3 | Control+Cmd+G |
-| Jump to bracket | Ctrl+M | Control+M |
+| Select all matches / use selection for Find / quick find | Alt+Enter / Ctrl+E / Ctrl+F3 | Option+Enter / Cmd+E / Cmd+F3 |
+| Go to definition / references | F12 / Shift+F12 | F12 / Shift+F12 |
 | Back / forward | Alt+Left / Alt+Right | Control+- / Control+Shift+- |
-| Block comment | Ctrl+Shift+/ | Cmd+Option+/ |
+| Next occurrence / split into lines | Ctrl+D / Ctrl+Shift+L | Cmd+D / Cmd+Shift+L |
+| Select all occurrences | Alt+F3 | Control+Cmd+G |
+| Add cursor above / below | Alt+Shift+Up / Down | Control+Shift+Up / Down |
+| Expand selection / to brackets | Ctrl+Shift+Space / Ctrl+Shift+M | Cmd+Shift+Space / Cmd+Shift+M |
+| Jump to bracket | Ctrl+M | Control+M |
+| Copy / cut / paste | Ctrl+C / Ctrl+X / Ctrl+V | Cmd+C / Cmd+X / Cmd+V |
+| Paste and indent / paste from history | Ctrl+Shift+V / Ctrl+K, Ctrl+V | Cmd+Shift+V / Cmd+K, Cmd+V |
+| Undo / redo / undo selection change | Ctrl+Z / Ctrl+Shift+Z / Ctrl+U | Cmd+Z / Cmd+Shift+Z / Cmd+U |
+| Line comment / block comment | Ctrl+/ / Ctrl+Shift+/ | Cmd+/ / Cmd+Option+/ |
 | Wrap paragraph | Alt+Q | Cmd+Option+Q |
 | Transpose | Ctrl+T | Control+T |
 | Delete to the start of the line | Ctrl+Shift+Backspace | Cmd+Backspace |
+| Complete word | Ctrl+Space | Control+Space |
 | Record / play macro | Ctrl+Alt+Q / Ctrl+Alt+Shift+Q | Control+Q / Control+Shift+Q |
-| Recent tab / next and previous tab | Ctrl+Tab / Ctrl+PageDown, Ctrl+PageUp | Control+Tab / Control+PageDown, Control+PageUp |
-| Tabs 1–9 | Alt+1–9 | Cmd+1–9 |
-| Add cursor above / below | Alt+Shift+Up / Down | Control+Shift+Up / Down |
+| Spell check / next misspelling | F6 / Ctrl+F6 | F6 / Cmd+F6 |
+| Next change / revert change | Ctrl+K, Ctrl+. / Ctrl+K, Ctrl+Z | Cmd+K, Cmd+. / Cmd+K, Cmd+Z |
+| Bookmark / next bookmark / select all bookmarks | Ctrl+F2 / F2 / Alt+F2 | Cmd+F2 / F2 / Option+F2 |
+| Build / build with / next error or match | Ctrl+B / Ctrl+Shift+B / F4 | Cmd+B / Cmd+Shift+B / F4 |
 | Column layouts and grid | Alt+Shift+1–5 | Cmd+Option+1–5 |
 | Two / three rows | Alt+Shift+8 / 9 | Cmd+Option+Shift+2 / 3 |
 | Focus a group | Ctrl+1–4 | Control+1–4 |
+| Fold / unfold | Ctrl+Shift+[ / Ctrl+Shift+] | Cmd+Shift+[ / Cmd+Shift+] |
+| Full screen / distraction-free | F11 / Shift+F11 | Control+Cmd+F / Control+Shift+Cmd+F |
+| Wrap long lines | Ctrl+Shift+W | Cmd+Shift+W |
+| Bigger / smaller / reset font | Ctrl++ / Ctrl+- / Ctrl+0 | Cmd++ / Cmd+- / Cmd+0 |
 | Scroll a line | Ctrl+Up / Down | Control+Option+Up / Down |
-
-Everything else uses Cmd for Ctrl and Option for Alt.
+| Settings / quit | Ctrl+, / Ctrl+Q | Cmd+, / Cmd+Q |
+| Close the newest window or panel, then extra cursors | Esc | Esc |
 
 ## Recovery
 
