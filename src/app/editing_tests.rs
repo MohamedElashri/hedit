@@ -1699,3 +1699,37 @@ fn control_arrows_scroll_without_moving_the_cursor() {
     frame(&ctx, &mut app, vec![]);
     assert_eq!(app.active().view.head, 3);
 }
+
+#[test]
+fn indentation_enter_added_goes_away_if_the_line_stays_empty() {
+    let (_directory, ctx, mut app) = app_with("    a");
+    app.set_syntax(Some(syntax::Language::PlainText));
+    app.set_selections(vec![hedit::advanced::Selection::caret(5)]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![]);
+    let enter = || key(Key::Enter, Modifiers::NONE);
+    frame(&ctx, &mut app, vec![enter()]);
+    assert_eq!(app.active().page.text, "    a\n    ");
+    // Enter again: the line left behind loses its indentation.
+    frame(&ctx, &mut app, vec![enter()]);
+    assert_eq!(app.active().page.text, "    a\n\n    ");
+    // Moving away does the same.
+    frame(&ctx, &mut app, vec![key(Key::ArrowUp, Modifiers::NONE)]);
+    frame(&ctx, &mut app, vec![]);
+    assert_eq!(app.active().page.text, "    a\n\n");
+    // Typed text keeps its line.
+    app.set_selections(vec![hedit::advanced::Selection::caret(5)]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![enter()]);
+    type_text(&ctx, &mut app, "b");
+    frame(&ctx, &mut app, vec![key(Key::ArrowUp, Modifiers::NONE)]);
+    frame(&ctx, &mut app, vec![]);
+    assert_eq!(app.active().page.text, "    a\n    b\n\n");
+    // With the setting off, indentation stays.
+    app.settings.trim_automatic_white_space = false;
+    app.set_selections(vec![hedit::advanced::Selection::caret(11)]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![enter()]);
+    frame(&ctx, &mut app, vec![enter()]);
+    assert_eq!(app.active().page.text, "    a\n    b\n    \n    \n\n");
+}

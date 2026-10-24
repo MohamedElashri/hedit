@@ -213,6 +213,9 @@ editing, and line-comment commands remain available. NVIDIA identifies CUDA
 | `src/app/snippet_fields.rs` | Snippet field navigation, following edits through a bounded diff |
 | `src/app/paste_history.rs` | Recent copies for Paste from history |
 | `src/app/macros.rs` | Macro recording, playback through the normal input path, and macros.json |
+| `src/app/clipboard_lines.rs` | Whole-line copy, cut, and paste; paste and indent |
+| `src/app/view_commands.rs` | Recent files, closing many tabs, bookmark selection, line scrolling |
+| `src/app/trim_indent.rs` | Removing indentation Enter left on lines that stay empty |
 | `src/app/changes.rs` | Next/previous change and Revert change from the change markers' base text |
 | `src/app/find_tools.rs` | Select all matches, use selection for Find/Replace, quick find |
 | `src/app/fold_gutter.rs` | Fold arrows in the gutter, cached per revision |

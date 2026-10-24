@@ -44,6 +44,7 @@ mod tab_switch;
 mod tab_tests;
 mod themes;
 mod tree_row;
+mod trim_indent;
 mod updates;
 mod view_commands;
 mod wait;
@@ -191,6 +192,8 @@ pub struct HeditApp {
     recent_files: Vec<String>,
     /// A scroll position for a view, applied without moving its cursor.
     scroll_request: Option<(u64, f64)>,
+    /// A line holding only the indentation Enter added.
+    auto_indent: Option<trim_indent::AutoIndent>,
     /// Cursors made by Add cursor above/below and the column they keep.
     line_cursor_goal: Option<(Vec<hedit::advanced::Selection>, usize)>,
     live_find: find_live::LiveFind,
@@ -346,6 +349,7 @@ impl HeditApp {
             line_clip: None,
             paste_indent: false,
             scroll_request: None,
+            auto_indent: None,
             recent_files: storage
                 .and_then(|s| eframe::get_value(s, "recent_files"))
                 .unwrap_or_default(),
@@ -1105,6 +1109,7 @@ impl HeditApp {
         self.track_recent_tabs(ctx);
         self.track_recent_file();
         self.sync_snippet();
+        self.trim_auto_indent();
         self.update_completion(ctx);
         self.update_spelling(ctx);
         if !self.busy && !self.closing && self.handle_chords(ctx) {

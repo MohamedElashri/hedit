@@ -56,6 +56,8 @@
   bookmarks (Ctrl+Shift+F2) removes them.
 - Ctrl+Up and Ctrl+Down (Control+Option+Up/Down on macOS) scroll one line
   without moving the cursor.
+- Indentation that Enter adds is removed again when the line stays empty and the
+  cursor moves on (`trim_automatic_white_space`).
 - Paste and indent (Ctrl+Shift+V) fits pasted lines to the indentation of the
   line they land on.
 - Paste from history (Ctrl+K, Ctrl+V) lists the last 15 pieces of text copied or

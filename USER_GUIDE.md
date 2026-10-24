@@ -407,7 +407,10 @@ Opening a source file detects its indentation from up to 10,000 lines; choose
 copies leading whitespace on Enter. **Smart indentation** adds a level after an
 opening bracket and places a matching closing bracket on its own line. Turn
 these options off independently in the submenu or Editor preferences.
-**Backspace to indentation stops** removes spaces back to the previous stop.
+**Backspace to indentation stops** removes spaces back to the previous stop. When
+Enter indents a new line and you move on without typing on it, the indentation is
+taken away again, so no stray spaces are left behind
+(`trim_automatic_white_space`).
 Bulk text commands are unavailable in paged files and Follow mode.
 
 ### Multiple cursors and rectangular selections
@@ -957,6 +960,7 @@ you fix it.
 | `auto_match_enabled` | `true` | Close brackets and quotes, wrap selections in them, and step over closers |
 | `match_brackets` | `true` | Outline the bracket matching the one beside the cursor |
 | `match_selection` | `true` | Outline other occurrences of a selected word |
+| `trim_automatic_white_space` | `true` | Remove indentation Enter added when its line stays empty |
 | `copy_with_empty_selection` | `true` | With nothing selected, Copy and Cut take the whole line |
 | `auto_complete` | `true` | Offer completions in a list while typing |
 | `auto_complete_delay` | `50` | Milliseconds after typing before the list opens, 0–2000 |

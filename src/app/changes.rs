@@ -14,7 +14,7 @@ impl HeditApp {
         Some(intelligence::changes(base, &b.page.text))
     }
     /// The 0-based line of the cursor.
-    fn cursor_line(&self) -> usize {
+    pub(super) fn cursor_line(&self) -> usize {
         let b = self.active();
         let at = hedit::advanced::byte(&b.page.text, b.view.head);
         memchr::memchr_iter(b'\n', &b.page.text.as_bytes()[..at]).count()

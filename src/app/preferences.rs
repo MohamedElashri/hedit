@@ -337,6 +337,14 @@ impl HeditApp {
             "Backspace removes one indentation level",
         );
         ui.checkbox(
+            &mut s.trim_automatic_white_space,
+            "Remove indentation left on lines that stay empty",
+        );
+        ui.checkbox(
+            &mut s.copy_with_empty_selection,
+            "Copy and cut the whole line when nothing is selected",
+        );
+        ui.checkbox(
             &mut s.auto_match_enabled,
             "Close brackets and quotes automatically",
         );
@@ -400,6 +408,8 @@ impl HeditApp {
             s.auto_complete_commit_on_tab = d.auto_complete_commit_on_tab;
             s.show_definitions = d.show_definitions;
             s.spell_check = d.spell_check;
+            s.trim_automatic_white_space = d.trim_automatic_white_space;
+            s.copy_with_empty_selection = d.copy_with_empty_selection;
             s.mini_diff = d.mini_diff;
         }
     }
