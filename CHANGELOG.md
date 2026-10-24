@@ -49,6 +49,10 @@
 
 ### Changed
 
+- Updates and the release installer download over the public GitHub release
+  links only; the GitHub CLI option for private releases (the
+  `update_with_github_cli` setting and `install.sh --github-cli`) is gone, as the
+  repository is public. An old `update_with_github_cli` key is ignored.
 - Complete word (Ctrl+Space) opens the completion list at the cursor instead of
   a separate window.
 - Find in folders searches the current text of files open in hedit, including

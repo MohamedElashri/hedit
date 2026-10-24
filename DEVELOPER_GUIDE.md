@@ -451,8 +451,8 @@ CI cancels a run when a newer push reaches the same branch or pull request.
 `Swatinem/rust-cache` keeps compiled dependencies between runs: the main branch
 saves the cache and other branches reuse it. Workflows disable incremental
 compilation and debug info, which only slow down and enlarge CI builds. Workflow
-steps set up dependencies and the pinned Rust/Python versions. Offline installer tests cover public
-and authenticated downloads, version/architecture selection, checksum rejection,
+steps set up dependencies and the pinned Rust/Python versions. Offline installer tests cover downloads,
+version/architecture selection, checksum rejection,
 failed downloads, and preservation of an existing installation on download failure.
 
 ### Publish a release
@@ -478,9 +478,7 @@ it compatible with the asset names of published releases.
 
 The workflow uses GitHub's `GITHUB_TOKEN` with write permission only in the
 publication job; no personal token secret is needed. Actions must be enabled and
-repository/organization policy must permit that permission. A private repository
-keeps its releases private; installation uses the authenticated steps in the
-[user guide](USER_GUIDE.md#private-repository-access).
+repository/organization policy must permit that permission.
 
 Assets are uploaded to a draft before it is published. If upload/publication
 fails, rerun the failed workflow jobs to finish the draft. Published releases are
@@ -502,9 +500,8 @@ does not retrofit already published releases.
 `Help → Check for updates…` starts a worker for GitHub's latest stable release
 API. Constructors, frame polling, and timers do not initiate network work. A
 separate **Install update** action is required after review. The UI never installs
-from a successful check alone and never restarts the application. Private access
-uses `gh api --hostname github.com`; public access uses curl with HTTPS-only
-redirects and bounded downloads. Both paths pin the selected tag/asset IDs.
+from a successful check alone and never restarts the application. Downloads use
+curl with HTTPS-only redirects and bounded sizes, and pin the selected tag.
 
 Use semantic version precedence, ignore build metadata for update ordering, and
 reject drafts, prereleases, downgrades, duplicate assets, and oversized responses.
@@ -535,13 +532,13 @@ The UI prevents process exit while its installation worker is active, even if
 the dialog is hidden. Once the worker finishes, normal checkpoint/close gating
 continues. Updates use no elevation and store no GitHub credentials.
 
-Tests cover version ordering, release metadata, public/private transport fixtures,
+Tests cover version ordering, release metadata, transport fixtures,
 checksum rejection, real GNU tar preflight, compatibility checks, locks, external
 replacement, symlinks, injected rollback failure paths, portable/prefix layouts,
 preservation of custom themes and session data, production packager compatibility,
 manual-only UI behavior, compact layouts, and exit gating. They run through
 `make test` and `make ci` without contacting GitHub. Runtime update requirements
-are curl or authenticated GitHub CLI, plus GNU tar; Python is only a test/build
+are curl and GNU tar; Python is only a test/build
 dependency.
 
 ## Contribution guidelines

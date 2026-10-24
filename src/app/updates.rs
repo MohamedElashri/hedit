@@ -1,10 +1,9 @@
 use super::*;
-use hedit::update::{Access, Client, Installation, Release};
+use hedit::update::{Client, Installation, Release};
 
 #[derive(Default)]
 pub(super) struct Updates {
     pub(super) open: bool,
-    pub(super) use_github_cli: bool,
     release: Option<Release>,
     installation: Option<Installation>,
     location_error: Option<String>,
@@ -21,24 +20,11 @@ enum Event {
     Installed(Result<String, String>),
 }
 impl Updates {
-    pub(super) fn new(use_github_cli: bool) -> Self {
-        Self {
-            use_github_cli,
-            ..Default::default()
-        }
-    }
     pub(super) fn installing(&self) -> bool {
         self.installing
     }
     pub(super) fn active(&self) -> bool {
         self.events.is_some()
-    }
-    fn client(&self) -> Client {
-        Client::new(if self.use_github_cli {
-            Access::GitHubCli
-        } else {
-            Access::Public
-        })
     }
     fn check(&mut self, ctx: &egui::Context) {
         if self.active() || self.installed.is_some() {
@@ -49,7 +35,7 @@ impl Updates {
         self.installation = None;
         self.location_error = None;
         self.message = "Checking the latest stable GitHub release…".into();
-        let client = self.client();
+        let client = Client::default();
         let (tx, rx) = mpsc::channel();
         self.events = Some(rx);
         let ctx = ctx.clone();
@@ -78,7 +64,7 @@ impl Updates {
         self.error = None;
         self.installing = true;
         self.message = "Preparing download…".into();
-        let client = self.client();
+        let client = Client::default();
         let (tx, rx) = mpsc::channel();
         self.events = Some(rx);
         let ctx = ctx.clone();
@@ -201,12 +187,6 @@ impl HeditApp {
                     quit = ui.add_enabled(!self.busy && !self.closing, egui::Button::new("Quit hedit")).clicked();
                 } else {
                     let active = self.updates.active();
-                    ui.add_enabled_ui(!active, |ui| {
-                        if ui.checkbox(&mut self.updates.use_github_cli, "Use GitHub CLI authentication (private releases)").changed() {
-                            self.updates.release = None; self.updates.installation = None; self.updates.location_error = None;
-                            self.updates.message = "Click Check again to use the selected access method.".into();
-                        }
-                    });
                     ui.horizontal(|ui| {
                         check = ui.add_enabled(!active, egui::Button::new("Check again")).clicked();
                         let newer = self.updates.release.as_ref().is_some_and(|r| r.newer_than(env!("CARGO_PKG_VERSION")).unwrap_or(false));
@@ -247,7 +227,7 @@ mod tests {
     }
     #[test]
     fn check_results_and_redrawing_never_start_an_install() {
-        let mut updates = Updates::new(false);
+        let mut updates = Updates::default();
         assert!(!updates.active());
         assert!(!updates.installing());
         let (tx, rx) = mpsc::channel();

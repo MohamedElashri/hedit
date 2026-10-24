@@ -138,7 +138,6 @@ pub struct Settings {
     pub build_systems: Vec<crate::build::BuildSystem>,
     // Tools
     pub cuda_gdb_path: String,
-    pub update_with_github_cli: bool,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -192,10 +191,13 @@ impl Default for Settings {
             build_system: "automatic".into(),
             build_systems: Vec::new(),
             cuda_gdb_path: "cuda-gdb".into(),
-            update_with_github_cli: false,
         }
     }
 }
+
+/// Keys earlier versions wrote that no longer do anything; they are ignored
+/// quietly so old settings files load without warnings.
+const RETIRED: &[&str] = &["update_with_github_cli"];
 
 pub const FONT_SIZES: std::ops::RangeInclusive<f32> = 10.0..=28.0;
 pub const MAX_COLUMN: u16 = 400;
@@ -218,6 +220,7 @@ impl Settings {
         let warnings = map
             .keys()
             .filter(|key| !known.as_object().unwrap().contains_key(*key))
+            .filter(|key| !RETIRED.contains(&key.as_str()))
             .map(|key| format!("Unknown setting “{key}” is ignored."))
             .collect();
         let settings: Self =

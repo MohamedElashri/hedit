@@ -104,25 +104,16 @@ from pathlib import Path
 root=Path({})
 with (root/'requests').open('a') as f: f.write(repr(sys.argv[1:])+'\n')
 args=sys.argv[1:]
-if args[0]=='api':
-    endpoint=args[3]
-    if endpoint.endswith('/latest'): path=root/'release.json'
-    else:
-        path=next(root.glob('*.tar.gz'))
-        if endpoint.endswith('/2'): path=Path(str(path)+'.sha256')
-else:
-    url=args[-1]
-    if url.endswith('/latest'): path=root/'release.json'
-    else: path=root/url.rsplit('/',1)[1]
+url=args[-1]
+if url.endswith('/latest'): path=root/'release.json'
+else: path=root/url.rsplit('/',1)[1]
 sys.stdout.buffer.write(path.read_bytes())
 "##,
                 serde_json::to_string(directory.path().to_str().unwrap()).unwrap()
             ),
         );
         let client = Client {
-            access: Access::Public,
-            curl: tool.clone(),
-            gh: tool,
+            curl: tool,
             tar: "tar".into(),
         };
         Self {
@@ -182,8 +173,8 @@ fn malformed_missing_duplicate_or_oversized_assets_are_rejected() {
     assert!(Release::from_json("{}", std::env::consts::ARCH).is_err());
 }
 #[test]
-fn public_and_authenticated_checks_do_not_install_or_run_on_construction() {
-    let mut fixture = Fixture::new();
+fn checks_do_not_install_or_run_on_construction() {
+    let fixture = Fixture::new();
     assert!(!fixture.requests.exists());
     let release = fixture.client.check().unwrap();
     assert_eq!(release.version.to_string(), VERSION);
@@ -191,17 +182,13 @@ fn public_and_authenticated_checks_do_not_install_or_run_on_construction() {
         fs::read_to_string(fixture.root.join("bin/hedit")).unwrap(),
         "#!/bin/sh\nprintf 'old executable\\n'\n"
     );
-    fixture.client.access = Access::GitHubCli;
-    assert_eq!(fixture.client.check().unwrap().tag, release.tag);
     let requests = fs::read_to_string(&fixture.requests).unwrap();
     assert!(requests.contains("api.github.com/repos/MohamedElashri/hedit/releases/latest"));
-    assert!(requests.contains("--hostname"));
 }
 #[test]
-fn verified_public_and_private_install_preserve_custom_themes_and_running_inode() {
-    for access in [Access::Public, Access::GitHubCli] {
-        let mut fixture = Fixture::new();
-        fixture.client.access = access;
+fn verified_install_preserves_custom_themes_and_running_inode() {
+    {
+        let fixture = Fixture::new();
         let installation = fixture.installation();
         let mut old = File::open(fixture.root.join("bin/hedit")).unwrap();
         let release = fixture.client.check().unwrap();
@@ -426,9 +413,7 @@ fn subprocess_timeout_output_limit_and_network_failure_are_bounded() {
     .is_err());
     executable(&tool, "#!/bin/sh\nexit 22\n");
     let client = Client {
-        access: Access::Public,
-        curl: tool.clone(),
-        gh: tool,
+        curl: tool,
         tar: "tar".into(),
     };
     assert!(client

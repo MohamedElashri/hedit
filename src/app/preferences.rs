@@ -212,11 +212,6 @@ impl HeditApp {
         ui.checkbox(&mut s.show_status_bar, "Show status bar");
         ui.checkbox(&mut s.show_sidebar, "Show sidebar");
         let folders = ui.checkbox(&mut s.show_folders, "Show folders in the sidebar");
-        section(ui, "Updates");
-        ui.checkbox(
-            &mut self.updates.use_github_cli,
-            "Check for updates with GitHub CLI (for private repositories)",
-        );
         ui.add_space(14.0);
         if ui.button("Restore defaults").clicked() {
             let d = Settings::default();
@@ -232,7 +227,6 @@ impl HeditApp {
                 d.show_sidebar,
                 d.show_folders,
             );
-            self.updates.use_github_cli = d.update_with_github_cli;
             self.sync_folder_view();
         } else if folders.changed() {
             // Same as View → Side bar → Show folders: showing them shows the sidebar.

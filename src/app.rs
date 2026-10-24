@@ -383,11 +383,7 @@ impl HeditApp {
             shelf_open: false,
             shelf_query: String::new(),
             bookmarks_open: false,
-            updates: updates::Updates::new(
-                storage
-                    .and_then(|s| eframe::get_value(s, "update_github_cli"))
-                    .unwrap_or(false),
-            ),
+            updates: Default::default(),
         };
         // Tests stay on egui's own fonts unless they load fallbacks themselves.
         if !cfg!(test) {

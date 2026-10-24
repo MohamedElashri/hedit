@@ -75,7 +75,6 @@ fn from_storage(storage: Option<&dyn eframe::Storage>) -> Settings {
         "soft_tabs" => smart_backspace,
         "sidebar" => show_sidebar,
         "folder_sidebar" => show_folders,
-        "update_github_cli" => update_with_github_cli,
     );
     if let Some(size) = eframe::get_value::<f32>(storage, "font_size").filter(|s| s.is_finite()) {
         settings.font_size = size.clamp(10.0, 28.0);
@@ -224,7 +223,6 @@ impl HeditApp {
         self.settings.find_case_sensitive = self.quality.options.case_sensitive;
         self.settings.find_regex = self.quality.options.regex;
         self.settings.find_whole_word = self.quality.options.whole_word;
-        self.settings.update_with_github_cli = self.updates.use_github_cli;
         if self.settings == self.settings_files.saved {
             self.settings_files.changed_at = None;
             return;
@@ -307,7 +305,6 @@ impl HeditApp {
         self.quality.options.case_sensitive = self.settings.find_case_sensitive;
         self.quality.options.regex = self.settings.find_regex;
         self.quality.options.whole_word = self.settings.find_whole_word;
-        self.updates.use_github_cli = self.settings.update_with_github_cli;
         self.apply_excludes();
         self.sync_folder_view();
     }

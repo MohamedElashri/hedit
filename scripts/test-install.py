@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise release installation offline, including failed and private downloads."""
+"""Exercise release installation offline, including failed downloads."""
 import hashlib
 import json
 import os
@@ -54,20 +54,6 @@ if tool == 'curl':
         if '/releases/download/v0.1.2/' not in url:
             sys.exit(22)
         shutil.copyfile(fixtures / url.rsplit('/', 1)[1], args[args.index('--output') + 1])
-elif tool == 'gh':
-    if args[:2] == ['auth', 'status']:
-        sys.exit(1 if os.environ.get('MOCK_FAIL') == 'auth' else 0)
-    elif args[:2] == ['release', 'view']:
-        print('v0.1.2')
-    elif args[:2] == ['release', 'download']:
-        if args[2] != 'v0.1.2':
-            sys.exit(1)
-        destination = Path(args[args.index('--dir') + 1])
-        for i, value in enumerate(args):
-            if value == '--pattern':
-                shutil.copyfile(fixtures / args[i + 1], destination / args[i + 1])
-    else:
-        sys.exit('Unexpected gh invocation')
 '''
 
 
@@ -80,7 +66,7 @@ class ReleaseInstaller(unittest.TestCase):
         self.fixtures.mkdir()
         self.bin = self.work / 'bin'
         self.bin.mkdir()
-        for command in ['curl', 'gh', 'uname', 'ditto', 'shasum', 'codesign']:
+        for command in ['curl', 'uname', 'ditto', 'shasum', 'codesign']:
             path = self.bin / command
             path.write_text(MOCK)
             path.chmod(0o755)
@@ -162,12 +148,6 @@ class ReleaseInstaller(unittest.TestCase):
         self.assertFalse(any(request[-1].endswith('/releases/latest') for request in requests))
         self.assertTrue(any('aarch64.tar.gz' in request[-1] for request in requests))
 
-    def test_private_latest_and_pinned(self):
-        for args in [(), ('--version', TAG)]:
-            with self.subTest(args=args):
-                self.run_installer('--github-cli', *args)
-        self.assertFalse(any(request[0] == 'curl' for request in self.requests()))
-
     def test_corrupt_archive_preserves_existing_installation(self):
         archive = self.fixtures / 'hedit-0.1.2-linux-x86_64.tar.gz'
         archive.write_bytes(b'corrupt download')
@@ -188,12 +168,6 @@ class ReleaseInstaller(unittest.TestCase):
     def test_failed_download_is_not_installed(self):
         self.environment['MOCK_FAIL'] = 'download'
         self.run_installer('--version', TAG, succeeds=False)
-        self.assertFalse(self.prefix.exists())
-
-    def test_missing_private_access_is_not_installed(self):
-        self.environment['MOCK_FAIL'] = 'auth'
-        result = self.run_installer('--github-cli', succeeds=False)
-        self.assertIn('gh auth login', result.stderr)
         self.assertFalse(self.prefix.exists())
 
     def test_macos_installs_app_and_launcher(self):
@@ -232,7 +206,7 @@ class ReleaseInstaller(unittest.TestCase):
     def test_macos_rejects_unsafe_app_directory(self):
         self.app_dir = self.work / 'bad"dir'
         self.run_macos_installer(succeeds=False)
-        self.assertFalse(any(request[0] in {'gh', 'curl'} for request in self.requests()))
+        self.assertFalse(any(request[0] == 'curl' for request in self.requests()))
 
     def test_unsupported_system_does_not_download(self):
         for setting, value in [('MOCK_OS', 'FreeBSD'), ('MOCK_ARCH', 'riscv64')]:
@@ -240,13 +214,13 @@ class ReleaseInstaller(unittest.TestCase):
                 self.environment[setting] = value
                 self.run_installer(succeeds=False)
                 self.environment.pop(setting)
-        self.assertFalse(any(request[0] in {'gh', 'curl'} for request in self.requests()))
+        self.assertFalse(any(request[0] == 'curl' for request in self.requests()))
 
     def test_invalid_arguments_do_not_download(self):
         for args in [('--version', '../escape'), ('--prefix', 'relative'), ('--unknown',)]:
             with self.subTest(args=args):
                 self.run_installer(*args, succeeds=False)
-        self.assertFalse(any(request[0] in {'gh', 'curl'} for request in self.requests()))
+        self.assertFalse(any(request[0] == 'curl' for request in self.requests()))
 
     def test_incompatible_binary_preserves_existing_binary(self):
         name = 'hedit-0.1.2-linux-x86_64'

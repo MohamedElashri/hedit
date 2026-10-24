@@ -50,21 +50,6 @@ Omit `--version` for the latest stable release. Prereleases require their full
 tag, such as `--version vX.Y.Z-rc.1`. Run the installer again to upgrade. Close
 hedit before upgrading; your saved files and session data are kept.
 
-### Private repository access
-
-Private releases require an account with repository access. With GitHub CLI
-installed, sign in and download the installer through the authenticated API:
-
-```sh
-gh auth login --hostname github.com
-gh api -H 'Accept: application/vnd.github.raw' repos/MohamedElashri/hedit/contents/install.sh > hedit-install.sh
-sh hedit-install.sh --github-cli
-```
-
-Add `--version vX.Y.Z` to the second command for a pinned version.
-
-Public `curl` URLs cannot access a private repository.
-
 ### Install a portable package
 
 Download the matching archive and `.sha256` file from
@@ -165,12 +150,9 @@ editor keeps its current version until you restart. If you quit while an
 installation is in progress, closing waits for it to finish. Your session data,
 unsaved files, saved appearance, and additional theme files are kept.
 
-### Requirements and private releases
+### Requirements
 
-Updates support Linux x86-64 and ARM64. Public downloads need `curl` and **GNU
-tar**; private releases need GNU tar and an authenticated **GitHub CLI**. For a
-private release, run `gh auth login --hostname github.com`, enable **Use GitHub
-CLI authentication**, and click **Check again**. Credentials stay with GitHub CLI.
+Updates support Linux x86-64 and ARM64 and need `curl` and **GNU tar**.
 
 Installation must be writable and recognizable as a release package: either an
 extracted portable folder or a prefix installed by the included installer or
@@ -885,7 +867,7 @@ Settings are grouped in one window, and every change saves automatically:
 
 | Page | Settings and actions |
 | --- | --- |
-| General | Tab bar, status bar, sidebar, folders in the sidebar, update checks with GitHub CLI |
+| General | Tab bar, status bar, sidebar, folders in the sidebar |
 | Editor | Font size, line numbers, current line, whitespace, indentation guides, minimap, wrapping, rulers, typing behavior |
 | Formatting | Indentation, tab size, whitespace and final newline on save, line endings, encoding, and the same rules per syntax |
 | Folders & Search | Folders and files hidden from the folder tree and searches, default find options |
@@ -959,7 +941,6 @@ you fix it.
 | `build_system` | `"automatic"` | The build system for Ctrl+B, or `"automatic"` to choose by syntax |
 | `build_systems` | `[]` | Your own build systems; see [Build systems](#build-systems) |
 | `cuda_gdb_path` | `"cuda-gdb"` | CUDA-GDB executable (Linux) |
-| `update_with_github_cli` | `false` | Check for updates through GitHub CLI |
 
 Unset formatting keys leave each file's own style alone. A project's settings and
 matching `.editorconfig` rules override these defaults.
@@ -1312,7 +1293,7 @@ long-term copies.
 | Open/Save dialog does not appear | Check that `xdg-desktop-portal` and your desktop's portal backend are installed and running in the same session. |
 | File is rejected | Convert a separate copy to UTF-8 if needed. Binary files are unsupported. |
 | Theme is rejected | Check the version, name length, hex values, and 64 KiB limit. Your current palette stays active. |
-| Update check fails | Check the connection and access method; private releases need authenticated GitHub CLI. Read the error in the update dialog. |
+| Update check fails | Check the connection, then read the error in the update dialog. |
 | Update installation is unavailable | Use a writable release installation or upgrade manually; source builds and managed/symlink layouts cannot update in place. |
 | CUDA tool cannot start | Install it, check `PATH` or the debugger path, and read the tool's output for driver/device/permission errors. |
 

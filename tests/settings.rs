@@ -145,3 +145,10 @@ fn installed_font_lookup() {
         );
     }
 }
+
+#[test]
+fn retired_keys_load_without_warnings() {
+    let (_, warnings) =
+        hedit::settings::Settings::parse("{\"update_with_github_cli\": true}").unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+}

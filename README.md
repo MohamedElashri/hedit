@@ -66,7 +66,7 @@ Ensure `~/.local/bin` is on your `PATH`, then launch `hedit`.
 Prefer a manual download? Get an archive and its checksum from
 [GitHub Releases](https://github.com/MohamedElashri/hedit/releases). The
 [user guide](USER_GUIDE.md#installation) also covers custom installation paths,
-pinned versions, private-repository access, and building from source.
+pinned versions and building from source.
 
 Linux releases are built on Ubuntu 24.04 and need compatible Linux libraries, a graphical
 X11 or Wayland session, and OpenGL. NVIDIA hardware and CUDA tools are optional

@@ -8,20 +8,19 @@ main() (
     usage() {
         cat <<'HELP'
 Usage: sh install.sh [--version vX.Y.Z] [--prefix /absolute/path]
-                     [--app-dir /absolute/path] [--github-cli]
+                     [--app-dir /absolute/path]
 
 Install the latest stable hedit release, or select a release tag.
 Linux: installs under the prefix (default ~/.local); requires tar and sha256sum.
 macOS: installs hedit.app in the app directory (default ~/Applications) and a
 hedit command under the prefix; requires ditto and shasum.
-Both need curl, or authenticated gh with --github-cli for private repositories.
+Both need curl.
 HELP
     }
 
     version=
     install_prefix=${HOME}/.local
     app_dir=${HOME}/Applications
-    use_gh=false
     while [ "$#" -gt 0 ]; do
         case "$1" in
             --version|--prefix|--app-dir)
@@ -32,7 +31,6 @@ HELP
                     --app-dir) app_dir=$2 ;;
                 esac
                 shift 2 ;;
-            --github-cli) use_gh=true; shift ;;
             -h|--help) usage; exit 0 ;;
             *) fail "Unknown argument: $1. Use --help for usage." ;;
         esac
@@ -56,25 +54,17 @@ HELP
         command -v "$tool" >/dev/null 2>&1 || fail "Required command not found: $tool."
     done
     repo=MohamedElashri/hedit
-    if "$use_gh"; then
-        command -v gh >/dev/null 2>&1 || fail 'Install GitHub CLI and run gh auth login first.'
-        gh auth status --hostname github.com >/dev/null 2>&1 || fail 'Run gh auth login for an account with repository access.'
-        if [ -z "$version" ]; then
-            version=$(gh release view --repo "$repo" --json tagName --jq .tagName) || fail 'No accessible stable release found.'
-        fi
-    else
-        command -v curl >/dev/null 2>&1 || fail 'Required command not found: curl.'
-        if [ -z "$version" ]; then
-            release_url=$(curl --fail --silent --show-error --location --retry 3 \
-                --connect-timeout 15 --max-time 300 \
-                --proto '=https' --proto-redir '=https' --output /dev/null \
-                --write-out '%{url_effective}' "https://github.com/$repo/releases/latest") || \
-                fail 'Cannot find a release. For a private repository, use --github-cli.'
-            case "$release_url" in
-                "https://github.com/$repo/releases/tag/"*) version=${release_url##*/} ;;
-                *) fail 'GitHub did not return a release tag.' ;;
-            esac
-        fi
+    command -v curl >/dev/null 2>&1 || fail 'Required command not found: curl.'
+    if [ -z "$version" ]; then
+        release_url=$(curl --fail --silent --show-error --location --retry 3 \
+            --connect-timeout 15 --max-time 300 \
+            --proto '=https' --proto-redir '=https' --output /dev/null \
+            --write-out '%{url_effective}' "https://github.com/$repo/releases/latest") || \
+            fail 'Cannot find a release. Check your connection.'
+        case "$release_url" in
+            "https://github.com/$repo/releases/tag/"*) version=${release_url##*/} ;;
+            *) fail 'GitHub did not return a release tag.' ;;
+        esac
     fi
     case "$version" in
         v[0-9]*) ;;
@@ -96,19 +86,14 @@ HELP
     trap 'exit 130' INT
     trap 'exit 143' TERM HUP
     printf 'Downloading hedit %s for %s…\n' "$version" "$label"
-    if "$use_gh"; then
-        gh release download "$version" --repo "$repo" --dir "$work_dir" \
-            --pattern "$archive" --pattern "$archive.sha256" || fail 'Release download failed.'
-    else
-        for asset in "$archive" "$archive.sha256"; do
-            curl --fail --silent --show-error --location --retry 3 \
-                --connect-timeout 15 --max-time 300 \
-                --proto '=https' --proto-redir '=https' \
-                --output "$work_dir/$asset" \
-                "https://github.com/$repo/releases/download/$version/$asset" || \
-                fail 'Release download failed. Check the tag and architecture; private repositories need --github-cli.'
-        done
-    fi
+    for asset in "$archive" "$archive.sha256"; do
+        curl --fail --silent --show-error --location --retry 3 \
+            --connect-timeout 15 --max-time 300 \
+            --proto '=https' --proto-redir '=https' \
+            --output "$work_dir/$asset" \
+            "https://github.com/$repo/releases/download/$version/$asset" || \
+            fail 'Release download failed. Check the tag and architecture.'
+    done
     # Accept exactly one checksum for the expected archive, never paths from a manifest.
     checksum=$(cat "$work_dir/$archive.sha256")
     read -r expected filename extra <<CHECKSUM

@@ -27,12 +27,6 @@ fn error(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Access {
-    #[default]
-    Public,
-    GitHubCli,
-}
 #[derive(Clone, Debug, Deserialize)]
 struct Asset {
     id: u64,
@@ -114,20 +108,18 @@ impl Release {
 
 #[derive(Clone)]
 pub struct Client {
-    access: Access,
     curl: PathBuf,
-    gh: PathBuf,
     tar: PathBuf,
 }
-impl Client {
-    pub fn new(access: Access) -> Self {
+impl Default for Client {
+    fn default() -> Self {
         Self {
-            access,
             curl: "curl".into(),
-            gh: "gh".into(),
             tar: "tar".into(),
         }
     }
+}
+impl Client {
     fn curl(&self, url: &str, limit: u64) -> Command {
         let mut command = Command::new(&self.curl);
         command
@@ -157,50 +149,31 @@ impl Client {
             ]);
         command
     }
-    fn gh(&self, endpoint: &str, accept: &str) -> Command {
-        let mut command = Command::new(&self.gh);
-        command
-            .args([
-                "api",
-                "--hostname",
-                "github.com",
-                endpoint,
-                "--header",
-                accept,
-            ])
-            .env("GH_PROMPT_DISABLED", "1")
-            .env_remove("GH_DEBUG");
-        command
-    }
     pub fn check(&self) -> Result<Release, String> {
         if std::env::consts::OS != "linux" {
             return Err("In-app updates currently support Linux only.".into());
         }
         let output = tempfile::tempfile().map_err(error)?;
         let endpoint = format!("repos/{REPOSITORY}/releases/latest");
-        let mut command = match self.access {
-            Access::Public => self.curl(
-                &format!("https://api.github.com/{endpoint}"),
-                METADATA_LIMIT,
-            ),
-            Access::GitHubCli => self.gh(&endpoint, "Accept: application/vnd.github+json"),
-        };
-        run_tool(&mut command, &output, METADATA_LIMIT, Duration::from_secs(60))
-            .map_err(|e| format!("Could not check GitHub releases. Check your connection; for private releases select GitHub CLI and run gh auth login.\n{e}"))?;
+        let mut command = self.curl(
+            &format!("https://api.github.com/{endpoint}"),
+            METADATA_LIMIT,
+        );
+        run_tool(
+            &mut command,
+            &output,
+            METADATA_LIMIT,
+            Duration::from_secs(60),
+        )
+        .map_err(|e| format!("Could not check GitHub releases. Check your connection.\n{e}"))?;
         Release::from_json(&read_text(&output, METADATA_LIMIT)?, std::env::consts::ARCH)
     }
     fn download(&self, release: &Release, asset: &Asset, destination: &Path) -> Result<(), String> {
         let output = File::create(destination).map_err(error)?;
-        let mut command = match self.access {
-            Access::Public => self.curl(
-                &format!("{RELEASES_URL}/download/{}/{}", release.tag, asset.name),
-                asset.size,
-            ),
-            Access::GitHubCli => self.gh(
-                &format!("repos/{REPOSITORY}/releases/assets/{}", asset.id),
-                "Accept: application/octet-stream",
-            ),
-        };
+        let mut command = self.curl(
+            &format!("{RELEASES_URL}/download/{}/{}", release.tag, asset.name),
+            asset.size,
+        );
         run_tool(&mut command, &output, asset.size, Duration::from_secs(300))?;
         if output.metadata().map_err(error)?.len() != asset.size {
             return Err(format!("Incomplete download: {}", asset.name));
