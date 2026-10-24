@@ -45,9 +45,9 @@ impl HeditApp {
                     ("Edit", vec![]),
                     ("Find", vec![vec![Command::Find, Command::Replace, Command::FindPrevious, Command::ReplaceAll, Command::FindFiles], vec![Command::SelectAllMatches, Command::UseSelectionForFind, Command::UseSelectionForReplace, Command::QuickFindNext, Command::QuickFindPrevious]]),
                     ("View", vec![]),
-                    ("Goto", vec![vec![Command::Switcher, Command::Goto, Command::Symbols, Command::GotoDefinition, Command::GotoReferences], vec![Command::NextTab, Command::PreviousTab, Command::RecentTab], vec![Command::NavBack, Command::NavForward], vec![Command::Bookmark, Command::NextBookmark, Command::PreviousBookmark, Command::Bookmarks]]),
+                    ("Goto", vec![vec![Command::Switcher, Command::Goto, Command::Symbols, Command::GotoDefinition, Command::GotoReferences], vec![Command::NextTab, Command::PreviousTab, Command::RecentTab], vec![Command::NextChange, Command::PreviousChange], vec![Command::NavBack, Command::NavForward], vec![Command::Bookmark, Command::NextBookmark, Command::PreviousBookmark, Command::Bookmarks]]),
                     ("Project", vec![vec![Command::OpenProject,Command::SaveProject,Command::SaveProjectAs,Command::RecentProjects],vec![Command::ProjectSettings]]),
-                    ("Tools", vec![vec![Command::Palette, Command::Gpu, Command::GitDiff, Command::CompareDisk, Command::Complete, Command::Snippets], vec![Command::Build, Command::BuildWith, Command::CancelBuild, Command::BuildResults, Command::NextResult, Command::PreviousResult], vec![Command::Checkpoint]]),
+                    ("Tools", vec![vec![Command::Palette, Command::Gpu, Command::GitDiff, Command::RevertChange, Command::CompareDisk, Command::Complete, Command::Snippets], vec![Command::Build, Command::BuildWith, Command::CancelBuild, Command::BuildResults, Command::NextResult, Command::PreviousResult], vec![Command::Checkpoint]]),
                     ("Preferences", vec![vec![Command::Settings, Command::Appearance, Command::ToolSettings, Command::KeyBindings]]),
                     // macOS's own app menu already has About and Quit.
                     ("Help", vec![if cfg!(target_os = "macos") { vec![Command::Updates] } else { vec![Command::Updates, Command::About] }]),

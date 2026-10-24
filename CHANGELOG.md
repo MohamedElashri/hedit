@@ -43,6 +43,9 @@
   Ctrl+E and Ctrl+Shift+E use the selection as the Find or Replace text, and
   Ctrl+F3 and Ctrl+Shift+F3 select the next or previous copy of the word at the
   cursor.
+- Next and previous change (Ctrl+K, Ctrl+. and Ctrl+K, Ctrl+,) move between the
+  blocks marked as changed in the gutter, and Revert change (Ctrl+K, Ctrl+Z) puts
+  the block at the cursor back as one undoable edit.
 - Paste from history (Ctrl+K, Ctrl+V) lists the last 15 pieces of text copied or
   cut in hedit, with filtering, and pastes the chosen one at every cursor.
 - Fold arrows in the gutter: ▾ beside foldable lines while the pointer is over
@@ -53,6 +56,9 @@
 
 ### Changed
 
+- Change markers in the gutter also work for files outside Git, comparing with
+  the saved file, and `mini_diff` chooses what they compare with (`"auto"`,
+  `"saved"`, or `"off"`). They now refresh as soon as a file is saved.
 - The command palette, open files in Go to file, and lists such as Go to
   references match the letters you type in order (`tglc` finds Toggle line
   comment), rank matches at word starts first, and underline the matched

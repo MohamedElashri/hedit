@@ -643,3 +643,28 @@ fn repeated_snippet_fields_mirror_the_first_and_imports_are_not_definitions() {
     assert_eq!(lines, [3]);
     assert!(intelligence::definitions(text, "other", Path::new("a.rs")).is_empty());
 }
+
+#[test]
+fn changes_list_changed_blocks_with_their_original_lines() {
+    let base = "a\nb\nc\nd\ne\n";
+    let text = "a\nB\nc\ne\nf\n";
+    let found = intelligence::changes(base, text);
+    assert_eq!(
+        found,
+        [
+            intelligence::Change {
+                new: 1..2,
+                old: "b\n".into()
+            },
+            intelligence::Change {
+                new: 3..3,
+                old: "d\n".into()
+            },
+            intelligence::Change {
+                new: 4..5,
+                old: String::new()
+            },
+        ]
+    );
+    assert!(intelligence::changes(base, base).is_empty());
+}

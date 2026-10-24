@@ -2,6 +2,7 @@ mod advanced_edit;
 mod auto_complete;
 mod bidi_view;
 mod build_panel;
+mod changes;
 mod chords;
 mod chrome;
 mod commands;

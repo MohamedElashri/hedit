@@ -102,6 +102,9 @@ pub struct Settings {
     pub auto_complete_commit_on_tab: bool,
     /// List a name's definitions when the pointer rests on it.
     pub show_definitions: bool,
+    /// What change markers compare with: "auto" (Git's HEAD, or the saved file
+    /// outside Git), "saved" (the saved file), or "off".
+    pub mini_diff: String,
     /// Underline misspelled words in prose, comments, and strings.
     pub spell_check: bool,
     /// Words spell checking accepts.
@@ -167,6 +170,7 @@ impl Default for Settings {
             auto_complete_delay: 50,
             auto_complete_commit_on_tab: false,
             show_definitions: true,
+            mini_diff: "auto".into(),
             spell_check: false,
             added_words: Vec::new(),
             show_tab_bar: true,
@@ -253,6 +257,9 @@ impl Settings {
         }
         if !(1.0..=4.0).contains(&self.caret_width) {
             return Err("caret_width must be between 1 and 4.".into());
+        }
+        if !matches!(self.mini_diff.as_str(), "auto" | "saved" | "off") {
+            return Err("mini_diff must be \"auto\", \"saved\", or \"off\".".into());
         }
         if self.auto_complete_delay > 2000 {
             return Err("auto_complete_delay must be 0–2000 milliseconds.".into());

@@ -326,6 +326,11 @@ pub fn default_snippets() -> Vec<Snippet> {
 }
 
 pub fn git_diff(path: &Path, text: &str) -> Result<String, String> {
+    let base = git_base(path)?;
+    Ok(crate::search::diff(&base, text, path))
+}
+/// The file's text in Git's HEAD commit.
+pub fn git_base(path: &Path) -> Result<String, String> {
     let parent = path.parent().ok_or("No file directory.")?;
     let root = git_output(parent, &["rev-parse", "--show-toplevel"])?;
     let root = PathBuf::from(root.trim_end_matches(['\r', '\n']));
@@ -339,11 +344,33 @@ pub fn git_diff(path: &Path, text: &str) -> Result<String, String> {
         .ok_or("Git paths must be UTF-8.")?
         .replace('\\', "/");
     let base = git_output(&root, &["show", &format!("HEAD:{relative}")])?;
-    Ok(crate::search::diff(
-        base.strip_prefix('\u{feff}').unwrap_or(&base),
-        text,
-        path,
-    ))
+    Ok(base.strip_prefix('\u{feff}').unwrap_or(&base).to_owned())
+}
+
+/// A changed block: lines `new` of the current text (0-based, end exclusive;
+/// empty where lines were only deleted) were `old` in the base text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Change {
+    pub new: std::ops::Range<usize>,
+    pub old: String,
+}
+
+/// The changed blocks between `base` and `text`, line by line, in order.
+pub fn changes(base: &str, text: &str) -> Vec<Change> {
+    let old: Vec<&str> = base.split_inclusive('\n').collect();
+    let diff = similar::TextDiff::configure()
+        .timeout(std::time::Duration::from_millis(250))
+        .diff_lines(base, text);
+    diff.ops()
+        .iter()
+        .filter_map(|op| {
+            let (_, old_range, new_range) = op.as_tag_tuple();
+            (op.tag() != similar::DiffTag::Equal).then(|| Change {
+                new: new_range,
+                old: old[old_range].concat(),
+            })
+        })
+        .collect()
 }
 pub fn git_output(directory: &Path, args: &[&str]) -> Result<String, String> {
     let mut child = Command::new("git")

@@ -691,8 +691,14 @@ record where you were, so **Alt+Left** returns. Resting the pointer on a name fo
 a moment lists its definitions from the open files; click one to go there
 (`show_definitions` turns this off).
 
-With Git installed, changed-line markers refresh as you edit the active fully
-loaded file, and when hedit's window regains focus. Hover a marker for its inline hunk. **Tools → Git changes…**
+Changed-line markers in the gutter compare the active fully loaded file with
+Git's HEAD, or with the saved file when the file is not in a Git repository
+(`mini_diff`: `"auto"`, `"saved"` to always use the saved file, or `"off"`). They
+refresh as you edit, when you save, and when hedit's window regains focus. Hover a
+marker for its inline hunk. **Goto → Next change** (**Ctrl+K, Ctrl+.**) and
+**Previous change** (**Ctrl+K, Ctrl+,**) move between changed blocks, and
+**Tools → Revert change** (**Ctrl+K, Ctrl+Z**) puts the block at the cursor back as
+it was, as one undoable edit. **Tools → Git changes…**
 opens a comparison of editor text with HEAD, including staged and unsaved changes.
 These operations do not stage, commit, or otherwise modify the repository.
 
@@ -930,6 +936,7 @@ you fix it.
 | `auto_complete` | `true` | Offer completions in a list while typing |
 | `auto_complete_delay` | `50` | Milliseconds after typing before the list opens, 0–2000 |
 | `auto_complete_commit_on_tab` | `false` | Accept completions with Tab only; Enter starts a new line |
+| `mini_diff` | `"auto"` | Change markers compare with Git's HEAD, else the saved file (`"auto"`), the saved file (`"saved"`), or nothing (`"off"`) |
 | `spell_check` | `false` | Underline misspelled words in prose, comments, and strings |
 | `added_words` | `[]` | Words spell checking accepts, such as `["hedit"]` |
 | `show_definitions` | `true` | List a name's definitions when the pointer rests on it |
@@ -1239,6 +1246,7 @@ and Quit are in macOS's own hedit menu. Change any shortcut under
 | Ctrl+, | Settings |
 | Ctrl+Q | Quit (after a final recovery checkpoint) |
 | F12 / Shift+F12 | Go to definition / references |
+| Ctrl+K, Ctrl+. / Ctrl+K, Ctrl+, / Ctrl+K, Ctrl+Z | Next / previous change / revert change |
 | F6 / Ctrl+F6 / Ctrl+Shift+F6 | Spell check / next / previous misspelling |
 | Ctrl+F2 | Toggle a bookmark at the cursor |
 | F2 / Shift+F2 | Next / previous bookmark |

@@ -23,6 +23,9 @@ pub(super) enum Command {
     NavForward,
     CompareDisk,
     GitDiff,
+    NextChange,
+    PreviousChange,
+    RevertChange,
     KeyBindings,
     Encoding,
     Complete,
@@ -209,6 +212,9 @@ impl Command {
         Self::NavForward,
         Self::CompareDisk,
         Self::GitDiff,
+        Self::NextChange,
+        Self::PreviousChange,
+        Self::RevertChange,
         Self::KeyBindings,
         Self::Encoding,
         Self::Complete,
@@ -421,6 +427,9 @@ impl Command {
             Self::NavForward => "Navigate forward",
             Self::CompareDisk => "Compare with disk…",
             Self::GitDiff => "Git changes…",
+            Self::NextChange => "Next change",
+            Self::PreviousChange => "Previous change",
+            Self::RevertChange => "Revert change",
             Self::KeyBindings => "Key bindings and snippets…",
             Self::Encoding => "File encoding…",
             Self::Complete => "Complete word…",
@@ -597,6 +606,9 @@ impl Command {
     fn shortcut_label(self) -> &'static str {
         match self {
             Self::FindFiles => "Ctrl+Shift+F",
+            Self::NextChange => "Ctrl+K, Ctrl+.",
+            Self::PreviousChange => "Ctrl+K, Ctrl+,",
+            Self::RevertChange => "Ctrl+K, Ctrl+Z",
             // Control+Tab everywhere: Cmd+Tab switches applications on macOS.
             Self::RecentTab if cfg!(target_os = "macos") => "Control+Tab",
             Self::RecentTabBack if cfg!(target_os = "macos") => "Control+Shift+Tab",
@@ -936,6 +948,11 @@ impl HeditApp {
             Command::CloseFolder | Command::RefreshFolder => !self.workspace.folders.is_empty(),
             Command::Rename => self.active().page.info.path.is_none(),
             Command::CopyPath | Command::RevealInSidebar => self.active().page.info.path.is_some(),
+            Command::NextChange | Command::PreviousChange | Command::RevertChange => {
+                !self.active().page.info.paged
+                    && !self.active().follow
+                    && self.quality.git_base.contains_key(&self.active().view.id)
+            }
             Command::Reopen => !self.workspace.closed.is_empty(),
             Command::Follow => {
                 self.active().page.info.path.is_some() && !self.active().page.info.dirty
@@ -1037,6 +1054,9 @@ impl HeditApp {
             Command::NavForward => self.navigate(ctx, true),
             Command::CompareDisk => self.compare_disk(ctx, false),
             Command::GitDiff => self.compare_disk(ctx, true),
+            Command::NextChange => self.next_change(ctx, true),
+            Command::PreviousChange => self.next_change(ctx, false),
+            Command::RevertChange => self.revert_change(),
             Command::KeyBindings => self.open_preferences(PreferencesPage::Keys),
             Command::Encoding => {
                 self.quality.encoding = self.active().page.info.encoding.clone();

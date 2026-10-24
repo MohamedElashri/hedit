@@ -65,7 +65,10 @@ pub(super) struct Quality {
     pub git_cache: std::collections::BTreeMap<u64, String>,
     pub git_pending: bool,
     /// The buffer and revision the current markers were computed for.
-    pub git_key: Option<(u64, u64)>,
+    /// The view, revision, saved state, and comparison the markers are for.
+    pub git_key: Option<(u64, u64, bool, String)>,
+    /// The text each view's change markers compare against.
+    pub git_base: std::collections::BTreeMap<u64, String>,
     pub git_lines: std::collections::BTreeMap<u64, std::collections::BTreeSet<usize>>,
     pub file_action: Option<(PathBuf, FileOperation)>,
     pub file_name: String,
@@ -105,7 +108,8 @@ pub(super) enum FileOperation {
     Trash,
 }
 pub(super) enum Event {
-    GitMarkers(u64, u64, String),
+    /// Change markers: view, revision, diff, and the text compared against.
+    GitMarkers(u64, u64, String, Option<String>),
     Found(u64, Page, usize, usize, usize, String, search::Options),
     Results(search::Results),
     Applied(Vec<(u64, Page)>, usize, Vec<String>, Vec<search::Restore>),
@@ -140,7 +144,7 @@ impl HeditApp {
     }
     pub(super) fn quality_event(&mut self, ctx: &egui::Context, event: Event) {
         match event {
-            Event::GitMarkers(id, revision, diff) => {
+            Event::GitMarkers(id, revision, diff, base) => {
                 self.quality.git_pending = false;
                 if self
                     .workspace
@@ -152,6 +156,10 @@ impl HeditApp {
                         .git_lines
                         .insert(id, intelligence::changed_lines(&diff));
                     self.quality.git_cache.insert(id, diff);
+                    match base {
+                        Some(base) => self.quality.git_base.insert(id, base),
+                        None => self.quality.git_base.remove(&id),
+                    };
                 }
             }
             Event::Found(id, page, a, z, count, query, options) => {
@@ -1413,7 +1421,13 @@ impl HeditApp {
         let b = self.active();
         b.page.info.path.is_some()
             && !b.page.info.paged
-            && (self.quality.git_key != Some((b.view.id, b.page.info.revision))
+            && (self.quality.git_key.as_ref()
+                != Some(&(
+                    b.view.id,
+                    b.page.info.revision,
+                    b.page.info.dirty,
+                    self.settings.mini_diff.clone(),
+                ))
                 || refocused(ctx)
                 || self
                     .quality
@@ -1439,16 +1453,34 @@ impl HeditApp {
         };
         let id = b.view.id;
         let revision = b.page.info.revision;
+        let dirty = b.page.info.dirty;
         let text = b.page.text.clone();
         let tx = self.tx.clone();
         let ctx = ctx.clone();
+        let mode = self.settings.mini_diff.clone();
         self.quality.git_at = Some(Instant::now());
         self.quality.git_pending = true;
-        self.quality.git_key = Some((id, revision));
+        self.quality.git_key = Some((id, revision, dirty, mode.clone()));
         thread::spawn(move || {
-            let diff = intelligence::git_diff(Path::new(&path), &text).unwrap_or_default();
+            let path = Path::new(&path);
+            // "auto" compares with Git's HEAD, or the saved file outside Git.
+            let saved = || {
+                let bytes = std::fs::read(path).ok()?;
+                hedit::text_encoding::decode(&bytes, hedit::text_encoding::detect(&bytes))
+                    .ok()
+                    .map(|(text, _)| text)
+            };
+            let base = match mode.as_str() {
+                "off" => None,
+                "saved" => saved(),
+                _ => intelligence::git_base(path).ok().or_else(saved),
+            };
+            let diff = base
+                .as_deref()
+                .map(|base| hedit::search::diff(base, &text, path))
+                .unwrap_or_default();
             let _ = tx.send(Ok(Action::Quality(Box::new(Event::GitMarkers(
-                id, revision, diff,
+                id, revision, diff, base,
             )))));
             ctx.request_repaint();
         });

@@ -1396,3 +1396,83 @@ fn find_shortcuts_select_matches_and_reuse_the_selection() {
         }
     );
 }
+
+#[test]
+fn change_markers_navigate_and_revert_against_the_saved_file() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("notes.txt");
+    std::fs::write(&path, "one\ntwo\nthree\nfour\nfive\n").unwrap();
+    let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    app.settings.mini_diff = "saved".into();
+    app.open(&ctx, Some(path.clone()));
+    finish_app_job(&mut app, &ctx);
+    // Change line 2 and delete line 4.
+    let index = app.workspace.active;
+    let old = app.workspace.open[index].page.text.clone();
+    app.workspace.open[index].page.text = "one\nTWO\nthree\nfive\n".into();
+    app.workspace.edit(index, &old).unwrap();
+    // Wait for the markers.
+    let started = Instant::now();
+    while app
+        .quality
+        .git_lines
+        .get(&app.active().view.id)
+        .is_none_or(|l| l.is_empty())
+    {
+        assert!(started.elapsed() < Duration::from_secs(5));
+        app.quality.git_at = None;
+        frame(&ctx, &mut app, vec![]);
+        app.poll_git(&ctx);
+        thread::sleep(Duration::from_millis(10));
+        app.receive(&ctx);
+    }
+    let line = |app: &HeditApp| {
+        let b = app.active();
+        b.page
+            .text
+            .chars()
+            .take(b.view.head)
+            .filter(|c| *c == '\n')
+            .count()
+            + 1
+    };
+    app.set_selections(vec![hedit::advanced::Selection::caret(0)]);
+    app.execute(&ctx, Command::NextChange);
+    assert_eq!(line(&app), 2);
+    app.execute(&ctx, Command::NextChange);
+    assert_eq!(line(&app), 4, "where line four was deleted");
+    app.execute(&ctx, Command::NextChange);
+    assert_eq!(line(&app), 2, "wraps around");
+    app.execute(&ctx, Command::RevertChange);
+    assert_eq!(app.active().page.text, "one\ntwo\nthree\nfive\n");
+    app.execute(&ctx, Command::Undo);
+    finish_app_job(&mut app, &ctx);
+    assert_eq!(
+        app.active().page.text,
+        "one\nTWO\nthree\nfive\n",
+        "reverting is undoable"
+    );
+    // The two-key shortcut reaches the next change.
+    let release = |key| egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: false,
+        repeat: false,
+        modifiers: Modifiers::COMMAND,
+    };
+    app.set_selections(vec![hedit::advanced::Selection::caret(0)]);
+    frame(&ctx, &mut app, vec![]);
+    frame(
+        &ctx,
+        &mut app,
+        vec![key(Key::K, Modifiers::COMMAND), release(Key::K)],
+    );
+    frame(
+        &ctx,
+        &mut app,
+        vec![key(Key::Period, Modifiers::COMMAND), release(Key::Period)],
+    );
+    assert_eq!(line(&app), 2);
+}

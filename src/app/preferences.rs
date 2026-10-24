@@ -361,6 +361,16 @@ impl HeditApp {
             &mut s.spell_check,
             "Check spelling in prose, comments, and strings",
         );
+        ui.horizontal(|ui| {
+            ui.label("Change markers compare with");
+            for (value, label) in [
+                ("auto", "Git, else the saved file"),
+                ("saved", "The saved file"),
+                ("off", "Nothing (off)"),
+            ] {
+                ui.radio_value(&mut s.mini_diff, value.to_owned(), label);
+            }
+        });
         ui.add_space(14.0);
         if ui.button("Restore defaults").clicked() {
             let d = Settings::default();
@@ -390,6 +400,7 @@ impl HeditApp {
             s.auto_complete_commit_on_tab = d.auto_complete_commit_on_tab;
             s.show_definitions = d.show_definitions;
             s.spell_check = d.spell_check;
+            s.mini_diff = d.mini_diff;
         }
     }
     fn tool_preferences(&mut self, ui: &mut egui::Ui) {
