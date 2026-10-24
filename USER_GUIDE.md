@@ -210,6 +210,13 @@ path. After saving, the tab uses the filename from disk.
 Click a tab or an Open Files row to switch files. **Ctrl+P** finds open files
 and files in all open folders. A dot on a tab indicates unsaved changes.
 
+From the keyboard, **Ctrl+Tab** returns to the file you used before. Keep Ctrl
+held and press Tab again to go further back through recently used files;
+**Ctrl+Shift+Tab** goes the other way. **Ctrl+PageDown** and **Ctrl+PageUp** move
+to the next or previous tab in the tab strip, and **Alt+1** to **Alt+9** choose a
+tab by its position. On macOS these are **Control+Tab**, **Control+PageDown**,
+and **Cmd+1** to **Cmd+9**.
+
 Drag a tab to reorder it. Its context menu offers **Pin tab**, **Close other tabs**,
 and **Close tabs to the right**; group closing keeps pinned tabs. A single click
 on a sidebar file opens an italic preview tab, replacing the previous clean,
@@ -1084,7 +1091,9 @@ macOS and Sublime Text conventions: Replace is **Cmd+Option+F** (Cmd+H hides the
 app), full screen is **Control+Cmd+F**, distraction-free mode is
 **Control+Shift+Cmd+F**, Complete word is **Control+Space** (Cmd+Space opens
 Spotlight), select all occurrences is **Control+Cmd+G**, jump to bracket is
-**Control+M**, and navigate back/forward is **Control+-** / **Control+Shift+-**. About
+**Control+M**, navigate back/forward is **Control+-** / **Control+Shift+-**,
+tab switching uses **Control+Tab** and **Control+PageDown** / **Control+PageUp**, and
+tabs 1–9 are **Cmd+1–9**. About
 and Quit are in macOS's own hedit menu. Change any shortcut under
 **Settings → Key Bindings**.
 
@@ -1094,6 +1103,9 @@ and Quit are in macOS's own hedit menu. Change any shortcut under
 | Ctrl+Shift+N | New window |
 | Ctrl+S / Ctrl+Shift+S | Save / Save As |
 | Ctrl+W / Ctrl+Shift+T | Close to shelf / reopen latest |
+| Ctrl+Tab / Ctrl+Shift+Tab | Recently used tabs, forward / back (hold Ctrl to go further) |
+| Ctrl+PageDown / Ctrl+PageUp | Next / previous tab |
+| Alt+1–9 | Tab 1–9 |
 | Ctrl+Shift+R | Name the active unsaved file |
 | Ctrl+Shift+O | Add one or more folders |
 | Ctrl+K, Ctrl+B / Ctrl+Alt+B | Toggle entire sidebar / folder section |

@@ -29,6 +29,9 @@ mod settings_pages;
 mod settings_store;
 #[cfg(test)]
 mod settings_tests;
+mod tab_switch;
+#[cfg(test)]
+mod tab_tests;
 mod themes;
 mod tree_row;
 mod updates;
@@ -153,6 +156,7 @@ pub struct HeditApp {
     chord: Option<egui::KeyboardShortcut>,
     /// Selection history for Undo/Redo selection change: (view, cursors).
     soft_history: (Vec<SoftState>, Vec<SoftState>, Option<SoftState>),
+    tab_cycle: tab_switch::TabCycle,
     live_find: find_live::LiveFind,
     /// Where the cursor was before Go to Anything previewed a result.
     goto_origin: Option<goto_anything::Origin>,
@@ -293,6 +297,7 @@ impl HeditApp {
             capture_first: None,
             chord: None,
             soft_history: Default::default(),
+            tab_cycle: Default::default(),
             live_find: Default::default(),
             goto_origin: None,
             font_applied: String::new(),
@@ -1048,6 +1053,7 @@ impl HeditApp {
             return;
         }
         self.track_selection();
+        self.track_recent_tabs(ctx);
         if !self.busy && !self.closing && self.handle_chords(ctx) {
             return;
         }
@@ -1146,6 +1152,7 @@ impl HeditApp {
                 self.execute(ctx, Command::AllOccurrences);
             }
         }
+        self.tab_shortcuts(ctx);
         self.quality_shortcuts(ctx);
         self.filter_overridden_clipboard(ctx);
         if self.overridden(Command::SelectAll) {

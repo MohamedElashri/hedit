@@ -281,10 +281,7 @@ impl HeditApp {
                 self.quality.tab_drag = None;
             }
             if let Some(index) = select {
-                self.navigation_mark();
-                self.workspace.active = index;
-                self.navigation_mark();
-                self.changed();
+                self.select_tab(index);
                 self.focus_editor = true;
             }
             if let Some(index) = close {
