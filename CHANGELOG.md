@@ -49,6 +49,10 @@
 
 ### Changed
 
+- The command palette, open files in Go to file, and lists such as Go to
+  references match the letters you type in order (`tglc` finds Toggle line
+  comment), rank matches at word starts first, and underline the matched
+  letters.
 - Updates and the release installer download over the public GitHub release
   links only; the GitHub CLI option for private releases (the
   `update_with_github_cli` setting and `install.sh --github-cli`) is gone, as the

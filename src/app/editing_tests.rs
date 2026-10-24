@@ -1315,3 +1315,14 @@ fn full_screen_and_distraction_free_turn_on_and_off_separately() {
     app.execute(&ctx, Command::Fullscreen);
     assert!(!app.distraction_free && !app.fullscreen);
 }
+
+#[test]
+fn the_palette_matches_letters_in_order_best_first() {
+    let (_directory, ctx, mut app) = app_with("text");
+    app.set_syntax(Some(syntax::Language::Python));
+    app.execute(&ctx, Command::Palette);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![egui::Event::Text("tglc".into())]);
+    frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)]);
+    assert_eq!(app.active().page.text, "# text");
+}

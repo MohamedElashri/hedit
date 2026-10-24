@@ -851,6 +851,9 @@ locates a line in the entire document, even when only a page is displayed.
 
 **Ctrl+P** opens Go to file, including all open folders; **Ctrl+Shift+P** opens commands. Type a
 filter, use **Up/Down** to select a result, and press **Enter**, or click a result.
+Filters match letters in order, so `tglc` finds **Toggle line comment**; matches at
+the start of words rank first, and the matched letters are underlined. Lists such
+as Paste from history and Go to references filter the same way.
 Like Sublime's Go to Anything, Go to file also jumps inside files: `@name` lists
 the current file's symbols, `:42` (or `:42:7`) goes to a line and column, and
 `#text` lists lines containing the text. The cursor previews each result as you

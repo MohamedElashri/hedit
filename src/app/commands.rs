@@ -770,6 +770,49 @@ impl Command {
         })
     }
 }
+/// A label with the letters matching `filter` drawn in `color`. Text that is
+/// reordered for right-to-left display is shown without highlights.
+fn highlighted(ui: &egui::Ui, label: &str, filter: &str, color: egui::Color32) -> egui::WidgetText {
+    let shown = hedit::bidi::display(label);
+    let positions = match hedit::folder::fuzzy_match(label, filter) {
+        Some((_, positions)) if !positions.is_empty() && shown == label => positions,
+        _ => return shown.into(),
+    };
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let normal = ui.visuals().text_color();
+    let mut job = egui::text::LayoutJob::default();
+    let mut append = |run: &str, matched: bool| {
+        job.append(
+            run,
+            0.0,
+            egui::TextFormat {
+                font_id: font.clone(),
+                color: if matched { color } else { normal },
+                underline: if matched {
+                    egui::Stroke::new(1.0, color)
+                } else {
+                    egui::Stroke::NONE
+                },
+                ..Default::default()
+            },
+        );
+    };
+    // Runs of matched and unmatched letters.
+    let mut run = String::new();
+    let mut in_match = false;
+    for (index, c) in label.chars().enumerate() {
+        let matched = positions.contains(&index);
+        if matched != in_match && !run.is_empty() {
+            append(&run, in_match);
+            run.clear();
+        }
+        in_match = matched;
+        run.push(c);
+    }
+    append(&run, in_match);
+    job.into()
+}
+
 /// What choosing an entry of a pick list does.
 #[derive(Clone, Debug)]
 pub(super) enum Pick {
@@ -1451,21 +1494,23 @@ impl HeditApp {
                 self.project.search(ctx, &roots, &filter);
             }
             let mut items = Vec::new();
+            // Letters in order, best matches first; equal scores keep their order.
+            let score = |text: &str| hedit::folder::fuzzy_match(text, &filter).map(|(s, _)| s);
+            let mut scored: Vec<(i64, (String, String, Item))> = vec![];
             if let Some(list) = &self.pick_list {
                 for (label, detail, pick) in &list.items {
-                    if format!("{label} {detail}").to_lowercase().contains(&filter) {
-                        items.push((label.clone(), detail.clone(), Item::Pick(pick.clone())));
+                    // The detail, such as a file name, can match too.
+                    let found = score(label).or_else(|| score(&format!("{label} {detail}")).map(|s| s - 50));
+                    if let Some(found) = found {
+                        scored.push((found, (label.clone(), detail.clone(), Item::Pick(pick.clone()))));
                     }
                 }
             } else if commands {
                 for &command in Command::ALL {
-                    if command.label().to_lowercase().contains(&filter)
-                        && self.command_enabled(command)
-                    {
-                        items.push((
-                            command.label().to_owned(),
-                            command.shortcut(),
-                            Item::Command(command),
+                    if let Some(found) = score(command.label()).filter(|_| self.command_enabled(command)) {
+                        scored.push((
+                            found,
+                            (command.label().to_owned(), command.shortcut(), Item::Command(command)),
                         ));
                     }
                 }
@@ -1479,12 +1524,9 @@ impl HeditApp {
                     for name in names {
                         let label = format!("Build with: {name}");
                         let current = self.settings.build_system.eq_ignore_ascii_case(&name);
-                        if label.to_lowercase().contains(&filter) {
-                            items.push((
-                                label,
-                                if current { "current".into() } else { String::new() },
-                                Item::BuildWith(name),
-                            ));
+                        if let Some(found) = score(&label) {
+                            let detail = if current { "current".into() } else { String::new() };
+                            scored.push((found, (label, detail, Item::BuildWith(name))));
                         }
                     }
                 }
@@ -1492,8 +1534,8 @@ impl HeditApp {
                 if !filter.is_empty() {
                     for language in syntax::Language::ALL {
                         let label = format!("Set syntax: {}", language.label());
-                        if label.to_lowercase().contains(&filter) {
-                            items.push((label, String::new(), Item::Syntax(language)));
+                        if let Some(found) = score(&label) {
+                            scored.push((found, (label, String::new(), Item::Syntax(language))));
                         }
                     }
                 }
@@ -1526,21 +1568,18 @@ impl HeditApp {
                     }
                 }
             } else {
+                let roots: Vec<_> = self.workspace.folders.iter().map(|f| PathBuf::from(&f.path)).collect();
                 for (index, buffer) in self.workspace.open.iter().enumerate() {
-                    if buffer.view.name.to_lowercase().contains(&filter)
-                        || buffer
-                            .page
-                            .info
-                            .path
-                            .as_ref()
-                            .is_some_and(|path| path.to_lowercase().contains(&filter))
-                    {
-                        let roots: Vec<_> = self.workspace.folders.iter().map(|f| PathBuf::from(&f.path)).collect();
-                        let label = buffer.page.info.path.as_ref().map(|path| hedit::folder::display_path(&roots, std::path::Path::new(path))).unwrap_or_else(|| buffer.view.name.clone());
-                        items.push((label, "open".to_owned(), Item::Buffer(index)));
+                    let label = buffer.page.info.path.as_ref().map(|path| hedit::folder::display_path(&roots, std::path::Path::new(path))).unwrap_or_else(|| buffer.view.name.clone());
+                    if let Some(found) = score(&label).or_else(|| score(&buffer.view.name)) {
+                        scored.push((found, (label, "open".to_owned(), Item::Buffer(index))));
                     }
                 }
             }
+            if !filter.is_empty() {
+                scored.sort_by_key(|(found, _)| std::cmp::Reverse(*found));
+            }
+            items.extend(scored.into_iter().map(|(_, item)| item));
             if !commands && !paste && !here && !self.workspace.folders.is_empty() {
                 match &self.project.search {
                     Some(Ok(results)) => {
@@ -1594,7 +1633,7 @@ impl HeditApp {
                 .show(ui, |ui| {
                     for (index, (label, shortcut, item)) in items.iter().enumerate() {
                         let response = ui.add(
-                            egui::Button::new(hedit::bidi::display(label))
+                            egui::Button::new(highlighted(ui, label, &filter, self.theme.accent.color()))
                                 .selected(index == self.palette_index)
                                 .shortcut_text(shortcut)
                                 .min_size(egui::vec2(ui.available_width(), 28.0)),

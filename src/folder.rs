@@ -143,6 +143,58 @@ pub struct QuickOpen {
     pub skipped_directories: u64,
 }
 
+/// Where the letters of `query` appear in order in `text`, ignoring case and
+/// spaces in the query, as character indices with a score (higher is better).
+/// Letters at the start of words are preferred, so `tglc` matches the T, l, and
+/// c of "Toggle line comment" rather than letters inside "Toggle".
+pub fn fuzzy_match(text: &str, query: &str) -> Option<(i64, Vec<usize>)> {
+    let chars: Vec<char> = text.chars().collect();
+    let lower: Vec<char> = chars
+        .iter()
+        .map(|c| c.to_lowercase().next().unwrap_or(*c))
+        .collect();
+    let wanted: Vec<char> = query
+        .to_lowercase()
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let boundary = |i: usize| {
+        i == 0
+            || !chars[i - 1].is_alphanumeric()
+            || (chars[i].is_uppercase() && chars[i - 1].is_lowercase())
+    };
+    // Whether wanted[w..] still appears in order from `from`.
+    let rest_fits = |w: usize, from: usize| {
+        let mut letters = lower[from.min(lower.len())..].iter();
+        wanted[w..].iter().all(|c| letters.any(|l| l == c))
+    };
+    let mut positions = Vec::with_capacity(wanted.len());
+    let mut from = 0;
+    for (w, &c) in wanted.iter().enumerate() {
+        let mut at = (from..lower.len()).find(|&i| lower[i] == c)?;
+        if !boundary(at) {
+            if let Some(word) = (at + 1..lower.len())
+                .find(|&i| lower[i] == c && boundary(i) && rest_fits(w + 1, i + 1))
+            {
+                at = word;
+            }
+        }
+        positions.push(at);
+        from = at + 1;
+    }
+    let mut score = -(chars.len() as i64) / 4;
+    for (n, &at) in positions.iter().enumerate() {
+        score += 10 - at as i64 / 2;
+        if boundary(at) {
+            score += 15;
+        }
+        if n > 0 && positions[n - 1] + 1 == at {
+            score += 8;
+        }
+    }
+    Some((score, positions))
+}
+
 pub fn fuzzy_score(path: &str, query: &str) -> Option<i64> {
     let path = path.to_lowercase().replace('\\', "/");
     let mut wanted = query.chars().peekable();

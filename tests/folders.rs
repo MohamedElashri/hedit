@@ -270,3 +270,19 @@ fn extra_windows_get_their_own_sessions_and_reopen_with_the_main_window() {
     // Extra windows never reopen other windows.
     assert!(to_restore(&first).is_empty());
 }
+
+#[test]
+fn fuzzy_matching_prefers_word_starts_and_reports_positions() {
+    use hedit::folder::fuzzy_match;
+    let (_, at) = fuzzy_match("Toggle line comment", "tglc").unwrap();
+    assert_eq!(at, [0, 2, 7, 12]);
+    assert!(fuzzy_match("Toggle line comment", "tgx").is_none());
+    assert_eq!(fuzzy_match("Save", "").unwrap().1, Vec::<usize>::new());
+    // Spaces in the query are ignored; camelCase humps count as word starts.
+    assert!(fuzzy_match("Go to definition", "go def").is_some());
+    assert_eq!(fuzzy_match("parseJsonValue", "jv").unwrap().1, [5, 9]);
+    // Prefix and word-start matches outrank scattered ones.
+    let (exact, _) = fuzzy_match("Save", "sa").unwrap();
+    let (scattered, _) = fuzzy_match("Close tabs to the right", "sa").unwrap();
+    assert!(exact > scattered);
+}
