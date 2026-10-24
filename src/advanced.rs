@@ -717,6 +717,7 @@ pub fn transform(
     let global = matches!(
         operation,
         editing::Operation::SortLines
+            | editing::Operation::SortLinesIgnoreCase
             | editing::Operation::ReverseLines
             | editing::Operation::UniqueLines
             | editing::Operation::TrimWhitespace

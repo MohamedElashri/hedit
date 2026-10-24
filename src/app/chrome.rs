@@ -880,7 +880,10 @@ impl HeditApp {
                 Command::MoveUp,
                 Command::MoveDown,
                 Command::JoinLines,
+                Command::DeleteToLineStart,
+                Command::DeleteToLineEnd,
                 Command::SortLines,
+                Command::SortLinesIgnoreCase,
                 Command::ReverseLines,
                 Command::UniqueLines,
             ],
@@ -893,6 +896,11 @@ impl HeditApp {
             &[
                 Command::Uppercase,
                 Command::Lowercase,
+                Command::TitleCase,
+                Command::SwapCase,
+                Command::Transpose,
+                Command::WrapLines,
+                Command::Reindent,
                 Command::TrimWhitespace,
             ],
             action,
@@ -932,9 +940,11 @@ impl HeditApp {
                 });
         });
         ui.separator();
-        if menu_item(ui, self, Command::ToggleComment) {
-            *action = Some(Command::ToggleComment);
-            ui.close_menu();
+        for command in [Command::ToggleComment, Command::ToggleBlockComment] {
+            if menu_item(ui, self, command) {
+                *action = Some(command);
+                ui.close_menu();
+            }
         }
     }
     fn view_menu(&self, ui: &mut egui::Ui, action: &mut Option<Command>) {

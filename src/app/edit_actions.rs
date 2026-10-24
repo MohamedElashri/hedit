@@ -36,6 +36,48 @@ impl HeditApp {
         self.apply_edit(edited, crlf);
     }
 
+    /// Commands from `text_commands`, applied to every selection as one undo step.
+    pub(super) fn text_command(&mut self, command: Command) {
+        use hedit::text_commands as t;
+        let b = self.active();
+        let text = &b.page.text;
+        let selections = self.selections();
+        let width = b.view.tab_size.unwrap_or(4) as usize;
+        let language = b.language().id();
+        let batch = match command {
+            Command::ToggleBlockComment => match t::block_comment(language) {
+                Some((open, close)) => t::toggle_block_comment(text, &selections, open, close),
+                // Without block comments, comment the lines instead.
+                None => return self.edit_command(Operation::ToggleComment),
+            },
+            Command::WrapLines => {
+                let column = match (self.settings.wrap_width, self.settings.rulers.first()) {
+                    (0, Some(&ruler)) => ruler as usize,
+                    (0, None) => 80,
+                    (wrap, _) => wrap as usize,
+                };
+                let markers = t::wrap_markers(language, editing::comment_prefix(language));
+                t::wrap_lines(text, &selections, column, width, &markers)
+            }
+            Command::Transpose => t::transpose(text, &selections),
+            Command::TitleCase | Command::SwapCase => {
+                t::change_case(text, &selections, command == Command::TitleCase)
+            }
+            Command::DeleteToLineStart | Command::DeleteToLineEnd => {
+                t::delete_to_line_edge(text, &selections, command == Command::DeleteToLineEnd)
+            }
+            Command::Reindent => t::reindent(
+                text,
+                &selections,
+                width,
+                b.view.indent.as_deref() == Some("tabs"),
+            ),
+            _ => return,
+        };
+        if batch.text != self.active().page.text || batch.selections != selections {
+            self.batch(batch);
+        }
+    }
     pub(super) fn apply_edit(&mut self, edited: editing::Edit, crlf: Option<bool>) -> bool {
         let index = self.workspace.active;
         let old = self.active().page.text.clone();

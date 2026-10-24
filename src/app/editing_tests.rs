@@ -553,3 +553,77 @@ fn repeated_arrow_shortcuts_keep_the_editor_focused() {
     }
     assert_eq!(app.active().page.text, "two\nthree\nfour\none\n");
 }
+
+#[test]
+fn text_command_shortcuts_edit_the_file_as_one_undo_step() {
+    let (_directory, ctx, mut app) = app_with("int a = 1;\nab\n");
+    app.set_syntax(Some(syntax::Language::C));
+    app.set_selections(vec![hedit::advanced::Selection { anchor: 4, head: 9 }]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![]);
+    if cfg!(target_os = "macos") {
+        app.execute(&ctx, Command::ToggleBlockComment);
+    } else {
+        // Ctrl+Shift+/ arrives as ?, and must not toggle the line comment.
+        frame(
+            &ctx,
+            &mut app,
+            vec![key(
+                Key::Questionmark,
+                Modifiers::COMMAND | Modifiers::SHIFT,
+            )],
+        );
+    }
+    assert_eq!(app.active().page.text, "int /*a = 1*/;\nab\n");
+    app.execute(&ctx, Command::Undo);
+    finish_app_job(&mut app, &ctx);
+    assert_eq!(app.active().page.text, "int a = 1;\nab\n");
+    // Ctrl+T swaps the letters around the cursor.
+    app.set_selections(vec![hedit::advanced::Selection::caret(12)]);
+    frame(&ctx, &mut app, vec![]);
+    let transpose = if cfg!(target_os = "macos") {
+        Modifiers::CTRL
+    } else {
+        Modifiers::COMMAND
+    };
+    frame(&ctx, &mut app, vec![key(Key::T, transpose)]);
+    assert_eq!(app.active().page.text, "int a = 1;\nba\n");
+    // Ctrl+K, Ctrl+K deletes to the end of the line.
+    app.set_selections(vec![hedit::advanced::Selection::caret(3)]);
+    frame(&ctx, &mut app, vec![]);
+    let release = egui::Event::Key {
+        key: Key::K,
+        physical_key: None,
+        pressed: false,
+        repeat: false,
+        modifiers: Modifiers::COMMAND,
+    };
+    frame(
+        &ctx,
+        &mut app,
+        vec![key(Key::K, Modifiers::COMMAND), release.clone()],
+    );
+    frame(
+        &ctx,
+        &mut app,
+        vec![key(Key::K, Modifiers::COMMAND), release],
+    );
+    assert_eq!(app.active().page.text, "int\nba\n");
+    // Alt+Q wraps without typing q.
+    app.settings.wrap_width = 2;
+    app.set_selections(vec![hedit::advanced::Selection::caret(0)]);
+    frame(&ctx, &mut app, vec![]);
+    if cfg!(target_os = "macos") {
+        app.execute(&ctx, Command::WrapLines);
+    } else {
+        frame(
+            &ctx,
+            &mut app,
+            vec![key(Key::Q, Modifiers::ALT), egui::Event::Text("q".into())],
+        );
+    }
+    assert_eq!(app.active().page.text, "int\nba\n");
+    assert!(app.command_enabled(Command::Reindent));
+    app.set_syntax(Some(syntax::Language::Python));
+    assert!(!app.command_enabled(Command::Reindent));
+}

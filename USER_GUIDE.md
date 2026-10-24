@@ -359,12 +359,38 @@ All text changes participate in the current file's undo history and recovery.
 | Ctrl+] / Ctrl+[ | Indent / unindent lines |
 | Tab / Shift+Tab | Insert indentation or indent selected lines / unindent |
 | Ctrl+/ | Toggle line comments for languages with a supported line-comment prefix |
+| Ctrl+Shift+/ | Toggle a block comment around the selection or the current line |
+| Alt+Q | Rewrap the selected lines, or the paragraph at the cursor, at the ruler |
+| Ctrl+T | Swap the characters around the cursor, or the text of several selections |
+| Ctrl+Shift+Backspace / Ctrl+K, Ctrl+K | Delete to the start / end of the line |
+| F9 / Ctrl+F9 | Sort lines ignoring case / by exact characters |
 
-**Line → Sort lines**, **Reverse lines**, and **Remove duplicate lines** affect
-selected lines, or the whole file without a selection. Duplicate removal keeps
-the first occurrence of each line and preserves their order.
-**Text → Uppercase/Lowercase** transforms the selection.
+**Line → Sort lines**, **Sort lines, ignoring case**, **Reverse lines**, and
+**Remove duplicate lines** affect selected lines, or the whole file without a
+selection. Duplicate removal keeps the first occurrence of each line and
+preserves their order. **Delete to start of line** and **Delete to end of line**
+remove the text between the cursor and the line's edge; at the edge itself, they
+join the line with its neighbor.
+
+**Text → Uppercase/Lowercase** transforms the selection. **Title case** and
+**Swap case** change the selection, or the word at the cursor. **Transpose**
+swaps the two characters around the cursor (at the end of a line, the two before
+it); with several selections, their text moves one place along.
 **Trim trailing whitespace** affects selected lines or the whole file.
+
+**Text → Wrap paragraph at ruler** rewraps the selected lines, or the paragraph
+around the cursor, at the wrap column (`wrap_width`), else the first ruler, else
+80 columns. Indentation, comment markers such as `//` and `#`, quote markers
+in Markdown, and list bullets are kept on every line, and a paragraph ends where
+the marker changes. **Text → Reindent lines** indents the selected lines, or the
+current line, by their brackets, starting from the line above; it is available
+for languages whose blocks use brackets, such as C, Rust, JavaScript, and JSON.
+
+**Toggle block comment** wraps the selection in `/* */` (or the language's own
+markers, such as `<!-- -->` in HTML and Markdown), and removes them from a
+selection that is already a comment. With no selection it comments the current
+line, or removes the comment around the cursor. Languages without block comments
+toggle line comments instead.
 
 Under **Indentation**, choose spaces or tabs and **Tab width: 2/4/8**
 for the current file. These choices survive restart. Conversions affect leading
@@ -1094,6 +1120,8 @@ app), full screen is **Control+Cmd+F**, distraction-free mode is
 **Control+Shift+Cmd+F**, Complete word is **Control+Space** (Cmd+Space opens
 Spotlight), select all occurrences is **Control+Cmd+G**, jump to bracket is
 **Control+M**, navigate back/forward is **Control+-** / **Control+Shift+-**,
+block comments are **Cmd+Option+/**, wrapping is **Cmd+Option+Q**, transpose is
+**Control+T**, delete to the start of a line is **Cmd+Backspace**,
 tab switching uses **Control+Tab** and **Control+PageDown** / **Control+PageUp**, and
 tabs 1–9 are **Cmd+1–9**. About
 and Quit are in macOS's own hedit menu. Change any shortcut under
@@ -1125,6 +1153,9 @@ and Quit are in macOS's own hedit menu. Change any shortcut under
 | Ctrl+U / Ctrl+Shift+U | Undo / redo a selection change |
 | Ctrl+K, Ctrl+D | Skip occurrence |
 | Ctrl+K, Ctrl+U / Ctrl+K, Ctrl+L | Uppercase / lowercase |
+| Ctrl+Shift+/ / Alt+Q / Ctrl+T | Block comment / wrap paragraph / transpose |
+| Ctrl+Shift+Backspace / Ctrl+K, Ctrl+K | Delete to the start / end of the line |
+| F9 / Ctrl+F9 | Sort lines ignoring case / exactly |
 | Ctrl+K, Ctrl+1 / Ctrl+K, Ctrl+J | Fold / unfold all |
 | Alt+click / Alt+Shift+drag | Add a cursor / rectangular selection |
 | Alt+Shift+Up / Alt+Shift+Down | Add a cursor on the line above / below |

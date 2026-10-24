@@ -14,6 +14,7 @@ pub enum Operation {
     Uppercase,
     Lowercase,
     SortLines,
+    SortLinesIgnoreCase,
     ReverseLines,
     UniqueLines,
     TrimWhitespace,
@@ -99,6 +100,7 @@ pub fn apply(
         && matches!(
             operation,
             Operation::SortLines
+                | Operation::SortLinesIgnoreCase
                 | Operation::ReverseLines
                 | Operation::UniqueLines
                 | Operation::TrimWhitespace
@@ -285,10 +287,12 @@ pub fn apply(
             joined.push_str(lines.last().map_or("", |line| body(line).1));
             joined
         }
-        Operation::SortLines | Operation::ReverseLines => {
+        Operation::SortLines | Operation::SortLinesIgnoreCase | Operation::ReverseLines => {
             let mut contents: Vec<_> = lines.iter().map(|line| body(line).0).collect();
             if operation == Operation::SortLines {
                 contents.sort();
+            } else if operation == Operation::SortLinesIgnoreCase {
+                contents.sort_by_cached_key(|line| line.to_lowercase());
             } else {
                 contents.reverse();
             }
@@ -408,6 +412,7 @@ pub fn apply(
         || matches!(
             operation,
             Operation::SortLines
+                | Operation::SortLinesIgnoreCase
                 | Operation::ReverseLines
                 | Operation::UniqueLines
                 | Operation::Uppercase

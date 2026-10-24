@@ -11,13 +11,24 @@ pub(super) struct TabCycle {
 }
 
 /// Take one key press whose modifiers match exactly, so Ctrl+Shift+Tab is not
-/// taken for Ctrl+Tab.
+/// taken for Ctrl+Tab. Some keyboard layouts also type the key's character
+/// with Alt, as in Alt+1 or Alt+Q; that text is dropped too.
 pub(super) fn take_exact(ctx: &egui::Context, modifiers: Modifiers, key: Key) -> bool {
     ctx.input_mut(|i| {
         let found = i.events.iter().position(|e| {
             matches!(e, egui::Event::Key { key: k, pressed: true, modifiers: m, .. } if *k == key && m.matches_exact(modifiers))
         });
-        found.map(|n| i.events.remove(n)).is_some()
+        let Some(n) = found else {
+            return false;
+        };
+        i.events.remove(n);
+        let name = key.name();
+        if modifiers.alt && name.chars().count() == 1 {
+            i.events.retain(
+                |e| !matches!(e, egui::Event::Text(t) if t.eq_ignore_ascii_case(name)),
+            );
+        }
+        true
     })
 }
 
@@ -122,14 +133,6 @@ impl HeditApp {
         keys.extend(TAB_KEYS.map(|(command, key)| (position, key, command)));
         for (modifiers, key, command) in keys {
             if !self.overridden(command) && take_exact(ctx, modifiers, key) {
-                // Some keyboard layouts also type the digit for Alt+1.
-                let digit = key.name();
-                if digit.len() == 1 && digit.chars().all(|c| c.is_ascii_digit()) {
-                    ctx.input_mut(|i| {
-                        i.events
-                            .retain(|e| !matches!(e, egui::Event::Text(t) if t == digit))
-                    });
-                }
                 self.execute(ctx, command);
             }
         }

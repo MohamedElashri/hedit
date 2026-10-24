@@ -118,6 +118,15 @@ pub(super) enum Command {
     ToSpaces,
     ToTabs,
     ToggleComment,
+    ToggleBlockComment,
+    WrapLines,
+    Transpose,
+    TitleCase,
+    SwapCase,
+    DeleteToLineStart,
+    DeleteToLineEnd,
+    Reindent,
+    SortLinesIgnoreCase,
     ToLf,
     ToCrlf,
     IndentSpaces,
@@ -280,6 +289,15 @@ impl Command {
         Self::ToSpaces,
         Self::ToTabs,
         Self::ToggleComment,
+        Self::ToggleBlockComment,
+        Self::WrapLines,
+        Self::Transpose,
+        Self::TitleCase,
+        Self::SwapCase,
+        Self::DeleteToLineStart,
+        Self::DeleteToLineEnd,
+        Self::Reindent,
+        Self::SortLinesIgnoreCase,
         Self::ToLf,
         Self::ToCrlf,
         Self::IndentSpaces,
@@ -472,6 +490,15 @@ impl Command {
             Self::ToSpaces => "Convert indentation to spaces",
             Self::ToTabs => "Convert indentation to tabs",
             Self::ToggleComment => "Toggle line comment",
+            Self::ToggleBlockComment => "Toggle block comment",
+            Self::WrapLines => "Wrap paragraph at ruler",
+            Self::Transpose => "Transpose",
+            Self::TitleCase => "Title case",
+            Self::SwapCase => "Swap case",
+            Self::DeleteToLineStart => "Delete to start of line",
+            Self::DeleteToLineEnd => "Delete to end of line",
+            Self::Reindent => "Reindent lines",
+            Self::SortLinesIgnoreCase => "Sort lines, ignoring case",
             Self::ToLf => "Convert to LF (Unix)",
             Self::ToCrlf => "Convert to CRLF (Windows)",
             Self::IndentSpaces => "Indent using spaces",
@@ -648,6 +675,17 @@ impl Command {
             Self::Indent => "Ctrl+]",
             Self::Unindent => "Ctrl+[",
             Self::ToggleComment => "Ctrl+/",
+            Self::ToggleBlockComment if cfg!(target_os = "macos") => "Ctrl+Alt+/",
+            Self::ToggleBlockComment => "Ctrl+Shift+/",
+            Self::WrapLines if cfg!(target_os = "macos") => "Ctrl+Alt+Q",
+            Self::WrapLines => "Alt+Q",
+            Self::Transpose if cfg!(target_os = "macos") => "Control+T",
+            Self::Transpose => "Ctrl+T",
+            Self::DeleteToLineStart if cfg!(target_os = "macos") => "Ctrl+Backspace",
+            Self::DeleteToLineStart => "Ctrl+Shift+Backspace",
+            Self::DeleteToLineEnd => "Ctrl+K, Ctrl+K",
+            Self::SortLines => "Ctrl+F9",
+            Self::SortLinesIgnoreCase => "F9",
             // macOS reserves F11; use its Control+Cmd+F convention.
             Self::Fullscreen if cfg!(target_os = "macos") => "Control+Ctrl+F",
             Self::DistractionFree if cfg!(target_os = "macos") => "Control+Shift+Ctrl+F",
@@ -689,6 +727,7 @@ impl Command {
             Self::Uppercase => Operation::Uppercase,
             Self::Lowercase => Operation::Lowercase,
             Self::SortLines => Operation::SortLines,
+            Self::SortLinesIgnoreCase => Operation::SortLinesIgnoreCase,
             Self::ReverseLines => Operation::ReverseLines,
             Self::UniqueLines => Operation::UniqueLines,
             Self::TrimWhitespace => Operation::TrimWhitespace,
@@ -745,6 +784,24 @@ impl HeditApp {
             Command::ToggleComment => {
                 hedit::editing::comment_prefix(self.active().language().id()).is_some()
             }
+            Command::ToggleBlockComment
+            | Command::WrapLines
+            | Command::Transpose
+            | Command::TitleCase
+            | Command::SwapCase
+            | Command::DeleteToLineStart
+            | Command::DeleteToLineEnd
+            | Command::Reindent
+                if self.active().page.info.paged || self.active().follow =>
+            {
+                false
+            }
+            Command::ToggleBlockComment => {
+                let language = self.active().language().id();
+                hedit::text_commands::block_comment(language).is_some()
+                    || hedit::editing::comment_prefix(language).is_some()
+            }
+            Command::Reindent => hedit::text_commands::reindents(self.active().language().id()),
             Command::CloseFolder | Command::RefreshFolder => !self.workspace.folders.is_empty(),
             Command::Rename => self.active().page.info.path.is_none(),
             Command::Reopen => !self.workspace.closed.is_empty(),
@@ -909,6 +966,14 @@ impl HeditApp {
                     hedit::advanced::split_into_lines(&self.active().page.text, &self.selections());
                 self.set_selections(ranges);
             }
+            Command::ToggleBlockComment
+            | Command::WrapLines
+            | Command::Transpose
+            | Command::TitleCase
+            | Command::SwapCase
+            | Command::DeleteToLineStart
+            | Command::DeleteToLineEnd
+            | Command::Reindent => self.text_command(command),
             Command::AddCursorAbove => self.add_line_cursor(false),
             Command::AddCursorBelow => self.add_line_cursor(true),
             Command::SoftUndo => self.soft_undo(false),

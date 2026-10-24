@@ -1245,11 +1245,34 @@ impl HeditApp {
             } else {
                 Modifiers::ALT | Modifiers::SHIFT
             };
-            for (key, command) in [
-                (Key::ArrowUp, Command::AddCursorAbove),
-                (Key::ArrowDown, Command::AddCursorBelow),
-            ] {
-                if !self.overridden(command) && tab_switch::take_exact(ctx, line_cursor, key) {
+            let mac = cfg!(target_os = "macos");
+            let shifted = Modifiers::COMMAND | Modifiers::SHIFT;
+            let command_alt = Modifiers::COMMAND | Modifiers::ALT;
+            let mut exact = vec![
+                (line_cursor, Key::ArrowUp, Command::AddCursorAbove),
+                (line_cursor, Key::ArrowDown, Command::AddCursorBelow),
+                (Modifiers::COMMAND, Key::F9, Command::SortLines),
+                (Modifiers::NONE, Key::F9, Command::SortLinesIgnoreCase),
+            ];
+            if mac {
+                exact.extend([
+                    (command_alt, Key::Slash, Command::ToggleBlockComment),
+                    (command_alt, Key::Q, Command::WrapLines),
+                    (Modifiers::CTRL, Key::T, Command::Transpose),
+                ]);
+            } else {
+                exact.extend([
+                    // Shift+/ arrives as ? on many layouts.
+                    (shifted, Key::Slash, Command::ToggleBlockComment),
+                    (shifted, Key::Questionmark, Command::ToggleBlockComment),
+                    (Modifiers::ALT, Key::Q, Command::WrapLines),
+                    (Modifiers::COMMAND, Key::T, Command::Transpose),
+                    (shifted, Key::Backspace, Command::DeleteToLineStart),
+                    (shifted, Key::Delete, Command::DeleteToLineEnd),
+                ]);
+            }
+            for (modifiers, key, command) in exact {
+                if !self.overridden(command) && tab_switch::take_exact(ctx, modifiers, key) {
                     self.execute(ctx, command);
                 }
             }

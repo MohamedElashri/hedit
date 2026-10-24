@@ -209,8 +209,10 @@ editing, and line-comment commands remain available. NVIDIA identifies CUDA
 | `src/session.rs` | Process lock, snapshots, manifests, fallback and preservation |
 | `src/advanced.rs` | Multi-selection edits, indentation heuristics, folding/tab projections |
 | `src/app/panes.rs` | Shared-document split views and independent view positions |
+| `src/app/tab_switch.rs` | Recently used, sequential, and positional tab switching |
 | `src/app/advanced_edit.rs` | Occurrence commands, multi-cursor input, and folding |
 | `src/editing.rs` | Unicode-safe line/text transformations used by Edit commands |
+| `src/text_commands.rs` | Block comments, paragraph wrapping, transpose, case changes, line-edge deletion, bracket reindent |
 | `src/app/edit_actions.rs` | Apply transformations through backend undo/recovery |
 | `src/debugger.rs` | CUDA-GDB/MI and bounded NVIDIA tool subprocess output |
 | `src/syntax.rs`, `src/syntax/grammar.rs`, `src/syntax/lexer.rs`, `src/syntax/keywords.rs` | Syntax catalog, filename detection, grammar highlighting with Sublime syntax definitions, and the quick lexer fallback |
