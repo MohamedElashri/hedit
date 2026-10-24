@@ -754,6 +754,22 @@ defaults are **Ctrl+K, Ctrl+D** (skip occurrence), **Ctrl+K, Ctrl+U** /
 body, and can add, remove, or restore the default snippets. They are saved in
 `snippets.json`.
 
+### Spell check
+
+**View → Editor → Spell check** (**F6**) underlines misspelled words with a red
+wave. Plain text and LaTeX are checked throughout, Markdown except its code, and
+source code only in comments and strings; logs, CSV, and diffs are not checked.
+Words with digits or underscores, words with capitals after the first letter
+(such as `parseJson` or `GPU`), words in other scripts such as Arabic or Greek,
+and parts of web addresses and paths are skipped.
+
+Right-click an underlined word for suggested spellings, **Add to dictionary**
+(saved in `added_words` in `settings.json`), or **Ignore** until hedit quits.
+**Ctrl+F6** and **Ctrl+Shift+F6** select the next and previous misspelled word.
+The check runs in the background a moment after you stop typing, on files up to
+8 MiB. hedit includes an American English dictionary (en_US, from SCOWL), so it
+works without any system dictionaries.
+
 ### Brackets and indentation
 
 Typing an opening bracket or quote also inserts its closer, typing a selected
@@ -921,6 +937,8 @@ you fix it.
 | `auto_complete` | `true` | Offer completions in a list while typing |
 | `auto_complete_delay` | `50` | Milliseconds after typing before the list opens, 0–2000 |
 | `auto_complete_commit_on_tab` | `false` | Accept completions with Tab only; Enter starts a new line |
+| `spell_check` | `false` | Underline misspelled words in prose, comments, and strings |
+| `added_words` | `[]` | Words spell checking accepts, such as `["hedit"]` |
 | `show_definitions` | `true` | List a name's definitions when the pointer rests on it |
 | `detect_indentation` | `true` | Use the indentation a file already has instead of `tab_size` and `translate_tabs_to_spaces` |
 | `show_tab_bar`, `show_status_bar` | `true` | Show the tab bar and status bar |
@@ -1226,6 +1244,7 @@ and Quit are in macOS's own hedit menu. Change any shortcut under
 | Ctrl+, | Settings |
 | Ctrl+Q | Quit (after a final recovery checkpoint) |
 | F12 / Shift+F12 | Go to definition / references |
+| F6 / Ctrl+F6 / Ctrl+Shift+F6 | Spell check / next / previous misspelling |
 | Ctrl+F2 | Toggle a bookmark at the cursor |
 | F2 / Shift+F2 | Next / previous bookmark |
 | Esc | Close the topmost window or the search panel, then the error banner, then extra cursors |

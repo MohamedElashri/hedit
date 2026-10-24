@@ -1156,3 +1156,57 @@ fn editor_gutter_width(app: &HeditApp) -> f32 {
         .len();
     (digits.max(3) as f32 * app.settings.font_size * 0.65 + 16.0).max(42.0)
 }
+
+/// Run frames until spelling results for the active file are in.
+fn wait_for_spelling(ctx: &egui::Context, app: &mut HeditApp) {
+    let started = Instant::now();
+    loop {
+        frame(ctx, app, vec![]);
+        let view = app.active().view.id;
+        let revision = app.active().page.info.revision;
+        if app.spell.pending.is_none() && app.spell_checked(view) == Some(revision) {
+            return;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "spelling timed out"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[test]
+fn f6_checks_spelling_and_the_menu_fixes_words() {
+    let (_directory, ctx, mut app) = app_with("A smal tset of wrods.\n");
+    assert!(app.misspellings(app.active().view.id).is_none());
+    frame(&ctx, &mut app, vec![key(Key::F6, Modifiers::NONE)]);
+    assert!(app.settings.spell_check);
+    wait_for_spelling(&ctx, &mut app);
+    let view = app.active().view.id;
+    assert_eq!(app.misspellings(view).unwrap(), [2..6, 7..11, 15..20]);
+    // Ctrl+F6 selects the next misspelled word.
+    app.set_selections(vec![hedit::advanced::Selection::caret(0)]);
+    frame(&ctx, &mut app, vec![key(Key::F6, Modifiers::COMMAND)]);
+    assert_eq!(
+        app.selections(),
+        [hedit::advanced::Selection { anchor: 2, head: 6 }]
+    );
+    // A suggestion replaces the word; ranges after it follow along.
+    app.word_menu_at(view, 3);
+    let menu = app.spell.menu.as_ref().unwrap();
+    assert_eq!(menu.word, "smal");
+    assert!(menu.suggestions.iter().any(|w| w == "small"));
+    app.spell_action(spell_check::SpellAction::Replace("small".into()));
+    assert_eq!(app.active().page.text, "A small tset of wrods.\n");
+    assert_eq!(app.misspellings(view).unwrap(), [8..12, 16..21]);
+    // Adding a word to the dictionary saves it and checks again.
+    app.word_menu_at(view, 9);
+    app.spell_action(spell_check::SpellAction::Add);
+    assert_eq!(app.settings.added_words, ["tset"]);
+    wait_for_spelling(&ctx, &mut app);
+    assert_eq!(app.misspellings(view).unwrap().to_vec(), vec![16..21; 1]);
+    // Turned off, nothing is underlined.
+    app.execute(&ctx, Command::ToggleSpellCheck);
+    frame(&ctx, &mut app, vec![]);
+    assert!(app.misspellings(view).is_none());
+}

@@ -102,6 +102,10 @@ pub struct Settings {
     pub auto_complete_commit_on_tab: bool,
     /// List a name's definitions when the pointer rests on it.
     pub show_definitions: bool,
+    /// Underline misspelled words in prose, comments, and strings.
+    pub spell_check: bool,
+    /// Words spell checking accepts.
+    pub added_words: Vec<String>,
     // Window
     pub show_tab_bar: bool,
     pub show_status_bar: bool,
@@ -164,6 +168,8 @@ impl Default for Settings {
             auto_complete_delay: 50,
             auto_complete_commit_on_tab: false,
             show_definitions: true,
+            spell_check: false,
+            added_words: Vec::new(),
             show_tab_bar: true,
             show_status_bar: true,
             show_sidebar: true,

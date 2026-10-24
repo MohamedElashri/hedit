@@ -34,6 +34,7 @@ mod settings_store;
 #[cfg(test)]
 mod settings_tests;
 mod snippet_fields;
+mod spell_check;
 mod tab_switch;
 #[cfg(test)]
 mod tab_tests;
@@ -175,6 +176,7 @@ pub struct HeditApp {
     hover_target: Option<(u64, (usize, usize), egui::Pos2)>,
     hover: Option<definitions::Hover>,
     fold_cache: fold_gutter::FoldCache,
+    spell: spell_check::SpellCheck,
     /// Cursors made by Add cursor above/below and the column they keep.
     line_cursor_goal: Option<(Vec<hedit::advanced::Selection>, usize)>,
     live_find: find_live::LiveFind,
@@ -326,6 +328,7 @@ impl HeditApp {
             hover_target: None,
             hover: None,
             fold_cache: Default::default(),
+            spell: Default::default(),
             line_cursor_goal: None,
             live_find: Default::default(),
             goto_origin: None,
@@ -1085,6 +1088,7 @@ impl HeditApp {
         self.track_recent_tabs(ctx);
         self.sync_snippet();
         self.update_completion(ctx);
+        self.update_spelling(ctx);
         if !self.busy && !self.closing && self.handle_chords(ctx) {
             return;
         }
@@ -1276,6 +1280,15 @@ impl HeditApp {
             };
             let mac = cfg!(target_os = "macos");
             let shifted = Modifiers::COMMAND | Modifiers::SHIFT;
+            for (modifiers, command) in [
+                (shifted, Command::PreviousMisspelling),
+                (Modifiers::COMMAND, Command::NextMisspelling),
+                (Modifiers::NONE, Command::ToggleSpellCheck),
+            ] {
+                if !self.overridden(command) && tab_switch::take_exact(ctx, modifiers, Key::F6) {
+                    self.execute(ctx, command);
+                }
+            }
             let command_alt = Modifiers::COMMAND | Modifiers::ALT;
             let mut exact = vec![
                 (line_cursor, Key::ArrowUp, Command::AddCursorAbove),
@@ -1528,6 +1541,16 @@ impl HeditApp {
         })
         .collect();
         let mut context_command = None;
+        let mut spell_choice = None;
+        let active_view = self.active().view.id;
+        let misspelled: Vec<std::ops::Range<usize>> = if self.settings.spell_check {
+            self.misspellings(active_view)
+                .map(<[_]>::to_vec)
+                .unwrap_or_default()
+        } else {
+            vec![]
+        };
+        let mut word_menu_at = None;
         let index = self.workspace.active;
         let buffer = &mut self.workspace.open[index];
         let base_id = egui::Id::new(("editor", buffer.page.info.id, buffer.page.start));
@@ -2310,6 +2333,56 @@ impl HeditApp {
                                 self.generation = self.generation.wrapping_add(1);
                             }
                         }
+                        // Misspelled words on screen get a red underline.
+                        if !misspelled.is_empty() {
+                            let clip = ui.clip_rect();
+                            let top = output
+                                .galley
+                                .cursor_from_pos(egui::vec2(0.0, clip.top() - output.galley_pos.y))
+                                .ccursor
+                                .index;
+                            let bottom = output
+                                .galley
+                                .cursor_from_pos(egui::vec2(
+                                    f32::MAX,
+                                    clip.bottom() - output.galley_pos.y,
+                                ))
+                                .ccursor
+                                .index;
+                            let painter = ui.painter();
+                            let stroke = egui::Stroke::new(1.2, self.theme.error.color());
+                            for range in &misspelled {
+                                let (a, b) = (
+                                    projection.display(range.start),
+                                    projection.display(range.end),
+                                );
+                                if b < top || a > bottom || a >= b {
+                                    continue;
+                                }
+                                let offset = output.galley_pos.to_vec2();
+                                let start = bidi_view::caret_rect(&output.galley, &bidi_rows, a)
+                                    .translate(offset);
+                                let end = bidi_view::caret_rect(&output.galley, &bidi_rows, b)
+                                    .translate(offset);
+                                if (start.center().y - end.center().y).abs() > 1.0 {
+                                    continue;
+                                }
+                                let y = start.bottom() - 1.0;
+                                let (left, right) =
+                                    (start.left().min(end.left()), start.left().max(end.left()));
+                                // A gentle wave, as other editors draw it.
+                                let mut points = vec![];
+                                let mut x = left;
+                                let mut up = false;
+                                while x < right {
+                                    points.push(egui::pos2(x, if up { y - 1.5 } else { y }));
+                                    x += 2.0;
+                                    up = !up;
+                                }
+                                points.push(egui::pos2(right, y));
+                                painter.add(egui::Shape::line(points, stroke));
+                            }
+                        }
                         // Right-clicking outside the selection moves the cursor there.
                         if output.response.secondary_clicked() {
                             if let Some(at) = output.response.interact_pointer_pos() {
@@ -2319,6 +2392,7 @@ impl HeditApp {
                                         output.galley.cursor_from_pos(relative).ccursor.index
                                     });
                                 let source = projection.source(index);
+                                word_menu_at = Some(source);
                                 let (a, b) = (
                                     buffer.view.anchor.min(buffer.view.head),
                                     buffer.view.anchor.max(buffer.view.head),
@@ -2332,6 +2406,30 @@ impl HeditApp {
                             }
                         }
                         output.response.context_menu(|ui| {
+                            if let Some(menu) = &self.spell.menu {
+                                if menu.suggestions.is_empty() {
+                                    ui.weak("No suggestions");
+                                }
+                                for word in &menu.suggestions {
+                                    if ui.button(RichText::new(word).strong()).clicked() {
+                                        spell_choice =
+                                            Some(spell_check::SpellAction::Replace(word.clone()));
+                                        ui.close_menu();
+                                    }
+                                }
+                                if ui
+                                    .button(format!("Add “{}” to dictionary", menu.word))
+                                    .clicked()
+                                {
+                                    spell_choice = Some(spell_check::SpellAction::Add);
+                                    ui.close_menu();
+                                }
+                                if ui.button(format!("Ignore “{}”", menu.word)).clicked() {
+                                    spell_choice = Some(spell_check::SpellAction::Ignore);
+                                    ui.close_menu();
+                                }
+                                ui.separator();
+                            }
                             for (n, group) in context_menu.iter().enumerate() {
                                 if n > 0 {
                                     ui.separator();
@@ -2477,6 +2575,15 @@ impl HeditApp {
                     ));
                 }
             }
+        }
+        if let Some(at) = word_menu_at {
+            if self.settings.spell_check {
+                self.word_menu_at(active_view, at);
+            }
+        }
+        if let Some(action) = spell_choice {
+            self.focus_editor = true;
+            self.spell_action(action);
         }
         if let Some(command) = context_command {
             self.focus_editor = true;

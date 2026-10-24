@@ -166,6 +166,9 @@ pub(super) enum Command {
     ZoomIn,
     ZoomOut,
     ResetZoom,
+    ToggleSpellCheck,
+    NextMisspelling,
+    PreviousMisspelling,
     Bookmark,
     NextBookmark,
     PreviousBookmark,
@@ -340,6 +343,9 @@ impl Command {
         Self::ZoomIn,
         Self::ZoomOut,
         Self::ResetZoom,
+        Self::ToggleSpellCheck,
+        Self::NextMisspelling,
+        Self::PreviousMisspelling,
         Self::Bookmark,
         Self::NextBookmark,
         Self::PreviousBookmark,
@@ -548,6 +554,9 @@ impl Command {
             Self::ZoomIn => "Increase font size",
             Self::ZoomOut => "Decrease font size",
             Self::ResetZoom => "Reset font size",
+            Self::ToggleSpellCheck => "Spell check",
+            Self::NextMisspelling => "Next misspelling",
+            Self::PreviousMisspelling => "Previous misspelling",
             Self::Bookmark => "Toggle bookmark",
             Self::NextBookmark => "Next bookmark",
             Self::PreviousBookmark => "Previous bookmark",
@@ -722,6 +731,9 @@ impl Command {
             Self::Wrap => "Ctrl+Shift+W",
             Self::ZoomIn => "Ctrl++",
             Self::ZoomOut => "Ctrl+-",
+            Self::ToggleSpellCheck => "F6",
+            Self::NextMisspelling => "Ctrl+F6",
+            Self::PreviousMisspelling => "Ctrl+Shift+F6",
             Self::Bookmark => "Ctrl+F2",
             Self::NextBookmark => "F2",
             Self::PreviousBookmark => "Shift+F2",
@@ -865,6 +877,7 @@ impl HeditApp {
             Command::Follow => {
                 self.active().page.info.path.is_some() && !self.active().page.info.dirty
             }
+            Command::NextMisspelling | Command::PreviousMisspelling => self.settings.spell_check,
             Command::PasteHistory => {
                 !self.paste_history.is_empty()
                     && !self.active().follow
@@ -915,6 +928,7 @@ impl HeditApp {
             Command::Indent4 => self.active().view.tab_size.unwrap_or(4) == 4,
             Command::Indent8 => self.active().view.tab_size == Some(8),
             Command::Wrap => self.settings.word_wrap,
+            Command::ToggleSpellCheck => self.settings.spell_check,
             Command::LineNumbers => self.settings.line_numbers,
             Command::Follow => self.active().follow,
             Command::Gpu => self.gpu_open,
@@ -1332,6 +1346,9 @@ impl HeditApp {
             Command::ZoomIn => self.settings.font_size = (self.settings.font_size + 1.0).min(28.0),
             Command::ZoomOut => self.settings.font_size = (self.settings.font_size - 1.0).max(10.0),
             Command::ResetZoom => self.settings.font_size = 14.0,
+            Command::ToggleSpellCheck => self.settings.spell_check = !self.settings.spell_check,
+            Command::NextMisspelling => self.next_misspelling(true),
+            Command::PreviousMisspelling => self.next_misspelling(false),
             Command::Bookmark => self.toggle_bookmark(),
             Command::NextBookmark => self.adjacent_bookmark(ctx, true),
             Command::PreviousBookmark => self.adjacent_bookmark(ctx, false),

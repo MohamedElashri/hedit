@@ -213,6 +213,7 @@ editing, and line-comment commands remain available. NVIDIA identifies CUDA
 | `src/app/snippet_fields.rs` | Snippet field navigation, following edits through a bounded diff |
 | `src/app/paste_history.rs` | Recent copies for Paste from history |
 | `src/app/fold_gutter.rs` | Fold arrows in the gutter, cached per revision |
+| `src/spelling.rs`, `src/app/spell_check.rs` | Prose regions, misspelled words, the check worker, underlines, and suggestions |
 | `src/app/definitions.rs` | Go to definition/references searches, pick lists of locations, and hover definitions |
 | `src/completion.rs`, `src/app/auto_complete.rs` | Word index built off the UI thread, ranking, and the completion list at the cursor |
 | `src/app/advanced_edit.rs` | Occurrence commands, multi-cursor input, and folding |
@@ -658,3 +659,10 @@ The file engine, session foundation, and folder utilities derive from
 `63a9ee4966d3fe1cfcd7d4af70e963e10aa297ff`. hedit's native UI, workspace layer,
 branding, and development direction are independent work. Preserve the original
 MIT notices and attribution in [LICENSE](LICENSE).
+
+The spell checker's dictionary, `assets/dictionaries/en_US.aff` and `en_US.dic`,
+is the en_US Hunspell dictionary from SCOWL, read with the
+[spellbook](https://crates.io/crates/spellbook) crate and built into the binary.
+Its copyright and permission notices are in
+[assets/dictionaries/en_US-LICENSE.txt](assets/dictionaries/en_US-LICENSE.txt),
+which packages ship with the rest of `assets/`; keep it with the dictionary.

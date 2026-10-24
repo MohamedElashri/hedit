@@ -1012,6 +1012,9 @@ impl HeditApp {
                 Command::IndentGuides,
                 Command::Minimap,
                 Command::Wrap,
+                Command::ToggleSpellCheck,
+                Command::NextMisspelling,
+                Command::PreviousMisspelling,
             ],
             action,
         );

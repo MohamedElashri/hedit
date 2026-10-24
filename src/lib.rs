@@ -14,6 +14,7 @@ pub mod projects;
 pub mod search;
 pub mod session;
 pub mod settings;
+pub mod spelling;
 pub mod syntax;
 pub mod text_commands;
 pub mod text_encoding;

@@ -33,6 +33,10 @@
 - A right-click menu in the editor with clipboard, selection, Go to definition,
   comment, and file path commands. Tabs add Copy file path and Reveal in sidebar,
   which opens the file's folders in the folder tree and scrolls to it.
+- Spell check (F6) with a built-in American English dictionary: misspelled words
+  in prose, comments, and strings are underlined, the right-click menu offers
+  suggestions, Add to dictionary (`added_words`), and Ignore, and Ctrl+F6 and
+  Ctrl+Shift+F6 go to the next and previous misspelling.
 - Right-to-left text: Arabic and Hebrew follow the Unicode Bidirectional
   Algorithm, Arabic letters join (including lam-alef), and right-to-left text
   mixes with English and numbers on the same line. Clicks, the caret, Left and
