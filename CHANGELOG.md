@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.1.4] - 2026-10-24
+## [0.1.5] - Unreleased
 
 ### Added
 
@@ -10,6 +10,17 @@
   Right, selections, and Find highlights follow the text on screen, while the
   file keeps the typed order. Plain text, Markdown, and LaTeX lines take their
   direction from their first letter; code lines run left to right.
+
+### Fixed
+
+- Arabic, Hebrew, Chinese, Japanese, Korean, Devanagari, Thai, and other scripts
+  missing from the built-in fonts showed empty boxes; hedit now uses the system's
+  fonts for them.
+
+## [0.1.4] - 2026-10-24
+
+### Added
+
 - Eighteen built-in themes, including One Dark, One Light, Dracula, Monokai, Nord,
   Gruvbox, Solarized, Tokyo Night, Catppuccin, GitHub, and Rosé Pine, alongside
   Hedit Ink and Hedit Paper.
@@ -119,9 +130,6 @@
 
 ### Fixed
 
-- Arabic, Hebrew, Chinese, Japanese, Korean, Devanagari, Thai, and other scripts
-  missing from the built-in fonts showed empty boxes; hedit now uses the system's
-  fonts for them.
 - On Linux desktops that leave window decorations to the app, such as GNOME on
   Wayland, the window now has a GNOME-style title bar with standard close,
   maximize, and minimize buttons instead of a bare gray frame.
@@ -320,6 +328,7 @@ Initial release of hedit.
 - User and developer guides, plus Makefile commands for formatting, linting,
   tests, packaging, and CI validation.
 
+[0.1.5]: https://github.com/MohamedElashri/hedit/compare/v0.1.4...HEAD
 [0.1.4]: https://github.com/MohamedElashri/hedit/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/MohamedElashri/hedit/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/MohamedElashri/hedit/releases/tag/v0.1.2
