@@ -30,6 +30,10 @@ pub(super) enum Command {
     Encoding,
     Complete,
     Snippets,
+    RecordMacro,
+    PlayMacro,
+    SaveMacro,
+    RunMacro,
     PinTab,
     CloseOthers,
     CloseRight,
@@ -219,6 +223,10 @@ impl Command {
         Self::Encoding,
         Self::Complete,
         Self::Snippets,
+        Self::RecordMacro,
+        Self::PlayMacro,
+        Self::SaveMacro,
+        Self::RunMacro,
         Self::PinTab,
         Self::CloseOthers,
         Self::CloseRight,
@@ -403,6 +411,8 @@ impl Command {
                 | Self::Snippets
                 | Self::RecentProjects
                 | Self::PasteHistory
+                | Self::SaveMacro
+                | Self::RunMacro
         )
     }
     pub(super) fn label(self) -> &'static str {
@@ -434,6 +444,10 @@ impl Command {
             Self::Encoding => "File encoding…",
             Self::Complete => "Complete word…",
             Self::Snippets => "Insert snippet…",
+            Self::RecordMacro => "Record macro",
+            Self::PlayMacro => "Play macro",
+            Self::SaveMacro => "Save macro…",
+            Self::RunMacro => "Run saved macro…",
             Self::PinTab => "Pin tab",
             Self::CloseOthers => "Close other tabs",
             Self::CloseRight => "Close tabs to the right",
@@ -606,6 +620,10 @@ impl Command {
     fn shortcut_label(self) -> &'static str {
         match self {
             Self::FindFiles => "Ctrl+Shift+F",
+            Self::RecordMacro if cfg!(target_os = "macos") => "Control+Q",
+            Self::PlayMacro if cfg!(target_os = "macos") => "Control+Shift+Q",
+            Self::RecordMacro => "Ctrl+Alt+Q",
+            Self::PlayMacro => "Ctrl+Alt+Shift+Q",
             Self::NextChange => "Ctrl+K, Ctrl+.",
             Self::PreviousChange => "Ctrl+K, Ctrl+,",
             Self::RevertChange => "Ctrl+K, Ctrl+Z",
@@ -849,6 +867,8 @@ fn highlighted(ui: &egui::Ui, label: &str, filter: &str, color: egui::Color32) -
 #[derive(Clone, Debug)]
 pub(super) enum Pick {
     Paste(String),
+    /// A saved macro, by name.
+    Macro(String),
     Location(definitions::Location),
 }
 
@@ -948,6 +968,12 @@ impl HeditApp {
             Command::CloseFolder | Command::RefreshFolder => !self.workspace.folders.is_empty(),
             Command::Rename => self.active().page.info.path.is_none(),
             Command::CopyPath | Command::RevealInSidebar => self.active().page.info.path.is_some(),
+            Command::PlayMacro | Command::SaveMacro => {
+                !self.macros.last.is_empty() && self.macros.recording.is_none()
+            }
+            Command::RunMacro => {
+                !self.quality.config.macros.is_empty() && self.macros.recording.is_none()
+            }
             Command::NextChange | Command::PreviousChange | Command::RevertChange => {
                 !self.active().page.info.paged
                     && !self.active().follow
@@ -1009,6 +1035,7 @@ impl HeditApp {
             Command::Indent8 => self.active().view.tab_size == Some(8),
             Command::Wrap => self.settings.word_wrap,
             Command::ToggleSpellCheck => self.settings.spell_check,
+            Command::RecordMacro => self.macros.recording.is_some(),
             Command::LineNumbers => self.settings.line_numbers,
             Command::Follow => self.active().follow,
             Command::Gpu => self.gpu_open,
@@ -1063,6 +1090,22 @@ impl HeditApp {
                 self.quality.encoding_open = true;
             }
             Command::Complete => self.open_completion(ctx),
+            Command::RecordMacro => self.toggle_recording(),
+            Command::PlayMacro => self.play_macro(self.macros.last.clone()),
+            Command::SaveMacro => self.open_macro_name(),
+            Command::RunMacro => {
+                let items = self
+                    .quality
+                    .config
+                    .macros
+                    .iter()
+                    .map(|m| {
+                        let detail = format!("{} steps", m.steps.len());
+                        (m.name.clone(), detail, Pick::Macro(m.name.clone()))
+                    })
+                    .collect();
+                self.open_pick_list(ctx, "Run saved macro", "Filter macros…", items);
+            }
             Command::Snippets => {
                 self.quality.snippets_open = true;
                 self.quality.snippet_focus = true;
@@ -1734,6 +1777,16 @@ impl HeditApp {
                 Item::File(path) => self.open(ctx, Some(path.into())),
                 Item::Command(command) => self.execute(ctx, command),
                 Item::Pick(Pick::Paste(text)) => self.paste_entry(ctx, text),
+                Item::Pick(Pick::Macro(name)) => {
+                    let steps = self
+                        .quality
+                        .config
+                        .macros
+                        .iter()
+                        .find(|m| m.name == name)
+                        .map(|m| m.steps.clone());
+                    self.play_macro(steps.unwrap_or_default());
+                }
                 Item::Pick(Pick::Location(location)) => self.open_location(ctx, location),
                 Item::Syntax(language) => self.set_syntax(Some(language)),
                 Item::BuildWith(name) => {

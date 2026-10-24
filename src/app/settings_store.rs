@@ -7,6 +7,7 @@ use std::{path::Path, time::SystemTime};
 pub(super) const SETTINGS_FILE: &str = "settings.json";
 pub(super) const KEYBINDINGS_FILE: &str = "keybindings.json";
 pub(super) const SNIPPETS_FILE: &str = "snippets.json";
+pub(super) const MACROS_FILE: &str = "macros.json";
 /// Write settings this long after the last change, so a dragged slider
 /// becomes one write.
 const SETTLE: Duration = Duration::from_millis(400);
@@ -195,6 +196,13 @@ pub(super) fn load(
         Ok(snippets) => config.snippets = snippets,
         Err(error) => errors.push(format!("{SNIPPETS_FILE}: {error}")),
     }
+    // Created only once a macro is saved.
+    if dir.join(MACROS_FILE).exists() {
+        match projects::read_json(&dir.join(MACROS_FILE), 4 * 1024 * 1024) {
+            Ok(macros) => config.macros = macros,
+            Err(error) => errors.push(format!("{MACROS_FILE}: {error}")),
+        }
+    }
     files.config_saved = config.clone();
     (settings, config, files, errors)
 }
@@ -361,6 +369,9 @@ impl HeditApp {
         if let Some(dir) = &self.settings_files.dir {
             projects::atomic_json(&dir.join(KEYBINDINGS_FILE), &config.keybindings)?;
             projects::atomic_json(&dir.join(SNIPPETS_FILE), &config.snippets)?;
+            if !config.macros.is_empty() || dir.join(MACROS_FILE).exists() {
+                projects::atomic_json(&dir.join(MACROS_FILE), &config.macros)?;
+            }
         }
         self.quality.config = config;
         Ok(())

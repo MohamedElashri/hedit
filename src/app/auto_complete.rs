@@ -275,7 +275,11 @@ impl HeditApp {
             }
         }
         // Only typing in the editor counts, not in Find or other fields.
-        if !self.settings.auto_complete || !ctx.memory(|m| m.has_focus(self.editor_id())) {
+        // Nor does a macro playing back.
+        if !self.settings.auto_complete
+            || !self.macros.playing.is_empty()
+            || !ctx.memory(|m| m.has_focus(self.editor_id()))
+        {
             return;
         }
         // Typing a word character schedules the list; anything else closes it.

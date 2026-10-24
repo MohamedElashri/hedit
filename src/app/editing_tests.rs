@@ -1476,3 +1476,59 @@ fn change_markers_navigate_and_revert_against_the_saved_file() {
     );
     assert_eq!(line(&app), 2);
 }
+
+#[test]
+fn macros_record_typing_and_keys_then_play_and_save() {
+    let directory = tempfile::tempdir().unwrap();
+    super::settings_store::TEST_CONFIG_DIR
+        .with(|dir| *dir.borrow_mut() = Some(directory.path().join("config")));
+    let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    app.focus_editor = true;
+    let index = app.workspace.active;
+    app.workspace.open[index].page.text = "one\ntwo\n".into();
+    app.workspace.edit(index, "").unwrap();
+    app.set_selections(vec![hedit::advanced::Selection::caret(3)]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![]);
+    let (record, play) = macros::macro_keys();
+    // Record: type “;”, go to the start of the line, type “- ”, go down.
+    frame(&ctx, &mut app, vec![key(Key::Q, record)]);
+    assert!(app.macros.recording.is_some());
+    type_text(&ctx, &mut app, ";");
+    frame(&ctx, &mut app, vec![key(Key::Home, Modifiers::NONE)]);
+    type_text(&ctx, &mut app, "- ");
+    frame(&ctx, &mut app, vec![key(Key::ArrowDown, Modifiers::NONE)]);
+    frame(&ctx, &mut app, vec![key(Key::End, Modifiers::NONE)]);
+    frame(&ctx, &mut app, vec![key(Key::Q, record)]);
+    assert!(app.macros.recording.is_none());
+    assert_eq!(app.active().page.text, "- one;\ntwo\n");
+    // Play it on the next line.
+    frame(&ctx, &mut app, vec![key(Key::Q, play)]);
+    for _ in 0..10 {
+        frame(&ctx, &mut app, vec![]);
+    }
+    assert_eq!(app.active().page.text, "- one;\n- two;\n");
+    // Save it, then run it by name.
+    app.execute(&ctx, Command::SaveMacro);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![egui::Event::Text("bullet".into())]);
+    frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)]);
+    assert_eq!(app.quality.config.macros[0].name, "bullet");
+    app.flush_settings();
+    let saved = std::fs::read_to_string(directory.path().join("config/macros.json")).unwrap();
+    assert!(
+        saved.contains("\"bullet\"") && saved.contains("Home"),
+        "{saved}"
+    );
+    type_text(&ctx, &mut app, "three");
+    app.execute(&ctx, Command::RunMacro);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)]);
+    for _ in 0..10 {
+        frame(&ctx, &mut app, vec![]);
+    }
+    assert_eq!(app.active().page.text, "- one;\n- two;\n- three;");
+    super::settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
+}

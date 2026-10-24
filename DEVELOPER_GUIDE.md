@@ -212,6 +212,7 @@ editing, and line-comment commands remain available. NVIDIA identifies CUDA
 | `src/app/tab_switch.rs` | Recently used, sequential, and positional tab switching |
 | `src/app/snippet_fields.rs` | Snippet field navigation, following edits through a bounded diff |
 | `src/app/paste_history.rs` | Recent copies for Paste from history |
+| `src/app/macros.rs` | Macro recording, playback through the normal input path, and macros.json |
 | `src/app/changes.rs` | Next/previous change and Revert change from the change markers' base text |
 | `src/app/find_tools.rs` | Select all matches, use selection for Find/Replace, quick find |
 | `src/app/fold_gutter.rs` | Fold arrows in the gutter, cached per revision |

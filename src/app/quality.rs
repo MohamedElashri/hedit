@@ -16,12 +16,15 @@ pub(super) struct Binding {
 pub(super) struct Config {
     pub keybindings: Vec<Binding>,
     pub snippets: Vec<intelligence::Snippet>,
+    /// Saved macros, in macros.json.
+    pub macros: Vec<macros::Macro>,
 }
 impl Default for Config {
     fn default() -> Self {
         Self {
             keybindings: vec![],
             snippets: intelligence::default_snippets(),
+            macros: vec![],
         }
     }
 }

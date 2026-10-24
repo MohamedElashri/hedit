@@ -11,6 +11,7 @@ pub(super) enum Overlay {
     Create,
     FileAction,
     Completion,
+    MacroName,
     Snippets,
     Symbols,
     Encoding,
@@ -27,13 +28,14 @@ pub(super) enum Overlay {
     Build,
 }
 impl Overlay {
-    const ALL: [Self; 20] = [
+    const ALL: [Self; 21] = [
         Self::Palette,
         Self::Goto,
         Self::Rename,
         Self::Create,
         Self::FileAction,
         Self::Completion,
+        Self::MacroName,
         Self::Snippets,
         Self::Symbols,
         Self::Encoding,
@@ -72,6 +74,7 @@ impl HeditApp {
             Overlay::Create => self.project.create.is_some(),
             Overlay::FileAction => self.quality.file_action.is_some(),
             Overlay::Completion => self.auto.popup.is_some(),
+            Overlay::MacroName => self.macros.naming.is_some(),
             Overlay::Snippets => self.quality.snippets_open,
             Overlay::Symbols => self.quality.symbols_open,
             Overlay::Encoding => self.quality.encoding_open,
@@ -100,6 +103,7 @@ impl HeditApp {
             Overlay::Create => self.project.create = None,
             Overlay::FileAction => self.quality.file_action = None,
             Overlay::Completion => self.auto.popup = None,
+            Overlay::MacroName => self.macros.naming = None,
             Overlay::Snippets => self.quality.snippets_open = false,
             Overlay::Symbols => self.quality.symbols_open = false,
             Overlay::Encoding => self.quality.encoding_open = false,

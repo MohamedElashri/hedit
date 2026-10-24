@@ -750,6 +750,16 @@ defaults are **Ctrl+K, Ctrl+D** (skip occurrence), **Ctrl+K, Ctrl+U** /
 body, and can add, remove, or restore the default snippets. They are saved in
 `snippets.json`.
 
+### Macros
+
+**Tools → Record macro** (**Ctrl+Alt+Q**; **Control+Q** on macOS) starts recording
+what you type and the keys you press in the editor, including shortcuts, Copy,
+Cut, and Paste; press it again to stop. **Tools → Play macro**
+(**Ctrl+Alt+Shift+Q**; **Control+Shift+Q** on macOS) plays the recording at the
+cursor. **Save macro…** names the recording and keeps it in `macros.json` in the
+configuration folder, and **Run saved macro…** plays a saved one. Commands chosen
+from menus or the command palette are not recorded; use their shortcuts instead.
+
 ### Spell check
 
 **View → Editor → Spell check** (**F6**) underlines misspelled words with a red
@@ -1195,6 +1205,7 @@ Spotlight), select all occurrences is **Control+Cmd+G**, jump to bracket is
 **Control+M**, navigate back/forward is **Control+-** / **Control+Shift+-**,
 block comments are **Cmd+Option+/**, wrapping is **Cmd+Option+Q**, transpose is
 **Control+T**, delete to the start of a line is **Cmd+Backspace**,
+macros are **Control+Q** to record and **Control+Shift+Q** to play,
 tab switching uses **Control+Tab** and **Control+PageDown** / **Control+PageUp**, and
 tabs 1–9 are **Cmd+1–9**. About
 and Quit are in macOS's own hedit menu. Change any shortcut under
@@ -1246,6 +1257,7 @@ and Quit are in macOS's own hedit menu. Change any shortcut under
 | Ctrl+, | Settings |
 | Ctrl+Q | Quit (after a final recovery checkpoint) |
 | F12 / Shift+F12 | Go to definition / references |
+| Ctrl+Alt+Q / Ctrl+Alt+Shift+Q | Record or stop a macro / play it |
 | Ctrl+K, Ctrl+. / Ctrl+K, Ctrl+, / Ctrl+K, Ctrl+Z | Next / previous change / revert change |
 | F6 / Ctrl+F6 / Ctrl+Shift+F6 | Spell check / next / previous misspelling |
 | Ctrl+F2 | Toggle a bookmark at the cursor |

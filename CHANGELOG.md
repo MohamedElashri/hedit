@@ -23,6 +23,9 @@
   suggestions, Add to dictionary (`added_words`), and Ignore, and Ctrl+F6 and
   Ctrl+Shift+F6 go to the next and previous misspelling. Words in other scripts,
   such as Arabic, are left alone.
+- Macros: record typing and keys in the editor (Ctrl+Alt+Q; Control+Q on
+  macOS), play them back (Ctrl+Alt+Shift+Q; Control+Shift+Q on macOS), and save
+  them by name in `macros.json` to run later from the Tools menu.
 - Snippet fields: `$1`, `${1:text}`, and repeated numbers that fill in together.
   Tab and Shift+Tab move between fields, ending at `$0`. Multi-line snippets
   follow the indentation of the line they are inserted on.

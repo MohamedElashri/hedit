@@ -18,6 +18,7 @@ mod fold_gutter;
 mod goto_anything;
 #[cfg(test)]
 mod goto_tests;
+mod macros;
 #[cfg(test)]
 mod overlay_tests;
 mod overlays;
@@ -179,6 +180,7 @@ pub struct HeditApp {
     hover: Option<definitions::Hover>,
     fold_cache: fold_gutter::FoldCache,
     spell: spell_check::SpellCheck,
+    macros: macros::Macros,
     /// Cursors made by Add cursor above/below and the column they keep.
     line_cursor_goal: Option<(Vec<hedit::advanced::Selection>, usize)>,
     live_find: find_live::LiveFind,
@@ -330,6 +332,7 @@ impl HeditApp {
             hover: None,
             fold_cache: Default::default(),
             spell: Default::default(),
+            macros: Default::default(),
             line_cursor_goal: None,
             live_find: Default::default(),
             goto_origin: None,
@@ -1076,7 +1079,9 @@ impl HeditApp {
         });
     }
     fn shortcuts(&mut self, ctx: &egui::Context) {
+        self.play_step(ctx);
         self.plain_ime_commits(ctx);
+        self.record_input(ctx);
         if self.capture_binding(ctx) {
             return;
         }
@@ -1184,6 +1189,12 @@ impl HeditApp {
             }
         }
         self.tab_shortcuts(ctx);
+        let (record, play) = macros::macro_keys();
+        for (modifiers, command) in [(play, Command::PlayMacro), (record, Command::RecordMacro)] {
+            if !self.overridden(command) && tab_switch::take_exact(ctx, modifiers, Key::Q) {
+                self.execute(ctx, command);
+            }
+        }
         // Alt+Enter selects every match, from the Find field or the editor.
         if !self.query.is_empty()
             && !self.overridden(Command::SelectAllMatches)
