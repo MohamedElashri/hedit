@@ -18,17 +18,17 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: 0
       CARGO_PROFILE_TEST_DEBUG: 0
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.4.0
       - uses: dtolnay/rust-toolchain@1.92.0
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
           components: rustfmt, clippy
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5.6.0
         with:
           python-version: '3.12'
       - name: Static checks
         run: make static
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.9.3
         with:
           key: macos-universal
       # Clippy also type-checks; the Intel slice is compiled by the release
@@ -56,7 +56,7 @@ jobs:
           if arch -x86_64 /usr/bin/true 2>/dev/null; then
             test "$(arch -x86_64 "$binary" --version)" = "$expected"
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4.6.2
         with:
           name: hedit-macos-universal
           path: dist/hedit-*-macos-universal.zip*
