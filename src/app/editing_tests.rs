@@ -1024,3 +1024,40 @@ fn f4_goes_through_folder_matches_after_a_search() {
     finish_app_job(&mut app, &ctx);
     assert_eq!(app.active().view.name, "a.txt");
 }
+
+/// The editor text's rectangle on screen, from last frame.
+fn editor_rect(ctx: &egui::Context, app: &HeditApp) -> egui::Rect {
+    let id = egui::Id::new(("editor", app.active().page.info.id, app.active().page.start));
+    ctx.read_response(id).expect("editor drawn").rect
+}
+
+#[test]
+fn hovering_a_git_marker_shows_its_change() {
+    let (_directory, ctx, mut app) = app_with("one\ntwo\n");
+    let id = app.active().view.id;
+    app.quality.git_lines.insert(id, [1].into_iter().collect());
+    app.quality
+        .git_cache
+        .insert(id, "@@ -1 +1 @@\n-uno\n+one\n".into());
+    frame(&ctx, &mut app, vec![]);
+    let rect = editor_rect(&ctx, &app);
+    let gutter = rect.left() - editor_gutter_width(&app);
+    let at = egui::pos2(gutter + 4.0, rect.top() + app.settings.font_size * 0.6);
+    let mut seen = false;
+    for _ in 0..12 {
+        let output = frame(&ctx, &mut app, vec![egui::Event::PointerMoved(at)]);
+        thread::sleep(Duration::from_millis(60));
+        seen |= output
+            .shapes
+            .iter()
+            .any(|c| matches!(&c.shape, egui::Shape::Text(t) if t.galley.text().contains("+one")));
+    }
+    assert!(seen, "the hunk shows on hover");
+}
+
+fn editor_gutter_width(app: &HeditApp) -> f32 {
+    let digits = (app.active().page.text.matches('\n').count() + 1)
+        .to_string()
+        .len();
+    (digits.max(3) as f32 * app.settings.font_size * 0.65 + 16.0).max(42.0)
+}

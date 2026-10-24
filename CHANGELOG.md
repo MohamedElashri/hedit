@@ -47,6 +47,7 @@
 
 ### Fixed
 
+- Hovering a Git change marker in the gutter did not show the change.
 - Pressing Escape in the editor took keyboard focus away from it, so typing did
   nothing until the text was clicked.
 - Pressing a shortcut with an arrow key several times in a row, such as

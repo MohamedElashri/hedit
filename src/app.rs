@@ -1998,6 +1998,11 @@ impl HeditApp {
                         }
                         if gutter > 0.0 {
                             gutter_painter.rect_filled(gutter_rect, 0.0, gutter_background);
+                            // The text's row is clipped to the text, which would
+                            // make the gutter's markers unreachable by the pointer.
+                            let mut gutter_ui =
+                                ui.new_child(egui::UiBuilder::new().max_rect(gutter_rect));
+                            gutter_ui.set_clip_rect(gutter_rect);
                             let mut display_line = 0;
                             let mut first_row = true;
                             for row in &output.galley.rows {
@@ -2036,19 +2041,20 @@ impl HeditApp {
                                             {
                                                 let hunk =
                                                     hedit::intelligence::hunk_at(diff, source_line);
-                                                ui.interact(
-                                                    mark,
-                                                    ui.id().with((
-                                                        "git-hunk",
-                                                        buffer.view.id,
-                                                        source_line,
-                                                    )),
-                                                    egui::Sense::hover(),
-                                                )
-                                                .on_hover_ui(|ui| {
-                                                    ui.set_max_width(620.0);
-                                                    ui.label(RichText::new(hunk).monospace());
-                                                });
+                                                gutter_ui
+                                                    .interact(
+                                                        mark,
+                                                        gutter_ui.id().with((
+                                                            "git-hunk",
+                                                            buffer.view.id,
+                                                            source_line,
+                                                        )),
+                                                        egui::Sense::hover(),
+                                                    )
+                                                    .on_hover_ui(|ui| {
+                                                        ui.set_max_width(620.0);
+                                                        ui.label(RichText::new(hunk).monospace());
+                                                    });
                                             }
                                         }
                                         gutter_painter.text(
