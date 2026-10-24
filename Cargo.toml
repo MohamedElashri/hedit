@@ -28,6 +28,11 @@ two-face = { version = "0.5.2", default-features = false, features = ["syntect-d
 [target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
 rustix = { version = "1", features = ["fs", "process"] }
 
+# GNOME on Wayland leaves window decorations to the app; draw Adwaita-style
+# title bar buttons instead of winit's bare fallback frame.
+[target.'cfg(target_os = "linux")'.dependencies]
+winit = { version = "0.30.13", default-features = false, features = ["wayland-csd-adwaita"] }
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_System_Threading"] }
 

@@ -112,6 +112,9 @@
 
 ### Fixed
 
+- On Linux desktops that leave window decorations to the app, such as GNOME on
+  Wayland, the window now has a GNOME-style title bar with standard close,
+  maximize, and minimize buttons instead of a bare gray frame.
 - Menu-bar titles, menu entries, and buttons now show a visible highlight under
   the pointer, and the title of the open menu stays highlighted.
 - The command palette, theme switcher, Go to line, Bookmarks, and Closed files close
