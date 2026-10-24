@@ -130,14 +130,29 @@ fn cancelling_stops_the_commands_a_build_started() {
     }
     let started = Instant::now();
     running.cancel();
-    // Temporary diagnostics for macOS.
-    std::thread::sleep(Duration::from_millis(300));
-    let ps = std::process::Command::new("ps").args(["-axo", "pid,ppid,pgid,stat,command"]).output().unwrap();
-    for line in String::from_utf8_lossy(&ps.stdout).lines().filter(|l| l.contains("sleep 30") || l.contains("started;")) {
-        eprintln!("DBG {line}");
-    }
     let (output, code) = collect(&running);
     assert!(started.elapsed() < Duration::from_secs(5));
     assert!(!output.contains("late"));
     assert_eq!(code, None);
+}
+
+#[test]
+fn cancelling_while_the_shell_starts_a_command_still_stops_it() {
+    // Cancel right after the first output, while the shell may be starting
+    // `sleep`; a process created as the signal lands must not survive.
+    let dir = tempfile::tempdir().unwrap();
+    for _ in 0..20 {
+        let running = Running::start("echo started; sleep 30", dir.path(), || {}).unwrap();
+        let _ = running.events.recv_timeout(Duration::from_secs(5)).unwrap();
+        let started = Instant::now();
+        running.cancel();
+        loop {
+            match running.events.recv_timeout(Duration::from_secs(3)) {
+                Ok(Event::Finished(..)) => break,
+                Ok(Event::Output(_)) => {}
+                Err(_) => panic!("cancel did not stop the build"),
+            }
+        }
+        assert!(started.elapsed() < Duration::from_secs(3));
+    }
 }

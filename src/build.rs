@@ -208,6 +208,10 @@ pub enum Event {
 /// A running build. Dropping it does not stop the process; call [`Self::cancel`].
 pub struct Running {
     child: Arc<Mutex<Option<Child>>>,
+    /// The build's process group, shared by everything the shell starts.
+    group: u32,
+    /// Set once the build's output has ended.
+    done: Arc<std::sync::atomic::AtomicBool>,
     pub events: mpsc::Receiver<Event>,
 }
 
@@ -233,6 +237,9 @@ impl Running {
             .spawn()
             .map_err(|e| format!("Could not start the build: {e}"))?;
         let mut stdout = child.stdout.take().expect("stdout is piped");
+        let group = child.id();
+        let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let finished = Arc::clone(&done);
         let child = Arc::new(Mutex::new(Some(child)));
         let (tx, rx) = mpsc::channel();
         let started = Instant::now();
@@ -258,6 +265,7 @@ impl Running {
                     }
                 }
             }
+            finished.store(true, std::sync::atomic::Ordering::Relaxed);
             let status = waiter
                 .lock()
                 .ok()
@@ -269,19 +277,42 @@ impl Running {
             ));
             wake();
         });
-        Ok(Self { child, events: rx })
+        Ok(Self {
+            child,
+            group,
+            done,
+            events: rx,
+        })
     }
     /// Stop the build's shell. Its output thread then reports it finished.
     pub fn cancel(&self) {
         if let Ok(mut child) = self.child.lock() {
             if let Some(child) = child.as_mut() {
-                #[cfg(unix)]
-                if let Some(group) = rustix::process::Pid::from_raw(child.id() as i32) {
-                    let _ =
-                        rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
-                }
+                kill_group(self.group);
                 let _ = child.kill();
             }
         }
+        // A command the shell was starting as the signal arrived can miss it
+        // and keep the output open; repeat until the output ends.
+        let (group, done) = (self.group, Arc::clone(&self.done));
+        std::thread::spawn(move || {
+            for _ in 0..20 {
+                std::thread::sleep(Duration::from_millis(100));
+                if done.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+                kill_group(group);
+            }
+        });
     }
+}
+
+/// Send SIGKILL to every process in the build's group.
+fn kill_group(group: u32) {
+    #[cfg(unix)]
+    if let Some(group) = rustix::process::Pid::from_raw(group as i32) {
+        let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
+    }
+    #[cfg(not(unix))]
+    let _ = group;
 }
