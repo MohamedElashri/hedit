@@ -23,11 +23,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4.4.0
+      - uses: actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@1.92.0
         with:
           components: rustfmt, clippy
-      - uses: actions/setup-python@v5.6.0
+      - uses: actions/setup-python@v7.1.0
         with:
           python-version: '3.12'
       # Seconds, no compiling: fail here before spending minutes on builds.
@@ -48,11 +48,11 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4.4.0
+      - uses: actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@1.92.0
         with:
           components: clippy
-      - uses: actions/setup-python@v5.6.0
+      - uses: actions/setup-python@v7.1.0
         with:
           python-version: '3.12'
       - uses: Swatinem/rust-cache@v2.9.3

@@ -31,9 +31,9 @@ jobs:
             arch: aarch64
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4.4.0
+      - uses: actions/checkout@v7.0.1
       - name: Install Python for packaging
-        uses: actions/setup-python@v5.6.0
+        uses: actions/setup-python@v7.1.0
         with:
           python-version: '3.12'
       - name: Match release tag to package version
@@ -55,7 +55,7 @@ jobs:
         run: make test
       - name: Package and verify installation
         run: make package smoke
-      - uses: actions/upload-artifact@v4.6.2
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: hedit-linux-${{ matrix.arch }}
           path: dist/hedit-*-linux-${{ matrix.arch }}.tar.gz*
@@ -73,8 +73,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4.4.0
-      - uses: actions/download-artifact@v4.3.0
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/download-artifact@v8.0.2
         with:
           pattern: hedit-*
           merge-multiple: true
