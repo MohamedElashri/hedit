@@ -31,21 +31,23 @@ fn indentation(line: &str) -> &str {
     &line[..line.len() - line.trim_start_matches([' ', '\t']).len()]
 }
 
-/// Pasted text re-indented for a line indented by `target`: the text's own
-/// common indentation (ignoring its first line, which is often copied from
-/// mid-line) is replaced by `target` on every line after the first.
-pub(super) fn reindent_paste(text: &str, target: &str) -> String {
+/// Pasted text re-indented for a line indented by `target`. With `whole`, the
+/// text goes at the start of a line: its common indentation becomes `target`
+/// on every line, the first included. Otherwise it goes after other text on
+/// the line, so its first line (often copied from mid-line) is left out of
+/// the common indentation and pasted as it is, without leading spaces.
+pub(super) fn reindent_paste(text: &str, target: &str, whole: bool) -> String {
     let lines: Vec<&str> = text.split_inclusive('\n').collect();
     let common = lines
         .iter()
-        .skip(1)
+        .skip(usize::from(!whole))
         .filter(|l| !l.trim().is_empty())
         .map(|l| indentation(l))
         .min_by_key(|i| i.len())
         .unwrap_or("");
     let mut out = String::with_capacity(text.len());
     for (n, line) in lines.iter().enumerate() {
-        if n == 0 {
+        if n == 0 && !whole {
             out.push_str(line.trim_start_matches([' ', '\t']));
         } else if line.trim().is_empty() {
             // Blank lines keep only their line break.
@@ -147,11 +149,23 @@ impl HeditApp {
     /// Paste `text` with its lines re-indented for the cursor's line.
     fn paste_indented(&mut self, text: &str) {
         let b = self.active();
-        let head = advanced::byte(&b.page.text, b.view.head);
-        let line = b.page.text[..head].rfind('\n').map_or(0, |n| n + 1);
+        let selections = self.selections();
+        let start = selections.iter().map(|s| s.start()).min().unwrap_or(0);
+        let at = advanced::byte(&b.page.text, start);
+        let line = b.page.text[..at].rfind('\n').map_or(0, |n| n + 1);
         let target = indentation(&b.page.text[line..]).to_owned();
-        let pasted = reindent_paste(text, &target);
-        let batch = advanced::replace(&b.page.text, &self.selections(), &pasted);
+        // Only indentation before a single cursor: the text replaces it.
+        let whole = selections.len() == 1 && b.page.text[line..at].trim().is_empty();
+        let pasted = reindent_paste(text, &target, whole);
+        let ranges = if whole {
+            vec![Selection {
+                anchor: b.page.text[..line].chars().count(),
+                head: selections[0].end(),
+            }]
+        } else {
+            selections
+        };
+        let batch = advanced::replace(&b.page.text, &ranges, &pasted);
         self.batch(batch);
     }
     /// Copy, Cut, and Paste events for the editor, before it handles them.
@@ -159,7 +173,8 @@ impl HeditApp {
         if self.active().page.info.paged {
             return;
         }
-        let shifted = ctx.input(|i| i.modifiers.shift);
+        // Ctrl+Shift+V; Shift+Insert, a plain paste on Windows, has no Ctrl.
+        let shifted = ctx.input(|i| i.modifiers.shift && i.modifiers.command);
         let events = ctx.input(|i| i.events.clone());
         let mut handled = vec![];
         for (index, event) in events.iter().enumerate() {

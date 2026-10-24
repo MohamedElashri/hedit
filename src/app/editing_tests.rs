@@ -1562,12 +1562,17 @@ fn copy_and_cut_without_a_selection_take_whole_lines() {
 #[test]
 fn paste_and_indent_fits_lines_to_the_cursor_line() {
     assert_eq!(
-        clipboard_lines::reindent_paste("if x {\n        y();\n\n    }\n", "    "),
+        clipboard_lines::reindent_paste("if x {\n        y();\n\n    }\n", "    ", false),
         "if x {\n        y();\n\n    }\n"
     );
     assert_eq!(
-        clipboard_lines::reindent_paste("a\n\t\tb\n\t\t\tc", "  "),
+        clipboard_lines::reindent_paste("a\n\t\tb\n\t\t\tc", "  ", false),
         "a\n  b\n  \tc"
+    );
+    // Whole lines keep their nesting relative to the first.
+    assert_eq!(
+        clipboard_lines::reindent_paste("    if x:\n        y\n", "  ", true),
+        "  if x:\n      y\n"
     );
     let (_directory, ctx, mut app) = app_with("fn f() {\n    \n}\n");
     app.set_selections(vec![hedit::advanced::Selection::caret(13)]);
@@ -1780,4 +1785,82 @@ fn the_font_picker_lists_families_and_sets_the_font() {
         frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)]);
         assert_eq!(app.settings.font_face, name);
     }
+}
+
+#[test]
+fn trimming_never_touches_lines_that_moved_or_were_not_entered() {
+    // Enter, then two Backspaces join the lines again: the user's own blank
+    // line below keeps its spaces.
+    let (_directory, ctx, mut app) = app_with("    a\n        \nz");
+    app.set_selections(vec![hedit::advanced::Selection::caret(5)]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)]);
+    for _ in 0..3 {
+        frame(&ctx, &mut app, vec![key(Key::Backspace, Modifiers::NONE)]);
+    }
+    frame(&ctx, &mut app, vec![]);
+    assert!(
+        app.active().page.text.contains("\n        \n"),
+        "{:?}",
+        app.active().page.text
+    );
+    // Enter over a selection of several lines leaves other lines alone.
+    let (_directory, ctx, mut app) = app_with("    a\n    b\n    c\n        \n    d");
+    app.set_selections(vec![hedit::advanced::Selection {
+        anchor: 5,
+        head: 17,
+    }]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)]);
+    frame(&ctx, &mut app, vec![]);
+    assert!(
+        app.active().page.text.contains("\n        \n"),
+        "{:?}",
+        app.active().page.text
+    );
+}
+
+#[test]
+fn macros_replay_word_keys_with_their_modifiers() {
+    let (_directory, ctx, mut app) = app_with("one two\nthree four");
+    app.set_selections(vec![hedit::advanced::Selection::caret(7)]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![]);
+    let (record, play) = macros::macro_keys();
+    let word = Modifiers::CTRL | Modifiers::COMMAND;
+    frame(&ctx, &mut app, vec![key(Key::Q, record)]);
+    frame(&ctx, &mut app, vec![key(Key::Backspace, word)]);
+    frame(&ctx, &mut app, vec![key(Key::Q, record)]);
+    assert_eq!(app.active().page.text, "one \nthree four");
+    // At the end of the second line, the same keys delete one word again.
+    app.set_selections(vec![hedit::advanced::Selection::caret(15)]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![key(Key::Q, play)]);
+    for _ in 0..4 {
+        frame(&ctx, &mut app, vec![]);
+    }
+    assert_eq!(app.active().page.text, "one \nthree ");
+    assert!(matches!(&app.macros.last[0], macros::Step::Key(k) if k.ctrl && k.key == "Backspace"));
+}
+
+#[test]
+fn find_shortcuts_keep_text_literal_in_regex_mode() {
+    let (_directory, ctx, mut app) = app_with("a.b axb $price");
+    app.quality.options.regex = true;
+    app.set_selections(vec![hedit::advanced::Selection { anchor: 0, head: 3 }]);
+    app.execute(&ctx, Command::UseSelectionForFind);
+    assert_eq!(app.query, "a\\.b");
+    app.set_selections(vec![hedit::advanced::Selection {
+        anchor: 8,
+        head: 14,
+    }]);
+    app.execute(&ctx, Command::UseSelectionForReplace);
+    assert_eq!(app.replacement, "$$price");
+    app.set_selections(vec![hedit::advanced::Selection { anchor: 0, head: 3 }]);
+    app.execute(&ctx, Command::QuickFindNext);
+    assert_eq!(app.query, "a\\.b");
+    app.execute(&ctx, Command::SelectAllMatches);
+    assert_eq!(app.selections().len(), 1, "axb is not a match");
 }

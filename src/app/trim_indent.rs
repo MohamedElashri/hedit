@@ -6,6 +6,9 @@ use super::*;
 pub(super) struct AutoIndent {
     view: u64,
     line: usize,
+    /// The file's revision right after Enter; any later edit cancels the trim,
+    /// since lines may have moved.
+    pub(super) revision: u64,
 }
 
 /// Byte range of a 0-based line's text, without its line break.
@@ -45,12 +48,19 @@ pub(super) fn trim_blank_line(text: &str, line: usize) -> Option<(String, usize,
 impl HeditApp {
     /// After Enter: trim the line it left if that line was only indentation,
     /// and remember the new line if it is.
-    pub(super) fn after_newline(&mut self, old_line: usize, batch: &mut hedit::advanced::Batch) {
+    /// `old_line` is the line Enter was pressed on, when that was a plain
+    /// cursor; a selection Enter replaced has no line to trim.
+    pub(super) fn after_newline(
+        &mut self,
+        old_line: Option<usize>,
+        batch: &mut hedit::advanced::Batch,
+    ) {
         self.auto_indent = None;
         if !self.settings.trim_automatic_white_space || batch.selections.len() != 1 {
             return;
         }
-        if let Some((text, start, removed)) = trim_blank_line(&batch.text, old_line) {
+        let trimmed = old_line.and_then(|line| trim_blank_line(&batch.text, line));
+        if let Some((text, start, removed)) = trimmed {
             batch.text = text;
             for s in &mut batch.selections {
                 if s.head > start {
@@ -66,6 +76,7 @@ impl HeditApp {
             self.auto_indent = Some(AutoIndent {
                 view: self.active().view.id,
                 line,
+                revision: 0,
             });
         }
     }
@@ -78,6 +89,7 @@ impl HeditApp {
         let b = self.active();
         if !self.settings.trim_automatic_white_space
             || pending.view != b.view.id
+            || pending.revision != b.page.info.revision
             || !b.view.selections.is_empty()
             || b.page.info.paged
         {

@@ -430,7 +430,8 @@ impl HeditApp {
         let width = b.view.tab_size.unwrap_or(4) as usize;
         let tabs = b.view.indent.as_deref() == Some("tabs");
         let crlf = b.page.info.eol == "CRLF";
-        let old_line = self.cursor_line();
+        let old_line = (b.view.anchor == b.view.head && b.view.selections.is_empty())
+            .then(|| self.cursor_line());
         let mut text = b.page.text.clone();
         let mut cursors: Vec<Selection> = vec![];
         for s in self.selections().into_iter().rev() {
@@ -449,5 +450,9 @@ impl HeditApp {
         };
         self.after_newline(old_line, &mut batch);
         self.batch(batch);
+        let revision = self.active().page.info.revision;
+        if let Some(pending) = &mut self.auto_indent {
+            pending.revision = revision;
+        }
     }
 }

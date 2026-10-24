@@ -3,15 +3,32 @@
 use super::*;
 use serde::{Deserialize, Serialize};
 
-/// One recorded step: typed text, a key with its modifiers (written as in
-/// keybindings.json, such as `Primary+Shift+Left`), or a clipboard action.
+/// One recorded step: typed text, a key with exactly the modifiers it was
+/// pressed with, or a clipboard action. Paste replays whatever the clipboard
+/// holds when the macro runs, as Copy and Cut do.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum Step {
     Text(String),
-    Key(String),
+    Key(KeyStep),
     Copy,
     Cut,
+    Paste,
+    /// Paste and indent.
+    PasteIndent,
+}
+
+/// A key and its modifiers. Ctrl and Cmd are kept apart, since text editing
+/// tells word and line motion apart by them.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub(super) struct KeyStep {
+    pub key: String,
+    pub ctrl: bool,
+    pub alt: bool,
+    pub shift: bool,
+    pub mac_cmd: bool,
+    pub command: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -28,6 +45,8 @@ pub(super) struct Macros {
     pub last: Vec<Step>,
     /// Steps still to play, one batch per frame.
     pub playing: VecDeque<Step>,
+    /// Playback waits until this time for a requested paste to arrive.
+    waiting_paste: Option<Instant>,
     /// The name being typed in the Save macro window.
     pub naming: Option<String>,
     naming_focus: bool,
@@ -80,6 +99,28 @@ impl HeditApp {
         self.macros.playing = steps.into();
         self.focus_editor = true;
     }
+    /// Whether a key press is one that records or plays macros, as bound now.
+    fn is_macro_key(&self, key: Key, modifiers: Modifiers) -> bool {
+        let (record, play) = macro_keys();
+        let defaults = [(Command::RecordMacro, record), (Command::PlayMacro, play)];
+        defaults.iter().any(|(command, default)| {
+            let bound = self
+                .quality
+                .config
+                .keybindings
+                .iter()
+                .filter(|b| b.command == *command)
+                .filter_map(|b| quality_windows::shortcut(&b.shortcut).ok().flatten())
+                .collect::<Vec<_>>();
+            if bound.is_empty() {
+                key == Key::Q && modifiers.matches_exact(*default)
+            } else {
+                bound
+                    .iter()
+                    .any(|s| s.logical_key == key && modifiers.matches_exact(s.modifiers))
+            }
+        })
+    }
     /// Record this frame's typing and keys while the editor has focus.
     pub(super) fn record_input(&mut self, ctx: &egui::Context) {
         if self.macros.recording.is_none()
@@ -88,12 +129,14 @@ impl HeditApp {
         {
             return;
         }
-        let (record, play) = macro_keys();
+        let shifted = ctx.input(|i| i.modifiers.shift && i.modifiers.command);
         let events = ctx.input(|i| i.events.clone());
-        let steps = self.macros.recording.as_mut().unwrap();
+        let mut recorded = vec![];
         for event in events {
             let step = match event {
-                egui::Event::Text(text) | egui::Event::Paste(text) => Step::Text(text),
+                egui::Event::Text(text) => Step::Text(text),
+                egui::Event::Paste(_) if shifted => Step::PasteIndent,
+                egui::Event::Paste(_) => Step::Paste,
                 egui::Event::Copy => Step::Copy,
                 egui::Event::Cut => Step::Cut,
                 egui::Event::Key {
@@ -102,15 +145,24 @@ impl HeditApp {
                     modifiers,
                     ..
                 } => {
-                    if key == Key::Q
-                        && (modifiers.matches_exact(record) || modifiers.matches_exact(play))
-                    {
+                    if self.is_macro_key(key, modifiers) {
                         continue;
                     }
-                    Step::Key(settings_pages::binding_text(modifiers, key))
+                    Step::Key(KeyStep {
+                        key: key.name().to_owned(),
+                        ctrl: modifiers.ctrl,
+                        alt: modifiers.alt,
+                        shift: modifiers.shift,
+                        mac_cmd: modifiers.mac_cmd,
+                        command: modifiers.command,
+                    })
                 }
                 _ => continue,
             };
+            recorded.push(step);
+        }
+        let steps = self.macros.recording.as_mut().unwrap();
+        for step in recorded {
             match (steps.last_mut(), &step) {
                 (Some(Step::Text(previous)), Step::Text(text)) => previous.push_str(text),
                 _ => steps.push(step),
@@ -119,6 +171,21 @@ impl HeditApp {
     }
     /// Feed the next recorded step to the editor, as if it were typed now.
     pub(super) fn play_step(&mut self, ctx: &egui::Context) {
+        // A requested paste arrives as an event a frame or so later; wait for
+        // it, but not forever when the clipboard is empty.
+        if let Some(until) = self.macros.waiting_paste {
+            let arrived =
+                ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Paste(_))));
+            if !arrived && Instant::now() < until {
+                ctx.request_repaint();
+                return;
+            }
+            self.macros.waiting_paste = None;
+            if arrived {
+                ctx.request_repaint();
+                return;
+            }
+        }
         let Some(step) = self.macros.playing.pop_front() else {
             return;
         };
@@ -126,16 +193,30 @@ impl HeditApp {
             Step::Text(text) => egui::Event::Text(text),
             Step::Copy => egui::Event::Copy,
             Step::Cut => egui::Event::Cut,
-            Step::Key(name) => match quality_windows::shortcut(&name) {
-                Ok(Some(shortcut)) => egui::Event::Key {
-                    key: shortcut.logical_key,
+            Step::Paste | Step::PasteIndent => {
+                self.paste_indent = step == Step::PasteIndent;
+                self.quality.paste_requested = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+                self.macros.waiting_paste = Some(Instant::now() + Duration::from_secs(1));
+                ctx.request_repaint();
+                return;
+            }
+            Step::Key(step) => match Key::from_name(&step.key) {
+                Some(key) => egui::Event::Key {
+                    key,
                     physical_key: None,
                     pressed: true,
                     repeat: false,
-                    modifiers: shortcut.modifiers,
+                    modifiers: Modifiers {
+                        ctrl: step.ctrl,
+                        alt: step.alt,
+                        shift: step.shift,
+                        mac_cmd: step.mac_cmd,
+                        command: step.command,
+                    },
                 },
-                _ => {
-                    self.notice = format!("A macro step is not a key: {name}");
+                None => {
+                    self.notice = format!("A macro step is not a key: {}", step.key);
                     self.macros.playing.clear();
                     return;
                 }

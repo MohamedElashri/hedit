@@ -39,6 +39,14 @@ impl HeditApp {
         let text = &b.page.text[start..end];
         (!text.is_empty()).then(|| (text.to_owned(), range))
     }
+    /// Text for the Find field that matches `text` literally, also in regex mode.
+    fn literal_query(&self, text: &str) -> String {
+        if self.quality.options.regex {
+            regex::escape(text)
+        } else {
+            text.to_owned()
+        }
+    }
     /// Alt+Enter: a cursor on every match of the Find text.
     pub(super) fn select_all_matches(&mut self) {
         if self.query.is_empty() {
@@ -82,10 +90,12 @@ impl HeditApp {
             self.notice = "Select text first.".into();
             return;
         };
-        let text = if self.quality.options.regex && !replace {
-            regex::escape(&text)
-        } else {
-            text
+        // With regex on, the text must match literally, and `$` in a
+        // replacement would otherwise name a capture group.
+        let text = match (self.quality.options.regex, replace) {
+            (true, false) => regex::escape(&text),
+            (true, true) => text.replace('$', "$$"),
+            (false, _) => text,
         };
         if replace {
             self.notice = format!("Replace with “{text}”.");
@@ -107,7 +117,7 @@ impl HeditApp {
         let whole_word = b.view.anchor == b.view.head;
         if whole_word {
             // The first press selects the word itself.
-            self.query = needle;
+            self.query = self.literal_query(&needle);
             self.set_selections(vec![range]);
             return;
         }
@@ -128,7 +138,7 @@ impl HeditApp {
         };
         if let Some(next) = next.cloned() {
             let selected = char_ranges(text, &[next]);
-            self.query = needle;
+            self.query = self.literal_query(&needle);
             self.navigation_mark();
             self.set_selections(selected);
         }
