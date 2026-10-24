@@ -28,7 +28,6 @@
   line spacing (`line_padding`), cursor width and blinking (`caret_width`,
   `caret_blink`), and scrolling the last line up to the top (`scroll_past_end`,
   on by default).
-
 - Syntax highlighting uses Sublime Text syntax definitions for most languages,
   recognizing embedded languages, multi-line strings and comments, escapes, and
   language constructs. Edits re-highlight only the affected lines, and large files
@@ -96,7 +95,6 @@
 - The theme in use, and the dark and light themes when following the system, are
   named in `settings.json` (`color_theme`, `follow_system_appearance`,
   `dark_color_theme`, `light_color_theme`).
-
 - Ctrl+Q quits on Linux, and Ctrl+0 / Cmd+0 resets the editor font size; these
   keys no longer zoom the whole interface.
 - On macOS, Replace is Cmd+Option+F (Cmd+H hides the app), full screen is
@@ -128,9 +126,6 @@
 - Clicking a window that floats over a split pane no longer switches panes.
 - Git change markers and Tools → Git changes work for files reached through a
   symlinked folder, such as macOS's `/var` → `/private/var`.
-- Saving `settings.json` reloads settings even when the configuration folder is
-  reached through a symlink.
-- Cancelling a build also stops a command the shell was starting at that moment.
 - On macOS, navigate back/forward with Control+- and Control+Shift+-, so
   Option+arrows keep moving by word.
 
