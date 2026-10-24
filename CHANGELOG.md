@@ -16,6 +16,9 @@
 
 ### Fixed
 
+- Pressing a shortcut with an arrow key several times in a row, such as
+  Ctrl+Shift+Down to move a line, could move keyboard focus out of the editor on
+  the third press, so later presses did nothing.
 - Arabic, Hebrew, Chinese, Japanese, Korean, Devanagari, Thai, and other scripts
   missing from the built-in fonts showed empty boxes; hedit now uses the system's
   fonts for them.

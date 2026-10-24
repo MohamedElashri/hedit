@@ -1232,6 +1232,7 @@ impl HeditApp {
             && !self.palette
             && !self.find_focus
             && !self.goto_focus
+            && !ctx.memory(|m| m.has_focus(editor_id))
         {
             ctx.memory_mut(|m| m.request_focus(editor_id));
         }
@@ -1658,7 +1659,9 @@ impl HeditApp {
                         if !wrap {
                             edit = edit.desired_width(f32::INFINITY);
                         }
-                        if self.focus_editor {
+                        // Asking again resets egui's key filter, and the next
+                        // arrow or Tab press would move focus out of the editor.
+                        if self.focus_editor && !ctx.memory(|m| m.has_focus(id)) {
                             ctx.memory_mut(|m| m.request_focus(id));
                         }
                         let line_background = ui.painter().add(egui::Shape::Noop);
@@ -2005,7 +2008,9 @@ impl HeditApp {
                             }
                         }
                         if self.focus_editor {
-                            output.response.request_focus();
+                            if !output.response.has_focus() {
+                                output.response.request_focus();
+                            }
                             self.focus_editor = false;
                         }
                         if restore && buffer.reveal_cursor {

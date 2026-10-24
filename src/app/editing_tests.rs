@@ -515,3 +515,19 @@ fn an_empty_extra_window_removes_its_session_on_close() {
     drop(app);
     assert!(main.exists());
 }
+
+#[test]
+fn repeated_arrow_shortcuts_keep_the_editor_focused() {
+    let (_directory, ctx, mut app) = app_with("one\ntwo\nthree\nfour\n");
+    app.set_selections(vec![hedit::advanced::Selection::caret(0)]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![]);
+    let shift = Modifiers {
+        shift: true,
+        ..Modifiers::COMMAND
+    };
+    for _ in 0..3 {
+        frame(&ctx, &mut app, vec![key(Key::ArrowDown, shift)]);
+    }
+    assert_eq!(app.active().page.text, "two\nthree\nfour\none\n");
+}
