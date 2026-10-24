@@ -115,6 +115,7 @@ pub(super) enum Command {
     Copy,
     Paste,
     PasteHistory,
+    PasteIndent,
     SelectAll,
     SelectLine,
     Duplicate,
@@ -306,6 +307,7 @@ impl Command {
         Self::Copy,
         Self::Paste,
         Self::PasteHistory,
+        Self::PasteIndent,
         Self::SelectAll,
         Self::SelectLine,
         Self::Duplicate,
@@ -529,6 +531,7 @@ impl Command {
             Self::Copy => "Copy",
             Self::Paste => "Paste",
             Self::PasteHistory => "Paste from history…",
+            Self::PasteIndent => "Paste and indent",
             Self::SelectAll => "Select all",
             Self::SelectLine => "Select line",
             Self::Duplicate => "Duplicate selection or line",
@@ -740,6 +743,7 @@ impl Command {
             Self::Copy => "Ctrl+C",
             Self::Paste => "Ctrl+V",
             Self::PasteHistory => "Ctrl+K, Ctrl+V",
+            Self::PasteIndent => "Ctrl+Shift+V",
             Self::SelectAll => "Ctrl+A",
             Self::SelectLine => "Ctrl+L",
             Self::Duplicate => "Ctrl+Shift+D",
@@ -989,9 +993,12 @@ impl HeditApp {
                     && !self.active().follow
                     && !self.active().page.info.paged
             }
-            Command::Undo | Command::Redo | Command::Cut | Command::Paste | Command::Replace => {
-                !self.active().follow
-            }
+            Command::Undo
+            | Command::Redo
+            | Command::Cut
+            | Command::Paste
+            | Command::PasteIndent
+            | Command::Replace => !self.active().follow,
             _ => true,
         }
     }
@@ -1320,6 +1327,8 @@ impl HeditApp {
                     self.batch(batch);
                 }
             }
+            // With nothing selected, the whole line.
+            Command::Copy | Command::Cut if self.copy_lines(ctx, command == Command::Cut) => {}
             Command::Copy | Command::Cut => {
                 let buffer = self.active();
                 let start = buffer.view.anchor.min(buffer.view.head);
@@ -1356,6 +1365,12 @@ impl HeditApp {
                     self.workspace.open[index].restore_cursor = true;
                 }
                 self.focus_editor = true;
+            }
+            Command::PasteIndent => {
+                self.paste_indent = true;
+                self.quality.paste_requested = true;
+                self.focus_editor = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
             }
             Command::Paste => {
                 self.quality.paste_requested = true;

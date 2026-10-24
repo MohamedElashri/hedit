@@ -5,6 +5,7 @@ mod build_panel;
 mod changes;
 mod chords;
 mod chrome;
+mod clipboard_lines;
 mod commands;
 mod controls;
 mod definitions;
@@ -181,6 +182,10 @@ pub struct HeditApp {
     fold_cache: fold_gutter::FoldCache,
     spell: spell_check::SpellCheck,
     macros: macros::Macros,
+    /// Text copied as whole lines, which pastes above the cursor's line.
+    line_clip: Option<String>,
+    /// The next paste is Paste and indent.
+    paste_indent: bool,
     /// Cursors made by Add cursor above/below and the column they keep.
     line_cursor_goal: Option<(Vec<hedit::advanced::Selection>, usize)>,
     live_find: find_live::LiveFind,
@@ -333,6 +338,8 @@ impl HeditApp {
             fold_cache: Default::default(),
             spell: Default::default(),
             macros: Default::default(),
+            line_clip: None,
+            paste_indent: false,
             line_cursor_goal: None,
             live_find: Default::default(),
             goto_origin: None,
@@ -1290,6 +1297,7 @@ impl HeditApp {
         }
         if ctx.memory(|m| m.has_focus(editor_id)) {
             self.completion_keys(ctx);
+            self.clipboard_events(ctx);
             let line_cursor = if cfg!(target_os = "macos") {
                 Modifiers::CTRL | Modifiers::SHIFT
             } else {

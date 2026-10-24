@@ -49,6 +49,8 @@
 - Next and previous change (Ctrl+K, Ctrl+. and Ctrl+K, Ctrl+,) move between the
   blocks marked as changed in the gutter, and Revert change (Ctrl+K, Ctrl+Z) puts
   the block at the cursor back as one undoable edit.
+- Paste and indent (Ctrl+Shift+V) fits pasted lines to the indentation of the
+  line they land on.
 - Paste from history (Ctrl+K, Ctrl+V) lists the last 15 pieces of text copied or
   cut in hedit, with filtering, and pastes the chosen one at every cursor.
 - Fold arrows in the gutter: ▾ beside foldable lines while the pointer is over
@@ -59,6 +61,8 @@
 
 ### Changed
 
+- With nothing selected, Copy and Cut take the whole line, and pasting a line
+  copied that way puts it above the cursor's line (`copy_with_empty_selection`).
 - Change markers in the gutter also work for files outside Git, comparing with
   the saved file, and `mini_diff` chooses what they compare with (`"auto"`,
   `"saved"`, or `"off"`). They now refresh as soon as a file is saved.

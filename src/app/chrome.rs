@@ -851,6 +851,7 @@ impl HeditApp {
             Command::Cut,
             Command::Copy,
             Command::Paste,
+            Command::PasteIndent,
             Command::PasteHistory,
         ] {
             if menu_item(ui, self, command) {

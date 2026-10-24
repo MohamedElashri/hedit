@@ -320,7 +320,12 @@ sits at a saved position.
 
 ## Editing and navigation
 
-Use one or more selections for clipboard operations and indentation.
+Use one or more selections for clipboard operations and indentation. With
+nothing selected, **Ctrl+C** and **Ctrl+X** copy or cut the whole line at each
+cursor, and pasting such a line puts it above the cursor's line instead of in the
+middle of it (`copy_with_empty_selection` turns this off). **Edit → Paste and
+indent** (**Ctrl+Shift+V**) fits the pasted lines to the indentation of the line
+they land on.
 **Edit → Paste from history…** (**Ctrl+K, Ctrl+V**) lists the last 15 pieces of
 text copied or cut in hedit, newest first; type to filter, then press **Enter**
 to paste one at every cursor. The pasted text also goes back on the clipboard.
@@ -943,6 +948,7 @@ you fix it.
 | `auto_match_enabled` | `true` | Close brackets and quotes, wrap selections in them, and step over closers |
 | `match_brackets` | `true` | Outline the bracket matching the one beside the cursor |
 | `match_selection` | `true` | Outline other occurrences of a selected word |
+| `copy_with_empty_selection` | `true` | With nothing selected, Copy and Cut take the whole line |
 | `auto_complete` | `true` | Offer completions in a list while typing |
 | `auto_complete_delay` | `50` | Milliseconds after typing before the list opens, 0–2000 |
 | `auto_complete_commit_on_tab` | `false` | Accept completions with Tab only; Enter starts a new line |
@@ -1233,6 +1239,7 @@ and Quit are in macOS's own hedit menu. Change any shortcut under
 | Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y | Undo / redo |
 | Ctrl+C / Ctrl+X / Ctrl+V | Copy / cut / paste |
 | Ctrl+K, Ctrl+V | Paste from history |
+| Ctrl+Shift+V | Paste and indent |
 | Ctrl+A | Select all in the focused text field |
 | Ctrl+D / Alt+F3 | Select next / all occurrences |
 | Ctrl+Shift+L | Split the selection into lines |

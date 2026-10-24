@@ -1532,3 +1532,55 @@ fn macros_record_typing_and_keys_then_play_and_save() {
     assert_eq!(app.active().page.text, "- one;\n- two;\n- three;");
     super::settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
 }
+
+#[test]
+fn copy_and_cut_without_a_selection_take_whole_lines() {
+    let (_directory, ctx, mut app) = app_with("one\ntwo\nthree");
+    app.set_selections(vec![hedit::advanced::Selection::caret(5)]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![egui::Event::Copy]);
+    assert_eq!(app.paste_history[0], "two\n");
+    // Pasting the line puts it above the cursor's line, cursor kept in place.
+    app.set_selections(vec![hedit::advanced::Selection::caret(9)]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![egui::Event::Paste("two\n".into())]);
+    assert_eq!(app.active().page.text, "one\ntwo\ntwo\nthree");
+    assert_eq!(app.active().view.head, 13);
+    // Cut takes the line away; the last line gains a line break when copied.
+    frame(&ctx, &mut app, vec![egui::Event::Cut]);
+    assert_eq!(app.active().page.text, "one\ntwo\ntwo\n");
+    assert_eq!(app.paste_history[0], "three\n");
+    // With the setting off, nothing is copied.
+    app.settings.copy_with_empty_selection = false;
+    app.set_selections(vec![hedit::advanced::Selection::caret(1)]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![egui::Event::Cut]);
+    assert_eq!(app.active().page.text, "one\ntwo\ntwo\n");
+}
+
+#[test]
+fn paste_and_indent_fits_lines_to_the_cursor_line() {
+    assert_eq!(
+        clipboard_lines::reindent_paste("if x {\n        y();\n\n    }\n", "    "),
+        "if x {\n        y();\n\n    }\n"
+    );
+    assert_eq!(
+        clipboard_lines::reindent_paste("a\n\t\tb\n\t\t\tc", "  "),
+        "a\n  b\n  \tc"
+    );
+    let (_directory, ctx, mut app) = app_with("fn f() {\n    \n}\n");
+    app.set_selections(vec![hedit::advanced::Selection::caret(13)]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![]);
+    app.execute(&ctx, Command::PasteIndent);
+    frame(
+        &ctx,
+        &mut app,
+        vec![egui::Event::Paste("if a {\n  b();\n}".into())],
+    );
+    assert_eq!(
+        app.active().page.text,
+        "fn f() {\n    if a {\n      b();\n    }\n}\n"
+    );
+}

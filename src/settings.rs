@@ -94,6 +94,8 @@ pub struct Settings {
     pub match_selection: bool,
     /// Use the indentation a file already has instead of the defaults.
     pub detect_indentation: bool,
+    /// With nothing selected, Copy and Cut take the whole line.
+    pub copy_with_empty_selection: bool,
     /// Offer completions in a list while typing.
     pub auto_complete: bool,
     /// Milliseconds after typing before the list opens.
@@ -166,6 +168,7 @@ impl Default for Settings {
             match_brackets: true,
             match_selection: true,
             detect_indentation: true,
+            copy_with_empty_selection: true,
             auto_complete: true,
             auto_complete_delay: 50,
             auto_complete_commit_on_tab: false,
