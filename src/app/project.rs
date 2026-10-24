@@ -257,13 +257,14 @@ impl HeditApp {
             {
                 self.refresh_folder();
             }
-            if ui
-                .small_button("×")
-                .on_hover_text(format!(
+            if controls::close_button(
+                ui,
+                &format!(
                     "Hide folder sidebar · {}",
                     Command::FolderSidebar.shortcut()
-                ))
-                .clicked()
+                ),
+            )
+            .clicked()
             {
                 self.settings.show_folders = false;
                 self.sync_folder_view();
@@ -461,15 +462,17 @@ impl HeditApp {
         let Some(create) = &mut self.project.create else {
             return;
         };
-        let mut submit = false;
-        let mut cancel = false;
+        let mut open = true;
+        let mut choice = controls::Choice::None;
         egui::Window::new(if create.directory {
             "New folder"
         } else {
             "New file"
         })
+        .open(&mut open)
         .collapsible(false)
         .resizable(false)
+        .default_width(320.0)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
         .show(ctx, |ui| {
             ui.label(&create.parent);
@@ -479,12 +482,10 @@ impl HeditApp {
                 response.request_focus();
                 create.focus = false;
             }
-            ui.horizontal(|ui| {
-                submit = (ui.button("Create").clicked() || enter) && !create.name.trim().is_empty();
-                cancel = ui.button("Cancel").clicked();
-            });
+            let named = !create.name.trim().is_empty();
+            choice = controls::dialog_buttons(ui, &self.theme, "Create", named, enter);
         });
-        if submit && !self.busy && !self.closing {
+        if choice == controls::Choice::Confirm && !self.busy && !self.closing {
             let create = self.project.create.take().unwrap();
             self.job(ctx, move || {
                 let result = if create.directory {
@@ -494,7 +495,7 @@ impl HeditApp {
                 };
                 result.map(|path| Action::Created(path, create.directory))
             });
-        } else if cancel {
+        } else if choice == controls::Choice::Cancel || !open {
             self.project.create = None;
         }
     }

@@ -3,6 +3,7 @@ mod build_panel;
 mod chords;
 mod chrome;
 mod commands;
+mod controls;
 mod edit_actions;
 #[cfg(test)]
 mod editing_tests;
@@ -1250,7 +1251,7 @@ impl HeditApp {
                 self.pane_layout(ui);
             });
     }
-    /// One banner above all panes; Escape or Dismiss clears it.
+    /// One banner above all panes; Escape or its close button clears it.
     fn error_banner(&mut self, ui: &mut egui::Ui, theme: &Theme) {
         let Some(error) = self.error.clone() else {
             return;
@@ -1260,16 +1261,27 @@ impl HeditApp {
             .fill(theme.error.color().gamma_multiply(0.12))
             .inner_margin(10.0)
             .show(ui, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new(&error).color(theme.error.color()));
-                    if ui.button("Dismiss").on_hover_text("Esc").clicked() {
-                        self.error = None;
-                    }
-                    if error.starts_with(CHECKPOINT_FAILED)
-                        && ui.button("Retry checkpoint").clicked()
-                    {
-                        self.checkpoint(&ctx);
-                    }
+                let retry = error.starts_with(CHECKPOINT_FAILED);
+                ui.horizontal_top(|ui| {
+                    // Leave room on the right for the buttons; the message wraps.
+                    let buttons = if retry { 150.0 } else { 0.0 } + 28.0;
+                    ui.allocate_ui(
+                        egui::vec2((ui.available_width() - buttons).max(120.0), 0.0),
+                        |ui| {
+                            ui.add(
+                                egui::Label::new(RichText::new(&error).color(theme.error.color()))
+                                    .wrap(),
+                            )
+                        },
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                        if controls::close_button(ui, "Dismiss · Esc").clicked() {
+                            self.error = None;
+                        }
+                        if retry && ui.button("Retry checkpoint").clicked() {
+                            self.checkpoint(&ctx);
+                        }
+                    });
                 });
             });
         ui.add_space(6.0);
@@ -2108,7 +2120,9 @@ impl HeditApp {
                 ui.label(RichText::new("CUDA / GPU").strong().color(theme.accent.color()));
                 ui.label(RichText::new("NVIDIA tools · Linux").small().color(theme.muted.color()));
                 if let Some(debug) = &self.debug { ui.label(format!("{:?}", debug.state)); }
-                if ui.small_button("Close panel").clicked() { self.gpu_open = false; }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if controls::close_button(ui, "Hide CUDA panel").clicked() { self.gpu_open = false; }
+                });
             });
             let live = self.debug.as_ref().is_some_and(|d| d.state != State::Exited);
             ui.add_enabled_ui(!live, |ui| {
@@ -2293,6 +2307,7 @@ impl HeditApp {
         if let Some(id) = self.rename_target {
             let mut open = true;
             let mut apply = false;
+            let mut cancel = false;
             egui::Window::new("Name unsaved file")
                 .id(egui::Id::new("unsaved-file-name"))
                 .open(&mut open)
@@ -2320,11 +2335,19 @@ impl HeditApp {
                             .small()
                             .color(self.theme.muted.color()),
                     );
-                    apply = ui
-                        .add_enabled(!self.busy && !self.closing, egui::Button::new("Apply name"))
-                        .clicked()
-                        || enter;
+                    match controls::dialog_buttons(
+                        ui,
+                        &self.theme,
+                        "Apply",
+                        !self.busy && !self.closing,
+                        enter,
+                    ) {
+                        controls::Choice::Confirm => apply = true,
+                        controls::Choice::Cancel => cancel = true,
+                        controls::Choice::None => {}
+                    }
                 });
+            open &= !cancel;
             if apply && !self.busy && !self.closing {
                 if let Some(index) = self
                     .workspace
@@ -4220,7 +4243,7 @@ mod tests {
     }
 
     #[test]
-    fn compact_preferences_keep_title_and_done_visible() {
+    fn compact_preferences_keep_title_and_footer_visible() {
         let directory = tempfile::tempdir().unwrap();
         let (workspace, _) = Workspace::restore(directory.path().into()).unwrap();
         let ctx = egui::Context::default();
@@ -4240,7 +4263,7 @@ mod tests {
                     frame_size(&ctx, &mut app, vec![], size);
                 }
                 let output = frame_size(&ctx, &mut app, vec![], size);
-                for label in ["Preferences", "Done"] {
+                for label in ["Preferences", "Open settings.json"] {
                     let rects: Vec<_> = output
                         .shapes
                         .iter()
@@ -4611,6 +4634,7 @@ mod tests {
                 ("search", [1280.0, 820.0], None),
                 ("build", [1280.0, 820.0], None),
                 ("cuda", [1280.0, 820.0], None),
+                ("dialog", [1280.0, 820.0], None),
             ] {
                 frame(&ctx, &mut app, vec![key(Key::Escape, Modifiers::NONE)]);
                 app.preferences_open = page.is_some();
@@ -4625,6 +4649,14 @@ mod tests {
                 app.gpu_open = name == "cuda";
                 app.appearance.customizing = name == "customize";
                 app.build.open = name == "build";
+                app.goto_open = name == "dialog";
+                app.goto = if name == "dialog" {
+                    "42".into()
+                } else {
+                    String::new()
+                };
+                app.error = (name == "dialog")
+                    .then(|| "Could not save vector_add.cu: permission denied.".into());
                 if name == "build" {
                     app.build.name = "CUDA (nvcc)".into();
                     app.build.status =

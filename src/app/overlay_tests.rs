@@ -1,5 +1,5 @@
 //! Overlay dismissal, Escape order, and keyboard focus.
-use super::tests::{click_at, click_label, finish_app_job, frame, key};
+use super::tests::{click_at, click_label, finish_app_job, frame, key, text_rect};
 use super::*;
 
 const SIZE: egui::Vec2 = egui::vec2(1280.0, 820.0);
@@ -223,5 +223,44 @@ fn a_request_from_another_hedit_process_wakes_the_window() {
             "watcher did not wake the window"
         );
         thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[test]
+fn dialogs_offer_cancel_and_confirm_with_enter() {
+    let (_directory, ctx, mut app) = app_with("one\ntwo\nthree\n");
+    app.execute(&ctx, Command::Goto);
+    frame(&ctx, &mut app, vec![]);
+    click_label(&ctx, &mut app, "Cancel");
+    assert!(!app.goto_open);
+
+    app.execute(&ctx, Command::Goto);
+    frame(&ctx, &mut app, vec![]);
+    // Enter does nothing until the field holds a line number.
+    frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)]);
+    assert!(app.goto_open);
+    frame(&ctx, &mut app, vec![egui::Event::Text("3".into())]);
+    frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)]);
+    finish_app_job(&mut app, &ctx);
+    assert!(!app.goto_open);
+    assert_eq!(app.active().view.head, 8);
+}
+
+#[test]
+fn panels_and_banners_share_one_close_button() {
+    let (_directory, ctx, mut app) = app_with("notes");
+    app.error = Some("Something failed.".into());
+    app.find_open = true;
+    app.build.open = true;
+    let output = frame(&ctx, &mut app, vec![]);
+    // The old text buttons are gone; each surface draws the same ×.
+    for label in ["Dismiss", "×", "Close panel", "Done"] {
+        assert!(
+            !output
+                .shapes
+                .iter()
+                .any(|shape| text_rect(&shape.shape, label).is_some()),
+            "{label}"
+        );
     }
 }

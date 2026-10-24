@@ -161,12 +161,6 @@ impl HeditApp {
                             self.open_settings_file(ctx);
                         }
                         ui.weak("Changes save automatically.");
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button("Done").clicked() {
-                                self.preferences_open = false;
-                                self.focus_editor = true;
-                            }
-                        });
                     });
                 });
             self.preferences_open &= open;
@@ -450,7 +444,7 @@ impl HeditApp {
             return;
         }
         let mut open = true;
-        let mut go = false;
+        let mut choice = controls::Choice::None;
         let shown = egui::Window::new("Go to line")
             .open(&mut open)
             .collapsible(false)
@@ -473,19 +467,19 @@ impl HeditApp {
                     self.goto_focus = false;
                 }
                 let valid = self.goto.parse::<u64>().is_ok_and(|line| line > 0);
-                go = (ui
-                    .add_enabled(!self.busy && valid, egui::Button::new("Go"))
-                    .clicked()
-                    || enter)
-                    && valid;
                 if !valid && !self.goto.is_empty() {
                     ui.colored_label(
                         self.theme.warning.color(),
                         "Enter a positive whole line number.",
                     );
                 }
+                choice =
+                    controls::dialog_buttons(ui, &self.theme, "Go", !self.busy && valid, enter);
             });
-        if go && !self.busy {
+        if choice == controls::Choice::Cancel {
+            open = false;
+        }
+        if choice == controls::Choice::Confirm && !self.busy {
             if self.goto.parse::<u64>().is_ok_and(|line| line > 0) {
                 self.goto_line(ctx);
                 open = false;

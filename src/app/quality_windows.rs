@@ -441,7 +441,7 @@ impl HeditApp {
     fn file_action_window(&mut self, ctx: &egui::Context) {
         let (path, operation) = self.quality.file_action.clone().unwrap();
         let mut open = true;
-        let mut submit = false;
+        let mut choice = controls::Choice::None;
         let title = match operation {
             FileOperation::Rename => "Rename",
             FileOperation::Move => "Move",
@@ -450,13 +450,17 @@ impl HeditApp {
         };
         egui::Window::new(title).open(&mut open).max_width((ctx.screen_rect().width()-32.0).max(300.0)).max_height((ctx.screen_rect().height()-32.0).max(220.0)).vscroll(true).collapsible(false).show(ctx,|ui|{
             ui.label(path.display().to_string());
-            if matches!(operation,FileOperation::Rename|FileOperation::Duplicate){ui.text_edit_singleline(&mut self.quality.file_name);}
+            let mut enter=false;
+            if matches!(operation,FileOperation::Rename|FileOperation::Duplicate){
+                let response=ui.text_edit_singleline(&mut self.quality.file_name);
+                enter=response.lost_focus()&&ui.input(|i|i.key_pressed(Key::Enter));
+            }
             if operation==FileOperation::Trash{ui.label("Open buffers stay recoverable. Restore the disk file using your system trash.");}
-            submit=ui.add_enabled(!self.busy,egui::Button::new(title)).clicked();
+            choice=controls::dialog_buttons(ui,&self.theme,title,!self.busy,enter);
         });
-        if !open {
+        if !open || choice == controls::Choice::Cancel {
             self.quality.file_action = None;
-        } else if submit {
+        } else if choice == controls::Choice::Confirm {
             self.perform_file_action(ctx);
         }
     }

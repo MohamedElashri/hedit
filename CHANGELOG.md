@@ -101,6 +101,14 @@
   Control+Cmd+F, distraction-free mode is Control+Shift+Cmd+F, and Complete word
   is Control+Space (Cmd+Space opens Spotlight). About and Quit appear only in
   macOS's own app menu instead of twice.
+- Panels, bars, and banners share one close button (×) on the right: the Find
+  bar, build results, CUDA panel, folder sidebar, and error banner (which loses
+  its Dismiss button). The Settings window closes from its title bar; the extra
+  Done button is gone.
+- Dialogs end with Cancel and a highlighted default action on the right, which
+  Enter also triggers: Go to line, New file and New folder (which now also has a
+  title-bar close button), Name unsaved file, and Rename, Move, Duplicate, and
+  Move to trash.
 
 ### Fixed
 

@@ -744,7 +744,7 @@ impl HeditApp {
                         self.find_advanced(ctx, true);
                     }
                     ui.toggle_value(&mut self.replace_open, "Replace");
-                    if ui.button("×").on_hover_text("Close search · Esc").clicked() {
+                    if controls::close_button(ui, "Close search · Esc").clicked() {
                         self.find_open = false;
                         self.focus_editor = true;
                     }

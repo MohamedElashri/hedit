@@ -225,7 +225,7 @@ impl HeditApp {
                     }
                     ui.label(RichText::new(&self.build.status).color(self.theme.muted.color()));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        close = ui.button("×").on_hover_text("Hide · Esc").clicked();
+                        close = controls::close_button(ui, "Hide build results · Esc").clicked();
                         if self.build.running() {
                             cancel = ui.button("Cancel").clicked();
                         }

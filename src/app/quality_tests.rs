@@ -294,10 +294,11 @@ fn quality_dialogs_render_at_minimum_window_size_without_editing_the_buffer() {
             // Key bindings are a Settings page now; its footer stays reachable.
             assert!(app.preferences_open);
             let output = frame_size(&ctx, &mut app, vec![], egui::vec2(720.0, 480.0));
-            assert!(output
-                .shapes
-                .iter()
-                .any(|shape| text_rect(&shape.shape, "Done").is_some()));
+            assert!(output.shapes.iter().any(|shape| text_rect(
+                &shape.shape,
+                "Open settings.json"
+            )
+            .is_some()));
         }
         if command == Command::ProjectSettings {
             let output = frame_size(&ctx, &mut app, vec![], egui::vec2(720.0, 480.0));
