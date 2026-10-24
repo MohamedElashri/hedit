@@ -12,6 +12,7 @@ mod edit_actions;
 mod editing_tests;
 mod editor_layout;
 mod find_live;
+mod fold_gutter;
 mod goto_anything;
 #[cfg(test)]
 mod goto_tests;
@@ -173,6 +174,7 @@ pub struct HeditApp {
     /// The view, name range, and pointer position of a name the pointer rests on.
     hover_target: Option<(u64, (usize, usize), egui::Pos2)>,
     hover: Option<definitions::Hover>,
+    fold_cache: fold_gutter::FoldCache,
     /// Cursors made by Add cursor above/below and the column they keep.
     line_cursor_goal: Option<(Vec<hedit::advanced::Selection>, usize)>,
     live_find: find_live::LiveFind,
@@ -323,6 +325,7 @@ impl HeditApp {
             caret_screen: None,
             hover_target: None,
             hover: None,
+            fold_cache: Default::default(),
             line_cursor_goal: None,
             live_find: Default::default(),
             goto_origin: None,
@@ -1503,6 +1506,28 @@ impl HeditApp {
                 })
             });
         }
+        // The editor's right-click menu, worked out before borrowing the buffer.
+        let context_menu: Vec<Vec<(Command, &str, String, bool)>> = [
+            &[
+                Command::Cut,
+                Command::Copy,
+                Command::Paste,
+                Command::PasteHistory,
+            ][..],
+            &[Command::SelectAll, Command::ExpandSelection][..],
+            &[Command::GotoDefinition, Command::GotoReferences][..],
+            &[Command::ToggleComment, Command::ToggleBlockComment][..],
+            &[Command::CopyPath, Command::RevealInSidebar][..],
+        ]
+        .iter()
+        .map(|group| {
+            group
+                .iter()
+                .map(|&c| (c, c.label(), self.shortcut_text(c), self.command_enabled(c)))
+                .collect()
+        })
+        .collect();
+        let mut context_command = None;
         let index = self.workspace.active;
         let buffer = &mut self.workspace.open[index];
         let base_id = egui::Id::new(("editor", buffer.page.info.id, buffer.page.start));
@@ -1676,6 +1701,31 @@ impl HeditApp {
         if self.settings.show_minimap && map_area.width() > 300.0 {
             editor_area.max.x -= 76.0;
         }
+        // Fold arrows: open blocks while the pointer is over the gutter, and
+        // folded blocks always.
+        let gutter_hovered = ctx
+            .pointer_hover_pos()
+            .is_some_and(|p| editor_area.contains(p) && p.x < editor_area.left() + gutter + 4.0);
+        let fold_heads = if gutter > 0.0
+            && !buffer.page.info.paged
+            && (gutter_hovered || !buffer.view.folds.is_empty())
+        {
+            self.fold_cache.heads(
+                buffer.view.id,
+                buffer.page.info.revision,
+                buffer.view.tab_size.unwrap_or(4) as usize,
+                &buffer.page.text,
+            )
+        } else {
+            Arc::default()
+        };
+        let folded_heads: Vec<(usize, hedit::advanced::Fold)> = buffer
+            .view
+            .folds
+            .iter()
+            .map(|&f| (fold_gutter::header_line(&buffer.page.text, f), f))
+            .collect();
+        let mut fold_click: Option<(hedit::advanced::Fold, bool)> = None;
         // Move the text out for this frame instead of copying a page of up to
         // 2 MiB; it goes back, possibly edited, right after the editor is drawn.
         let old = std::mem::take(&mut buffer.page.text);
@@ -1999,7 +2049,7 @@ impl HeditApp {
                         if gutter > 0.0 {
                             gutter_painter.rect_filled(gutter_rect, 0.0, gutter_background);
                             // The text's row is clipped to the text, which would
-                            // make the gutter's markers unreachable by the pointer.
+                            // make the gutter's markers and arrows unreachable by the pointer.
                             let mut gutter_ui =
                                 ui.new_child(egui::UiBuilder::new().max_rect(gutter_rect));
                             gutter_ui.set_clip_rect(gutter_rect);
@@ -2055,6 +2105,52 @@ impl HeditApp {
                                                         ui.set_max_width(620.0);
                                                         ui.label(RichText::new(hunk).monospace());
                                                     });
+                                            }
+                                        }
+                                        let folded = folded_heads
+                                            .iter()
+                                            .find(|(line, _)| *line == source_line);
+                                        let open = (gutter_hovered && folded.is_none())
+                                            .then(|| {
+                                                fold_heads
+                                                    .iter()
+                                                    .find(|(line, _)| *line == source_line)
+                                            })
+                                            .flatten();
+                                        if let Some(&(_, fold)) = folded.or(open) {
+                                            let center =
+                                                egui::pos2(gutter_rect.right() - 6.0, position.y);
+                                            let target = egui::Rect::from_center_size(
+                                                center,
+                                                egui::vec2(12.0, row.rect.height()),
+                                            );
+                                            let response = gutter_ui
+                                                .interact(
+                                                    target,
+                                                    gutter_ui.id().with((
+                                                        "fold-arrow",
+                                                        buffer.view.id,
+                                                        source_line,
+                                                    )),
+                                                    egui::Sense::click(),
+                                                )
+                                                .on_hover_text(if folded.is_some() {
+                                                    "Unfold"
+                                                } else {
+                                                    "Fold"
+                                                });
+                                            fold_gutter::arrow(
+                                                &gutter_painter,
+                                                center,
+                                                folded.is_some(),
+                                                if response.hovered() {
+                                                    gutter_text
+                                                } else {
+                                                    gutter_color
+                                                },
+                                            );
+                                            if response.clicked() {
+                                                fold_click = Some((fold, folded.is_some()));
                                             }
                                         }
                                         gutter_painter.text(
@@ -2214,6 +2310,42 @@ impl HeditApp {
                                 self.generation = self.generation.wrapping_add(1);
                             }
                         }
+                        // Right-clicking outside the selection moves the cursor there.
+                        if output.response.secondary_clicked() {
+                            if let Some(at) = output.response.interact_pointer_pos() {
+                                let relative = at - output.galley_pos;
+                                let index = bidi_view::hit(&output.galley, &bidi_rows, relative)
+                                    .unwrap_or_else(|| {
+                                        output.galley.cursor_from_pos(relative).ccursor.index
+                                    });
+                                let source = projection.source(index);
+                                let (a, b) = (
+                                    buffer.view.anchor.min(buffer.view.head),
+                                    buffer.view.anchor.max(buffer.view.head),
+                                );
+                                if a == b || source < a || source > b {
+                                    buffer.view.anchor = source;
+                                    buffer.view.head = source;
+                                    buffer.view.selections.clear();
+                                    buffer.restore_cursor = true;
+                                }
+                            }
+                        }
+                        output.response.context_menu(|ui| {
+                            for (n, group) in context_menu.iter().enumerate() {
+                                if n > 0 {
+                                    ui.separator();
+                                }
+                                for (command, label, shortcut, enabled) in group {
+                                    let button =
+                                        egui::Button::new(*label).shortcut_text(shortcut.as_str());
+                                    if ui.add_enabled(*enabled, button).clicked() {
+                                        context_command = Some(*command);
+                                        ui.close_menu();
+                                    }
+                                }
+                            }
+                        });
                         // Backend history is authoritative across pages. Do not retain a
                         // second, potentially large TextEdit undo history.
                         output.state.clear_undoer();
@@ -2235,6 +2367,21 @@ impl HeditApp {
                 None
             }
         };
+        if let Some((fold, folded)) = fold_click.filter(|_| previous.is_none()) {
+            if folded {
+                buffer.view.folds.retain(|f| *f != fold);
+            } else {
+                buffer.view.folds.push(fold);
+                // A cursor inside would unfold it again; keep it at the header.
+                if fold.start < buffer.view.head && buffer.view.head < fold.end {
+                    buffer.view.anchor = fold.start;
+                    buffer.view.head = fold.start;
+                }
+                buffer.view.selections.clear();
+            }
+            buffer.restore_cursor = true;
+            self.generation = self.generation.wrapping_add(1);
+        }
         let mut minimap_target = None;
         if self.settings.show_minimap && map_area.width() > 300.0 {
             let map = egui::Rect::from_min_max(
@@ -2330,6 +2477,10 @@ impl HeditApp {
                     ));
                 }
             }
+        }
+        if let Some(command) = context_command {
+            self.focus_editor = true;
+            self.execute(ui.ctx(), command);
         }
     }
     fn gpu(&mut self, ctx: &egui::Context) {

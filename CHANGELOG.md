@@ -28,6 +28,11 @@
   cursor, across open files and folders; one definition opens directly, several
   are listed. Resting the pointer on a name lists its definitions
   (`show_definitions`).
+- Fold arrows in the gutter: ▾ beside foldable lines while the pointer is over
+  the gutter, and ▸ beside folded ones; click to fold or unfold.
+- A right-click menu in the editor with clipboard, selection, Go to definition,
+  comment, and file path commands. Tabs add Copy file path and Reveal in sidebar,
+  which opens the file's folders in the folder tree and scrolls to it.
 - Right-to-left text: Arabic and Hebrew follow the Unicode Bidirectional
   Algorithm, Arabic letters join (including lam-alef), and right-to-left text
   mixes with English and numbers on the same line. Clicks, the caret, Left and

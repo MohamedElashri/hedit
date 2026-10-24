@@ -25,6 +25,8 @@ pub(super) enum Command {
     PinTab,
     CloseOthers,
     CloseRight,
+    CopyPath,
+    RevealInSidebar,
     NextTab,
     PreviousTab,
     RecentTab,
@@ -201,6 +203,8 @@ impl Command {
         Self::PinTab,
         Self::CloseOthers,
         Self::CloseRight,
+        Self::CopyPath,
+        Self::RevealInSidebar,
         Self::NextTab,
         Self::PreviousTab,
         Self::RecentTab,
@@ -403,6 +407,8 @@ impl Command {
             Self::PinTab => "Pin tab",
             Self::CloseOthers => "Close other tabs",
             Self::CloseRight => "Close tabs to the right",
+            Self::CopyPath => "Copy file path",
+            Self::RevealInSidebar => "Reveal in sidebar",
             Self::NextTab => "Next tab",
             Self::PreviousTab => "Previous tab",
             Self::RecentTab => "Next recently used tab",
@@ -854,6 +860,7 @@ impl HeditApp {
             Command::Reindent => hedit::text_commands::reindents(self.active().language().id()),
             Command::CloseFolder | Command::RefreshFolder => !self.workspace.folders.is_empty(),
             Command::Rename => self.active().page.info.path.is_none(),
+            Command::CopyPath | Command::RevealInSidebar => self.active().page.info.path.is_some(),
             Command::Reopen => !self.workspace.closed.is_empty(),
             Command::Follow => {
                 self.active().page.info.path.is_some() && !self.active().page.info.dirty
@@ -967,6 +974,13 @@ impl HeditApp {
             }
             Command::CloseOthers => self.close_tab_group(false),
             Command::CloseRight => self.close_tab_group(true),
+            Command::CopyPath => {
+                if let Some(path) = self.active().page.info.path.clone() {
+                    ctx.copy_text(path);
+                    self.notice = "File path copied.".into();
+                }
+            }
+            Command::RevealInSidebar => self.reveal_in_sidebar(),
             Command::NextTab => self.step_tab(true),
             Command::PreviousTab => self.step_tab(false),
             Command::RecentTab => self.cycle_recent(false),

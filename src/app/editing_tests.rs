@@ -1032,6 +1032,101 @@ fn editor_rect(ctx: &egui::Context, app: &HeditApp) -> egui::Rect {
 }
 
 #[test]
+fn fold_arrows_in_the_gutter_fold_and_unfold_blocks() {
+    let (_directory, ctx, mut app) = app_with("fn a() {\n    one();\n    two();\n}\nfn b() {}\n");
+    app.set_selections(vec![hedit::advanced::Selection::caret(0)]);
+    frame(&ctx, &mut app, vec![]);
+    let rect = editor_rect(&ctx, &app);
+    let row = app.settings.font_size * 1.3;
+    let arrow = egui::pos2(rect.left() - 6.0, rect.top() + row / 2.0);
+    // Arrows appear while the pointer is over the gutter.
+    frame(&ctx, &mut app, vec![egui::Event::PointerMoved(arrow)]);
+    frame(&ctx, &mut app, vec![egui::Event::PointerMoved(arrow)]);
+    let click = |pressed| egui::Event::PointerButton {
+        pos: arrow,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: Modifiers::NONE,
+    };
+    frame(&ctx, &mut app, vec![click(true)]);
+    frame(&ctx, &mut app, vec![click(false)]);
+    assert_eq!(
+        app.active().view.folds.len(),
+        1,
+        "the block under line 1 folds"
+    );
+    frame(&ctx, &mut app, vec![click(true)]);
+    frame(&ctx, &mut app, vec![click(false)]);
+    assert!(
+        app.active().view.folds.is_empty(),
+        "the folded arrow unfolds it"
+    );
+}
+
+#[test]
+fn editor_menu_and_tab_menu_commands() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(directory.path())
+        .unwrap()
+        .join("project");
+    std::fs::create_dir_all(root.join("src/deep")).unwrap();
+    let file = root.join("src/deep/main.rs");
+    std::fs::write(&file, "fn main() {}\n").unwrap();
+    let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    assert!(
+        !app.command_enabled(Command::CopyPath),
+        "unsaved files have no path"
+    );
+    app.set_folder(hedit::folder::read_directory(root.clone()).unwrap());
+    app.open(&ctx, Some(file.clone()));
+    finish_app_job(&mut app, &ctx);
+    app.settings.show_sidebar = false;
+    app.execute(&ctx, Command::RevealInSidebar);
+    assert!(app.settings.show_sidebar && app.settings.show_folders);
+    let src = root.join("src").to_string_lossy().into_owned();
+    let deep = root.join("src/deep").to_string_lossy().into_owned();
+    assert!(app.project.expanded.contains(&src) && app.project.expanded.contains(&deep));
+    let output = {
+        app.execute(&ctx, Command::CopyPath);
+        frame(&ctx, &mut app, vec![])
+    };
+    let _ = output;
+    assert_eq!(
+        app.paste_history.first().map(String::as_str),
+        Some(file.to_str().unwrap())
+    );
+    // Right-clicking moves the cursor to the click and opens the menu.
+    frame(&ctx, &mut app, vec![]);
+    let rect = editor_rect(&ctx, &app);
+    let at = egui::pos2(rect.left() + 40.0, rect.top() + 6.0);
+    let press = |pressed| egui::Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Secondary,
+        pressed,
+        modifiers: Modifiers::NONE,
+    };
+    frame(&ctx, &mut app, vec![egui::Event::PointerMoved(at)]);
+    frame(&ctx, &mut app, vec![press(true)]);
+    frame(&ctx, &mut app, vec![press(false)]);
+    assert!(app.active().view.head > 0, "the cursor moved to the click");
+    let output = frame(&ctx, &mut app, vec![]);
+    let texts: Vec<String> = output
+        .shapes
+        .iter()
+        .filter_map(|c| match &c.shape {
+            egui::Shape::Text(t) => Some(t.galley.text().to_owned()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        texts.iter().any(|t| t == "Go to definition"),
+        "the menu is open"
+    );
+}
+
+#[test]
 fn hovering_a_git_marker_shows_its_change() {
     let (_directory, ctx, mut app) = app_with("one\ntwo\n");
     let id = app.active().view.id;

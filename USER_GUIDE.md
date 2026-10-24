@@ -218,7 +218,12 @@ tab by its position. On macOS these are **Control+Tab**, **Control+PageDown**,
 and **Cmd+1** to **Cmd+9**.
 
 Drag a tab to reorder it. Its context menu offers **Pin tab**, **Close other tabs**,
-and **Close tabs to the right**; group closing keeps pinned tabs. A single click
+**Close tabs to the right**, **Copy file path**, and **Reveal in sidebar**, which
+opens the folders above the file in the folder tree and scrolls to it; group
+closing keeps pinned tabs. Right-click the text for Cut, Copy, Paste, Paste from
+history, Select all, Expand selection, Go to definition and references, the
+comment commands, Copy file path, and Reveal in sidebar. Right-clicking outside
+the selection first moves the cursor there. A single click
 on a sidebar file opens an italic preview tab, replacing the previous clean,
 unpinned preview. Double-click, pin, or edit the preview to keep it.
 
@@ -463,7 +468,10 @@ page across views.
 
 **View → Code folding** folds the current indentation block or selection, folds
 all indentation blocks, and unfolds one or all regions. **Ctrl+Shift+[** folds;
-**Ctrl+Shift+]** unfolds. Click a folded marker to expand it. Folded text remains
+**Ctrl+Shift+]** unfolds. Click a folded marker to expand it. With line numbers
+shown, moving the pointer over the gutter shows ▾ arrows beside lines that start
+an indented block; click one to fold the block, and click the ▸ beside a folded
+line to unfold it. Folded text remains
 in the file, in copy operations, and in recovery. Editing clears fold ranges so
 stale ranges cannot hide unrelated text. A search or cursor jump into a fold
 reveals it. Automatic folds use indentation rather than a language parser;

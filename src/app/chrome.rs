@@ -190,7 +190,17 @@ impl HeditApp {
                                                         Command::PinTab,
                                                         Command::CloseOthers,
                                                         Command::CloseRight,
+                                                        Command::CopyPath,
+                                                        Command::RevealInSidebar,
                                                     ] {
+                                                        if matches!(
+                                                            command,
+                                                            Command::CopyPath
+                                                                | Command::RevealInSidebar
+                                                        ) && buffer.page.info.path.is_none()
+                                                        {
+                                                            continue;
+                                                        }
                                                         if ui.button(command.label()).clicked() {
                                                             select = Some(index);
                                                             action = Some(command);

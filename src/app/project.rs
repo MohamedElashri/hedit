@@ -29,6 +29,8 @@ pub(super) struct ProjectBrowser {
     listings: HashMap<String, std::sync::Arc<Result<FolderListing, String>>>,
     pending: HashSet<String>,
     pub expanded: BTreeSet<String>,
+    /// A file row to scroll into view once it is drawn.
+    pub reveal: Option<String>,
     generation: u64,
     tx: Sender<ListingResult>,
     rx: Receiver<ListingResult>,
@@ -52,6 +54,7 @@ impl ProjectBrowser {
                 .iter()
                 .flat_map(|f| f.expanded.iter().cloned())
                 .collect(),
+            reveal: None,
             generation: 0,
             tx,
             rx,
@@ -183,6 +186,37 @@ impl HeditApp {
             .insert(listing.path.clone(), std::sync::Arc::new(Ok(listing)));
         self.settings.show_sidebar = true;
         self.settings.show_folders = true;
+        self.sync_folder_view();
+    }
+    /// Show the active file in the folder tree, opening the folders above it.
+    pub(super) fn reveal_in_sidebar(&mut self) {
+        let Some(path) = self.active().page.info.path.clone() else {
+            return;
+        };
+        let file = std::path::Path::new(&path);
+        let Some(root) = self
+            .workspace
+            .folders
+            .iter_mut()
+            .filter(|f| file.starts_with(&f.path))
+            .max_by_key(|f| f.path.len())
+        else {
+            self.notice = "This file is not in an open folder.".into();
+            return;
+        };
+        root.collapsed = false;
+        let root = PathBuf::from(&root.path);
+        for folder in file.ancestors().skip(1) {
+            if !folder.starts_with(&root) || folder == root {
+                break;
+            }
+            self.project
+                .expanded
+                .insert(folder.to_string_lossy().into_owned());
+        }
+        self.settings.show_sidebar = true;
+        self.settings.show_folders = true;
+        self.project.reveal = Some(path);
         self.sync_folder_view();
     }
     pub(super) fn refresh_folder(&mut self) {
@@ -428,6 +462,10 @@ impl HeditApp {
                     symlink: entry.is_symlink,
                 },
             );
+            if self.project.reveal.as_deref() == Some(entry.path.as_str()) {
+                response.scroll_to_me(Some(egui::Align::Center));
+                self.project.reveal = None;
+            }
             if response.clicked() {
                 if entry.is_directory {
                     if expanded {
