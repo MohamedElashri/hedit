@@ -26,6 +26,14 @@ See the [changelog](CHANGELOG.md) for what each release adds.
   icons distinguish directories from documents. Hide the tree with **Ctrl+Alt+B**;
   your folders, expanded directories, and visibility return after restarting.
 
+- **Write code quickly.** Get completions as you type, fill in snippet fields
+  with Tab, edit with multiple cursors, jump to definitions and references with
+  **F12**, record and replay macros, and step through changed lines against Git.
+  The command palette (**Ctrl+Shift+P**) finds any command from a few letters.
+- **Write in any language.** Arabic and Hebrew read right to left with joined
+  letters, other scripts fall back to system fonts, and the built-in spell checker
+  underlines English typos in prose, comments, and strings.
+
 - **Keep notes for later.** Create a new file without choosing a path, name its
   tab, and return to it after restarting. Browse the shelf to reopen closed files.
 - **Inspect large logs.** Read files in manageable pages, follow new output, search
@@ -44,7 +52,8 @@ See the [changelog](CHANGELOG.md) for what each release adds.
 - **Make it comfortable.** Pick from popular editor themes such as One Dark,
   Dracula, Solarized, Gruvbox, Nord, Tokyo Night, Catppuccin, and GitHub, preview
   them live, follow the system's light or dark mode, and save your own color
-  variations. Adjust font size, line numbers, and word wrap.
+  variations. Choose any installed font, and adjust font size, line numbers, and
+  word wrap.
   Familiar menus and a single Preferences window keep settings easy to find.
 - **Work with CUDA.** Read highlighted C/C++ and CUDA source, control CUDA-GDB,
   run Compute Sanitizer, and inspect GPU information from the CUDA panel.

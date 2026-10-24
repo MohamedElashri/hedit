@@ -872,7 +872,9 @@ hedit finds system fonts for scripts its built-in fonts lack, such as Arabic,
 Persian, Urdu, Hebrew, Devanagari, Thai, Chinese, Japanese, and Korean, so their
 text appears instead of empty boxes. On Linux it asks fontconfig and prefers Noto
 fonts; on macOS it uses the system fonts. Install a font package such as
-`fonts-noto` if a script still shows boxes.
+`fonts-noto` if a script still shows boxes. This also works with an editor font
+you choose (see **Editor font…** under [Editing and navigation](#editing-and-navigation)): any
+character it lacks comes from these fonts.
 
 Right-to-left text follows the Unicode Bidirectional Algorithm, and Arabic letters
 join into their connected forms, including the lam-alef ligature. The file keeps
@@ -921,7 +923,7 @@ Settings are grouped in one window, and every change saves automatically:
 | Page | Settings and actions |
 | --- | --- |
 | General | Tab bar, status bar, sidebar, folders in the sidebar |
-| Editor | Font size, line numbers, current line, whitespace, indentation guides, minimap, wrapping, rulers, typing behavior |
+| Editor | Font and font size, line numbers, current line, whitespace, indentation guides, minimap, wrapping, rulers, typing behavior, completions, definitions on hover, spell check, change markers |
 | Formatting | Indentation, tab size, whitespace and final newline on save, line endings, encoding, and the same rules per syntax |
 | Folders & Search | Folders and files hidden from the folder tree and searches, default find options |
 | Appearance | Theme gallery, system light/dark switching, custom colors, saved themes, import/export |

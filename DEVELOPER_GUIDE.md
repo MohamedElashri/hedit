@@ -626,10 +626,13 @@ forked child from briefly retaining an inherited recovery lock before exec.
 Search uses the shared regex engine with Unicode boundaries and capture-group
 replacement. Folder workers honor Git ignore files, deduplicate overlapping
 roots, skip personal `.hedit-workspace` files, and cap files/results/retained text.
-Replacement plans fingerprint original bytes. Applying rechecks disk and buffer
-state, skips dirty/followed buffers, and commits candidate documents only after a
-successful guarded save. Changes across several files are individually atomic,
-with partial success reported; unopened files have no retained editor undo.
+Folder search reads open, fully loaded buffers from the editor and other files
+from disk. Replacement plans fingerprint original bytes. Open buffers are edited
+in place as one undoable edit when their text still equals the plan's; files that
+are not open are written only when their hash still matches, and each write is
+recorded so Undo replacements can restore it while the file is unchanged since.
+Changes across several files are individually atomic, with partial success
+reported.
 
 Project definitions hold roots and settings; the adjacent workspace holds bounded
 personal text/views and remaps restored document IDs in split-pane state. Current
@@ -647,9 +650,12 @@ to 64 undo/redo states and 32 MiB in each direction. Historical text is coalesce
 into immutable, content-addressed sources so typing does not multiply open file
 descriptors or manifest entries. Paged history remains process-local.
 
-Git uses bounded read-only subprocesses and background refresh. Symbol navigation
-uses source-line heuristics; completion uses open buffers, and snippets support
-selection insertion plus a final cursor. These features do not require an LSP.
+Git uses bounded read-only subprocesses and background refresh; change markers
+compare with HEAD, or with the saved file (`mini_diff`). Symbol navigation and Go
+to definition use source-line heuristics. Completion ranks words from an index of
+open buffers built off the UI thread, and snippets support fields, mirrors,
+selection insertion, and a final cursor. Spell checking uses the bundled en_US
+dictionary on a worker thread. These features do not require an LSP.
 Run `cargo test quality` for the backend/UI contracts. To inspect native layouts:
 
 ```sh
