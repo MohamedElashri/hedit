@@ -1,688 +1,211 @@
 # hedit developer guide
 
-Build, maintain, and contribute to hedit. For using the application, see the
-[user guide](USER_GUIDE.md).
+Build, test, and release hedit. For using it, see the [user guide](USER_GUIDE.md).
 
 - [Build and install](#build-and-install)
-- [Checks and visual review](#checks-and-visual-review)
+- [Checks](#checks)
 - [macOS builds](#macos-builds)
-- [Architecture](#architecture)
-- [Recovery and compatibility](#recovery-and-compatibility)
-- [CUDA transport](#cuda-transport)
+- [Code map](#code-map)
+- [Rules to keep](#rules-to-keep)
 - [Themes and branding](#themes-and-branding)
-- [Packaging and CI](#packaging-and-ci)
-- [Manual updater](#manual-updater)
-- [Contribution guidelines](#contribution-guidelines)
-- [Roadmap](#roadmap)
+- [Packaging and releases](#packaging-and-releases)
 - [Provenance and license](#provenance-and-license)
 
 ## Build and install
 
-Requires Rust 1.92 or newer, GNU Make, and Python 3.11 or newer for development
-scripts. CI and release builds use Rust 1.92.0 and Python 3.12; use those versions
-for matching local checks. The application uses eframe/egui with OpenGL on Linux
-and builds through Cargo. Keep the build free of a web frontend, Node.js, and npm.
-
-Building needs only a C compiler (for the bundled Oniguruma regex engine): X11,
-Wayland, and OpenGL libraries are loaded when the editor starts, so their
-development packages are not needed to build. On Debian/Ubuntu:
+You need Rust 1.92 or newer, GNU Make, a C compiler (for the bundled Oniguruma
+regex engine), and Python 3.11 or newer for the development scripts. CI uses
+Rust 1.92.0 and Python 3.12. X11, Wayland, and OpenGL libraries load at run time,
+so their development packages are not needed. Keep the project free of Node.js,
+npm, and web frontends.
 
 ```sh
-sudo apt-get install build-essential
-make dev
-make run ARGS='--session-dir /tmp/hedit-development'
+sudo apt-get install build-essential   # Debian/Ubuntu
+make dev                               # debug build
+make run ARGS='--session-dir /tmp/hedit-dev'
+make build                             # release build
+make install                           # into ~/.local; set PREFIX to change it
+make install DESTDIR=/tmp/stage PREFIX=/usr   # staged, to inspect the layout
 ```
 
-All editor launches, including `make run`, re-exec in an independent OS session, disconnect terminal
-streams, and return after native window initialization. The child alone acquires
-the recovery lock; stdin is handed off through a private temporary spool and
-checkpointed before window creation. Startup failures return to the launcher;
-later stderr diagnostics append to `hedit.log` in the session directory.
+Every launch, including `make run`, re-executes itself detached from the
+terminal and returns once the window is up; later errors go to `hedit.log` in the
+session directory. Linux is the validated platform; macOS builds and passes CI
+but still needs hands-on GUI review; Windows is untested.
 
-X11 and Wayland are enabled. Native file dialogs use the desktop's XDG portal.
-CUDA and NVIDIA drivers are optional external tools, not editor build dependencies.
-Linux is runtime-validated. Universal macOS packaging is configured, with native
-validation pending; Windows remains unverified.
+## Checks
 
-```sh
-make build
-make install
-make package
-```
-
-`make install` defaults to `~/.local`; override `PREFIX` with an absolute path.
-Use a staging root to inspect installation without changing your home:
-
-```sh
-make install DESTDIR=/tmp/hedit-stage PREFIX=/usr
-/tmp/hedit-stage/usr/bin/hedit --version
-```
-
-Development scripts use Python's standard library; the installed application
-does not require Python. Run `make` or `make help` to list the available commands.
-
-## Checks and visual review
-
-```sh
-make ci
-```
-
-Run `make ci` **before committing**. It checks formatting, clippy warnings,
-the native-only policy, documentation links, Python/shell syntax, Rust tests,
-and offline installer tests. It then builds a release, creates the archive and
-checksum, and verifies package extraction, installation to a temporary prefix,
-and the installed executable. A failed command stops the check with a nonzero exit.
-
-Use narrower targets while working:
+Run `make ci` before committing. It checks formatting, Clippy with warnings
+denied, the native-only policy, documentation links, script syntax, Rust tests,
+and the offline installer tests, then builds and smoke-tests a release package.
 
 | Command | Purpose |
 | --- | --- |
-| `make help` | List targets and configurable variables; also the default for `make` |
-| `make dev` / `make build` | Debug / release build |
-| `make run ARGS='--new'` | Run the editor with arguments |
-| `make fmt` / `make fmt-check` | Apply / check Rust formatting |
-| `make static` | Quick checks that need no compiling: formatting, policy, docs, scripts |
-| `make clippy` | Clippy with warnings denied |
-| `make lint` | `make static`, then clippy |
-| `make docs` | Check links, images, and local headings |
-| `make test` | Rust tests and offline release-installer tests |
-| `make test-macos` | Tests that apply on macOS (used by the CI macOS job) |
-| `make check` | Lint and tests without a release build |
-| `make package` | Build and package a release under `dist/` |
-| `make smoke` | Build and test a package in a temporary installation |
-| `make ci` | Full pre-commit and GitHub CI validation |
-| `make release-check RELEASE_TAG=vX.Y.Z` | Validate a release tag against `Cargo.toml` |
-| `make workflow-lint` | Optional workflow validation; requires `actionlint` |
-| `make clean` | Remove Cargo build artifacts |
+| `make static` | Formatting, policy, docs, and script checks; no compiling |
+| `make lint` | `make static`, then Clippy |
+| `make test` | Rust tests and offline installer tests |
+| `make test-macos` | The tests that apply on macOS (the CI macOS job) |
+| `make check` | Lint and tests, without a release build |
+| `make package` / `make smoke` | Build a release package under `dist/` / install it in a temporary prefix and run it |
+| `make release-check RELEASE_TAG=vX.Y.Z` | Check a tag against `Cargo.toml` |
+| `make help` | Every target and variable (`CARGO`, `PYTHON`, `PREFIX`, `DESTDIR`, `ARGS`) |
 
-Override `CARGO` or `PYTHON` when needed. `PREFIX` and `DESTDIR` control installation;
-`ARGS` passes editor arguments. `ACTIONLINT` can point to a specific actionlint
-executable. `make clean` keeps installed files, release archives, and session data.
-
-Tests cover unsaved/closed-buffer recovery, custom names, bookmarks, old session
-metadata, process locks, corrupt manifests, failed restores/checkpoints, external
-writes, atomic saves, Unicode, search boundaries, themes, and debugger transport.
-A sparse 3 GiB file exercises bounded opening. A child process is killed after a
-checkpoint to verify persistence and lock release.
-
-### Headless layout review
+Tests run in temporary directories and never touch your session. Some are
+ignored by default because they write files or measure time:
 
 ```sh
-HEDIT_PREVIEW_DIR=/tmp/hedit-previews cargo test --locked --bin hedit export_theme_previews -- --ignored
-rsvg-convert /tmp/hedit-previews/hedit-paper-appearance.svg -o /tmp/hedit-paper.png
-```
+# Layout previews as SVG (system fonts stand in for egui's)
+HEDIT_PREVIEW_DIR=/tmp/previews cargo test --locked --bin hedit export_theme_previews -- --ignored
 
-These SVG exports preserve egui layout and colors but substitute system fonts
-and omit some GPU meshes/effects. They complement desktop testing. X11/Wayland
-visual checks, accessibility review, and NVIDIA hardware validation remain open.
-
-The README screenshots are drawn the same way, from a real window rendered in
-software at twice the resolution. Regenerate them after interface changes:
-
-```sh
-HEDIT_PREVIEW_DIR=/tmp/hedit-shots cargo test --locked --release --bin hedit export_readme_screenshots -- --ignored
+# The README screenshots, rendered in software at 2x
+HEDIT_PREVIEW_DIR=/tmp/shots cargo test --locked --release --bin hedit export_readme_screenshots -- --ignored
 for theme in dark light; do
-    python3 scripts/ppm-to-png.py /tmp/hedit-shots/screenshot-$theme.ppm docs/images/screenshot-$theme.png
+    python3 scripts/ppm-to-png.py /tmp/shots/screenshot-$theme.ppm docs/images/screenshot-$theme.png
 done
-```
 
-For a repeatable CPU timing check, run
-`cargo test --locked --bin hedit profile_syntax_picker -- --ignored --nocapture`.
-This opens the picker over a 231 KB CUDA document and reports the mean time for
-20 hover frames. It measures headless rendering work, not desktop input latency.
+# CPU timings for the syntax menu and for typing with completions on
+cargo test --locked --release --bin hedit profile_ -- --ignored --nocapture
+```
 
 ## macOS builds
 
-The release workflow produces one `hedit-X.Y.Z-macos-universal.zip` containing
-`hedit.app`, with native Apple Silicon and Intel slices. The deployment target is
-macOS 11.0. On a Mac with Xcode's command-line tools and Rust installed:
+Releases ship one `hedit-X.Y.Z-macos-universal.zip` with an Apple Silicon and
+Intel `hedit.app` (macOS 11 or newer). On a Mac with Xcode's command-line tools:
 
 ```sh
 rustup target add aarch64-apple-darwin x86_64-apple-darwin
 make macos
 ```
 
-`make macos` builds both release executables. `scripts/package-macos.py` verifies
-the input architectures, combines them with `lipo`, creates Info.plist and an
-ICNS icon, copies themes/examples/guides, signs and verifies the app, checks its
-version, and archives it with `ditto`. A failed assembly leaves any previous ZIP
-intact. A `.sha256` file accompanies the ZIP. Apple's
-[universal binary documentation](https://developer.apple.com/documentation/apple-silicon/building-a-universal-macos-binary)
-describes the architecture slices.
+`scripts/package-macos.py` joins the two builds with `lipo`, writes Info.plist
+and the icon, copies themes and guides, signs, verifies, and zips the app. The
+signature is ad hoc; pass `--identity 'Developer ID Application: …'` to sign
+with a Developer ID. Notarization is not automated.
 
-The default signature is ad-hoc. For an available Developer ID identity, package
-already-built slices with:
+On macOS, run `make test-macos` instead of `make ci`: the updater tests expect
+Linux layouts and GNU tar. Updates are Linux-only; Mac users replace the app.
+Local CUDA tools are hidden on macOS. Before calling Mac support stable, check
+Open/Save As, the clipboard, Retina rendering, Cmd+Q with recovery, Finder
+document events, external changes, and saves on APFS on a clean Mac.
 
-```sh
-python3 scripts/package-macos.py --identity 'Developer ID Application: Your Name (TEAMID)'
-```
+## Code map
 
-This enables hardened runtime and a timestamp. Notarization and ticket stapling
-are separate steps and are not yet automated. Follow Apple's
-[notarization documentation](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution)
-before treating downloaded bundles as ready for normal public distribution.
-Do not disable system-wide Gatekeeper settings to test an app.
+The library (`src/*.rs`) holds editing logic with no UI; the app (`src/app/`)
+draws the window and turns input into library calls. Logic that can be tested
+without a window belongs in the library, with tests under `tests/`.
 
-The [Universal macOS build](.github/workflows/macos-probe.yml) workflow can run
-manually and is also called by release automation. One Apple Silicon `macos-15`
-runner checks and lints both targets, runs native editor/recovery tests, builds
-both slices, and uploads one universal app archive. It unpacks that archive,
-verifies its signature and both architectures, and runs the CLI; when Rosetta is
-available it also runs the Intel slice. Runner architectures are documented by
-[GitHub](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
-It does not create two Mac downloads.
-
-Updater tests only build on Linux, since they expect Linux installation layouts,
-GNU tar, and `scripts/package-linux.py`. On macOS run `make test-macos` rather
-than `make ci`.
-Linux runs the full suite, offline installer tests, and mocked macOS packaging
-contract tests. Folder tests compare resolved paths, including temporary
-directories reached through symlinks.
-
-Linux source checks and strict Clippy checks pass for both Mac targets. These
-checks do not link Mach-O code or validate AppKit. CI runs clippy and
-`make test-macos` natively on macOS for every push; GUI review is still pending; Linux remains the runtime-validated platform.
-Before calling Mac support stable, check Open/Save As, multiple folders, clipboard,
-Retina rendering, Cmd+Q recovery, Dock reopen, Finder document events, external
-changes, and atomic saves on APFS (including case-insensitive volumes), then
-launch an actually downloaded archive on a clean Mac.
-
-Mac shortcuts display Cmd/Option. The bundle identifier remains `hedit.hedit`,
-with recovery under `~/Library/Application Support/hedit.hedit/session/`.
-Updates currently support Linux only; Mac upgrades replace the app manually.
-Local CUDA debugging, Compute Sanitizer, and NVIDIA GPU commands are hidden and
-blocked at their backend entry points on macOS. CUDA source highlighting,
-editing, and line-comment commands remain available. NVIDIA identifies CUDA
-10.2 as the final Mac release in its
-[release notes](https://docs.nvidia.com/cuda/archive/10.2/cuda-toolkit-release-notes/index.html).
-
-## Architecture
-
-| Module | Responsibility |
+| Area | Files |
 | --- | --- |
-| `src/app.rs` | Editor rendering, shortcuts, background jobs, checkpoint status, exit gating |
-| `src/app/chrome.rs` | Menus, tabs, sidebar, status bar, bottom search panel |
-| `src/app/editor_layout.rs` | One-entry cache of the displayed page's highlighted text layout |
-| `src/app/commands.rs` | Shared menu/shortcut commands and keyboard-driven palette |
-| `src/app/quality.rs`, `quality_windows.rs` | Project/search/file workflows, settings, comparisons, navigation, completion and native dialogs |
-| `src/search.rs` | Shared Unicode regex engine, ignore-aware folder traversal and guarded replacement plans |
-| `src/projects.rs` | Project/workspace JSON, formatting precedence and EditorConfig |
-| `src/intelligence.rs` | Source-line symbols, completion, snippet expansion and read-only Git transport |
-| `src/text_encoding.rs` | Lossless UTF-8, UTF-16 and explicit legacy encoding conversion |
-| `src/ipc.rs`, `src/launcher.rs` | Per-session request mailbox, startup acknowledgements and terminal detachment |
-| `src/update.rs`, `src/update/install.rs` | Manual release checks, checksum verification, archive preflight, staged installation and rollback |
-| `src/app/updates.rs` | Explicit check/install actions, worker progress, restart guidance and close gating |
-| `src/app/preferences.rs` | Unified settings, tool/recovery preferences, navigation dialogs |
-| `src/app/themes.rs` | Theme gallery, color editor, quick switcher, saved themes, system light/dark switching |
-| `src/workspace.rs` | Open/closed buffers, names, bookmarks, UTF-8-safe edit splices |
-| `src/document.rs` | Disk-backed piece table, bounded pages, source guards, atomic saves, undo |
-| `src/session.rs` | Process lock, snapshots, manifests, fallback and preservation |
-| `src/advanced.rs` | Multi-selection edits, indentation heuristics, folding/tab projections |
-| `src/app/panes.rs` | Shared-document split views and independent view positions |
-| `src/app/tab_switch.rs` | Recently used, sequential, and positional tab switching |
-| `src/app/snippet_fields.rs` | Snippet field navigation, following edits through a bounded diff |
-| `src/app/paste_history.rs` | Recent copies for Paste from history |
-| `src/app/macros.rs` | Macro recording, playback through the normal input path, and macros.json |
-| `src/app/clipboard_lines.rs` | Whole-line copy, cut, and paste; paste and indent |
-| `src/app/view_commands.rs` | Recent files, closing many tabs, bookmark selection, line scrolling |
-| `src/app/trim_indent.rs` | Removing indentation Enter left on lines that stay empty |
-| `src/fonts.rs`, `src/app/font_picker.rs` | Installed font families, loading a family's regular face, fallback fonts for other scripts, and the font picker |
-| `src/app/changes.rs` | Next/previous change and Revert change from the change markers' base text |
-| `src/app/find_tools.rs` | Select all matches, use selection for Find/Replace, quick find |
-| `src/app/fold_gutter.rs` | Fold arrows in the gutter, cached per revision |
-| `src/spelling.rs`, `src/app/spell_check.rs` | Prose regions, misspelled words, the check worker, underlines, and suggestions |
-| `src/app/definitions.rs` | Go to definition/references searches, pick lists of locations, and hover definitions |
-| `src/completion.rs`, `src/app/auto_complete.rs` | Word index built off the UI thread, ranking, and the completion list at the cursor |
-| `src/app/advanced_edit.rs` | Occurrence commands, multi-cursor input, and folding |
-| `src/editing.rs` | Unicode-safe line/text transformations used by Edit commands |
-| `src/text_commands.rs` | Block comments, paragraph wrapping, transpose, case changes, line-edge deletion, bracket reindent |
-| `src/app/edit_actions.rs` | Apply transformations through backend undo/recovery |
-| `src/debugger.rs` | CUDA-GDB/MI and bounded NVIDIA tool subprocess output |
-| `src/syntax.rs`, `src/syntax/grammar.rs`, `src/syntax/lexer.rs`, `src/syntax/keywords.rs` | Syntax catalog, filename detection, grammar highlighting with Sublime syntax definitions, and the quick lexer fallback |
-| `src/theme.rs` | Theme roles, built-in catalog, native styling, JSON theme files, user theme folder |
-| `src/brand.rs` | Native mark and antialiased launcher icon |
-| `src/cli.rs` | Arguments and file locations |
-| `src/folder.rs` | Bounded directory listings, fuzzy path search, safe file/folder creation |
-| `src/app/project.rs` | Multiple folder roots, lazy trees, background listings/search, creation dialog |
-| `src/app/tree_row.rs` | Native tree rows with vector folder/document icons |
-| `src/preview.rs` | Test-only headless SVG export |
+| Documents, sessions, recovery | `document.rs` (piece table, pages, saves, undo), `workspace.rs`, `session.rs`, `text_encoding.rs` |
+| Editing | `advanced.rs` (selections, folding, display projection), `editing.rs`, `text_commands.rs`, `completion.rs`, `intelligence.rs` (symbols, snippets, definitions, Git), `spelling.rs`, `bidi.rs` |
+| Search and folders | `search.rs` (search, guarded replacement), `folder.rs` (listings, fuzzy matching), `projects.rs` (projects, EditorConfig) |
+| Syntax and look | `syntax.rs`, `syntax/` (grammars, lexer, keywords), `theme.rs`, `fonts.rs`, `brand.rs` |
+| Process and updates | `cli.rs`, `launcher.rs`, `ipc.rs`, `windows.rs`, `update.rs`, `update/`, `build.rs`, `debugger.rs` |
+| Window | `app.rs` (frame loop, shortcuts, editor drawing), `app/chrome.rs` (menus, tabs, sidebar, status bar), `app/commands.rs` (every command, the palette) |
+| App features | One file each in `src/app/`, named after the feature: `auto_complete.rs`, `definitions.rs`, `spell_check.rs`, `macros.rs`, `snippet_fields.rs`, `find_tools.rs`, `changes.rs`, `fold_gutter.rs`, `font_picker.rs`, and so on |
+| Settings | `settings.rs` (the `settings.json` schema), `app/settings_store.rs`, `app/preferences.rs`, `app/settings_pages.rs` |
 
-Documents live behind shared mutexes. The UI applies minimal UTF-8-safe splices;
-opening, saving, searching, and paging run on workers with conflicting edits
-disabled. One foreground I/O job and one checkpoint can run at a time. Folder listings
-and quick-open scans use separate workers so they leave editing available.
-Generation tags discard stale results after adding/removing a root or refreshing. Directory
-listing concurrency is capped at eight; quick open runs one scan at a time with
-a 120 ms typing debounce. Quick open shares a 50,000-entry, one-second and
-80-result budget across roots, and deduplicates overlapping paths.
-`Workspace.folders` persists root paths, expanded paths, collapsed roots and
-folder-section visibility. The legacy optional `folder` metadata migrates into
-the new `folders` collection and remains in checkpoints for compatibility.
-Whole-sidebar visibility is an independent window preference. Tree icons use
-native vector shapes instead of font glyphs. Search
-cancellation is checked between bounded batches.
+Every menu item, shortcut, and palette entry goes through `Command` in
+`app/commands.rs`, so availability and behavior stay the same everywhere. A new
+command needs a variant, a label, a default shortcut (if any), an `execute` arm,
+and, when it can be unavailable, a `command_enabled` arm.
 
-Checkpoint workers capture immutable piece references and stream data outside
-the editing lock. A generation counter prevents an older checkpoint from being
-reported as current after newer edits. Window close is cancelled until current
-work and a final checkpoint complete; failures keep the window open. The exit
-hook makes another recovery attempt during framework teardown.
+## Rules to keep
 
-Files above 2 MiB use approximately 256 KiB views. Unchanged bytes stay on disk;
-dirty paged snapshots copy source pieces into private recovery storage. Completed
-copies can protect live pieces and history from later source changes. Before a
-copy completes, unseen externally changed bytes cannot be reconstructed; a failed
-visible edit is rescued into an independent unsaved file.
+**Never lose text.** Changes to saving, recovery, replacement, or session data
+need tests for the failure paths.
 
-The renderer uses a bounded standard text widget. Tab stops, selections, and
-folding use the source/display projection in `src/advanced.rs`. Continuous
-whole-file layout remains future work for paged buffers.
+- A checkpoint writes buffer data, then a new manifest, keeping the previous one
+  until the new one is synced. If the newest manifest fails to load, the previous
+  one is used; if both fail, the old data is moved to `preserved-*` before starting
+  fresh. Never delete preserved data automatically.
+- Saves are atomic and refuse to overwrite a file that changed on disk since it
+  was read. Replace in folders writes a file only when its hash still matches the
+  preview, and edits open files as undoable changes instead.
+- New session or settings fields need serde defaults, so older files still load.
+  Retired `settings.json` keys go in `settings::RETIRED` so they load silently.
 
-`Language` defines stable syntax IDs, display names, and filename associations
-in one catalog. It includes separate C, C++, and CUDA modes. The status-bar menu
-filters the catalog by name, extension, or special filename, and scales its
-scrolling list to the available window height.
-The picker is anchored above its status-bar button. Filtered results are cached
-until the query changes, and a stable scroll area draws only visible rows.
-`Buffer::language()` resolves a recognized `TabView.language_override` first,
-then the current filename; unknown IDs fall back to detection. A syntax change
-only updates view metadata and the checkpoint generation, preserving text,
-selection, scroll position, and undo history. No session schema change is needed.
-The status-bar menu and editor renderer use the same resolved language.
+**Keep the UI thread fast.** Reading files, folder walks, Git, spell checking,
+word indexing, font listing, and highlighting more than 64 KiB of text run on
+worker threads; their results carry a view and revision, and stale ones are
+dropped. An idle window must not redraw on its own; repaint only when there is
+input or a worker result.
 
-The editor retains one highlighted layout and checks the exact text, syntax,
-font size, wrap width, theme, display scale, and font atlas before reusing it. This avoids
-lexing and hashing a large layout again during menu hovers. The cache holds only
-the displayed page and invalidates immediately on edits or visual changes.
+**Positions are characters.** Editing code uses Unicode scalar (character)
+indices; convert to bytes with `advanced::byte` only at slicing. Test with CRLF
+text, text without a final newline, and non-Latin text.
 
-`src/syntax/grammar.rs` highlights with syntect and the syntax definitions bundled
-by the `two-face` crate (bat's collection; MIT or Apache-2.0, with each grammar
-under its own permissive license). It maps TextMate scopes to the theme roles, so
-every hedit theme colors grammars without separate color schemes. `Grammar`
-keeps each line's parser and highlighter state: an edit re-parses from the first
-changed line and reuses the old lines once the state matches again, which a
-randomized test checks against full highlights. The editor's layout cache runs
-re-highlights of more than 64 KiB on a background thread and shows lexer colors
-meanwhile. syntect uses the Oniguruma engine (built from bundled C sources), which
-is about three times faster than the pure-Rust engine here; `grammar::Moved`
-documents why moving its parser state between threads is sound.
+**No shell.** Pass subprocess arguments with `Command::arg`. Debugger, Git, build,
+and NVIDIA tool output is bounded.
 
-Sorted keyword tables provide language-specific lookup, including case-insensitive
-keywords where appropriate, without allocations. Lexers work on the displayed
-page, merge adjacent equal-color tokens, and use the active theme's syntax roles (plus severity colors for logs). They preserve
-source bytes and operate without plugins or runtime downloads. They are lexical
-approximations, not full language grammars: embedded languages and multiline
-state across page boundaries remain future work. Add syntax IDs, associations,
-token-color tests, and recovery tests together when extending support.
-Every registered extension and special filename is checked against detection;
-format samples, Unicode fragments, manual syntax persistence, filtered selection,
-and compact-menu geometry are covered by tests.
-
-## Recovery and compatibility
-
-| Session entry | Purpose |
-| --- | --- |
-| `session.lock` | Process-held storage lock |
-| `session.json` | Latest committed manifest |
-| `session.previous.json` | Previous valid manifest |
-| `buffers-*/` | Recovery text or piece sources referenced by manifests |
-| `window.ron` | Window geometry, theme, editor layout, font size, CUDA-GDB path |
-
-A checkpoint syncs buffer data and its directory, writes and syncs the manifest,
-retains the previous manifest, then atomically replaces the current one. Unix
-directory entries are synced. Generations referenced by either manifest survive
-reclamation; unchanged documents reuse snapshots.
-
-The previous committed manifest stays authoritative until replacement. Failed
-restores keep their references, and failed checkpoints preserve earlier recovery
-data. Dirty and unnamed buffers are snapshotted. Clean named files reopen from
-disk; missing clean files can be dropped. Externally growing clean logs must not
-prevent unrelated unsaved files from checkpointing.
-
-When the newest manifest fails, try the previous one. Archive the corrupt
-manifest under `preserved-manifests/` and disable generation cleanup while that
-marker exists. If both fail, preserve the old data under `preserved-*` before
-starting fresh. Resume interrupted preservation on the next launch. Never delete
-these archives automatically.
-
-The shelf has 50 entries: only clean file-backed entries may be evicted. Undo is
-bounded to 256 steps in the current process. Custom names and bookmarks use
-serde defaults for compatibility with older sessions. Bookmark positions adjust
-for ordinary splices but do not yet follow undo or external replacements.
-
-Recovery is periodic, not a durable per-keystroke journal. Preserve source-change
-guards and named-new-file no-clobber behavior. Add compatibility and failure tests
-whenever changing persisted metadata or save/recovery behavior. Manual rescue
-instructions belong in the [user guide](USER_GUIDE.md#recovery).
-
-## CUDA transport
-
-NVIDIA tools run as native subprocesses. CUDA-GDB uses bidirectional MI pipes;
-stdout/stderr readers have bounded records and a bounded output queue. The
-transcript retains 512 KiB. Run/stop notifications update session state.
-
-Pass executable arguments through `Command::arg`, and quote console text as a
-single MI C string. Do not introduce shell interpolation. Startup uses `--nx` to
-avoid loading project or personal GDB init files. A pending `main` breakpoint is
-added before Run. Stop requests debugger exit, then terminates an unresponsive
-child; teardown reaps the process.
-
-Compute Sanitizer and `nvidia-smi` use the same bounded-output model. The panel is
-a textual workbench, without an interactive target terminal or source/variable
-trees. Automated tests exercise transport with a subprocess fixture; actual
-NVIDIA behavior still requires hardware testing.
+**Large files are paged.** Files over 2 MiB load in about 256 KiB pages;
+commands that need the whole text must check `page.info.paged`.
 
 ## Themes and branding
 
-Theme files contain a version, name, dark-controls flag, and opaque RGB roles.
-`src/theme.rs` declares every role once in the `roles!` table, which generates the
-`Theme` fields, `Role` enum, JSON keys, labels, and groups. The built-in catalog
-lives in the same file as one color row per theme in role order.
-
-Missing roles come from the optional `base` built-in, or Hedit Ink. Roles added in
-version 2 derive from a version-1 role when a file sets that role, so older themes
-render unchanged. Validate names, color strings, unknown fields, bases, versions,
-and the 64 KiB input limit before applying imports. Export through a synced
-temporary file and atomic replacement. Theme files written by hedit are always
-complete and at the current version.
-
-To add a role, add a `roles!` row and a color to every built-in, then add a
-`DERIVED` fallback if older files need one. To add a built-in theme, add its row
-and regenerate the bundled files:
+`src/theme.rs` declares every color role once in the `roles!` table and holds
+the built-in themes, one row per theme. To add a role, add a row and a color to
+every built-in (plus a `DERIVED` fallback if older theme files need one). To add a
+built-in theme, add its row and regenerate the files in `themes/`:
 
 ```sh
 HEDIT_WRITE_THEMES=1 cargo test --locked --test themes
 ```
 
-The `themes` tests require readable text and selection contrast, a dark flag that
-matches the background, and a `themes/` directory identical to the catalog.
+The theme tests require readable contrast and a `themes/` folder that matches
+the catalog.
 
-`src/app/themes.rs` holds the gallery, color editor, quick switcher, user theme
-folder, and system light/dark switching. `Theme::apply` pins egui's own light/dark
-mode, so a system appearance change never swaps in egui's default style. See the
-[user guide](USER_GUIDE.md#appearance) for the format and controls.
+The name is lowercase **hedit** and the tagline is **Keep your train of thought.**
+Brand SVGs in `assets/` are generated by `python3 scripts/generate-brand.py`; keep
+their geometry in step with `src/brand.rs`. Dark/light in a file name describes
+the background it is for.
 
-### Identity assets
+## Packaging and releases
 
-Use lowercase **hedit** and the tagline **Keep your train of thought.** The mark
-combines a geometric h with stacked buffer lines and a cut shoulder. The wordmark
-uses custom outlines; primary SVG assets have no font or bitmap dependency.
+`make package` builds a Linux tarball and its SHA-256 file with the binary, the
+three documents, the license, `assets/`, themes, the CUDA example, a desktop file,
+and an installer script. `Makefile`, `scripts/package-linux.py`, and
+`packaging/linux/install.sh` must install the same paths; update
+`scripts/smoke-package.py` when the layout changes.
 
-| Asset in `assets/` | Intended use |
-| --- | --- |
-| `hedit.svg` | Rounded application icon |
-| `hedit-mark.svg` | Transparent symbol on dark backgrounds |
-| `hedit-mark-mono.svg` | Single-color symbol using `currentColor` |
-| `hedit-wordmark-dark.svg`, `hedit-wordmark-light.svg` | Standalone name |
-| `hedit-lockup-dark.svg`, `hedit-lockup-light.svg` | Symbol and name |
-| `hedit-logo-mono.svg` | Single-color lockup |
-| `brand-board.svg` | Identity overview and palette |
+The CI workflow runs the Linux and macOS checks on every push, through the same
+Makefile targets as `make ci`; keep check commands in the Makefile, not in
+workflow files. Pushing a version tag runs the release workflow, which builds
+Linux x86-64 and ARM64 tarballs and the universal macOS app, tests them, and
+publishes them with checksums. Tags with a hyphen (`vX.Y.Z-rc.1`) publish as
+prereleases.
 
-Dark/light suffixes describe the background. Keep one stem-width of clear space.
-Use the icon at 16 px or above, transparent mark at 24 px or above, and lockup at
-160 px or above. Preserve proportions; use monochrome for single-ink work.
+To release:
 
-| Color | Value |
-| --- | --- |
-| Ink / Surface | `#10161F` / `#161E29` |
-| Sea glass / Frost | `#64D8CB` / `#9AEBDF` |
-| Slate | `#8DA0B4` |
-| Paper / Deep teal | `#FAF8F3` / `#147568` |
-
-Run `python3 scripts/generate-brand.py` to regenerate SVGs. Keep geometry aligned
-with `src/brand.rs`. The brand board uses system text for labels; wordmarks are
-paths. The launcher keeps fixed brand colors; the in-app mark uses theme colors.
-
-Give the document most of the space. Use quiet borders, consistent controls,
-monospace editing/tool output, and proportional UI text. Active tabs and buffer
-rows need clear markers. Recovery must always have a written status as well as a
-color cue. Keep preferences in the Settings window's pages (General, Editor,
-Formatting, Folders & Search, Appearance, Key Bindings, Snippets, CUDA Tools,
-Recovery). Menus, shortcuts, and the palette should route through the same
-command dispatcher so availability and behavior stay consistent. The line-number
-gutter follows laid-out rows, skips wrap continuations, and remains fixed during
-horizontal scrolling; paged documents use page-relative line numbers.
-
-## Packaging and CI
-
-`make package` writes a versioned Linux tarball and SHA-256 file under `dist/`.
-It includes the binary, three documentation entry points, license, SVG
-assets, themes, CUDA example, desktop entry, and shell installer. The installer
-defaults to `~/.local` and accepts an absolute prefix. Architecture follows the
-build host; newer Linux builds may require newer destination libraries.
-
-`Makefile`, `scripts/package-linux.py`, and `packaging/linux/install.sh` must keep
-installed paths consistent. Update `scripts/smoke-package.py` when changing the
-archive or documentation layout. `scripts/check-docs.py` validates document links
-and local section anchors.
-
-Workflows call the same Makefile targets as `make ci`, ordered from cheapest to
-slowest so a failure costs as little time as possible: `make static` (seconds,
-no compiling), then `make clippy`, then `make test`. The `CI` workflow runs a Linux
-job (static, clippy, test) and a macOS job (clippy, `make test-macos`) in parallel
-and stops there; the release matrix then runs `make package smoke`, which builds the
-optimized executable. Keep checks in the Makefile instead of duplicating their
-commands in workflow YAML.
-
-CI cancels a run when a newer push reaches the same branch or pull request.
-`Swatinem/rust-cache` keeps compiled dependencies between runs: the main branch
-saves the cache and other branches reuse it. Workflows disable incremental
-compilation and debug info, which only slow down and enlarge CI builds. Workflow
-steps set up dependencies and the pinned Rust/Python versions. Offline installer tests cover downloads,
-version/architecture selection, checksum rejection,
-failed downloads, and preservation of an existing installation on download failure.
-
-### Publish a release
-
-The `Release packages` workflow builds Linux x86-64 and ARM64 natively on Ubuntu
-24.04 and one universal macOS app through its reusable Mac workflow. It publishes when a version tag is pushed; the tag must equal `v` followed
-by the version in `Cargo.toml`. Builds run checks and package smoke tests before
-publication. GitHub generates release notes, and each release includes two Linux
-tarballs, one universal macOS ZIP, and their SHA-256 files. The publish job waits
-for all three packages. The `install.sh` downloader is not a release asset: users
-fetch it from the root of `main`, and it resolves the latest release itself, so keep
-it compatible with the asset names of published releases.
-
-1. Set the version in `Cargo.toml` and run `cargo check` to update `Cargo.lock`.
-2. Run `make ci` and `make release-check RELEASE_TAG=vX.Y.Z`, using the new tag.
-3. Commit the version, lockfile, and release changes, then push the commit.
-4. Create and push an annotated tag matching the version:
+1. Set the version in `Cargo.toml`, run `cargo check` to update `Cargo.lock`, and
+   date the version's section in `CHANGELOG.md`.
+2. Run `make ci` and `make release-check RELEASE_TAG=vX.Y.Z`.
+3. Commit, push, then tag:
 
    ```sh
    git tag -a vX.Y.Z -m "hedit X.Y.Z"
    git push origin vX.Y.Z
    ```
 
-The workflow uses GitHub's `GITHUB_TOKEN` with write permission only in the
-publication job; no personal token secret is needed. Actions must be enabled and
-repository/organization policy must permit that permission.
+The changelog lists only changes users of the previous release will notice: a
+bug fixed during development of a feature that has not shipped is not a fix.
 
-Assets are uploaded to a draft before it is published. If upload/publication
-fails, rerun the failed workflow jobs to finish the draft. Published releases are
-left intact; use a new version tag for subsequent changes. Tags containing a
-hyphen, such as `vX.Y.Z-rc.1`, publish as prereleases and do not become Latest.
-Stable tags become Latest. The default installer selects Latest; `--version`
-selects a specific stable or prerelease tag.
-
-Running the workflow manually on a branch produces downloadable Actions artifacts
-without publishing a release. Running it on a version tag also publishes that tag.
-See GitHub's [release command documentation](https://cli.github.com/manual/gh_release_create)
-for draft and publication behavior.
-
-## Manual updater
-
-Releases that predate the updater need one external upgrade; adding code here
-does not retrofit already published releases.
-
-`Help → Check for updates…` starts a worker for GitHub's latest stable release
-API. Constructors, frame polling, and timers do not initiate network work. A
-separate **Install update** action is required after review. The UI never installs
-from a successful check alone and never restarts the application. Downloads use
-curl with HTTPS-only redirects and bounded sizes, and pin the selected tag.
-
-Use semantic version precedence, ignore build metadata for update ordering, and
-reject drafts, prereleases, downgrades, duplicate assets, and oversized responses.
-SHA-256 verification is against the checksum asset from the same GitHub release;
-this is transport/repository trust, not an independent signing-key mechanism.
-
-GNU tar supplies parsing and extraction. Preflight its resolved numeric-owner
-listing in the C locale, retaining absolute names for validation. Reject links,
-special files, duplicate paths, traversal, nonportable names, too many entries,
-and excessive unpacked size before extraction into a private directory. Release
-archive filenames must use ASCII letters/digits, `/`, `_`, `.`, `-`, or `+`.
-Clear `TAR_OPTIONS`; pass arguments directly without shell interpolation. Never
-execute a downloaded installer script. Run the verified new binary with
-`--version` and check its exact version before installation.
-
-Recognize prefix and extracted-package layouts from the executable location.
-Reject source builds and unwritable or symlinked resource paths. An OS file lock
-serializes installers; a captured executable identity detects outside replacement.
-Stage new resources on the destination filesystem, preserving additional custom
-files. Commit resource directories/files first, then atomically rename the new
-binary last. Linux keeps the running executable inode alive until exit. Session
-storage is never part of the installation transaction. On ordinary I/O errors,
-restore committed paths in reverse order. Preserve staging backups and report
-their location if rollback fails. This is not a power-loss journal for every
-resource directory, so do not claim a fully atomic multi-path update.
-
-The UI prevents process exit while its installation worker is active, even if
-the dialog is hidden. Once the worker finishes, normal checkpoint/close gating
-continues. Updates use no elevation and store no GitHub credentials.
-
-Tests cover version ordering, release metadata, transport fixtures,
-checksum rejection, real GNU tar preflight, compatibility checks, locks, external
-replacement, symlinks, injected rollback failure paths, portable/prefix layouts,
-preservation of custom themes and session data, production packager compatibility,
-manual-only UI behavior, compact layouts, and exit gating. They run through
-`make test` and `make ci` without contacting GitHub. Runtime update requirements
-are curl and GNU tar; Python is only a test/build
-dependency.
-
-## Contribution guidelines
-
-Keep documentation in three entry points: `README.md` is the user landing page,
-`USER_GUIDE.md` explains product use, and this file holds development, architecture,
-branding, and roadmap details. Avoid creating separate topic guides that scatter
-these subjects again.
-
-Test changes that can lose buffers, overwrite external edits, or invalidate
-recovery references. Keep tests isolated in temporary directories. Run `make ci`
-before committing, and fix any failed checks. Preserve
-upstream license notices and state actual limits rather than presenting planned
-features as available.
-
-## Roadmap
-
-### Delivered
-
-Native editor and Cargo build; periodic recovery with fallback/preservation;
-named unsaved files and a searchable shelf; guarded atomic saves; bounded large-file
-pages, log following, literal search, and bookmarks; bounded persistent undo; automatic
-syntax detection and persistent per-buffer syntax selection; customizable themes
-and SVG identity; persistent folder trees with multiple roots, file/subfolder creation, and fuzzy
-quick open; CUDA tools; Linux packaging
-and consolidated user/developer guides.
-
-### Reliability and daily use
-
-- Durable edit journal, recovery checksums, filesystem fault injection, and soak tests.
-- Bookmark anchors that follow undo/external changes.
-- Streaming encoding and line-ending conversion for large paged files.
-- Continuous large-file scrolling, global line indexes, and log filtering.
-- X11/Wayland visual validation, accessibility, DEB/RPM packages, and release checks.
-
-### Editor and GPU workbench
-
-#### Edit and View comparison with Sublime Text
-
-The menus cover common line operations, comments, case conversion,
-indentation conversion, LF/CRLF conversion, visibility toggles, column rulers,
-wrap columns, zoom, and focus modes. They do not establish full Sublime parity.
-The remaining controls from the comparison are now implemented as follows.
-
-| Control | Implementation | Current limits |
-| --- | --- | --- |
-| Multiple cursors and rectangular selection | Occurrence selection, Alt+click/Alt+Shift+drag, batch typing/clipboard/deletion, cursor undo and recovery | Up to 1,000 selections; fully loaded files |
-| Split panes | Two columns or rows, focus/move actions, independent view positions on shared documents | Two groups; paged views share their loaded page |
-| Indentation | Automatic detection, smart Enter, soft Backspace, 2/4/8 tab rendering and insertion | Detection examines 10,000 lines; smart Enter uses bracket heuristics |
-| Folding and guides | Indentation blocks, manual selections, fold/unfold all, original line numbers | Fully loaded files; edits invalidate fold ranges |
-| Minimap | Click/drag scrolling, sampled viewport overview | Current page only for paged files |
-
-The comparison uses Sublime's official descriptions of
-[multiple selections and split views](https://www.sublimetext.com/),
-[column selection](https://www.sublimetext.com/docs/column_selection.html),
-[indentation settings](https://www.sublimetext.com/docs/indentation.html),
-[rulers and guides](https://www.sublimetext.com/docs/color_schemes.html), and
-[distraction-free mode](https://www.sublimetext.com/docs/distraction_free.html).
-Its [API reference](https://www.sublimetext.com/docs/api_reference.html) also
-describes folding and minimap controls. Keep unavailable commands out of the
-menus until their underlying editing behavior is implemented.
-
-- Richer split layouts and syntax-aware folding across pages.
-- More language lexers and incremental multiline state across pages.
-- NVIDIA hardware/driver testing, source synchronization, gutter breakpoints,
-  structured variables/watches, GPU execution views, and remote setup workflows.
-
-### Daily-use features
-
-Terminal launches always detach. A child first probes the existing recovery lock;
-when another process owns it, the child submits an atomic mailbox request under
-`session/requests`. Requests retain native path bytes and resolve relative paths
-against the invoking directory. The GUI imports stdin on a worker, opens queued
-paths, checkpoints, and acknowledges. Only the session owner writes snapshots.
-Lock destruction explicitly unlocks before closing, preventing a concurrently
-forked child from briefly retaining an inherited recovery lock before exec.
-
-Search uses the shared regex engine with Unicode boundaries and capture-group
-replacement. Folder workers honor Git ignore files, deduplicate overlapping
-roots, skip personal `.hedit-workspace` files, and cap files/results/retained text.
-Folder search reads open, fully loaded buffers from the editor and other files
-from disk. Replacement plans fingerprint original bytes. Open buffers are edited
-in place as one undoable edit when their text still equals the plan's; files that
-are not open are written only when their hash still matches, and each write is
-recorded so Undo replacements can restore it while the file is unchanged since.
-Changes across several files are individually atomic, with partial success
-reported.
-
-Project definitions hold roots and settings; the adjacent workspace holds bounded
-personal text/views and remaps restored document IDs in split-pane state. Current
-unsaved buffers go to the shelf before switching. First-save formatting resolves
-rules against the chosen destination, and cleanup uses the normal undo engine.
-User and language defaults are overlaid by project settings, then matching parent
-EditorConfig sections. EditorConfig support covers common formatting properties
-and globs with indentation widths of 1–8; it is not a full conformance claim.
-
-Internal pieces and recovery files stay UTF-8. Encoding metadata controls disk
-output; UTF-16 conversion is explicit or BOM-detected and legacy encodings are
-never guessed. Conversion is bounded at 32 MiB and refuses lossy output. Format
-state, including encoding/BOM, follows undo. Fully loaded documents checkpoint up
-to 64 undo/redo states and 32 MiB in each direction. Historical text is coalesced
-into immutable, content-addressed sources so typing does not multiply open file
-descriptors or manifest entries. Paged history remains process-local.
-
-Git uses bounded read-only subprocesses and background refresh; change markers
-compare with HEAD, or with the saved file (`mini_diff`). Symbol navigation and Go
-to definition use source-line heuristics. Completion ranks words from an index of
-open buffers built off the UI thread, and snippets support fields, mirrors,
-selection insertion, and a final cursor. Spell checking uses the bundled en_US
-dictionary on a worker thread. These features do not require an LSP.
-Run `cargo test quality` for the backend/UI contracts. To inspect native layouts:
-
-```sh
-HEDIT_PREVIEW_DIR=/tmp/hedit-quality-previews cargo test --bin hedit export_quality_previews -- --ignored
-```
+The in-app updater (`Help → Check for updates…`) never downloads or installs
+without the user asking. It checks the SHA-256 file from the same release, runs
+the new binary's `--version` before installing, rejects unsafe archive entries
+before extracting, and swaps the binary in last, rolling back on failure.
+`install.sh` is served from `main`, not from a release, so keep it compatible with
+the asset names of published releases.
 
 ## Provenance and license
 
 The file engine, session foundation, and folder utilities derive from
-[rsedit](https://github.com/goodappsstore/rsedit), based on commit
-`63a9ee4966d3fe1cfcd7d4af70e963e10aa297ff`. hedit's native UI, workspace layer,
-branding, and development direction are independent work. Preserve the original
-MIT notices and attribution in [LICENSE](LICENSE).
+[rsedit](https://github.com/goodappsstore/rsedit) (commit
+`63a9ee4966d3fe1cfcd7d4af70e963e10aa297ff`); keep its MIT notice in
+[LICENSE](LICENSE). Syntax definitions come from the `two-face` crate, each under
+its own permissive license.
 
-The spell checker's dictionary, `assets/dictionaries/en_US.aff` and `en_US.dic`,
-is the en_US Hunspell dictionary from SCOWL, read with the
-[spellbook](https://crates.io/crates/spellbook) crate and built into the binary.
-Its copyright and permission notices are in
+The spell checker's en_US dictionary (`assets/dictionaries/en_US.aff` and
+`en_US.dic`) is from SCOWL and is built into the binary. Its notices are in
 [assets/dictionaries/en_US-LICENSE.txt](assets/dictionaries/en_US-LICENSE.txt),
-which packages ship with the rest of `assets/`; keep it with the dictionary.
+which ships with the packages; keep the two together.

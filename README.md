@@ -148,7 +148,7 @@ Fully loaded buffers retain bounded undo/redo history across restarts;
 multiple cursors, rectangular selections, split panes, indentation folding, guides,
 and a minimap are available. Read the
 [user guide](USER_GUIDE.md) for everyday use and recovery, or the
-[developer guide](DEVELOPER_GUIDE.md) for contributing and the roadmap.
+[developer guide](DEVELOPER_GUIDE.md) for building and contributing.
 
 ## LICENCE
 
