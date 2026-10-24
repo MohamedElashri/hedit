@@ -16,6 +16,7 @@ mod editor_layout;
 mod find_live;
 mod find_tools;
 mod fold_gutter;
+mod font_picker;
 mod goto_anything;
 #[cfg(test)]
 mod goto_tests;
@@ -90,7 +91,10 @@ enum Action {
     /// Open a `path:line` location.
     OpenAt(PathBuf),
     /// A font loaded for the `font_face` setting.
-    Font(String, Vec<u8>),
+    /// A font for `font_face`: its name, file bytes, and face index.
+    Font(String, Vec<u8>, u32),
+    /// Installed font families, for the font picker.
+    FontFamilies(Vec<hedit::fonts::Family>),
     /// System fonts for other scripts are ready.
     FallbackFonts,
     Notice(String),
@@ -202,7 +206,13 @@ pub struct HeditApp {
     /// The `font_face` in use, or being loaded.
     font_applied: String,
     /// The `font_face` font file, kept to rebuild the fonts when fallbacks load.
-    editor_font: Option<Vec<u8>>,
+    editor_font: Option<(Vec<u8>, u32)>,
+    /// Installed font families, once listed.
+    font_families: Option<Vec<hedit::fonts::Family>>,
+    /// Open the font picker when the families arrive.
+    font_picker_pending: bool,
+    /// Installed families are being listed.
+    fonts_listing: bool,
     /// An input method is composing text (it sent a non-empty preedit).
     ime_composing: bool,
     key_filter: String,
@@ -358,6 +368,9 @@ impl HeditApp {
             goto_origin: None,
             font_applied: String::new(),
             editor_font: None,
+            font_families: None,
+            font_picker_pending: false,
+            fonts_listing: false,
             ime_composing: false,
             key_filter: String::new(),
             rectangle_start: None,
@@ -784,7 +797,7 @@ impl HeditApp {
                 Ok(Action::Quality(event)) => {
                     matches!(&**event, quality::Event::GitMarkers(..))
                 }
-                Ok(Action::Font(..) | Action::FallbackFonts) => true,
+                Ok(Action::Font(..) | Action::FallbackFonts | Action::FontFamilies(_)) => true,
                 _ => false,
             };
             if !side {
@@ -945,10 +958,17 @@ impl HeditApp {
                     self.build_after_save(ctx);
                 }
                 Ok(Action::ThemeImported(theme)) => self.add_imported_theme(ctx, theme),
-                Ok(Action::Font(name, bytes)) => {
+                Ok(Action::Font(name, bytes, index)) => {
                     if self.settings.font_face == name {
-                        self.editor_font = Some(bytes);
+                        self.editor_font = Some((bytes, index));
                         settings_store::set_editor_font(ctx, self.editor_font.clone());
+                    }
+                }
+                Ok(Action::FontFamilies(families)) => {
+                    self.font_families = Some(families);
+                    self.fonts_listing = false;
+                    if std::mem::take(&mut self.font_picker_pending) {
+                        self.open_font_picker(ctx);
                     }
                 }
                 Ok(Action::FallbackFonts) => {

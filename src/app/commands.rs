@@ -197,6 +197,7 @@ pub(super) enum Command {
     Gpu,
     Settings,
     Appearance,
+    ChooseFont,
     ToolSettings,
     Checkpoint,
     About,
@@ -394,6 +395,7 @@ impl Command {
         Self::Gpu,
         Self::Settings,
         Self::Appearance,
+        Self::ChooseFont,
         Self::ToolSettings,
         Self::Checkpoint,
         Self::About,
@@ -428,6 +430,7 @@ impl Command {
                 | Self::RecentProjects
                 | Self::PasteHistory
                 | Self::OpenRecent
+                | Self::ChooseFont
                 | Self::SaveMacro
                 | Self::RunMacro
         )
@@ -628,6 +631,7 @@ impl Command {
             Self::Gpu => "CUDA panel",
             Self::Settings => "Settings…",
             Self::Appearance => "Color theme…",
+            Self::ChooseFont => "Editor font…",
             Self::ToolSettings => "CUDA tool settings…",
             Self::Checkpoint => "Checkpoint now",
             Self::About => "About hedit",
@@ -902,6 +906,8 @@ pub(super) enum Pick {
     Paste(String),
     /// A file to open.
     File(PathBuf),
+    /// An editor font family; empty for the built-in font.
+    Font(String),
     /// A saved macro, by name.
     Macro(String),
     Location(definitions::Location),
@@ -1549,6 +1555,7 @@ impl HeditApp {
             Command::Gpu => self.gpu_open = !self.gpu_open,
             Command::Settings => self.open_preferences(self.preferences_page),
             Command::Appearance => self.open_theme_palette(),
+            Command::ChooseFont => self.open_font_picker(ctx),
             Command::ToolSettings => self.open_preferences(PreferencesPage::Tools),
             Command::Checkpoint => self.checkpoint(ctx),
             Command::About => self.about_open = true,
@@ -1836,6 +1843,14 @@ impl HeditApp {
                 Item::Command(command) => self.execute(ctx, command),
                 Item::Pick(Pick::Paste(text)) => self.paste_entry(ctx, text),
                 Item::Pick(Pick::File(path)) => self.open(ctx, Some(path)),
+                Item::Pick(Pick::Font(name)) => {
+                    self.notice = if name.is_empty() {
+                        "Using the built-in font.".into()
+                    } else {
+                        format!("Using {name}.")
+                    };
+                    self.settings.font_face = name;
+                }
                 Item::Pick(Pick::Macro(name)) => {
                     let steps = self
                         .quality

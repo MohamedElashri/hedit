@@ -152,3 +152,47 @@ fn retired_keys_load_without_warnings() {
         hedit::settings::Settings::parse("{\"update_with_github_cli\": true}").unwrap();
     assert!(warnings.is_empty(), "{warnings:?}");
 }
+
+#[test]
+fn font_families_parse_from_fontconfig_with_scripts() {
+    let output = "DejaVu Sans Mono,DejaVu Sans Mono Book|100|/f/DejaVuSansMono.ttf|aa|ar|ru|he\n\
+                  DejaVu Sans Mono|100|/f/DejaVuSansMono-Bold.ttf|en\n\
+                  Noto Sans CJK JP,Noto Sans CJK JP Regular|90|/f/NotoSansCJK.ttc|ja|zh-cn|ko|en\n\
+                  Amiri||/f/Amiri-Regular.otf|ar|en\n\
+                  Web Only||/f/web.woff2|en\n\
+                  .Hidden||/f/hidden.ttf|en\n";
+    let families = hedit::fonts::parse_fc_list(output);
+    let names: Vec<_> = families.iter().map(|f| f.name.as_str()).collect();
+    assert_eq!(
+        names,
+        ["DejaVu Sans Mono", "Noto Sans CJK JP", "Amiri"],
+        "monospace first"
+    );
+    assert_eq!(families[0].scripts, ["Arabic", "Hebrew", "Cyrillic"]);
+    assert_eq!(families[1].scripts, ["CJK"]);
+    assert!(families[1].monospace && !families[2].monospace);
+    // The regular, readable face is chosen from a family's files.
+    let faces =
+        "/f/Open-Bold.woff|0|Bold\n/f/Open-Bold.otf|0|Bold\n/f/Open-Regular.otf|0|Regular\n";
+    assert_eq!(
+        hedit::fonts::pick_face(faces),
+        Some(("/f/Open-Regular.otf".into(), 0))
+    );
+    assert_eq!(
+        hedit::fonts::pick_face("/f/a.ttc|2|Regular,Normal\n"),
+        Some(("/f/a.ttc".into(), 2))
+    );
+    assert_eq!(hedit::fonts::pick_face("/f/a.woff|0|Regular\n"), None);
+}
+
+#[test]
+fn installed_fonts_list_and_load_with_their_face() {
+    let families = hedit::fonts::families();
+    // Machines without fonts list nothing; then there is nothing to load.
+    let Some(family) = families.first() else {
+        return;
+    };
+    let (bytes, _) = hedit::fonts::load(&family.name).unwrap();
+    assert!(!bytes.is_empty());
+    assert!(hedit::fonts::load("No Such Font Family").is_err());
+}

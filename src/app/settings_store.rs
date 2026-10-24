@@ -405,12 +405,17 @@ pub(super) fn load_fallback_fonts(tx: mpsc::Sender<Result<Action, String>>, ctx:
 
 /// Put the editor font first in the monospace family, or restore egui's own,
 /// and let both families fall back to system fonts for other scripts.
-pub(super) fn set_editor_font(ctx: &egui::Context, bytes: Option<Vec<u8>>) {
+pub(super) fn set_editor_font(ctx: &egui::Context, font: Option<(Vec<u8>, u32)>) {
     let mut fonts = egui::FontDefinitions::default();
-    if let Some(bytes) = bytes {
+    // Characters the chosen font lacks, such as Latin letters in an Arabic-only
+    // font, fall through to the built-in font and then the system fallbacks.
+    if let Some((bytes, index)) = font {
         fonts.font_data.insert(
             "editor".into(),
-            std::sync::Arc::new(egui::FontData::from_owned(bytes)),
+            std::sync::Arc::new(egui::FontData {
+                index,
+                ..egui::FontData::from_owned(bytes)
+            }),
         );
         fonts
             .families
@@ -460,7 +465,7 @@ impl HeditApp {
         let ctx = ctx.clone();
         thread::spawn(move || {
             let result = hedit::fonts::load(&name)
-                .map(|bytes| Action::Font(name.clone(), bytes))
+                .map(|(bytes, index)| Action::Font(name.clone(), bytes, index))
                 .map_err(|e| format!("Font “{name}”: {e} Using the built-in font."));
             let _ = tx.send(result);
             ctx.request_repaint();

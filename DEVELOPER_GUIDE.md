@@ -216,6 +216,7 @@ editing, and line-comment commands remain available. NVIDIA identifies CUDA
 | `src/app/clipboard_lines.rs` | Whole-line copy, cut, and paste; paste and indent |
 | `src/app/view_commands.rs` | Recent files, closing many tabs, bookmark selection, line scrolling |
 | `src/app/trim_indent.rs` | Removing indentation Enter left on lines that stay empty |
+| `src/fonts.rs`, `src/app/font_picker.rs` | Installed font families, loading a family's regular face, fallback fonts for other scripts, and the font picker |
 | `src/app/changes.rs` | Next/previous change and Revert change from the change markers' base text |
 | `src/app/find_tools.rs` | Select all matches, use selection for Find/Replace, quick find |
 | `src/app/fold_gutter.rs` | Fold arrows in the gutter, cached per revision |

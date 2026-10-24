@@ -1756,3 +1756,28 @@ fn distraction_free_mode_hides_the_minimap() {
     app.execute(&ctx, Command::DistractionFree);
     assert!(map_lines(&ctx, &mut app) > 50);
 }
+
+#[test]
+fn the_font_picker_lists_families_and_sets_the_font() {
+    let (_directory, ctx, mut app) = app_with("text");
+    app.execute(&ctx, Command::ChooseFont);
+    let started = Instant::now();
+    while app.font_families.is_none() {
+        assert!(started.elapsed() < Duration::from_secs(10));
+        thread::sleep(Duration::from_millis(10));
+        app.receive(&ctx);
+    }
+    frame(&ctx, &mut app, vec![]);
+    let list = app
+        .pick_list
+        .as_ref()
+        .expect("the font list opens once listed");
+    assert_eq!(list.items[0].0, "Built-in (Hack)");
+    // Choose the second entry (an installed font, when there is one).
+    if list.items.len() > 1 {
+        let name = list.items[1].0.clone();
+        frame(&ctx, &mut app, vec![key(Key::ArrowDown, Modifiers::NONE)]);
+        frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)]);
+        assert_eq!(app.settings.font_face, name);
+    }
+}

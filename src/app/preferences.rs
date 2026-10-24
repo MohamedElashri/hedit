@@ -237,14 +237,25 @@ impl HeditApp {
     fn editor_preferences(&mut self, ui: &mut egui::Ui) {
         let s = &mut self.settings;
         section(ui, "Text");
-        row(ui, "Font", |ui| {
+        let _ = s;
+        row(ui, "Font", |ui| self.font_setting(ui));
+        let s = &mut self.settings;
+        row(ui, "Font name or file", |ui| {
             ui.add(
                 egui::TextEdit::singleline(&mut s.font_face)
                     .hint_text("Built-in (Hack)")
-                    .desired_width(200.0),
+                    .desired_width(240.0),
             )
-            .on_hover_text("An installed font family, such as JetBrains Mono, or a .ttf/.otf path");
+            .on_hover_text(
+                "An installed font family, such as JetBrains Mono, or a .ttf/.otf/.ttc path",
+            );
         });
+        ui.label(
+            RichText::new(font_picker::SAMPLE)
+                .font(FontId::monospace(s.font_size))
+                .color(self.theme.text.color()),
+        );
+        ui.weak("Characters the font lacks, such as Arabic or CJK, come from system fonts.");
         row(ui, "Font size", |ui| {
             ui.add(
                 egui::Slider::new(&mut s.font_size, hedit::settings::FONT_SIZES)

@@ -10,6 +10,10 @@
   Right, selections, and Find highlights follow the text on screen, while the
   file keeps the typed order. Plain text, Markdown, and LaTeX lines take their
   direction from their first letter; code lines run left to right.
+- Choose the editor font from the installed families (Preferences → Editor
+  font… or Settings → Editor), listed monospace first with the scripts each
+  covers and a preview. Font collections (`.ttc`) work, and characters a font
+  lacks still come from the built-in and system fonts.
 - Completions while typing: a list at the cursor offers words from the open files
   and matching snippets, with Tab or Enter to accept (`auto_complete`,
   `auto_complete_delay`, `auto_complete_commit_on_tab`). Words are collected in

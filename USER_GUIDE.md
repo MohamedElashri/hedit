@@ -339,6 +339,15 @@ The history lasts until hedit quits. **Ctrl+Z**
 undoes; **Ctrl+Shift+Z** or **Ctrl+Y** redoes. Up to 256 edit steps per file are
 kept during the current process. Undo history is not restored after restart.
 
+**Preferences → Editor font…** lists the built-in font and every installed font
+family, monospace ones first, with the scripts each covers beyond Latin (such as
+Arabic or CJK); type to filter, for example `mono` or `arabic`. The same list is
+in **Settings → Editor → Font**, with a preview line, and you can also type a
+family name or a font file path there. Characters the chosen font lacks come from
+the built-in font and then from system fonts, so Arabic, Hebrew, CJK, and other
+scripts still show with a Latin-only font, and Latin text still shows with a font
+made for another script. Font collections (`.ttc`), common for CJK fonts, work too.
+
 **Ctrl+Up** and **Ctrl+Down** (**Control+Option+Up/Down** on macOS) scroll the view
 one line without moving the cursor.
 
@@ -941,7 +950,7 @@ you fix it.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `font_face` | `""` | An installed font family, such as `"JetBrains Mono"`, or a `.ttf`/`.otf` path; empty uses the built-in font |
+| `font_face` | `""` | An installed font family, such as `"JetBrains Mono"`, or a `.ttf`, `.otf`, or `.ttc` path; empty uses the built-in font |
 | `font_size` | `14` | Editor font size, 10–28 |
 | `line_padding` | `0` | Extra space between lines, 0–20 |
 | `caret_width`, `caret_blink` | `1.5`, `true` | Cursor width (1–4) and blinking |
