@@ -25,6 +25,8 @@
 
 ### Fixed
 
+- Pressing Escape in the editor took keyboard focus away from it, so typing did
+  nothing until the text was clicked.
 - Pressing a shortcut with an arrow key several times in a row, such as
   Ctrl+Shift+Down to move a line, could move keyboard focus out of the editor on
   the third press, so later presses did nothing.

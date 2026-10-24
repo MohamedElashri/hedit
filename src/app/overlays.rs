@@ -151,8 +151,12 @@ impl HeditApp {
             ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));
             return;
         }
-        // Keep the editor focused, as egui would otherwise drop focus on Escape.
+        // egui drops focus on Escape before this runs; give it back to the
+        // editor so typing continues.
         ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));
+        if ctx.memory(|m| m.focused().is_none()) {
+            self.focus_editor = true;
+        }
         let b = &mut self.workspace.open[self.workspace.active];
         if !b.view.selections.is_empty() {
             b.view.selections.clear();

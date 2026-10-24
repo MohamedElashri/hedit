@@ -663,3 +663,12 @@ fn paste_history_lists_copies_and_pastes_at_every_cursor() {
     frame(&ctx, &mut app, vec![]);
     assert!(!app.paste_palette);
 }
+
+#[test]
+fn escape_keeps_typing_in_the_editor() {
+    let (_directory, ctx, mut app) = app_with("");
+    type_text(&ctx, &mut app, "a");
+    frame(&ctx, &mut app, vec![key(Key::Escape, Modifiers::NONE)]);
+    type_text(&ctx, &mut app, "b");
+    assert_eq!(app.active().page.text, "ab");
+}
