@@ -35,6 +35,14 @@ pub(super) struct Quality {
     pub folders_open: bool,
     pub filter: String,
     pub results: search::Results,
+    /// Open files changed by the last replacement, and why others were not.
+    pub open_applied: (usize, Vec<String>),
+    /// The match F4 went to last, and whether these results are newer than
+    /// the build's, so F4 goes through them.
+    pub result_current: Option<usize>,
+    pub results_newer: bool,
+    /// How to undo the last replacement in folders, file by file.
+    pub replace_undo: Vec<search::Restore>,
     pub preview_query: Option<(String, String, String, search::Options)>,
     pub preview_diff: Option<usize>,
     pub preview_rendered: Option<(usize, String)>,
@@ -98,7 +106,8 @@ pub(super) enum Event {
     GitMarkers(u64, u64, String),
     Found(u64, Page, usize, usize, usize, String, search::Options),
     Results(search::Results),
-    Applied(Vec<(u64, Page)>, usize, Vec<String>),
+    Applied(Vec<(u64, Page)>, usize, Vec<String>, Vec<search::Restore>),
+    Restored(usize, Vec<String>),
     Symbols(Vec<intelligence::Symbol>),
     /// Definitions (false) or references (true) of a name.
     Locations(bool, String, Vec<definitions::Location>),
@@ -168,19 +177,36 @@ impl HeditApp {
             }
             Event::Results(results) => {
                 self.quality.results = results;
+                self.quality.result_current = None;
+                self.quality.results_newer = true;
                 self.quality.preview_diff = None;
                 self.quality.preview_rendered = None;
             }
-            Event::Applied(pages, count, errors) => {
+            Event::Applied(pages, count, mut errors, restore) => {
                 for (id, page) in pages {
                     if let Some(b) = self.workspace.open.iter_mut().find(|b| b.view.id == id) {
                         b.set_page(page);
                     }
                 }
+                // Replacements in open files were made already; add them up.
+                let (edited, open_errors) = std::mem::take(&mut self.quality.open_applied);
+                errors.extend(open_errors);
+                self.quality.replace_undo = restore;
                 self.quality.results = Default::default();
                 self.quality.preview_query = None;
-                self.notice = format!("Updated {count} files.");
+                self.notice = match edited {
+                    0 => format!("Updated {count} files."),
+                    _ => format!(
+                        "Updated {count} files on disk and {edited} open files (unsaved; undo in each file)."
+                    ),
+                };
                 self.changed();
+                if !errors.is_empty() {
+                    self.error = Some(errors.join("\n"));
+                }
+            }
+            Event::Restored(count, errors) => {
+                self.notice = format!("Restored {count} files.");
                 if !errors.is_empty() {
                     self.error = Some(errors.join("\n"));
                 }
@@ -700,14 +726,26 @@ impl HeditApp {
                 options.clone(),
             )
         });
+        // Search what open files hold now, saved or not.
+        let open: std::collections::HashMap<PathBuf, String> = self
+            .workspace
+            .open
+            .iter()
+            .filter(|b| !b.page.info.paged && !b.follow)
+            .filter_map(|b| {
+                let path = std::fs::canonicalize(b.page.info.path.as_ref()?).ok()?;
+                Some((path, b.page.text.clone()))
+            })
+            .collect();
         let cancel = Arc::clone(&self.cancel);
         self.job(ctx, move || {
-            search::folders(
+            search::folders_with_open(
                 &roots,
                 &filter,
                 &query,
                 preview.then_some(replacement.as_str()),
                 &options,
+                &open,
                 &cancel,
             )
             .map(|r| Action::Quality(Box::new(Event::Results(r))))
@@ -715,6 +753,58 @@ impl HeditApp {
     }
     pub(super) fn apply_folder_replacements(&mut self, ctx: &egui::Context) {
         let plans = std::mem::take(&mut self.quality.results.plans);
+        // Files open in the editor change there, as one undo step each, and
+        // stay unsaved; only files that are not open are written.
+        let (open_plans, plans): (Vec<_>, Vec<_>) = plans
+            .into_iter()
+            .filter(|p| p.selected)
+            .partition(|p| p.open);
+        let mut edited = 0;
+        let mut open_errors = vec![];
+        for plan in open_plans {
+            let index = self.workspace.open.iter().position(|b| {
+                b.page
+                    .info
+                    .path
+                    .as_ref()
+                    .and_then(|p| std::fs::canonicalize(p).ok())
+                    == Some(plan.path.clone())
+            });
+            let Some(index) = index else {
+                open_errors.push(format!(
+                    "{}: the file was closed; search again.",
+                    plan.path.display()
+                ));
+                continue;
+            };
+            let b = &self.workspace.open[index];
+            if b.follow || b.page.info.paged || b.page.text != plan.before {
+                open_errors.push(format!(
+                    "{}: the open text changed since the preview; search again.",
+                    plan.path.display()
+                ));
+                continue;
+            }
+            let old = std::mem::replace(&mut self.workspace.open[index].page.text, plan.after);
+            match self.workspace.edit(index, &old) {
+                Ok(()) => {
+                    let b = &mut self.workspace.open[index];
+                    let length = b.page.text.chars().count();
+                    b.view.anchor = b.view.anchor.min(length);
+                    b.view.head = b.view.head.min(length);
+                    b.view.selections.clear();
+                    b.view.folds.clear();
+                    b.restore_cursor = true;
+                    edited += 1;
+                }
+                Err(e) => {
+                    self.workspace.open[index].page.text = old;
+                    open_errors.push(e);
+                }
+            }
+        }
+        self.quality.open_applied = (edited, open_errors);
+        self.changed();
         let editor = Arc::clone(&self.workspace.editor);
         let open = self
             .workspace
@@ -732,7 +822,8 @@ impl HeditApp {
             let mut count = 0;
             let mut pages = Vec::new();
             let mut errors = Vec::new();
-            for plan in plans.into_iter().filter(|p| p.selected) {
+            let mut restore = vec![];
+            for plan in plans {
                 let result = (|| {
                     if let Some((_, id, dirty, follow)) =
                         open.iter().find(|(p, _, _, _)| p == &plan.path)
@@ -765,7 +856,7 @@ impl HeditApp {
                         *doc = candidate;
                         pages.push((*id, page));
                     } else {
-                        search::apply(&plan)?;
+                        restore.push(search::apply_recorded(&plan)?);
                     }
                     Ok(())
                 })();
@@ -775,8 +866,23 @@ impl HeditApp {
                 }
             }
             Ok(Action::Quality(Box::new(Event::Applied(
-                pages, count, errors,
+                pages, count, errors, restore,
             ))))
+        });
+    }
+    /// Put back the files the last replacement wrote, where unchanged since.
+    pub(super) fn undo_folder_replacements(&mut self, ctx: &egui::Context) {
+        let records = std::mem::take(&mut self.quality.replace_undo);
+        self.job(ctx, move || {
+            let mut count = 0;
+            let mut errors = vec![];
+            for record in &records {
+                match search::restore(record) {
+                    Ok(()) => count += 1,
+                    Err(e) => errors.push(e),
+                }
+            }
+            Ok(Action::Quality(Box::new(Event::Restored(count, errors))))
         });
     }
     pub(super) fn compare_disk(&mut self, ctx: &egui::Context, git: bool) {

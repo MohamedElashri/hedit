@@ -422,8 +422,8 @@ impl Command {
             Self::BuildWith => "Build with…",
             Self::CancelBuild => "Cancel build",
             Self::BuildResults => "Show build results",
-            Self::NextResult => "Next build result",
-            Self::PreviousResult => "Previous build result",
+            Self::NextResult => "Next result",
+            Self::PreviousResult => "Previous result",
             Self::SkipOccurrence => "Skip occurrence",
             Self::ExpandSelection => "Expand selection",
             Self::ExpandToBrackets => "Expand selection to brackets",
@@ -823,7 +823,10 @@ impl HeditApp {
             Command::FocusGroup3 => self.panes.groups() > 2,
             Command::FocusGroup4 => self.panes.groups() > 3,
             Command::CancelBuild => self.build.running(),
-            Command::NextResult | Command::PreviousResult => !self.build.locations.is_empty(),
+            Command::NextResult | Command::PreviousResult => {
+                !self.build.locations.is_empty()
+                    || (self.quality.results_newer && !self.quality.results.hits.is_empty())
+            }
             Command::Gpu | Command::ToolSettings => hedit::debugger::LOCAL_TOOLS_SUPPORTED,
             Command::Uppercase | Command::Lowercase => {
                 self.active().view.anchor != self.active().view.head

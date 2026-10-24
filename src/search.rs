@@ -98,8 +98,25 @@ pub struct Hit {
     pub column: usize,
     pub text: String,
 }
+/// A line shown in the results: matching lines carry the column of their
+/// first match, and the lines around them none.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ContextLine {
+    pub line: usize,
+    pub text: String,
+    pub column: Option<usize>,
+}
+/// One file's matches, with a line of context around each.
+#[derive(Clone, Debug)]
+pub struct FileHits {
+    pub path: PathBuf,
+    pub count: usize,
+    pub lines: Vec<ContextLine>,
+}
 pub struct FilePlan {
     pub path: PathBuf,
+    /// The text came from a file open in the editor rather than from disk.
+    pub open: bool,
     pub before: String,
     pub after: String,
     pub hash: [u8; 32],
@@ -110,6 +127,7 @@ pub struct FilePlan {
 #[derive(Default)]
 pub struct Results {
     pub hits: Vec<Hit>,
+    pub files: Vec<FileHits>,
     pub plans: Vec<FilePlan>,
     pub skipped: usize,
     pub truncated: bool,
@@ -207,6 +225,43 @@ pub fn folders(
     options: &Options,
     cancel: &AtomicBool,
 ) -> Result<Results, String> {
+    let open = std::collections::HashMap::new();
+    folders_with_open(roots, filter, query, replacement, options, &open, cancel)
+}
+/// The lines to show for matches on `matched` lines (1-based, with the
+/// column of the first match): each with the line before and after it.
+fn context(text: &str, matched: &[(usize, usize)]) -> Vec<ContextLine> {
+    let lines: Vec<&str> = text.split('\n').collect();
+    let mut wanted: Vec<usize> = matched
+        .iter()
+        .flat_map(|&(line, _)| line.saturating_sub(1).max(1)..=(line + 1).min(lines.len()))
+        .collect();
+    wanted.sort_unstable();
+    wanted.dedup();
+    wanted
+        .into_iter()
+        .map(|line| ContextLine {
+            line,
+            text: lines[line - 1]
+                .trim_end_matches('\r')
+                .chars()
+                .take(240)
+                .collect(),
+            column: matched.iter().find(|(l, _)| *l == line).map(|(_, c)| *c),
+        })
+        .collect()
+}
+/// Search folders like `folders`, reading files open in the editor from
+/// `open` (their current, possibly unsaved, text) instead of from disk.
+pub fn folders_with_open(
+    roots: &[PathBuf],
+    filter: &str,
+    query: &str,
+    replacement: Option<&str>,
+    options: &Options,
+    open: &std::collections::HashMap<PathBuf, String>,
+    cancel: &AtomicBool,
+) -> Result<Results, String> {
     options.compile(query)?;
     let mut result = Results::default();
     let mut retained = 0;
@@ -214,29 +269,36 @@ pub fn folders(
         if cancel.load(Ordering::Relaxed) {
             return Err("Search cancelled.".into());
         }
-        if std::fs::metadata(&path).map_or(true, |m| m.len() > FILE_LIMIT) {
-            result.skipped += 1;
-            continue;
-        }
-        let bytes = match std::fs::read(&path) {
-            Ok(b) => b,
-            Err(_) => {
+        let in_editor = open.get(&path);
+        let (text, bytes, encoding, bom) = if let Some(text) = in_editor {
+            (text.clone(), vec![], "", false)
+        } else {
+            if std::fs::metadata(&path).map_or(true, |m| m.len() > FILE_LIMIT) {
                 result.skipped += 1;
                 continue;
             }
-        };
-        let encoding = crate::text_encoding::detect(&bytes);
-        let (text, bom) = match crate::text_encoding::decode(&bytes, encoding) {
-            Ok(t) => t,
-            Err(_) => {
-                result.skipped += 1;
-                continue;
-            }
+            let bytes = match std::fs::read(&path) {
+                Ok(b) => b,
+                Err(_) => {
+                    result.skipped += 1;
+                    continue;
+                }
+            };
+            let encoding = crate::text_encoding::detect(&bytes);
+            let (text, bom) = match crate::text_encoding::decode(&bytes, encoding) {
+                Ok(t) => t,
+                Err(_) => {
+                    result.skipped += 1;
+                    continue;
+                }
+            };
+            (text, bytes, encoding, bom)
         };
         let found = matches(&text, query, options, 0..text.len())?;
         if found.is_empty() {
             continue;
         }
+        let first_hit = result.hits.len();
         for m in &found {
             let before = &text[..m.start];
             let start = before.rfind('\n').map_or(0, |i| i + 1);
@@ -254,6 +316,17 @@ pub fn folders(
                 break;
             }
         }
+        let mut matched: Vec<(usize, usize)> = vec![];
+        for hit in &result.hits[first_hit..] {
+            if matched.last().is_none_or(|(line, _)| *line != hit.line) {
+                matched.push((hit.line, hit.column));
+            }
+        }
+        result.files.push(FileHits {
+            path: path.clone(),
+            count: result.hits.len() - first_hit,
+            lines: context(&text, &matched),
+        });
         if let Some(replacement) = replacement {
             let (after, _) = replace(&text, query, replacement, options, 0..text.len())?;
             retained += text.len() + after.len();
@@ -262,6 +335,7 @@ pub fn folders(
             }
             result.plans.push(FilePlan {
                 path,
+                open: in_editor.is_some(),
                 before: text,
                 after,
                 hash: Sha256::digest(&bytes).into(),
@@ -276,7 +350,50 @@ pub fn folders(
     }
     Ok(result)
 }
+/// What a replacement wrote to disk, to put the file back.
+#[derive(Clone, Debug)]
+pub struct Restore {
+    pub path: PathBuf,
+    pub before: String,
+    /// The file's bytes after the replacement, to tell whether it changed since.
+    pub written: [u8; 32],
+}
+/// Put back a file changed by `apply`, unless it has changed since.
+pub fn restore(record: &Restore) -> Result<(), String> {
+    let current = std::fs::read(&record.path).map_err(|e| e.to_string())?;
+    if <[u8; 32]>::from(Sha256::digest(&current)) != record.written {
+        return Err(format!(
+            "{} changed after the replacement; it was left as it is.",
+            record.path.display()
+        ));
+    }
+    let mut doc = crate::document::Document::open(1, &record.path)?;
+    doc.replace(
+        0,
+        doc.info().size,
+        record.before.clone(),
+        doc.info().revision,
+    )?;
+    doc.save(None)?;
+    Ok(())
+}
+/// Apply a reviewed replacement and return how to undo it.
+pub fn apply_recorded(plan: &FilePlan) -> Result<Restore, String> {
+    apply(plan)?;
+    let written = std::fs::read(&plan.path).map_err(|e| e.to_string())?;
+    Ok(Restore {
+        path: plan.path.clone(),
+        before: plan.before.clone(),
+        written: Sha256::digest(&written).into(),
+    })
+}
 pub fn apply(plan: &FilePlan) -> Result<(), String> {
+    if plan.open {
+        return Err(format!(
+            "{} is open; its replacement belongs in the editor.",
+            plan.path.display()
+        ));
+    }
     let current = std::fs::read(&plan.path).map_err(|e| e.to_string())?;
     if <[u8; 32]>::from(Sha256::digest(&current)) != plan.hash {
         return Err(format!(

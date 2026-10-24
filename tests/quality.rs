@@ -551,3 +551,74 @@ fn declarations_are_definitions_but_returns_are_not() {
     assert_eq!(lines("name"), [3]);
     assert_eq!(lines("grid"), [4]);
 }
+
+#[test]
+fn folder_search_reads_open_text_groups_context_and_restores() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(directory.path()).unwrap();
+    std::fs::write(
+        root.join("a.txt"),
+        "one\ntwo needle\nthree\nfour\nfive\nsix needle\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("open.txt"), "nothing on disk\n").unwrap();
+    let roots = [root.clone()];
+    let cancel = AtomicBool::new(false);
+    let open =
+        std::collections::HashMap::from([(root.join("open.txt"), "needle unsaved\n".to_owned())]);
+    let result = search::folders_with_open(
+        &roots,
+        "",
+        "needle",
+        Some("pin"),
+        &Default::default(),
+        &open,
+        &cancel,
+    )
+    .unwrap();
+    assert_eq!(
+        result.hits.len(),
+        3,
+        "unsaved text in the editor is searched"
+    );
+    let a = &result.files[0];
+    assert_eq!(a.count, 2);
+    let shown: Vec<_> = a.lines.iter().map(|l| (l.line, l.column)).collect();
+    assert_eq!(
+        shown,
+        [
+            (1, None),
+            (2, Some(5)),
+            (3, None),
+            (5, None),
+            (6, Some(5)),
+            (7, None)
+        ]
+    );
+    let open_plan = result.plans.iter().find(|p| p.open).unwrap();
+    assert_eq!(open_plan.after, "pin unsaved\n");
+    assert!(
+        search::apply(open_plan).is_err(),
+        "open files are changed in the editor"
+    );
+    // A disk replacement can be undone while the file is unchanged.
+    let plan = result.plans.iter().find(|p| !p.open).unwrap();
+    let record = search::apply_recorded(plan).unwrap();
+    assert!(std::fs::read_to_string(root.join("a.txt"))
+        .unwrap()
+        .contains("two pin"));
+    search::restore(&record).unwrap();
+    assert!(std::fs::read_to_string(root.join("a.txt"))
+        .unwrap()
+        .contains("two needle"));
+    // Not after something else changed it.
+    let record = search::apply_recorded(plan).unwrap();
+    std::fs::write(root.join("a.txt"), "edited elsewhere\n").unwrap();
+    assert!(search::restore(&record)
+        .unwrap_err()
+        .contains("left as it is"));
+    assert_eq!(
+        std::fs::read_to_string(root.join("a.txt")).unwrap(),
+        "edited elsewhere\n"
+    );
+}

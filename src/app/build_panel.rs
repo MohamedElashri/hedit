@@ -55,6 +55,7 @@ impl HeditApp {
     /// Build the active file with the chosen (or automatic) build system,
     /// saving it first.
     pub(super) fn build(&mut self, ctx: &egui::Context) {
+        self.quality.results_newer = false;
         let b = self.active();
         let Some(path) = b.page.info.path.clone() else {
             self.error = Some("Save the file before building it.".into());
@@ -173,6 +174,26 @@ impl HeditApp {
     }
     /// Jump to the next (or previous) location in the build output.
     pub(super) fn next_result(&mut self, forward: bool) {
+        // Find in folders results, when they are newer than the build's.
+        let hits = self.quality.results.hits.len();
+        if self.quality.results_newer && hits > 0 {
+            let next = match (self.quality.result_current, forward) {
+                (None, true) => 0,
+                (None, false) => hits - 1,
+                (Some(i), true) => (i + 1) % hits,
+                (Some(i), false) => (i + hits - 1) % hits,
+            };
+            self.quality.result_current = Some(next);
+            let hit = &self.quality.results.hits[next];
+            self.pending_paths.push_back(PathBuf::from(format!(
+                "{}:{}:{}",
+                hit.path.display(),
+                hit.line,
+                hit.column
+            )));
+            self.notice = format!("Match {} of {hits}", next + 1);
+            return;
+        }
         let count = self.build.locations.len();
         if count == 0 {
             self.notice = "No build results to go to.".into();

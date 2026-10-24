@@ -35,6 +35,16 @@
   file keeps the typed order. Plain text, Markdown, and LaTeX lines take their
   direction from their first letter; code lines run left to right.
 
+### Changed
+
+- Find in folders searches the current text of files open in hedit, including
+  unsaved changes. Its results are grouped by file with a line of context around
+  each match, and F4 and Shift+F4 step through them.
+- Replace in folders changes files open in hedit in the editor, as an undoable
+  edit left unsaved, instead of skipping those with unsaved changes or saving
+  them right away. **Undo replacements** puts back the files it wrote to disk,
+  unless something else changed them since.
+
 ### Fixed
 
 - Pressing Escape in the editor took keyboard focus away from it, so typing did

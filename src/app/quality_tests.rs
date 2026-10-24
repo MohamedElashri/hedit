@@ -231,7 +231,7 @@ fn rename_through_symlinked_parent_retargets_folder_and_open_and_closed_buffers(
 }
 
 #[test]
-fn project_replacement_updates_open_clean_buffers_and_keeps_dirty_text() {
+fn project_replacement_edits_open_buffers_unsaved_and_keeps_newer_text() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("src");
     std::fs::create_dir(&root).unwrap();
@@ -250,12 +250,15 @@ fn project_replacement_updates_open_clean_buffers_and_keeps_dirty_text() {
     finish_app_job(&mut app, &ctx);
     app.apply_folder_replacements(&ctx);
     finish_app_job(&mut app, &ctx);
+    // The open file changes in the editor and waits to be saved.
     assert_eq!(app.active().page.text, "changed\n");
-    assert!(!app.active().page.info.dirty);
+    assert!(app.active().page.info.dirty);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "needle\n");
     app.query = "changed".into();
     app.replacement = "disk edit".into();
     app.folder_search(&ctx, true);
     finish_app_job(&mut app, &ctx);
+    // Typing after the preview keeps the newer text.
     let index = app.workspace.active;
     app.workspace.open[index].page.text = "my unsaved text".into();
     app.workspace.edit(index, "changed\n").unwrap();
@@ -264,9 +267,13 @@ fn project_replacement_updates_open_clean_buffers_and_keeps_dirty_text() {
         app.receive(&ctx);
         thread::sleep(Duration::from_millis(5));
     }
-    assert!(app.error.as_ref().unwrap().contains("unsaved changes"));
+    assert!(app
+        .error
+        .as_ref()
+        .unwrap()
+        .contains("changed since the preview"));
     assert_eq!(app.active().page.text, "my unsaved text");
-    assert_eq!(std::fs::read_to_string(path).unwrap(), "changed\n");
+    assert_eq!(std::fs::read_to_string(path).unwrap(), "needle\n");
 }
 
 #[test]

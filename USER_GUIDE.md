@@ -623,21 +623,29 @@ and 20,000 matches; advanced replacement requires a fully loaded file. Literal,
 case-sensitive Find continues to stream across larger paged files and supports
 cancellation from the status bar.
 
-**Find → Find in folders…** (**Ctrl+Shift+F**) searches disk contents across all
-workspace roots. Enter comma-separated filename/path globs, such as `*.rs, *.cu`,
-or leave Files empty. Git ignore rules apply, including outside Git repositories;
-directory symlinks are not followed. Click a result to open its location.
-Search reads UTF-8 and BOM-marked UTF-16 files, skipping unsupported/binary files
-and files over 16 MiB. It reports skipped files and result limits. Open unsaved
-text is not included in folder searches.
+**Find → Find in folders…** (**Ctrl+Shift+F**) searches all workspace roots.
+Files open in hedit are searched as they are now, including unsaved changes;
+other files are read from disk. Enter comma-separated filename/path globs, such
+as `*.rs, *.cu`, or leave Files empty. Git ignore rules apply, including outside
+Git repositories; directory symlinks are not followed. Search reads UTF-8 and
+BOM-marked UTF-16 files, skipping unsupported/binary files and files over
+16 MiB. It reports skipped files and result limits.
+
+Results are grouped by file, with each matching line shown between the lines
+around it; click a line to open it there. **F4** and **Shift+F4** step through
+the matches, the same keys that visit build errors; after a new build they go
+back to the build's errors.
 
 Choose **Preview replacements**, select the files to change, and click a filename
 to inspect its diff before **Apply reviewed replacements**. Changing the query,
-replacement, filters, or options requires a new preview. Files changed externally,
-open with unsaved text, or in Follow mode are skipped and reported. Preview text
-is limited to 128 MiB; applying across files is not a single transaction. Open,
-fully loaded buffers retain undo for successful replacements; unopened disk files
-should be restored through version control or backups if necessary.
+replacement, filters, or options requires a new preview. Replacements in files
+open in hedit are made in the editor and left unsaved, so you can review them,
+undo them with **Ctrl+Z**, or save them; a file whose text changed after the
+preview is skipped and reported. Files that are not open are written to disk,
+each only if it has not changed since the preview. **Undo replacements** then
+puts those files back, except any that something else changed in the meantime,
+which are left alone and reported. Preview text is limited to 128 MiB, and
+applying across files is not a single transaction.
 
 ### Saved projects and formatting
 
@@ -1180,7 +1188,7 @@ and Quit are in macOS's own hedit menu. Change any shortcut under
 | Ctrl+Shift+O | Add one or more folders |
 | Ctrl+K, Ctrl+B / Ctrl+Alt+B | Toggle entire sidebar / folder section |
 | Ctrl+B / Ctrl+Shift+B | Build / build with a chosen build system |
-| F4 / Shift+F4 | Next / previous build error |
+| F4 / Shift+F4 | Next / previous build error or Find in folders match |
 | Ctrl+P / Ctrl+Shift+P | Find files / command palette |
 | Ctrl+F / Ctrl+H / Ctrl+G | Find / Replace / Go to line |
 | Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y | Undo / redo |

@@ -937,3 +937,90 @@ fn resting_on_a_name_lists_its_definitions_from_open_files() {
     frame(&ctx, &mut app, vec![]);
     assert!(app.hover.is_none());
 }
+
+#[test]
+fn replace_in_folders_edits_open_files_unsaved_and_undoes_disk_files() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(directory.path())
+        .unwrap()
+        .join("project");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("open.txt"), "old on disk\n").unwrap();
+    std::fs::write(root.join("closed.txt"), "old closed\n").unwrap();
+    let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    app.set_folder(hedit::folder::read_directory(root.clone()).unwrap());
+    app.open(&ctx, Some(root.join("open.txt")));
+    finish_app_job(&mut app, &ctx);
+    // Unsaved text in the open file is what gets searched and replaced.
+    app.set_selections(vec![hedit::advanced::Selection::caret(0)]);
+    type_text(&ctx, &mut app, "old ");
+    assert!(app.active().page.info.dirty);
+    app.query = "old".into();
+    app.replacement = "new".into();
+    app.folder_search(&ctx, true);
+    finish_app_job(&mut app, &ctx);
+    assert_eq!(app.quality.results.hits.len(), 3);
+    assert_eq!(app.quality.results.plans.len(), 2);
+    app.apply_folder_replacements(&ctx);
+    finish_app_job(&mut app, &ctx);
+    let open = app
+        .workspace
+        .open
+        .iter()
+        .find(|b| b.view.name == "open.txt")
+        .unwrap();
+    assert_eq!(open.page.text, "new new on disk\n");
+    assert!(open.page.info.dirty, "open files stay unsaved");
+    assert_eq!(
+        std::fs::read_to_string(root.join("open.txt")).unwrap(),
+        "old on disk\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("closed.txt")).unwrap(),
+        "new closed\n"
+    );
+    assert!(app.notice.contains("1 open files"), "{}", app.notice);
+    // Undo in the open file brings its text back.
+    app.history(&ctx, false);
+    finish_app_job(&mut app, &ctx);
+    assert_eq!(app.active().page.text, "old old on disk\n");
+    // Undo replacements puts the closed file back.
+    app.undo_folder_replacements(&ctx);
+    finish_app_job(&mut app, &ctx);
+    assert_eq!(
+        std::fs::read_to_string(root.join("closed.txt")).unwrap(),
+        "old closed\n"
+    );
+    assert!(app.quality.replace_undo.is_empty());
+}
+
+#[test]
+fn f4_goes_through_folder_matches_after_a_search() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(directory.path())
+        .unwrap()
+        .join("project");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.txt"), "x\nneedle\n").unwrap();
+    std::fs::write(root.join("b.txt"), "needle\n").unwrap();
+    let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    app.set_folder(hedit::folder::read_directory(root.clone()).unwrap());
+    app.query = "needle".into();
+    app.folder_search(&ctx, false);
+    finish_app_job(&mut app, &ctx);
+    assert!(app.command_enabled(Command::NextResult));
+    app.execute(&ctx, Command::NextResult);
+    finish_app_job(&mut app, &ctx);
+    assert_eq!(app.active().view.name, "a.txt");
+    assert_eq!(app.active().view.head, 2, "line 2, column 1");
+    app.execute(&ctx, Command::NextResult);
+    finish_app_job(&mut app, &ctx);
+    assert_eq!(app.active().view.name, "b.txt");
+    app.execute(&ctx, Command::PreviousResult);
+    finish_app_job(&mut app, &ctx);
+    assert_eq!(app.active().view.name, "a.txt");
+}
