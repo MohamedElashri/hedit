@@ -1183,14 +1183,6 @@ impl Document {
         self.eol = if crlf { "CRLF" } else { "LF" };
         Ok(self.info())
     }
-    pub fn mark_clean(&mut self) {
-        // The fully loaded frontend retains the saved text across checkpoints.
-        // It calls this only when that text equals the current document again.
-        if !self.paged {
-            self.dirty = false;
-            self.saved_version = Some(self.version);
-        }
-    }
     fn write_content(&self, output: &mut File) -> Result<(), String> {
         self.check_source()?;
         if self.bom {
@@ -1467,106 +1459,6 @@ impl Document {
         self.revision += 1;
         self.recovered = false;
         Ok(self.info())
-    }
-    pub fn convert_indent(
-        &mut self,
-        tabs: bool,
-        width: u8,
-        revision: u64,
-        progress: impl Fn(u64, u64),
-    ) -> Result<Page, String> {
-        if ![2, 4, 8].contains(&width) || revision != self.revision {
-            return Err("Invalid indentation or stale revision.".into());
-        }
-        self.check_source()?;
-        let mut output = tempfile::tempfile().map_err(err)?;
-        let mut writer = io::BufWriter::with_capacity(IO_SIZE as usize, &mut output);
-        let mut cursor = 0;
-        let mut columns = 0u64;
-        let mut leading = true;
-        let mut size = 0;
-        let width = width as u64;
-        while cursor < self.size {
-            let bytes = self.read_range(cursor, (self.size - cursor).min(IO_SIZE))?;
-            let mut copied = 0;
-            for (index, byte) in bytes.iter().enumerate() {
-                if leading {
-                    if *byte == b' ' || *byte == b'\t' {
-                        columns += if *byte == b'\t' {
-                            width - columns % width
-                        } else {
-                            1
-                        };
-                        copied = index + 1;
-                        continue;
-                    }
-                    let (mut count, byte) = if tabs {
-                        (columns / width, b'\t')
-                    } else {
-                        (columns, b' ')
-                    };
-                    let block = [byte; 4096];
-                    while count > 0 {
-                        let n = count.min(block.len() as u64) as usize;
-                        writer.write_all(&block[..n]).map_err(err)?;
-                        size += n as u64;
-                        count -= n as u64;
-                    }
-                    if tabs {
-                        let rest = columns % width;
-                        writer.write_all(&[b' '; 8][..rest as usize]).map_err(err)?;
-                        size += rest;
-                    }
-                    columns = 0;
-                    leading = false;
-                }
-                if *byte == b'\n' {
-                    writer.write_all(&bytes[copied..=index]).map_err(err)?;
-                    size += (index + 1 - copied) as u64;
-                    copied = index + 1;
-                    leading = true;
-                }
-            }
-            writer.write_all(&bytes[copied..]).map_err(err)?;
-            size += (bytes.len() - copied) as u64;
-            cursor += bytes.len() as u64;
-            if cursor % (16 * IO_SIZE) == 0 || cursor == self.size {
-                progress(cursor, self.size);
-            }
-        }
-        // Preserve a final whitespace-only line without buffering its length.
-        let (mut count, byte) = if tabs {
-            (columns / width, b'\t')
-        } else {
-            (columns, b' ')
-        };
-        let block = [byte; 4096];
-        while count > 0 {
-            let n = count.min(4096) as usize;
-            writer.write_all(&block[..n]).map_err(err)?;
-            size += n as u64;
-            count -= n as u64;
-        }
-        if tabs {
-            let rest = columns % width;
-            writer.write_all(&[b' '; 8][..rest as usize]).map_err(err)?;
-            size += rest;
-        }
-        writer.flush().map_err(err)?;
-        drop(writer);
-        output.sync_all().map_err(err)?;
-        self.check_source()?;
-        self.paged |= size > SMALL_LIMIT;
-        self.remember_edit(0);
-        self.pieces = vec![Piece {
-            source: Source::disk(output)?,
-            start: 0,
-            len: size,
-        }];
-        self.size = size;
-        self.recovered = true;
-        self.finish_edit();
-        self.page(0)
     }
     pub fn replace_all(
         &mut self,

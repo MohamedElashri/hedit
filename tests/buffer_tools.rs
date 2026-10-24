@@ -156,9 +156,19 @@ fn cpp_and_cuda_extensions_share_the_native_lexer() {
         "kernel.CU",
         "device.cuh",
     ] {
-        assert!(hedit::syntax::is_c_family(name), "{name}");
+        use hedit::syntax::Language::*;
+        assert!(
+            matches!(
+                hedit::syntax::Language::detect(name),
+                C | Cpp | Cuda | ObjectiveC
+            ),
+            "{name}"
+        );
     }
-    assert!(!hedit::syntax::is_c_family("output.log"));
-    assert_eq!(hedit::syntax::language_label("main.cpp"), "C++");
-    assert_eq!(hedit::syntax::language_label("kernel.cu"), "CUDA");
+    assert_eq!(
+        hedit::syntax::Language::detect("output.log"),
+        hedit::syntax::Language::Log
+    );
+    assert_eq!(hedit::syntax::Language::detect("main.cpp").label(), "C++");
+    assert_eq!(hedit::syntax::Language::detect("kernel.cu").label(), "CUDA");
 }

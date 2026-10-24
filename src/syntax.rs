@@ -137,19 +137,6 @@ impl Language {
     }
 }
 
-pub fn is_cuda(name: &str) -> bool {
-    Language::detect(name) == Language::Cuda
-}
-pub fn is_c_family(name: &str) -> bool {
-    matches!(
-        Language::detect(name),
-        Language::C | Language::Cpp | Language::Cuda | Language::ObjectiveC
-    )
-}
-pub fn language_label(name: &str) -> &'static str {
-    Language::detect(name).label()
-}
-
 /// Convenience helpers for the CUDA tools preview and existing library callers.
 pub fn highlight(text: &str, font_size: f32, wrap_width: f32, cuda: bool) -> egui::text::LayoutJob {
     highlight_with_theme(text, font_size, wrap_width, cuda, &Theme::default())

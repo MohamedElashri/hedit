@@ -508,31 +508,6 @@ fn rename_no_replace(_from: &Path, _target: &Path) -> std::io::Result<()> {
     ))
 }
 
-/// Delete a file, symlink, or folder (recursively). The frontend confirms first.
-pub fn delete_path(path: String) -> Result<(), String> {
-    let path = entry_path(Path::new(&path))?;
-    if path.parent().is_none() {
-        return Err("Refusing to delete a filesystem root.".into());
-    }
-    let kind = fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
-    if kind.is_symlink() {
-        #[cfg(windows)]
-        {
-            use std::os::windows::fs::FileTypeExt;
-            if kind.file_type().is_symlink_dir() {
-                return fs::remove_dir(&path).map_err(|e| e.to_string());
-            }
-        }
-        fs::remove_file(&path).map_err(|e| e.to_string())
-    } else if kind.is_file() {
-        fs::remove_file(&path).map_err(|e| e.to_string())
-    } else if kind.is_dir() {
-        fs::remove_dir_all(&path).map_err(|e| e.to_string())
-    } else {
-        Err("Only files, symlinks, and folders can be deleted.".into())
-    }
-}
-
 /// Reveal `path` in Finder, Explorer, or the Linux file manager. Best effort.
 pub fn reveal_in_file_manager(path: String) -> Result<(), String> {
     let path = canonical_path(&path)?;
