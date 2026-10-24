@@ -126,6 +126,11 @@
   only appears for checkpoint failures.
 - Status messages such as “File saved.” appear in the status bar for a few seconds.
 - Clicking a window that floats over a split pane no longer switches panes.
+- Git change markers and Tools → Git changes work for files reached through a
+  symlinked folder, such as macOS's `/var` → `/private/var`.
+- Saving `settings.json` reloads settings even when the configuration folder is
+  reached through a symlink.
+- Cancelling a build also stops a command the shell was starting at that moment.
 - On macOS, navigate back/forward with Control+- and Control+Shift+-, so
   Option+arrows keep moving by word.
 
