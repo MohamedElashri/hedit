@@ -2,7 +2,7 @@
 
 This guide covers hedit on Linux and macOS. Shortcuts are written for Linux; on
 macOS use **Cmd** for **Ctrl** and **Option** for **Alt** (the exceptions are
-listed under [Keyboard shortcuts](#keyboard-shortcuts)). The menus always show
+listed under [macOS shortcuts](#macos-shortcuts)). The menus always show
 your platform's keys.
 
 - [Installation](#installation)
@@ -567,17 +567,6 @@ files go to the open window.
 Change any shortcut under **Settings → Key Bindings**. Two-key shortcuts such as
 **Ctrl+K, Ctrl+D** mean: press the first, then the second.
 
-On macOS, keys that macOS reserves differ: Replace is **Cmd+Option+F**, full
-screen **Control+Cmd+F**, distraction-free **Control+Shift+Cmd+F**, Complete word
-**Control+Space**, select all occurrences **Control+Cmd+G**, jump to bracket
-**Control+M**, back/forward **Control+-** / **Control+Shift+-**, block comment
-**Cmd+Option+/**, wrap paragraph **Cmd+Option+Q**, transpose **Control+T**, delete
-to the start of the line **Cmd+Backspace**, macros
-**Control+Q** / **Control+Shift+Q**, tab switching **Control+Tab** and
-**Control+PageDown/PageUp**, tabs 1–9 **Cmd+1–9**, add cursor above/below
-**Control+Shift+Up/Down**, layouts **Cmd+Option+1–5** and rows **Cmd+Option+Shift+2/3**, group focus **Control+1–4**,
-and line scrolling **Control+Option+Up/Down**.
-
 | Shortcut | Action |
 | --- | --- |
 | Ctrl+N / Ctrl+O / Ctrl+Shift+N | New file / open file / new window |
@@ -605,6 +594,33 @@ and line scrolling **Control+Option+Up/Down**.
 | Ctrl++ / Ctrl+- / Ctrl+0 / Ctrl+Up | Bigger / smaller / reset font / scroll a line |
 | Ctrl+, / Ctrl+Q | Settings / quit |
 | Esc | Close the newest window or panel, then extra cursors |
+
+### macOS shortcuts
+
+macOS reserves some of the usual keys, so these shortcuts differ:
+
+| Action | Linux | macOS |
+| --- | --- | --- |
+| Replace | Ctrl+H | Cmd+Option+F |
+| Full screen / distraction-free | F11 / Shift+F11 | Control+Cmd+F / Control+Shift+Cmd+F |
+| Complete word | Ctrl+Space | Control+Space |
+| Select all occurrences | Alt+F3 | Control+Cmd+G |
+| Jump to bracket | Ctrl+M | Control+M |
+| Back / forward | Alt+Left / Alt+Right | Control+- / Control+Shift+- |
+| Block comment | Ctrl+Shift+/ | Cmd+Option+/ |
+| Wrap paragraph | Alt+Q | Cmd+Option+Q |
+| Transpose | Ctrl+T | Control+T |
+| Delete to the start of the line | Ctrl+Shift+Backspace | Cmd+Backspace |
+| Record / play macro | Ctrl+Alt+Q / Ctrl+Alt+Shift+Q | Control+Q / Control+Shift+Q |
+| Recent tab / next and previous tab | Ctrl+Tab / Ctrl+PageDown, Ctrl+PageUp | Control+Tab / Control+PageDown, Control+PageUp |
+| Tabs 1–9 | Alt+1–9 | Cmd+1–9 |
+| Add cursor above / below | Alt+Shift+Up / Down | Control+Shift+Up / Down |
+| Column layouts and grid | Alt+Shift+1–5 | Cmd+Option+1–5 |
+| Two / three rows | Alt+Shift+8 / 9 | Cmd+Option+Shift+2 / 3 |
+| Focus a group | Ctrl+1–4 | Control+1–4 |
+| Scroll a line | Ctrl+Up / Down | Control+Option+Up / Down |
+
+Everything else uses Cmd for Ctrl and Option for Alt.
 
 ## Recovery
 
