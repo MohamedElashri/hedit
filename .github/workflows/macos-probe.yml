@@ -27,9 +27,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Static checks
-        run: |
-          make static
-          python3 scripts/test-macos-package.py
+        run: make static
       - uses: Swatinem/rust-cache@v2
         with:
           key: macos-universal
@@ -37,10 +35,8 @@ jobs:
       # build below, so lint the runner's native Apple Silicon slice only.
       - name: Clippy
         run: cargo clippy --locked --all-targets -- -D warnings
-      - name: Native editor and recovery tests
-        run: >-
-          cargo test --locked --bin hedit --test buffer_tools --test debugger
-          --test folders --test recovery --test syntax --test themes --test editing --test advanced
+      - name: Tests
+        run: make test-macos
       - name: Build architecture slices and assemble universal app
         run: |
           cargo build --release --locked --target aarch64-apple-darwin

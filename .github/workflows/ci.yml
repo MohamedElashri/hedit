@@ -40,3 +40,24 @@ jobs:
         run: make clippy
       - name: Tests
         run: make test
+
+  # macOS runs alongside Linux, so platform differences show up before a release.
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.92.0
+        with:
+          components: clippy
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Clippy
+        run: make clippy
+      - name: Tests
+        run: make test-macos

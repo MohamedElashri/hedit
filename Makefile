@@ -6,7 +6,7 @@ ACTIONLINT ?= actionlint
 PREFIX ?= $(HOME)/.local
 export RELEASE_TAG
 
-.PHONY: help dev build run fmt fmt-check policy docs scripts-check static clippy lint test check ci smoke package install release-check workflow-lint macos clean
+.PHONY: help dev build run fmt fmt-check policy docs scripts-check static clippy lint test test-macos check ci smoke package install release-check workflow-lint macos clean
 
 help: ## Show available commands and configuration
 	@printf 'hedit development commands\n\n'
@@ -51,6 +51,10 @@ lint: static clippy ## Run all static checks: quick checks first, then clippy
 test: ## Run Rust tests and offline release-installer tests
 	$(CARGO) test --locked
 	$(PYTHON) scripts/test-install.py
+	$(PYTHON) scripts/test-macos-package.py
+
+test-macos: ## Run the tests that apply on macOS (Rust tests and the app bundle checks)
+	$(CARGO) test --locked
 	$(PYTHON) scripts/test-macos-package.py
 
 check: lint test ## Run static checks and tests without a release build
