@@ -421,12 +421,12 @@ fn keyboard_completion_selects_a_word_without_inserting_a_newline() {
     let ctx = egui::Context::default();
     let mut app = HeditApp::from_context(&ctx, None, ws, vec![], vec![]);
     frame(&ctx, &mut app, vec![]);
-    app.open_completion();
+    app.open_completion(&ctx);
     frame(&ctx, &mut app, vec![]);
     frame(&ctx, &mut app, vec![key(Key::ArrowDown, Modifiers::NONE)]);
     frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)]);
     assert_eq!(app.active().page.text, "alpha alpine alpine");
-    assert!(!app.quality.completion_open);
+    assert!(app.auto.popup.is_none());
     app.history(&ctx, false);
     finish_app_job(&mut app, &ctx);
     assert_eq!(app.active().page.text, text);

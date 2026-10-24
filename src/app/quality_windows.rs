@@ -127,29 +127,7 @@ impl HeditApp {
         // still types a newline in the editor beside an open window.
         let focused = ctx.memory(|m| m.focused());
         let field = |name: &str| focused == Some(egui::Id::new(name));
-        if self.quality.completion_open {
-            if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowDown)) {
-                self.quality.completion_index = (self.quality.completion_index + 1)
-                    .min(self.quality.candidates.len().saturating_sub(1));
-                self.quality.completion_focus = true;
-            }
-            if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowUp)) {
-                self.quality.completion_index = self.quality.completion_index.saturating_sub(1);
-                self.quality.completion_focus = true;
-            }
-            if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter)) {
-                if let Some(word) = self
-                    .quality
-                    .candidates
-                    .get(self.quality.completion_index)
-                    .cloned()
-                {
-                    self.commit_completion(word);
-                }
-                self.quality.completion_open = false;
-                self.focus_editor = true;
-            }
-        } else if self.quality.snippets_open
+        if self.quality.snippets_open
             && field(SNIPPETS_FIELD)
             && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter))
         {
@@ -168,7 +146,7 @@ impl HeditApp {
                 })
                 .cloned()
             {
-                self.insert_snippet(snippet, false);
+                self.insert_snippet(snippet, 0);
                 self.quality.snippets_open = false;
             }
         } else if self.quality.symbols_open
@@ -303,9 +281,7 @@ impl HeditApp {
         if self.quality.encoding_open {
             self.encoding_window(ctx);
         }
-        if self.quality.completion_open {
-            self.completion_window(ctx);
-        }
+        self.completion_popup(ctx);
         if self.quality.snippets_open {
             self.snippets_window(ctx);
         }
@@ -583,66 +559,6 @@ impl HeditApp {
             });
         }
     }
-    fn completion_window(&mut self, ctx: &egui::Context) {
-        let mut open = true;
-        let mut selected = None;
-        egui::Window::new("Complete word")
-            .open(&mut open)
-            .collapsible(false)
-            .max_width((ctx.screen_rect().width() - 32.0).max(300.0))
-            .max_height((ctx.screen_rect().height() - 32.0).max(220.0))
-            .vscroll(true)
-            .default_width(360.0)
-            .show(ctx, |ui| {
-                if self.quality.candidates.is_empty() {
-                    ui.label("No matching words in open files.");
-                }
-                egui::ScrollArea::vertical()
-                    .max_height(260.0)
-                    .show(ui, |ui| {
-                        for (index, word) in self.quality.candidates.iter().enumerate() {
-                            let response =
-                                ui.selectable_label(index == self.quality.completion_index, word);
-                            if self.quality.completion_focus
-                                && index == self.quality.completion_index
-                            {
-                                response.request_focus();
-                                response.scroll_to_me(None);
-                            }
-                            if response.clicked() {
-                                selected = Some(word.clone());
-                            }
-                        }
-                    });
-            });
-        self.quality.completion_open = open;
-        self.quality.completion_focus = false;
-        if let Some(word) = selected {
-            self.commit_completion(word);
-            self.quality.completion_open = false;
-        }
-    }
-    pub(super) fn commit_completion(&mut self, word: String) {
-        if !self.busy
-            && self.active().page.info.revision == self.quality.completion_revision
-            && self.active().view.id == self.quality.completion_id
-        {
-            let range = self.quality.completion_range.clone();
-            let mut text = self.active().page.text.clone();
-            if text.is_char_boundary(range.start) && text.is_char_boundary(range.end) {
-                let cursor = text[..range.start].chars().count() + word.chars().count();
-                text.replace_range(range, &word);
-                self.apply_edit(
-                    hedit::editing::Edit {
-                        text,
-                        anchor: cursor,
-                        head: cursor,
-                    },
-                    None,
-                );
-            }
-        }
-    }
     fn snippets_window(&mut self, ctx: &egui::Context) {
         let mut open = true;
         let mut selected = None;
@@ -685,7 +601,7 @@ impl HeditApp {
         self.quality.snippets_open = open;
         if let Some(snippet) = selected {
             if !self.busy {
-                self.insert_snippet(snippet, false);
+                self.insert_snippet(snippet, 0);
             }
             self.quality.snippets_open = false;
         }

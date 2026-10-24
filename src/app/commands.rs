@@ -370,7 +370,6 @@ impl Command {
                 | Self::CompareDisk
                 | Self::GitDiff
                 | Self::Encoding
-                | Self::Complete
                 | Self::Snippets
                 | Self::RecentProjects
                 | Self::PasteHistory
@@ -906,7 +905,7 @@ impl HeditApp {
                 self.quality.encoding = self.active().page.info.encoding.clone();
                 self.quality.encoding_open = true;
             }
-            Command::Complete => self.open_completion(),
+            Command::Complete => self.open_completion(ctx),
             Command::Snippets => {
                 self.quality.snippets_open = true;
                 self.quality.snippet_focus = true;

@@ -2,6 +2,7 @@ pub mod bidi;
 pub mod brand;
 pub mod build;
 pub mod cli;
+pub mod completion;
 pub mod debugger;
 pub mod document;
 pub mod editing;

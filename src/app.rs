@@ -1,4 +1,5 @@
 mod advanced_edit;
+mod auto_complete;
 mod bidi_view;
 mod build_panel;
 mod chords;
@@ -165,6 +166,9 @@ pub struct HeditApp {
     paste_palette: bool,
     /// Tab moves through the fields of the snippet inserted last.
     snippet: Option<snippet_fields::SnippetSession>,
+    auto: auto_complete::AutoComplete,
+    /// The focused editor's caret on screen, for the completion list.
+    caret_screen: Option<egui::Rect>,
     /// Cursors made by Add cursor above/below and the column they keep.
     line_cursor_goal: Option<(Vec<hedit::advanced::Selection>, usize)>,
     live_find: find_live::LiveFind,
@@ -311,6 +315,8 @@ impl HeditApp {
             paste_history: Vec::new(),
             paste_palette: false,
             snippet: None,
+            auto: Default::default(),
+            caret_screen: None,
             line_cursor_goal: None,
             live_find: Default::default(),
             goto_origin: None,
@@ -1069,6 +1075,7 @@ impl HeditApp {
         self.track_selection();
         self.track_recent_tabs(ctx);
         self.sync_snippet();
+        self.update_completion(ctx);
         if !self.busy && !self.closing && self.handle_chords(ctx) {
             return;
         }
@@ -1252,6 +1259,7 @@ impl HeditApp {
             ctx.memory_mut(|m| m.request_focus(editor_id));
         }
         if ctx.memory(|m| m.has_focus(editor_id)) {
+            self.completion_keys(ctx);
             let line_cursor = if cfg!(target_os = "macos") {
                 Modifiers::CTRL | Modifiers::SHIFT
             } else {
@@ -2065,6 +2073,17 @@ impl HeditApp {
                                 output.response.request_focus();
                             }
                             self.focus_editor = false;
+                        }
+                        if output.response.has_focus() {
+                            self.caret_screen = output.cursor_range.and_then(|range| {
+                                let rect = bidi_view::caret_rect(
+                                    &output.galley,
+                                    &bidi_rows,
+                                    range.primary.ccursor.index,
+                                )
+                                .translate(output.galley_pos.to_vec2());
+                                ui.clip_rect().contains(rect.center()).then_some(rect)
+                            });
                         }
                         if restore && buffer.reveal_cursor {
                             if let Some(range) = output.cursor_range {

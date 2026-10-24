@@ -19,6 +19,11 @@
 - Snippet fields: `$1`, `${1:text}`, and repeated numbers that fill in together.
   Tab and Shift+Tab move between fields, ending at `$0`. Multi-line snippets
   follow the indentation of the line they are inserted on.
+- Completions while typing: a list at the cursor offers words from the open files
+  and matching snippets, with Tab or Enter to accept (`auto_complete`,
+  `auto_complete_delay`, `auto_complete_commit_on_tab`). Words are collected in
+  the background, so typing is never held up. Complete word (Ctrl+Space) opens
+  the same list.
 - Right-to-left text: Arabic and Hebrew follow the Unicode Bidirectional
   Algorithm, Arabic letters join (including lam-alef), and right-to-left text
   mixes with English and numbers on the same line. Clicks, the caret, Left and

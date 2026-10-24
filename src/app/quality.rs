@@ -65,16 +65,9 @@ pub(super) struct Quality {
     pub settings_json: String,
     pub encoding_open: bool,
     pub encoding: String,
-    pub completion_open: bool,
-    pub completion_index: usize,
-    pub completion_focus: bool,
     pub snippet_focus: bool,
     pub symbol_focus: bool,
     pub folder_focus: bool,
-    pub candidates: Vec<String>,
-    pub completion_range: std::ops::Range<usize>,
-    pub completion_revision: u64,
-    pub completion_id: u64,
     pub snippets_open: bool,
     pub snippet_query: String,
     pub preview: Option<u64>,
@@ -1070,41 +1063,9 @@ impl HeditApp {
             self.go_to_offset(ctx, offset);
         }
     }
-    pub(super) fn open_completion(&mut self) {
-        if self.active().follow || self.active().page.info.paged {
-            return;
-        }
-        let (range, mut candidates) =
-            intelligence::completions(&self.active().page.text, self.active().view.head);
-        let prefix = &self.active().page.text[range.clone()];
-        if !prefix.is_empty() {
-            for b in &self.workspace.open {
-                for word in b
-                    .page
-                    .text
-                    .split(|c: char| !c.is_alphanumeric() && c != '_')
-                {
-                    if word.starts_with(prefix)
-                        && word != prefix
-                        && word.len() < 256
-                        && candidates.len() < 200
-                        && !candidates.iter().any(|w| w == word)
-                    {
-                        candidates.push(word.into());
-                    }
-                }
-            }
-        }
-        self.quality.candidates = candidates;
-        self.quality.completion_range = range;
-        self.quality.completion_revision = self.active().page.info.revision;
-        self.quality.completion_id = self.active().view.id;
-        self.quality.completion_open = true;
-        self.quality.completion_index = 0;
-        self.quality.completion_focus = true;
-        self.focus_editor = false;
-    }
-    pub(super) fn insert_snippet(&mut self, snippet: intelligence::Snippet, trigger: bool) {
+    /// Insert a snippet over the selection and the `before` bytes ahead of it,
+    /// such as its typed trigger.
+    pub(super) fn insert_snippet(&mut self, snippet: intelligence::Snippet, before: usize) {
         if self.active().follow || self.active().page.info.paged {
             return;
         }
@@ -1112,11 +1073,7 @@ impl HeditApp {
         let old = &b.page.text;
         let start = hedit::advanced::byte(old, b.view.anchor.min(b.view.head));
         let end = hedit::advanced::byte(old, b.view.anchor.max(b.view.head));
-        let start = if trigger {
-            start.saturating_sub(snippet.trigger.len())
-        } else {
-            start
-        };
+        let start = start.saturating_sub(before);
         if !old.is_char_boundary(start) {
             return;
         }
@@ -1172,7 +1129,8 @@ impl HeditApp {
             })
             .cloned();
         if let Some(snippet) = snippet {
-            self.insert_snippet(snippet, true);
+            let before = snippet.trigger.len();
+            self.insert_snippet(snippet, before);
             true
         } else {
             false

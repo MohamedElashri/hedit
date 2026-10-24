@@ -351,6 +351,14 @@ impl HeditApp {
             &mut s.match_selection,
             "Outline other occurrences of the selected word",
         );
+        ui.checkbox(&mut s.auto_complete, "Suggest completions while typing");
+        ui.add_enabled(
+            s.auto_complete,
+            egui::Checkbox::new(
+                &mut s.auto_complete_commit_on_tab,
+                "Accept completions with Tab only; Enter starts a new line",
+            ),
+        );
         ui.add_space(14.0);
         if ui.button("Restore defaults").clicked() {
             let d = Settings::default();
@@ -375,6 +383,9 @@ impl HeditApp {
             s.auto_match_enabled = d.auto_match_enabled;
             s.match_brackets = d.match_brackets;
             s.match_selection = d.match_selection;
+            s.auto_complete = d.auto_complete;
+            s.auto_complete_delay = d.auto_complete_delay;
+            s.auto_complete_commit_on_tab = d.auto_complete_commit_on_tab;
         }
     }
     fn tool_preferences(&mut self, ui: &mut egui::Ui) {

@@ -679,7 +679,16 @@ loaded file, and when hedit's window regains focus. Hover a marker for its inlin
 opens a comparison of editor text with HEAD, including staged and unsaved changes.
 These operations do not stage, commit, or otherwise modify the repository.
 
-**Tools → Complete word…** (**Ctrl+Space**, **Control+Space** on macOS) offers words from open files.
+While you type a word, a list at the cursor offers matching words from the open
+files and snippets whose trigger matches. Words that start with what you typed
+come first, then words that contain its letters in order. **Up** and **Down**
+choose, **Tab** or **Enter** accepts, and **Esc**, a space, or punctuation closes
+the list. **Tools → Complete word…** (**Ctrl+Space**, **Control+Space** on macOS)
+opens it at once, even after one letter. The words are collected from the open
+files in the background a moment after you stop typing, up to the first 4 MB of
+each file, so large files never slow typing. Turn the list off with
+`auto_complete`, or set `auto_complete_commit_on_tab` so that **Enter** always
+starts a new line.
 **Tools → Insert snippet…** inserts a configured template into the current selection.
 Alternatively, type its trigger and press Tab. Templates support `${SELECTION}`
 and `$0` for the final cursor; a `language` value restricts them to a syntax ID.
@@ -882,6 +891,9 @@ you fix it.
 | `auto_match_enabled` | `true` | Close brackets and quotes, wrap selections in them, and step over closers |
 | `match_brackets` | `true` | Outline the bracket matching the one beside the cursor |
 | `match_selection` | `true` | Outline other occurrences of a selected word |
+| `auto_complete` | `true` | Offer completions in a list while typing |
+| `auto_complete_delay` | `50` | Milliseconds after typing before the list opens, 0–2000 |
+| `auto_complete_commit_on_tab` | `false` | Accept completions with Tab only; Enter starts a new line |
 | `detect_indentation` | `true` | Use the indentation a file already has instead of `tab_size` and `translate_tabs_to_spaces` |
 | `show_tab_bar`, `show_status_bar` | `true` | Show the tab bar and status bar |
 | `show_sidebar`, `show_folders` | `true` | Show the sidebar and its folder section |

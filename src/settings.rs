@@ -94,6 +94,12 @@ pub struct Settings {
     pub match_selection: bool,
     /// Use the indentation a file already has instead of the defaults.
     pub detect_indentation: bool,
+    /// Offer completions in a list while typing.
+    pub auto_complete: bool,
+    /// Milliseconds after typing before the list opens.
+    pub auto_complete_delay: u16,
+    /// Only Tab accepts a completion; Enter starts a new line.
+    pub auto_complete_commit_on_tab: bool,
     // Window
     pub show_tab_bar: bool,
     pub show_status_bar: bool,
@@ -152,6 +158,9 @@ impl Default for Settings {
             match_brackets: true,
             match_selection: true,
             detect_indentation: true,
+            auto_complete: true,
+            auto_complete_delay: 50,
+            auto_complete_commit_on_tab: false,
             show_tab_bar: true,
             show_status_bar: true,
             show_sidebar: true,
@@ -232,6 +241,9 @@ impl Settings {
         }
         if !(1.0..=4.0).contains(&self.caret_width) {
             return Err("caret_width must be between 1 and 4.".into());
+        }
+        if self.auto_complete_delay > 2000 {
+            return Err("auto_complete_delay must be 0–2000 milliseconds.".into());
         }
         if self.wrap_width > MAX_COLUMN {
             return Err(format!("wrap_width must be 0–{MAX_COLUMN}."));

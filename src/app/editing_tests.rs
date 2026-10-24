@@ -188,7 +188,7 @@ fn selection_shortcuts_follow_sublime() {
         [(5, 8)],
         "Ctrl+Shift+Space expands to the word"
     );
-    assert!(!app.quality.completion_open, "not Complete word");
+    assert!(app.auto.popup.is_none(), "not Complete word");
     frame(&ctx, &mut app, vec![key(Key::M, shift)]);
     assert_eq!(
         ranges(&app),
@@ -720,7 +720,7 @@ fn escape_or_moving_away_ends_snippet_fields() {
             body: "${1:a}, ${2:b}".into(),
             language: None,
         },
-        false,
+        0,
     );
     frame(&ctx, &mut app, vec![]);
     assert!(app.snippet.is_some());
@@ -739,7 +739,7 @@ fn escape_or_moving_away_ends_snippet_fields() {
             body: "${1:x}${2:y}".into(),
             language: None,
         },
-        false,
+        0,
     );
     frame(&ctx, &mut app, vec![]);
     assert!(app.snippet.is_some());
@@ -755,4 +755,121 @@ fn escape_keeps_typing_in_the_editor() {
     frame(&ctx, &mut app, vec![key(Key::Escape, Modifiers::NONE)]);
     type_text(&ctx, &mut app, "b");
     assert_eq!(app.active().page.text, "ab");
+}
+
+/// Run frames until the background word index is ready.
+fn wait_for_index(ctx: &egui::Context, app: &mut HeditApp) {
+    let started = Instant::now();
+    app.auto.wanted = true;
+    frame(ctx, app, vec![]);
+    while app.auto.building.is_some() {
+        assert!(started.elapsed() < Duration::from_secs(5));
+        thread::sleep(Duration::from_millis(5));
+        frame(ctx, app, vec![]);
+    }
+}
+
+#[test]
+fn completions_appear_while_typing_and_tab_accepts() {
+    let (_directory, ctx, mut app) = app_with("render_frame frame_count\n");
+    app.settings.auto_complete_delay = 0;
+    app.set_selections(vec![hedit::advanced::Selection::caret(25)]);
+    wait_for_index(&ctx, &mut app);
+    type_text(&ctx, &mut app, "fr");
+    frame(&ctx, &mut app, vec![]);
+    let popup = app
+        .auto
+        .popup
+        .as_ref()
+        .expect("the list opens after two letters");
+    assert!(matches!(&popup.choices[0], auto_complete::Choice::Word(w) if w == "frame_count"));
+    // Typing narrows the list; Tab accepts the first entry.
+    type_text(&ctx, &mut app, "c");
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![key(Key::Tab, Modifiers::NONE)]);
+    assert_eq!(
+        app.active().page.text,
+        "render_frame frame_count\nframe_count"
+    );
+    assert!(app.auto.popup.is_none());
+    // A space closes the list without accepting anything.
+    type_text(&ctx, &mut app, " ren");
+    frame(&ctx, &mut app, vec![]);
+    assert!(app.auto.popup.is_some());
+    type_text(&ctx, &mut app, " ");
+    frame(&ctx, &mut app, vec![]);
+    assert!(app.auto.popup.is_none());
+    assert_eq!(
+        app.active().page.text,
+        "render_frame frame_count\nframe_count ren "
+    );
+}
+
+#[test]
+fn completion_keys_follow_the_settings() {
+    let (_directory, ctx, mut app) = app_with("alpha alpine\n");
+    app.settings.auto_complete_delay = 0;
+    app.set_selections(vec![hedit::advanced::Selection::caret(13)]);
+    wait_for_index(&ctx, &mut app);
+    // With commit on Tab, Enter starts a new line and closes the list.
+    app.settings.auto_complete_commit_on_tab = true;
+    type_text(&ctx, &mut app, "al");
+    frame(&ctx, &mut app, vec![]);
+    assert!(app.auto.popup.is_some());
+    frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)]);
+    assert!(app.auto.popup.is_none());
+    assert_eq!(app.active().page.text, "alpha alpine\nal\n");
+    // Escape closes the list, keeping the typed text.
+    type_text(&ctx, &mut app, "alp");
+    frame(&ctx, &mut app, vec![]);
+    assert!(app.auto.popup.is_some());
+    frame(&ctx, &mut app, vec![key(Key::Escape, Modifiers::NONE)]);
+    assert!(app.auto.popup.is_none());
+    assert_eq!(app.active().page.text, "alpha alpine\nal\nalp");
+    // Turned off, typing shows nothing.
+    app.settings.auto_complete = false;
+    type_text(&ctx, &mut app, "h");
+    frame(&ctx, &mut app, vec![]);
+    assert!(app.auto.popup.is_none());
+}
+
+#[test]
+#[ignore = "manual headless CPU timing for typing with completions in a large file"]
+fn profile_completion_typing() {
+    // About 1 MB with many distinct words.
+    let source: String = (0..40_000)
+        .map(|i| format!("let value_{i} = compute_{}(item);\n", i % 997))
+        .collect();
+    let (_directory, ctx, mut app) = app_with(&source);
+    app.settings.auto_complete_delay = 0;
+    let end = source.chars().count();
+    app.set_selections(vec![hedit::advanced::Selection::caret(end)]);
+    wait_for_index(&ctx, &mut app);
+    for (label, auto) in [("off", false), ("on", true)] {
+        app.settings.auto_complete = auto;
+        let start = Instant::now();
+        for c in "value_12".chars() {
+            frame(&ctx, &mut app, vec![egui::Event::Text(c.into())]);
+        }
+        eprintln!(
+            "Typing with completions {label} in {} bytes: {:.2} ms/frame ({} words indexed)",
+            source.len(),
+            start.elapsed().as_secs_f64() * 1000.0 / 8.0,
+            app.auto.words_len()
+        );
+        frame(&ctx, &mut app, vec![key(Key::Escape, Modifiers::NONE)]);
+        type_text(&ctx, &mut app, "\n");
+    }
+}
+
+#[test]
+fn nothing_is_indexed_until_a_word_is_typed() {
+    let (_directory, ctx, mut app) = app_with("some words here\n");
+    for _ in 0..3 {
+        frame(&ctx, &mut app, vec![]);
+    }
+    assert!(app.auto.building.is_none() && app.auto.words_len() == 0);
+    type_text(&ctx, &mut app, "s");
+    frame(&ctx, &mut app, vec![]);
+    assert!(app.auto.wanted);
 }
