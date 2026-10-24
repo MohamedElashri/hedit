@@ -483,7 +483,7 @@ impl HeditApp {
         }
         let response = ui.add(
             egui::Button::new(
-                RichText::new(format!("{} ▾", language.label()))
+                RichText::new(format!("{} ⏷", language.label()))
                     .size(14.0)
                     .color(
                         if selected.is_some() {

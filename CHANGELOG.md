@@ -100,6 +100,7 @@
 
 ### Fixed
 
+- The syntax menu in the status bar showed a box instead of its arrow.
 - Distraction-free mode no longer switches the window to full screen, and full
   screen no longer depends on it: each turns on and off by itself. F11 also works
   on the first press after the window left full screen by other means.

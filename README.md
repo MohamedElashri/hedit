@@ -12,51 +12,22 @@
   <a href="DEVELOPER_GUIDE.md">Developer guide</a>
 </p>
 
-hedit is a native text editor for Linux and macOS, built for the work you leave open: logs to
-inspect, snippets to revisit, and notes that do not need a filename yet. Keep a
-workspace of files between sessions, find your place in large logs, and
-work with CUDA source without leaving the editor.
+hedit is a native text editor for Linux and macOS for the work you leave open:
+code across project folders, large logs to inspect, and notes that do not need a
+filename yet. It keeps your files and unsaved text between sessions, completes
+words as you type, jumps to definitions, edits with multiple cursors, and reads
+Arabic and Hebrew right to left. It also works with CUDA source and its debugging
+tools.
 
-See the [changelog](CHANGELOG.md) for what each release adds.
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/screenshot-dark.png">
+    <img src="docs/images/screenshot-light.png" width="900" alt="hedit with a project folder in the sidebar, Rust code in the editor, and the completion list open">
+  </picture>
+</p>
 
-## What you can do
-
-- **Edit folders of code.** Open several project folders, browse their trees,
-  create files and subfolders, and search across roots with **Ctrl+P**. Folder
-  icons distinguish directories from documents. Hide the tree with **Ctrl+Alt+B**;
-  your folders, expanded directories, and visibility return after restarting.
-
-- **Write code quickly.** Get completions as you type, fill in snippet fields
-  with Tab, edit with multiple cursors, jump to definitions and references with
-  **F12**, record and replay macros, and step through changed lines against Git.
-  The command palette (**Ctrl+Shift+P**) finds any command from a few letters.
-- **Write in any language.** Arabic and Hebrew read right to left with joined
-  letters, other scripts fall back to system fonts, and the built-in spell checker
-  underlines English typos in prose, comments, and strings.
-
-- **Keep notes for later.** Create a new file without choosing a path, name its
-  tab, and return to it after restarting. Browse the shelf to reopen closed files.
-- **Inspect large logs.** Read files in manageable pages, follow new output, search
-  across the file, and bookmark positions you want to revisit.
-- **Find your way around.** Search folder contents with regex and filename filters,
-  review replacements, jump to symbols, and navigate back and forward. Save named
-  projects with their tabs and split views; later terminal launches open in the
-  running window.
-- **Handle everyday file work.** Pin and reorder tabs, preview sidebar files,
-  rename/move/duplicate entries, send them to the system trash, and compare edits
-  with disk or Git HEAD. Customize keyboard shortcuts, snippets, and formatting.
-- **Read code in color.** Highlighting uses Sublime Text syntax definitions for
-  most languages, chosen from the filename. Choose a language from the searchable
-  bottom-bar menu for unsaved snippets, or switch to plain text. Common
-  programming, web, configuration, build, and scientific formats are included.
-- **Make it comfortable.** Pick from popular editor themes such as One Dark,
-  Dracula, Solarized, Gruvbox, Nord, Tokyo Night, Catppuccin, and GitHub, preview
-  them live, follow the system's light or dark mode, and save your own color
-  variations. Choose any installed font, and adjust font size, line numbers, and
-  word wrap.
-  Familiar menus and a single Preferences window keep settings easy to find.
-- **Work with CUDA.** Read highlighted C/C++ and CUDA source, control CUDA-GDB,
-  run Compute Sanitizer, and inspect GPU information from the CUDA panel.
+See the [user guide](USER_GUIDE.md) for everything it does and the
+[changelog](CHANGELOG.md) for what each release adds.
 
 ## Install
 

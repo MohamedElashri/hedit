@@ -34,6 +34,8 @@ mod quality_tests;
 mod quality_windows;
 #[cfg(test)]
 mod rtl_tests;
+#[cfg(test)]
+mod screenshot_tests;
 mod settings_pages;
 mod settings_store;
 #[cfg(test)]
@@ -4452,7 +4454,7 @@ mod tests {
                 size,
             );
             let generation = app.generation;
-            click_label_sized(&ctx, &mut app, "Plain text ▾", size);
+            click_label_sized(&ctx, &mut app, "Plain text ⏷", size);
             let dismissed = frame_size(
                 &ctx,
                 &mut app,
@@ -4466,7 +4468,7 @@ mod tests {
             .is_some()));
             assert_eq!(app.generation, generation);
             assert!(app.active().view.language_override.is_none());
-            click_label_sized(&ctx, &mut app, "Plain text ▾", size);
+            click_label_sized(&ctx, &mut app, "Plain text ⏷", size);
             let output = frame_size(
                 &ctx,
                 &mut app,
@@ -4517,12 +4519,12 @@ mod tests {
                 size,
             );
             assert_eq!(app.active().page.text, "print('keep λ') # more");
-            click_label_sized(&ctx, &mut app, "Python ▾", size);
+            click_label_sized(&ctx, &mut app, "Python ⏷", size);
             click_label_sized(&ctx, &mut app, "Automatic (Plain text)", size);
             assert_eq!(app.active().language(), syntax::Language::PlainText);
             assert!(app.active().view.language_override.is_none());
             assert_eq!(app.active().page.text, "print('keep λ') # more");
-            click_label_sized(&ctx, &mut app, "Plain text ▾", size);
+            click_label_sized(&ctx, &mut app, "Plain text ⏷", size);
             let output = frame_size(
                 &ctx,
                 &mut app,
@@ -4543,7 +4545,7 @@ mod tests {
                 vec![key(Key::Escape, Modifiers::NONE)],
                 size,
             );
-            click_label_sized(&ctx, &mut app, "Plain text ▾", size);
+            click_label_sized(&ctx, &mut app, "Plain text ⏷", size);
             frame_size(&ctx, &mut app, vec![egui::Event::Text(".hpp".into())], size);
             frame_size(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)], size);
             assert_eq!(app.active().language(), syntax::Language::Cpp);
@@ -4579,7 +4581,7 @@ mod tests {
             .iter()
             .find_map(|shape| editor_galley(&shape.shape, &source))
             .unwrap();
-        click_label_sized(&ctx, &mut app, "CUDA ▾", size);
+        click_label_sized(&ctx, &mut app, "CUDA ⏷", size);
         for _ in 0..3 {
             frame_size(&ctx, &mut app, vec![], size);
         }
@@ -5115,7 +5117,7 @@ mod tests {
         for _ in 0..3 {
             frame(&ctx, &mut app, vec![]);
         }
-        click_label(&ctx, &mut app, "CUDA ▾");
+        click_label(&ctx, &mut app, "CUDA ⏷");
         let start = Instant::now();
         for _ in 0..20 {
             frame(
@@ -5256,7 +5258,7 @@ mod tests {
                     app.open_theme_palette();
                 }
                 if name.ends_with("syntax") {
-                    click_label_sized(&ctx, &mut app, "CUDA ▾", egui::vec2(size[0], size[1]));
+                    click_label_sized(&ctx, &mut app, "CUDA ⏷", egui::vec2(size[0], size[1]));
                 }
                 // Multiple frames let egui settle sizing/scrollbar geometry.
                 let mut last = None;

@@ -74,19 +74,33 @@ fn clicks_and_arrows_follow_the_text_on_screen() {
 }
 
 /// Draw a whole frame in software, as the GPU would: tessellate the shapes and
-/// fill each textured triangle. Writes a binary PPM.
-fn rasterize(ctx: &egui::Context, output: egui::FullOutput, size: egui::Vec2) -> Vec<u8> {
+/// fill each textured triangle. `size` is in points and `scale` is pixels per
+/// point, which must match the context's. Writes a binary PPM.
+pub(super) fn rasterize(
+    ctx: &egui::Context,
+    output: egui::FullOutput,
+    size: egui::Vec2,
+    scale: f32,
+) -> Vec<u8> {
+    let size = size * scale;
     let (width, height) = (size.x as usize, size.y as usize);
     let font = ctx.fonts(|f| f.image());
-    let primitives = ctx.tessellate(output.shapes, 1.0);
+    let primitives = ctx.tessellate(output.shapes, scale);
     let mut canvas = vec![[0f32; 3]; width * height];
     for primitive in primitives {
         let egui::epaint::Primitive::Mesh(mesh) = primitive.primitive else {
             continue;
         };
-        let clip = primitive.clip_rect;
+        let clip = egui::Rect::from_min_max(
+            primitive.clip_rect.min * scale,
+            primitive.clip_rect.max * scale,
+        );
         for tri in mesh.indices.chunks(3) {
-            let v = [0, 1, 2].map(|k| mesh.vertices[tri[k] as usize]);
+            let v = [0, 1, 2].map(|k| {
+                let mut vertex = mesh.vertices[tri[k] as usize];
+                vertex.pos = (vertex.pos.to_vec2() * scale).to_pos2();
+                vertex
+            });
             let (min, max) = (
                 v.iter()
                     .fold(egui::pos2(f32::MAX, f32::MAX), |m, v| m.min(v.pos)),
@@ -175,7 +189,7 @@ fn export_rtl_editor() {
         for _ in 0..3 {
             output = Some(super::tests::frame_size(&ctx, &mut app, vec![], size));
         }
-        let ppm = rasterize(&ctx, output.unwrap(), size);
+        let ppm = rasterize(&ctx, output.unwrap(), size, 1.0);
         std::fs::write(output_dir.join(format!("rtl-editor-{name}.ppm")), ppm).unwrap();
     }
 }

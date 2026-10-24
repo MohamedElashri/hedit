@@ -116,6 +116,16 @@ These SVG exports preserve egui layout and colors but substitute system fonts
 and omit some GPU meshes/effects. They complement desktop testing. X11/Wayland
 visual checks, accessibility review, and NVIDIA hardware validation remain open.
 
+The README screenshots are drawn the same way, from a real window rendered in
+software at twice the resolution. Regenerate them after interface changes:
+
+```sh
+HEDIT_PREVIEW_DIR=/tmp/hedit-shots cargo test --locked --release --bin hedit export_readme_screenshots -- --ignored
+for theme in dark light; do
+    python3 scripts/ppm-to-png.py /tmp/hedit-shots/screenshot-$theme.ppm docs/images/screenshot-$theme.png
+done
+```
+
 For a repeatable CPU timing check, run
 `cargo test --locked --bin hedit profile_syntax_picker -- --ignored --nocapture`.
 This opens the picker over a 231 KB CUDA document and reports the mean time for
