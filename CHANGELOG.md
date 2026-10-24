@@ -4,70 +4,75 @@
 
 ### Added
 
-- Switch tabs from the keyboard: Ctrl+Tab and Ctrl+Shift+Tab go through recently
-  used files (hold Ctrl to go further back), Ctrl+PageDown and Ctrl+PageUp go
-  through the tab strip, and Alt+1–9 (Cmd+1–9 on macOS) choose a tab by position.
-- Add a cursor on the line above or below with Alt+Shift+Up and Alt+Shift+Down
-  (Control+Shift+Up/Down on macOS); repeated presses keep the starting column.
-- Text commands: toggle a block comment (Ctrl+Shift+/), rewrap a paragraph at the
-  ruler while keeping comment markers and list bullets (Alt+Q), transpose
-  characters or selections (Ctrl+T), Title case and Swap case, delete to the
-  start or end of a line (Ctrl+Shift+Backspace, Ctrl+K, Ctrl+K), reindent lines by
-  their brackets, and sort lines ignoring case (F9; Ctrl+F9 sorts exactly).
-- Paste from history (Ctrl+K, Ctrl+V) lists the last 15 pieces of text copied or
-  cut in hedit, with filtering, and pastes the chosen one at every cursor.
-- Snippet fields: `$1`, `${1:text}`, and repeated numbers that fill in together.
-  Tab and Shift+Tab move between fields, ending at `$0`. Multi-line snippets
-  follow the indentation of the line they are inserted on.
-- Completions while typing: a list at the cursor offers words from the open files
-  and matching snippets, with Tab or Enter to accept (`auto_complete`,
-  `auto_complete_delay`, `auto_complete_commit_on_tab`). Words are collected in
-  the background, so typing is never held up. Complete word (Ctrl+Space) opens
-  the same list.
-- Go to definition (F12) and Go to references (Shift+F12) for the name at the
-  cursor, across open files and folders; one definition opens directly, several
-  are listed. Resting the pointer on a name lists its definitions
-  (`show_definitions`).
-- Fold arrows in the gutter: ▾ beside foldable lines while the pointer is over
-  the gutter, and ▸ beside folded ones; click to fold or unfold.
-- A right-click menu in the editor with clipboard, selection, Go to definition,
-  comment, and file path commands. Tabs add Copy file path and Reveal in sidebar,
-  which opens the file's folders in the folder tree and scrolls to it.
-- Spell check (F6) with a built-in American English dictionary: misspelled words
-  in prose, comments, and strings are underlined, the right-click menu offers
-  suggestions, Add to dictionary (`added_words`), and Ignore, and Ctrl+F6 and
-  Ctrl+Shift+F6 go to the next and previous misspelling.
 - Right-to-left text: Arabic and Hebrew follow the Unicode Bidirectional
   Algorithm, Arabic letters join (including lam-alef), and right-to-left text
   mixes with English and numbers on the same line. Clicks, the caret, Left and
   Right, selections, and Find highlights follow the text on screen, while the
   file keeps the typed order. Plain text, Markdown, and LaTeX lines take their
   direction from their first letter; code lines run left to right.
+- Completions while typing: a list at the cursor offers words from the open files
+  and matching snippets, with Tab or Enter to accept (`auto_complete`,
+  `auto_complete_delay`, `auto_complete_commit_on_tab`). Words are collected in
+  the background, so typing is never held up.
+- Go to definition (F12) and Go to references (Shift+F12) for the name at the
+  cursor, across open files and folders; one definition opens directly, several
+  are listed. Resting the pointer on a name lists its definitions from the open
+  files (`show_definitions`).
+- Spell check (F6) with a built-in American English dictionary: misspelled words
+  in prose, comments, and strings are underlined, the right-click menu offers
+  suggestions, Add to dictionary (`added_words`), and Ignore, and Ctrl+F6 and
+  Ctrl+Shift+F6 go to the next and previous misspelling. Words in other scripts,
+  such as Arabic, are left alone.
+- Snippet fields: `$1`, `${1:text}`, and repeated numbers that fill in together.
+  Tab and Shift+Tab move between fields, ending at `$0`. Multi-line snippets
+  follow the indentation of the line they are inserted on.
+- Switch tabs from the keyboard: Ctrl+Tab and Ctrl+Shift+Tab go through recently
+  used files (hold Ctrl to go further back), Ctrl+PageDown and Ctrl+PageUp go
+  through the tab strip, and Alt+1–9 choose a tab by position (Control+Tab,
+  Control+PageDown/PageUp, and Cmd+1–9 on macOS).
+- Add a cursor on the line above or below with Alt+Shift+Up and Alt+Shift+Down
+  (Control+Shift+Up/Down on macOS); repeated presses keep the starting column.
+- Text commands: toggle a block comment (Ctrl+Shift+/), rewrap a paragraph at the
+  ruler while keeping comment markers and list bullets (Alt+Q), transpose
+  characters or selections (Ctrl+T), Title case and Swap case, delete to the
+  start or end of a line (Ctrl+Shift+Backspace or Ctrl+K, Ctrl+Backspace, and
+  Ctrl+K, Ctrl+K), reindent lines by their brackets, and sort lines ignoring case
+  (F9; Ctrl+F9 sorts exactly). On macOS, block comments are Cmd+Option+/,
+  wrapping is Cmd+Option+Q, and transpose is Control+T.
+- Paste from history (Ctrl+K, Ctrl+V) lists the last 15 pieces of text copied or
+  cut in hedit, with filtering, and pastes the chosen one at every cursor.
+- Fold arrows in the gutter: ▾ beside foldable lines while the pointer is over
+  the gutter, and ▸ beside folded ones; click to fold or unfold.
+- A right-click menu in the editor with clipboard, selection, Go to definition,
+  comment, and file path commands. Tabs add Copy file path and Reveal in sidebar,
+  which opens the file's folders in the folder tree and scrolls to it.
 
 ### Changed
 
+- Complete word (Ctrl+Space) opens the completion list at the cursor instead of
+  a separate window.
 - Find in folders searches the current text of files open in hedit, including
   unsaved changes. Its results are grouped by file with a line of context around
-  each match, and F4 and Shift+F4 step through them.
+  each match, and F4 and Shift+F4 step through them, as they do build errors.
 - Replace in folders changes files open in hedit in the editor, as an undoable
   edit left unsaved, instead of skipping those with unsaved changes or saving
   them right away. **Undo replacements** puts back the files it wrote to disk,
-  unless something else changed them since.
+  except those changed since, on disk or in hedit.
 
 ### Fixed
 
-- Hovering a Git change marker in the gutter did not show the change.
-- Pressing Escape in the editor took keyboard focus away from it, so typing did
-  nothing until the text was clicked.
-- Pressing a shortcut with an arrow key several times in a row, such as
-  Ctrl+Shift+Down to move a line, could move keyboard focus out of the editor on
-  the third press, so later presses did nothing.
 - Arabic, Hebrew, Chinese, Japanese, Korean, Devanagari, Thai, and other scripts
   missing from the built-in fonts showed empty boxes; hedit now uses the system's
   fonts for them.
 - With keyboard layouts that type through the input method without composing,
   such as Arabic on GNOME with Wayland, only the first letter appeared; every
   letter now reaches the editor and text fields.
+- Pressing Escape in the editor took keyboard focus away from it, so typing did
+  nothing until the text was clicked.
+- Pressing a shortcut with an arrow key several times in a row, such as
+  Ctrl+Shift+Down to move a line, could move keyboard focus out of the editor on
+  the third press, so later presses did nothing.
+- Hovering a Git change marker in the gutter did not show the change.
 
 ## [0.1.4] - 2026-10-24
 
