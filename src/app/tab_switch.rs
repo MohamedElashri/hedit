@@ -61,13 +61,16 @@ impl HeditApp {
     /// the order stays put, so repeated presses walk further back; releasing
     /// Ctrl makes the chosen tab the most recent.
     pub(super) fn track_recent_tabs(&mut self, ctx: &egui::Context) {
-        let cycle = &mut self.tab_cycle;
         let control =
             ctx.input(|i| i.modifiers.ctrl || (!cfg!(target_os = "macos") && i.modifiers.command));
-        if cycle.step.is_some() && !control {
-            cycle.step = None;
+        if self.tab_cycle.step.is_some() && !control {
+            self.tab_cycle.step = None;
         }
         let open: Vec<u64> = self.workspace.open.iter().map(|b| b.view.id).collect();
+        // Caches for closed files go too.
+        self.fold_cache.retain(|view| open.contains(&view));
+        self.spell.forget_closed(&open);
+        let cycle = &mut self.tab_cycle;
         cycle.recent.retain(|id| open.contains(id));
         for id in &open {
             if !cycle.recent.contains(id) {

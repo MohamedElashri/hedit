@@ -217,17 +217,6 @@ pub fn glob(pattern: &str, text: &str) -> bool {
         .build()
         .is_ok_and(|g| g.compile_matcher().is_match(text))
 }
-pub fn folders(
-    roots: &[PathBuf],
-    filter: &str,
-    query: &str,
-    replacement: Option<&str>,
-    options: &Options,
-    cancel: &AtomicBool,
-) -> Result<Results, String> {
-    let open = std::collections::HashMap::new();
-    folders_with_open(roots, filter, query, replacement, options, &open, cancel)
-}
 /// The lines to show for matches on `matched` lines (1-based, with the
 /// column of the first match): each with the line before and after it.
 fn context(text: &str, matched: &[(usize, usize)]) -> Vec<ContextLine> {
@@ -251,9 +240,10 @@ fn context(text: &str, matched: &[(usize, usize)]) -> Vec<ContextLine> {
         })
         .collect()
 }
-/// Search folders like `folders`, reading files open in the editor from
-/// `open` (their current, possibly unsaved, text) instead of from disk.
-pub fn folders_with_open(
+/// Search the files under `roots`, reading files open in the editor from
+/// `open` (their current, possibly unsaved, text) instead of from disk, and
+/// plan replacements when `replacement` is given.
+pub fn folders(
     roots: &[PathBuf],
     filter: &str,
     query: &str,

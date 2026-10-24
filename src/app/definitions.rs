@@ -16,6 +16,21 @@ pub(super) struct Location {
     /// The file's name as shown in the list.
     pub file: String,
     pub place: Place,
+    /// The column in UTF-16 units, as opening `path:line:column` counts them.
+    pub column16: usize,
+}
+
+/// A character column on a 1-based line, in UTF-16 units.
+fn utf16_column(text: &str, line: usize, column: usize) -> usize {
+    text.lines()
+        .nth(line.saturating_sub(1))
+        .map_or(column, |l| {
+            l.chars()
+                .take(column.saturating_sub(1))
+                .map(char::len_utf16)
+                .sum::<usize>()
+                + 1
+        })
 }
 
 /// An open file's text, for searching without reading it from disk.
@@ -96,6 +111,7 @@ impl HeditApp {
                         view: Some(o.view),
                         path: o.path.clone(),
                         file: o.file.clone(),
+                        column16: utf16_column(&o.text, place.line, place.column),
                         place,
                     });
                 }
@@ -126,6 +142,7 @@ impl HeditApp {
                             view: None,
                             path: Some(file.clone()),
                             file: shown.clone(),
+                            column16: utf16_column(&text, place.line, place.column),
                             place,
                         });
                     }
@@ -183,6 +200,7 @@ impl HeditApp {
             self.jump_to_line(ctx, line, Some(column));
             self.focus_editor = true;
         } else if let Some(path) = location.path {
+            let column = location.column16;
             self.pending_paths
                 .push_back(PathBuf::from(format!("{}:{line}:{column}", path.display())));
         }
@@ -236,6 +254,8 @@ impl HeditApp {
                     view: Some(o.view.id),
                     path: path.clone(),
                     file: o.view.name.clone(),
+                    // Open files are reached by view, which counts characters.
+                    column16: place.column,
                     place,
                 });
                 if found.len() == 8 {

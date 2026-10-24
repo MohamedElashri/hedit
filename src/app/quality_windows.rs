@@ -341,7 +341,8 @@ impl HeditApp {
             }else{
                 let current=self.quality.result_current.and_then(|i|results.hits.get(i)).map(|h|(h.path.clone(),h.line));
                 let roots:Vec<PathBuf>=self.workspace.folders.iter().map(|f|PathBuf::from(&f.path)).collect();
-                selected=result_rows(ui,&self.theme,&roots,&results.files,current,(ctx.screen_rect().height()-280.0).clamp(120.0,420.0));
+                let scroll=self.quality.result_shown!=self.quality.result_current;self.quality.result_shown=self.quality.result_current;
+                selected=result_rows(ui,&self.theme,&roots,&results.files,current,scroll,(ctx.screen_rect().height()-280.0).clamp(120.0,420.0));
             }
         });
         self.quality.folders_open = open;
@@ -623,6 +624,8 @@ fn result_rows(
     roots: &[PathBuf],
     files: &[search::FileHits],
     current: Option<(PathBuf, usize)>,
+    // Scroll to the current match only when F4 moved to it.
+    scroll: bool,
     height: f32,
 ) -> Option<PathBuf> {
     enum Row {
@@ -689,7 +692,7 @@ fn result_rows(
                                 .selected(is_current)
                                 .wrap_mode(egui::TextWrapMode::Truncate),
                         );
-                        if is_current {
+                        if is_current && scroll {
                             response.scroll_to_me(None);
                         }
                         if response.clicked() {

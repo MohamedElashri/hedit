@@ -81,12 +81,16 @@ impl HeditApp {
         let b = self.active();
         let width = b.view.tab_size.unwrap_or(4) as usize;
         let current = self.selections();
+        // A single cursor's column carries through repeated presses; several
+        // cursors each keep their own.
         let goal = match &self.line_cursor_goal {
-            Some((selections, column)) if *selections == current => *column,
-            _ => advanced::line_column(&b.page.text, b.view.head, width).1,
+            Some((selections, column)) if *selections == current => Some(*column),
+            _ if current.len() == 1 => {
+                Some(advanced::line_column(&b.page.text, b.view.head, width).1)
+            }
+            _ => None,
         };
-        let ranges =
-            advanced::add_line_selections(&b.page.text, &current, below, width, Some(goal));
+        let ranges = advanced::add_line_selections(&b.page.text, &current, below, width, goal);
         self.set_selections(ranges);
         // Show the newest cursor: the first one when adding above.
         if !below {
@@ -100,7 +104,7 @@ impl HeditApp {
                 *top = primary;
             }
         }
-        self.line_cursor_goal = Some((self.selections(), goal));
+        self.line_cursor_goal = goal.map(|goal| (self.selections(), goal));
     }
     pub(super) fn occurrence(&mut self, all: bool) {
         let ranges = advanced::occurrences(&self.active().page.text, &self.selections(), all);

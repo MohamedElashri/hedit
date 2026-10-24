@@ -1210,3 +1210,89 @@ fn f6_checks_spelling_and_the_menu_fixes_words() {
     frame(&ctx, &mut app, vec![]);
     assert!(app.misspellings(view).is_none());
 }
+
+#[test]
+fn resting_the_pointer_on_a_call_finds_its_definition() {
+    let (_directory, ctx, mut app) = app_with("fn total() {}\ntotal();\n");
+    frame(&ctx, &mut app, vec![]);
+    let rect = editor_rect(&ctx, &app);
+    // The middle of `total` on line 2.
+    let row = app.settings.font_size * 1.3;
+    let at = egui::pos2(rect.left() + 20.0, rect.top() + row * 1.5);
+    let run = |app: &mut HeditApp, time: f64, events: Vec<egui::Event>| {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1280.0, 820.0),
+            )),
+            time: Some(time),
+            focused: true,
+            events,
+            ..Default::default()
+        };
+        let _ = ctx.run(input, |ctx| {
+            app.shortcuts(ctx);
+            app.chrome(ctx);
+            app.search_panel(ctx);
+            app.build_panel(ctx);
+            app.editor(ctx);
+            app.quality_windows(ctx);
+        });
+    };
+    run(&mut app, 10.0, vec![egui::Event::PointerMoved(at)]);
+    run(&mut app, 11.0, vec![]);
+    run(&mut app, 11.1, vec![]);
+    let hover = app.hover.as_ref().expect("the definition is listed");
+    assert_eq!(hover.found_lines(), [1]);
+}
+
+#[test]
+fn typing_in_find_does_not_open_editor_completions() {
+    let (_directory, ctx, mut app) = app_with("alpha alpine al");
+    app.settings.auto_complete_delay = 0;
+    app.set_selections(vec![hedit::advanced::Selection::caret(15)]);
+    wait_for_index(&ctx, &mut app);
+    app.execute(&ctx, Command::Find);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![egui::Event::Text("p".into())]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![]);
+    assert_eq!(app.query, "p");
+    assert!(app.auto.popup.is_none());
+}
+
+#[test]
+fn undo_replacements_leaves_files_edited_since_alone() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(directory.path())
+        .unwrap()
+        .join("project");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.txt"), "old\n").unwrap();
+    let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    app.set_folder(hedit::folder::read_directory(root.clone()).unwrap());
+    app.query = "old".into();
+    app.replacement = "new".into();
+    app.folder_search(&ctx, true);
+    finish_app_job(&mut app, &ctx);
+    app.apply_folder_replacements(&ctx);
+    finish_app_job(&mut app, &ctx);
+    // Open the replaced file and edit it without saving.
+    app.open(&ctx, Some(root.join("a.txt")));
+    finish_app_job(&mut app, &ctx);
+    app.set_selections(vec![hedit::advanced::Selection::caret(0)]);
+    type_text(&ctx, &mut app, "x");
+    app.undo_folder_replacements(&ctx);
+    while app.busy {
+        app.receive(&ctx);
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(app.error.as_ref().unwrap().contains("unsaved changes"));
+    assert_eq!(
+        std::fs::read_to_string(root.join("a.txt")).unwrap(),
+        "new\n"
+    );
+    assert_eq!(app.active().page.text, "xnew\n");
+}

@@ -291,3 +291,13 @@ fn line_selections_add_carets_and_ranges_on_neighboring_lines() {
         vec![S { anchor: 7, head: 9 }, range]
     );
 }
+
+#[test]
+fn several_cursors_each_keep_their_column_when_adding_lines() {
+    let text = "abcdef\nabcdef\nabcdef\nabcdef";
+    let added = a::add_line_selections(text, &[S::caret(1), S::caret(18)], true, 4, None);
+    assert_eq!(
+        added,
+        vec![S::caret(1), S::caret(8), S::caret(18), S::caret(25)]
+    );
+}

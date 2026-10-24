@@ -40,6 +40,8 @@ pub(super) struct Quality {
     /// The match F4 went to last, and whether these results are newer than
     /// the build's, so F4 goes through them.
     pub result_current: Option<usize>,
+    /// The match the results list scrolled to last.
+    pub result_shown: Option<usize>,
     pub results_newer: bool,
     /// How to undo the last replacement in folders, file by file.
     pub replace_undo: Vec<search::Restore>,
@@ -739,7 +741,7 @@ impl HeditApp {
             .collect();
         let cancel = Arc::clone(&self.cancel);
         self.job(ctx, move || {
-            search::folders_with_open(
+            search::folders(
                 &roots,
                 &filter,
                 &query,
@@ -873,10 +875,26 @@ impl HeditApp {
     /// Put back the files the last replacement wrote, where unchanged since.
     pub(super) fn undo_folder_replacements(&mut self, ctx: &egui::Context) {
         let records = std::mem::take(&mut self.quality.replace_undo);
+        // A file opened and edited since keeps its edits; it is not reverted
+        // underneath them.
+        let edited: Vec<PathBuf> = self
+            .workspace
+            .open
+            .iter()
+            .filter(|b| b.page.info.dirty)
+            .filter_map(|b| std::fs::canonicalize(b.page.info.path.as_ref()?).ok())
+            .collect();
         self.job(ctx, move || {
             let mut count = 0;
             let mut errors = vec![];
             for record in &records {
+                if edited.contains(&record.path) {
+                    errors.push(format!(
+                        "{} has unsaved changes in hedit; it was left as it is.",
+                        record.path.display()
+                    ));
+                    continue;
+                }
                 match search::restore(record) {
                     Ok(()) => count += 1,
                     Err(e) => errors.push(e),

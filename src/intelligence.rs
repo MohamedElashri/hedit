@@ -84,6 +84,12 @@ pub fn definitions(text: &str, name: &str, path: &Path) -> Vec<Place> {
                 if matches!(
                     first,
                     "return"
+                        | "use"
+                        | "import"
+                        | "from"
+                        | "package"
+                        | "export"
+                        | "extern"
                         | "else"
                         | "case"
                         | "goto"
@@ -136,29 +142,6 @@ pub fn references(text: &str, name: &str, limit: usize) -> Vec<Place> {
     found
 }
 
-pub fn completions(text: &str, cursor: usize) -> (std::ops::Range<usize>, Vec<String>) {
-    let byte = crate::advanced::byte(text, cursor);
-    let start = text[..byte]
-        .char_indices()
-        .rev()
-        .take_while(|(_, c)| c.is_alphanumeric() || *c == '_')
-        .last()
-        .map_or(byte, |(i, _)| i);
-    let prefix = &text[start..byte];
-    if prefix.is_empty() {
-        return (start..byte, vec![]);
-    }
-    let mut words = BTreeSet::new();
-    for word in text.split(|c: char| !c.is_alphanumeric() && c != '_') {
-        if word.starts_with(prefix) && word != prefix && word.len() <= 256 {
-            words.insert(word.to_owned());
-        }
-        if words.len() >= 200 {
-            break;
-        }
-    }
-    (start..byte, words.into_iter().collect())
-}
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Snippet {
     pub trigger: String,
@@ -166,13 +149,6 @@ pub struct Snippet {
     pub body: String,
     pub language: Option<String>,
 }
-/// Expand a snippet body and return the text with the final cursor position.
-pub fn expand(body: &str, selection: &str) -> (String, usize) {
-    let expansion = expand_fields(body, selection);
-    let cursor = expansion.fields.last().map_or(0, |f| f[0].0);
-    (expansion.text, cursor)
-}
-
 /// A snippet body after expansion: its text, and its fields in the order Tab
 /// visits them. Each field lists every place it appears as character ranges;
 /// the last field is where the cursor ends (`$0`, or the end of the text).
@@ -302,7 +278,17 @@ impl FieldParser<'_> {
                                     *at = inner + 1;
                                     self.parse(at, true);
                                     let default = self.text[byte..].to_owned();
-                                    self.defaults.entry(number).or_insert(default);
+                                    // A number used again mirrors its first text.
+                                    let first =
+                                        self.defaults.entry(number).or_insert(default).clone();
+                                    if self.text[byte..] != first {
+                                        self.text.truncate(byte);
+                                        self.count = start;
+                                        for places in self.fields.values_mut() {
+                                            places.retain(|&(a, _)| a < start);
+                                        }
+                                        self.push(&first);
+                                    }
                                     self.field(number, start);
                                     continue;
                                 }

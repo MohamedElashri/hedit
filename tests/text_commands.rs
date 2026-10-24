@@ -144,3 +144,61 @@ fn reindent_follows_brackets_and_ignores_strings_and_comments() {
     assert!(t::reindents("rust"));
     assert!(!t::reindents("python"));
 }
+
+#[test]
+fn reindent_survives_lifetimes_unclosed_quotes_and_line_continuations() {
+    let text = "fn f<'a>(x: &'a str) -> &'a str {\nx\n}\n";
+    let end = text.chars().count();
+    assert_eq!(
+        t::reindent(text, &[range(0, end)], 4, false).text,
+        "fn f<'a>(x: &'a str) -> &'a str {\n    x\n}\n"
+    );
+    let batch = t::reindent(text, &[S::caret(end)], 4, false);
+    assert_eq!(
+        batch.text, text,
+        "a cursor on the empty last line changes nothing"
+    );
+    let text = "s = \"a\\\nb\";\n{\nx\n}";
+    let end = text.chars().count();
+    assert!(t::reindent(text, &[range(0, end)], 2, false)
+        .text
+        .ends_with("{\n  x\n}"));
+    let text = "let c = '{';\nif x {\ny\n}";
+    let end = text.chars().count();
+    assert_eq!(
+        t::reindent(text, &[range(0, end)], 2, false).text,
+        "let c = '{';\nif x {\n  y\n}"
+    );
+}
+
+#[test]
+fn block_comment_markers_inside_strings_and_line_comments_are_text() {
+    let text = "let g = \"src/*.rs\";\nfoo(); // a /* b\nbar();\n/* note */\n";
+    let batch = t::toggle_block_comment(text, &[S::caret(38)], "/*", "*/");
+    assert_eq!(
+        batch.text,
+        "let g = \"src/*.rs\";\nfoo(); // a /* b\n/*bar();*/\n/* note */\n"
+    );
+}
+
+#[test]
+fn cursors_that_change_nothing_are_kept() {
+    let batch = t::delete_to_line_edge("ab\ncd", &[S::caret(1), S::caret(5)], true);
+    assert_eq!(batch.text, "a\ncd");
+    assert_eq!(batch.selections, [S::caret(1), S::caret(4)]);
+    let batch = t::transpose("abc\ncd", &[S::caret(4), S::caret(2)]);
+    assert_eq!(batch.text, "acb\ncd");
+    assert_eq!(batch.selections, [S::caret(3), S::caret(4)]);
+}
+
+#[test]
+fn list_items_wrap_as_separate_paragraphs() {
+    assert_eq!(
+        t::wrap_lines("- a\n- b\n", &[S::caret(1)], 80, 4, &[]).text,
+        "- a\n- b\n"
+    );
+    assert_eq!(
+        t::wrap_lines("- a b\n  c\n- d\n", &[S::caret(1)], 80, 4, &[]).text,
+        "- a b c\n- d\n"
+    );
+}

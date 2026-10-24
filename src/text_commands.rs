@@ -6,6 +6,8 @@ use crate::advanced::{normalize, word, Batch, Selection};
 /// One replacement of `chars[start..end]`, and the selection to leave behind,
 /// relative to where the replacement starts in the new text.
 struct Change {
+    /// The selection this change replaces; selections without one stay put.
+    from: Selection,
     start: usize,
     end: usize,
     text: String,
@@ -13,37 +15,63 @@ struct Change {
     head: usize,
 }
 
-/// Apply changes from left to right; overlapping ones after the first are dropped.
-fn apply(chars: &[char], mut changes: Vec<Change>, unchanged: &[Selection]) -> Batch {
-    if changes.is_empty() {
-        return Batch {
-            text: chars.iter().collect(),
-            selections: normalize(unchanged, chars.len()),
-        };
-    }
+/// Apply changes from left to right; overlapping ones after the first are
+/// dropped. Selections that no change replaced move with the text.
+fn apply(chars: &[char], mut changes: Vec<Change>, selections: &[Selection]) -> Batch {
+    let originals = normalize(selections, chars.len());
     changes.sort_by_key(|c| (c.start, c.end));
     let mut text = String::with_capacity(chars.len());
     let mut count = 0;
     let mut previous = 0;
-    let mut selections = vec![];
+    let mut out = vec![];
+    let mut applied: Vec<(usize, usize, isize)> = vec![];
+    let mut replaced = vec![];
     for change in changes {
         if change.start < previous {
             continue;
         }
         text.extend(&chars[previous..change.start]);
         count += change.start - previous;
-        selections.push(Selection {
+        out.push(Selection {
             anchor: count + change.anchor,
             head: count + change.head,
         });
-        count += change.text.chars().count();
+        let length = change.text.chars().count();
+        count += length;
         text.push_str(&change.text);
         previous = change.end;
+        applied.push((
+            change.start,
+            change.end,
+            length as isize - (change.end - change.start) as isize,
+        ));
+        replaced.push(change.from);
     }
     text.extend(&chars[previous..]);
+    let moved = |p: usize| {
+        let shift: isize = applied
+            .iter()
+            .filter(|(_, end, _)| *end <= p)
+            .map(|(_, _, delta)| delta)
+            .sum();
+        p.saturating_add_signed(shift)
+    };
+    for s in originals {
+        let covered = replaced.contains(&s)
+            || applied
+                .iter()
+                .any(|&(a, b, _)| a <= s.start() && s.end() <= b);
+        if !covered {
+            out.push(Selection {
+                anchor: moved(s.anchor),
+                head: moved(s.head),
+            });
+        }
+    }
+    let length = count + chars.len() - previous;
     Batch {
         text,
-        selections: normalize(&selections, count + chars.len() - previous),
+        selections: normalize(&out, length),
     }
 }
 
@@ -149,6 +177,7 @@ pub fn toggle_block_comment(
                 (length, 0)
             };
             changes.push(Change {
+                from: s,
                 start: a,
                 end: b,
                 text: chars[inner.0..inner.1].iter().collect(),
@@ -158,6 +187,7 @@ pub fn toggle_block_comment(
         } else if a == b {
             // A blank line gets an empty comment with the caret inside.
             changes.push(Change {
+                from: s,
                 start: s.head,
                 end: s.head,
                 text: open.iter().chain(&close).collect(),
@@ -175,6 +205,7 @@ pub fn toggle_block_comment(
                 (open.len() + length, open.len())
             };
             changes.push(Change {
+                from: s,
                 start: a,
                 end: b,
                 text: open.iter().chain(&chars[a..b]).chain(&close).collect(),
@@ -195,7 +226,7 @@ fn enclosing_comment(
 ) -> Option<(usize, usize)> {
     let start = (0..at.min(chars.len()))
         .rev()
-        .find(|&i| starts_with(chars, i, open))?;
+        .find(|&i| starts_with(chars, i, open) && in_code(chars, i))?;
     // A closing marker between the opening and the caret ends that comment.
     let closed_before =
         (start + open.len()..at).any(|i| i + close.len() <= at && starts_with(chars, i, close));
@@ -204,6 +235,26 @@ fn enclosing_comment(
     }
     let end = (start + open.len()..chars.len()).find(|&i| starts_with(chars, i, close))?;
     Some((start, end + close.len()))
+}
+
+/// Whether `at` is outside strings and line comments on its line, so a
+/// comment marker there is real.
+fn in_code(chars: &[char], at: usize) -> bool {
+    let mut quote: Option<char> = None;
+    let mut i = line_start(chars, at);
+    while i < at {
+        let c = chars[i];
+        match quote {
+            Some(_) if c == '\\' => i += 1,
+            Some(q) if c == q => quote = None,
+            Some(_) => {}
+            None if c == '"' || c == '`' => quote = Some(c),
+            None if starts_with(chars, i, &['/', '/']) => return false,
+            None => {}
+        }
+        i += 1;
+    }
+    quote.is_none()
 }
 
 /// Line prefixes kept when wrapping: comment markers and quotes.
@@ -288,7 +339,12 @@ pub fn wrap_lines(
             // A paragraph ends at a blank line or where the marker changes.
             let kind = marker(first);
             let same = |start: usize| !blank(start) && marker(start) == kind;
-            while first > 0 && same(line_start(&chars, first - 1)) {
+            // A list item starts a paragraph of its own.
+            let item = |start: usize| {
+                let line = &chars[start..line_end(&chars, start)];
+                bullet(&line[wrap_prefix(line, markers)..]) > 0
+            };
+            while first > 0 && !item(first) && same(line_start(&chars, first - 1)) {
                 first = line_start(&chars, first - 1);
             }
             loop {
@@ -297,7 +353,7 @@ pub fn wrap_lines(
                     .position(|&c| c == '\n')
                     .map(|n| last + n + 1);
                 match next {
-                    Some(next) if next < chars.len() && same(next) => last = next,
+                    Some(next) if next < chars.len() && same(next) && !item(next) => last = next,
                     _ => break,
                 }
             }
@@ -353,6 +409,7 @@ pub fn wrap_lines(
         }
         let length = output.chars().count();
         changes.push(Change {
+            from: s,
             start: first,
             end,
             text: output,
@@ -378,6 +435,7 @@ pub fn transpose(text: &str, selections: &[Selection]) -> Batch {
             let text = pieces[(i + pieces.len() - 1) % pieces.len()].clone();
             let length = text.chars().count();
             changes.push(Change {
+                from: *s,
                 start: s.start(),
                 end: s.end(),
                 text,
@@ -402,6 +460,7 @@ pub fn transpose(text: &str, selections: &[Selection]) -> Batch {
             (h - 1, 2)
         };
         changes.push(Change {
+            from: s,
             start,
             end: start + 2,
             text: [chars[start + 1], chars[start]].iter().collect(),
@@ -448,6 +507,7 @@ pub fn change_case(text: &str, selections: &[Selection], title: bool) -> Batch {
             (length, 0)
         };
         changes.push(Change {
+            from: s,
             start: range.start(),
             end: range.end(),
             text: changed,
@@ -492,6 +552,7 @@ pub fn delete_to_line_edge(text: &str, selections: &[Selection], end: bool) -> B
         };
         if start < stop {
             changes.push(Change {
+                from: s,
                 start,
                 end: stop,
                 text: String::new(),
@@ -584,12 +645,22 @@ fn scan_brackets(chars: &[char]) -> Vec<Brackets> {
             continue;
         }
         match c {
+            // A quote that does not close soon is a Rust lifetime or an
+            // apostrophe, not a character literal.
+            '\'' if !char_literal(chars, i) => leading = false,
             '"' | '\'' | '`' => {
                 leading = false;
                 i += 1;
+                // A string ends at its closing quote or, unclosed, at the end
+                // of the line; the newline itself is left for the line count.
                 while i < chars.len() && chars[i] != c && chars[i] != '\n' {
-                    i += if chars[i] == '\\' { 2 } else { 1 };
+                    let escaped = chars[i] == '\\' && chars.get(i + 1).is_some_and(|&n| n != '\n');
+                    i += if escaped { 2 } else { 1 };
                 }
+                if chars.get(i) == Some(&c) {
+                    i += 1;
+                }
+                continue;
             }
             '{' | '[' | '(' => {
                 leading = false;
@@ -607,6 +678,15 @@ fn scan_brackets(chars: &[char]) -> Vec<Brackets> {
         i += 1;
     }
     lines
+}
+
+/// Whether the `'` at `at` starts a character literal such as `'x'` or `'\\n'`.
+fn char_literal(chars: &[char], at: usize) -> bool {
+    match chars.get(at + 1) {
+        Some('\\') => chars[at + 2..].iter().take(10).any(|&c| c == '\''),
+        Some(_) => chars.get(at + 2) == Some(&'\''),
+        None => false,
+    }
 }
 
 /// Indent the selected lines, or the line at each cursor, by bracket depth,
@@ -666,7 +746,7 @@ pub fn reindent(text: &str, selections: &[Selection], tab_width: usize, tabs: bo
             Some(above) => {
                 let (start, end) = indent_of(above);
                 let own = (columns(&chars[start..end], width) / width) as isize;
-                step(own, brackets[above])
+                step(own, brackets.get(above).copied().unwrap_or_default())
             }
             None => 0,
         };
@@ -674,7 +754,7 @@ pub fn reindent(text: &str, selections: &[Selection], tab_width: usize, tabs: bo
         for line in first..=last {
             let (start, end) = indent_of(line);
             let stop = line_end(&chars, start);
-            let b = brackets[line];
+            let b = brackets.get(line).copied().unwrap_or_default();
             if !b.in_comment && !is_blank(line) {
                 let own = (level - isize::from(b.leading_closers > 0)).max(0);
                 output.push_str(&unit.repeat(own as usize));
@@ -703,6 +783,7 @@ pub fn reindent(text: &str, selections: &[Selection], tab_width: usize, tabs: bo
             None => (0, length),
         };
         changes.push(Change {
+            from: Selection::caret(start),
             start,
             end,
             text: output,

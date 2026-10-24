@@ -29,8 +29,9 @@ pub(super) struct ProjectBrowser {
     listings: HashMap<String, std::sync::Arc<Result<FolderListing, String>>>,
     pending: HashSet<String>,
     pub expanded: BTreeSet<String>,
-    /// A file row to scroll into view once it is drawn.
-    pub reveal: Option<String>,
+    /// A file row to scroll into view once it is drawn, until a deadline in
+    /// case it never is (for example, when it is excluded from the tree).
+    pub reveal: Option<(String, Instant)>,
     generation: u64,
     tx: Sender<ListingResult>,
     rx: Receiver<ListingResult>,
@@ -216,7 +217,7 @@ impl HeditApp {
         }
         self.settings.show_sidebar = true;
         self.settings.show_folders = true;
-        self.project.reveal = Some(path);
+        self.project.reveal = Some((path, Instant::now() + Duration::from_secs(2)));
         self.sync_folder_view();
     }
     pub(super) fn refresh_folder(&mut self) {
@@ -462,7 +463,17 @@ impl HeditApp {
                     symlink: entry.is_symlink,
                 },
             );
-            if self.project.reveal.as_deref() == Some(entry.path.as_str()) {
+            if let Some((_, until)) = &self.project.reveal {
+                if Instant::now() > *until {
+                    self.project.reveal = None;
+                }
+            }
+            if self
+                .project
+                .reveal
+                .as_ref()
+                .is_some_and(|(p, _)| *p == entry.path)
+            {
                 response.scroll_to_me(Some(egui::Align::Center));
                 self.project.reveal = None;
             }

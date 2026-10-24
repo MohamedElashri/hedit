@@ -57,6 +57,7 @@ fn folder_search_respects_ignore_filters_roots_and_stale_previews() {
         "needle",
         Some("found"),
         &Default::default(),
+        &Default::default(),
         &cancel,
     )
     .unwrap();
@@ -79,6 +80,7 @@ fn folder_search_respects_ignore_filters_roots_and_stale_previews() {
         "changed",
         Some("updated"),
         &Default::default(),
+        &Default::default(),
         &cancel,
     )
     .unwrap();
@@ -88,7 +90,16 @@ fn folder_search_respects_ignore_filters_roots_and_stale_previews() {
         "updated outside\n"
     );
     cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-    assert!(search::folders(&roots, "", "updated", None, &Default::default(), &cancel).is_err());
+    assert!(search::folders(
+        &roots,
+        "",
+        "updated",
+        None,
+        &Default::default(),
+        &Default::default(),
+        &cancel
+    )
+    .is_err());
 }
 
 #[test]
@@ -260,13 +271,9 @@ fn symbols_completion_snippets_and_git_hunks_keep_unicode_positions() {
         symbols.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
         ["λ", "Thing", "method", "kernel"]
     );
-    let text = "λambda λatest λ";
-    let (range, words) = intelligence::completions(text, text.chars().count());
-    assert_eq!(&text[range], "λ");
-    assert!(words.contains(&"λambda".into()));
-    let (text, cursor) = intelligence::expand("before ${SELECTION} $0 after", "λ $0");
-    assert_eq!(text, "before λ $0  after");
-    assert_eq!(cursor, "before λ $0 ".chars().count());
+    let e = intelligence::expand_fields("before ${SELECTION} $0 after", "λ $0");
+    assert_eq!(e.text, "before λ $0  after");
+    assert_eq!(e.fields, vec![vec![(12, 12)]]);
     let diff = search::diff(
         "one\ntwo\nthree\n",
         "one\nchanged\nthree\n",
@@ -566,7 +573,7 @@ fn folder_search_reads_open_text_groups_context_and_restores() {
     let cancel = AtomicBool::new(false);
     let open =
         std::collections::HashMap::from([(root.join("open.txt"), "needle unsaved\n".to_owned())]);
-    let result = search::folders_with_open(
+    let result = search::folders(
         &roots,
         "",
         "needle",
@@ -621,4 +628,18 @@ fn folder_search_reads_open_text_groups_context_and_restores() {
         std::fs::read_to_string(root.join("a.txt")).unwrap(),
         "edited elsewhere\n"
     );
+}
+
+#[test]
+fn repeated_snippet_fields_mirror_the_first_and_imports_are_not_definitions() {
+    let e = intelligence::expand_fields("${1:a} ${1:b} $1", "");
+    assert_eq!(e.text, "a a a");
+    assert_eq!(e.fields[0], vec![(0, 1), (2, 3), (4, 5)]);
+    let text = "use crate::thing;\nimport other;\nstruct thing;\n";
+    let lines: Vec<usize> = intelligence::definitions(text, "thing", Path::new("a.rs"))
+        .iter()
+        .map(|p| p.line)
+        .collect();
+    assert_eq!(lines, [3]);
+    assert!(intelligence::definitions(text, "other", Path::new("a.rs")).is_empty());
 }

@@ -58,6 +58,16 @@ impl AutoComplete {
 }
 
 impl HeditApp {
+    /// The focused pane's editor widget.
+    pub(super) fn editor_id(&self) -> egui::Id {
+        let b = self.active();
+        let id = egui::Id::new(("editor", b.page.info.id, b.page.start));
+        if self.panes.mode != 0 && self.panes.focused > 0 {
+            id.with(self.panes.focused)
+        } else {
+            id
+        }
+    }
     fn completion_key(&self) -> Vec<(u64, u64)> {
         self.workspace
             .open
@@ -264,7 +274,8 @@ impl HeditApp {
                 ctx.request_repaint_after(due - Instant::now());
             }
         }
-        if !self.settings.auto_complete {
+        // Only typing in the editor counts, not in Find or other fields.
+        if !self.settings.auto_complete || !ctx.memory(|m| m.has_focus(self.editor_id())) {
             return;
         }
         // Typing a word character schedules the list; anything else closes it.

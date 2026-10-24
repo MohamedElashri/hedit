@@ -67,6 +67,13 @@ pub(super) struct SpellCheck {
     pub menu: Option<WordMenu>,
 }
 
+impl SpellCheck {
+    /// Drop results for files that were closed; each holds a copy of its text.
+    pub(super) fn forget_closed(&mut self, open: &[u64]) {
+        self.results.retain(|view, _| open.contains(view));
+    }
+}
+
 fn spawn_worker(ctx: &egui::Context) -> (mpsc::Sender<Request>, mpsc::Receiver<Reply>) {
     let (tx, requests) = mpsc::channel::<Request>();
     let (replies, rx) = mpsc::channel();

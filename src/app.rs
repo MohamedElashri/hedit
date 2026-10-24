@@ -1229,7 +1229,6 @@ impl HeditApp {
             (shift, Key::R, Command::Rename),
             (cmd, Key::Comma, Command::Settings),
             (cmd, Key::F, Command::Find),
-            (cmd, Key::Q, Command::Quit),
             (focus, Key::Num1, Command::FocusGroup1),
             (focus, Key::Num2, Command::FocusGroup2),
             (focus, Key::Num3, Command::FocusGroup3),
@@ -1241,6 +1240,10 @@ impl HeditApp {
             if !self.overridden(command) && take(modifiers, key) {
                 self.execute(ctx, command);
             }
+        }
+        // Exactly Ctrl+Q, so Cmd+Option+Q (Wrap paragraph on macOS) does not quit.
+        if !self.overridden(Command::Quit) && tab_switch::take_exact(ctx, cmd, Key::Q) {
+            self.execute(ctx, Command::Quit);
         }
         if !cfg!(target_os = "macos") {
             if !self.overridden(Command::Replace) && take(cmd, Key::H) {
@@ -1729,10 +1732,7 @@ impl HeditApp {
         let gutter_hovered = ctx
             .pointer_hover_pos()
             .is_some_and(|p| editor_area.contains(p) && p.x < editor_area.left() + gutter + 4.0);
-        let fold_heads = if gutter > 0.0
-            && !buffer.page.info.paged
-            && (gutter_hovered || !buffer.view.folds.is_empty())
-        {
+        let fold_heads = if gutter > 0.0 && !buffer.page.info.paged && gutter_hovered {
             self.fold_cache.heads(
                 buffer.view.id,
                 buffer.page.info.revision,
@@ -1742,12 +1742,16 @@ impl HeditApp {
         } else {
             Arc::default()
         };
-        let folded_heads: Vec<(usize, hedit::advanced::Fold)> = buffer
-            .view
-            .folds
-            .iter()
-            .map(|&f| (fold_gutter::header_line(&buffer.page.text, f), f))
-            .collect();
+        let folded_heads = if gutter > 0.0 && !buffer.view.folds.is_empty() {
+            self.fold_cache.folded(
+                buffer.view.id,
+                buffer.page.info.revision,
+                &buffer.view.folds,
+                &buffer.page.text,
+            )
+        } else {
+            Arc::default()
+        };
         let mut fold_click: Option<(hedit::advanced::Fold, bool)> = None;
         // Move the text out for this frame instead of copying a page of up to
         // 2 MiB; it goes back, possibly edited, right after the editor is drawn.
@@ -2232,7 +2236,8 @@ impl HeditApp {
                                     bidi_view::caret_rect(&output.galley, &bidi_rows, index);
                                 let close = (caret.center().x - relative.x).abs() < font_size;
                                 let source = projection.source(index);
-                                let word = hedit::advanced::word(&buffer.page.text, source);
+                                // The text is in `old` while the editor is drawn.
+                                let word = hedit::advanced::word(&old, source);
                                 if close && word.start() < word.end() {
                                     self.hover_target =
                                         Some((buffer.view.id, (word.start(), word.end()), at));
@@ -2393,6 +2398,8 @@ impl HeditApp {
                                     });
                                 let source = projection.source(index);
                                 word_menu_at = Some(source);
+                                // Until the word is looked up, show no stale entries.
+                                self.spell.menu = None;
                                 let (a, b) = (
                                     buffer.view.anchor.min(buffer.view.head),
                                     buffer.view.anchor.max(buffer.view.head),
