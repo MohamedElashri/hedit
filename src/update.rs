@@ -330,7 +330,9 @@ pub fn verify_checksum(archive: &Path, checksum: &str, name: &str) -> Result<(),
         }
         hasher.update(&bytes[..count]);
     }
-    if format!("{:x}", hasher.finalize()) != digest.to_ascii_lowercase() {
+    let hash: [u8; 32] = hasher.finalize().into();
+    let hash_hex: String = hash.iter().map(|b| format!("{b:02x}")).collect();
+    if hash_hex != digest.to_ascii_lowercase() {
         return Err("Checksum mismatch; the existing installation was not changed.".into());
     }
     Ok(())

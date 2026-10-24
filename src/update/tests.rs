@@ -77,9 +77,10 @@ impl Fixture {
             .status()
             .unwrap();
         assert!(status.success());
+        let hash: [u8; 32] = Sha256::digest(fs::read(&archive).unwrap()).into();
+        let hash_hex: String = hash.iter().map(|b| format!("{b:02x}")).collect();
         let checksum = format!(
-            "{:x}  {}\n",
-            Sha256::digest(fs::read(&archive).unwrap()),
+            "{hash_hex}  {}\n",
             archive.file_name().unwrap().to_string_lossy()
         );
         fs::write(archive.with_extension("gz.sha256"), &checksum).unwrap();
