@@ -605,6 +605,13 @@ when opened and adapts its height to smaller windows.
 4. Enable **Replace** (or press **Ctrl+H**), enter replacement text, and click
    **Replace selected** to change that occurrence.
 
+**Alt+Enter** puts a cursor on every match of the Find text, from the search
+field or the editor (up to 1,000). **Ctrl+E** makes the selection, or the word at
+the cursor, the Find text, and **Ctrl+Shift+E** makes it the Replace text, without
+opening the panel. **Ctrl+F3** selects the word at the cursor; press it again to
+select its next copy, or **Ctrl+Shift+F3** for the previous one, wrapping around
+the file.
+
 Search wraps at the end. Enable **Regex**, **Case sensitive**, or **Whole words**;
 **Selection only** uses the selection captured when opening Find. Use **Previous**
 or **Shift+F3** to go backward. The panel shows the current match as “n of m” while you type.
@@ -1202,6 +1209,9 @@ and Quit are in macOS's own hedit menu. Change any shortcut under
 | F4 / Shift+F4 | Next / previous build error or Find in folders match |
 | Ctrl+P / Ctrl+Shift+P | Find files / command palette |
 | Ctrl+F / Ctrl+H / Ctrl+G | Find / Replace / Go to line |
+| Alt+Enter | Select every match of the Find text |
+| Ctrl+E / Ctrl+Shift+E | Use the selection for Find / Replace |
+| Ctrl+F3 / Ctrl+Shift+F3 | Select the next / previous copy of the word at the cursor |
 | Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y | Undo / redo |
 | Ctrl+C / Ctrl+X / Ctrl+V | Copy / cut / paste |
 | Ctrl+K, Ctrl+V | Paste from history |

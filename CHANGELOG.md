@@ -39,6 +39,10 @@
   Ctrl+K, Ctrl+K), reindent lines by their brackets, and sort lines ignoring case
   (F9; Ctrl+F9 sorts exactly). On macOS, block comments are Cmd+Option+/,
   wrapping is Cmd+Option+Q, and transpose is Control+T.
+- Find shortcuts: Alt+Enter puts a cursor on every match of the Find text,
+  Ctrl+E and Ctrl+Shift+E use the selection as the Find or Replace text, and
+  Ctrl+F3 and Ctrl+Shift+F3 select the next or previous copy of the word at the
+  cursor.
 - Paste from history (Ctrl+K, Ctrl+V) lists the last 15 pieces of text copied or
   cut in hedit, with filtering, and pastes the chosen one at every cursor.
 - Fold arrows in the gutter: ▾ beside foldable lines while the pointer is over

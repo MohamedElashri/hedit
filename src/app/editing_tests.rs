@@ -1326,3 +1326,73 @@ fn the_palette_matches_letters_in_order_best_first() {
     frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)]);
     assert_eq!(app.active().page.text, "# text");
 }
+
+#[test]
+fn find_shortcuts_select_matches_and_reuse_the_selection() {
+    let (_directory, ctx, mut app) = app_with("λ cat, cat;\ncat\n");
+    // Ctrl+E takes the word at the cursor as the Find text.
+    app.set_selections(vec![hedit::advanced::Selection::caret(3)]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![key(Key::E, Modifiers::COMMAND)]);
+    assert_eq!(app.query, "cat");
+    // Alt+Enter puts a cursor on every match, in characters.
+    frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::ALT)]);
+    let ranges: Vec<(usize, usize)> = app
+        .selections()
+        .iter()
+        .map(|s| (s.start(), s.end()))
+        .collect();
+    assert_eq!(ranges, [(2, 5), (7, 10), (12, 15)]);
+    assert_eq!(
+        app.active().page.text,
+        "λ cat, cat;\ncat\n",
+        "nothing typed"
+    );
+    // Ctrl+Shift+E fills Replace.
+    app.set_selections(vec![hedit::advanced::Selection { anchor: 5, head: 6 }]);
+    frame(&ctx, &mut app, vec![]);
+    frame(
+        &ctx,
+        &mut app,
+        vec![key(Key::E, Modifiers::COMMAND | Modifiers::SHIFT)],
+    );
+    assert_eq!(app.replacement, ",");
+    // Ctrl+F3 selects the word, then its next copies, wrapping around.
+    app.set_selections(vec![hedit::advanced::Selection::caret(8)]);
+    frame(&ctx, &mut app, vec![]);
+    let next = |app: &mut HeditApp, ctx: &egui::Context| {
+        frame(ctx, app, vec![key(Key::F3, Modifiers::COMMAND)]);
+        app.selections()[0]
+    };
+    assert_eq!(
+        next(&mut app, &ctx),
+        hedit::advanced::Selection {
+            anchor: 7,
+            head: 10
+        }
+    );
+    assert_eq!(
+        next(&mut app, &ctx),
+        hedit::advanced::Selection {
+            anchor: 12,
+            head: 15
+        }
+    );
+    assert_eq!(
+        next(&mut app, &ctx),
+        hedit::advanced::Selection { anchor: 2, head: 5 }
+    );
+    frame(
+        &ctx,
+        &mut app,
+        vec![key(Key::F3, Modifiers::COMMAND | Modifiers::SHIFT)],
+    );
+    assert_eq!(
+        app.selections()[0],
+        hedit::advanced::Selection {
+            anchor: 12,
+            head: 15
+        }
+    );
+}

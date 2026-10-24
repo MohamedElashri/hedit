@@ -12,6 +12,7 @@ mod edit_actions;
 mod editing_tests;
 mod editor_layout;
 mod find_live;
+mod find_tools;
 mod fold_gutter;
 mod goto_anything;
 #[cfg(test)]
@@ -1182,6 +1183,13 @@ impl HeditApp {
             }
         }
         self.tab_shortcuts(ctx);
+        // Alt+Enter selects every match, from the Find field or the editor.
+        if !self.query.is_empty()
+            && !self.overridden(Command::SelectAllMatches)
+            && tab_switch::take_exact(ctx, Modifiers::ALT, Key::Enter)
+        {
+            self.execute(ctx, Command::SelectAllMatches);
+        }
         self.quality_shortcuts(ctx);
         self.filter_overridden_clipboard(ctx);
         if self.overridden(Command::SelectAll) {
@@ -1291,6 +1299,10 @@ impl HeditApp {
                 (line_cursor, Key::ArrowUp, Command::AddCursorAbove),
                 (line_cursor, Key::ArrowDown, Command::AddCursorBelow),
                 (Modifiers::COMMAND, Key::F9, Command::SortLines),
+                (shifted, Key::F3, Command::QuickFindPrevious),
+                (Modifiers::COMMAND, Key::F3, Command::QuickFindNext),
+                (shifted, Key::E, Command::UseSelectionForReplace),
+                (Modifiers::COMMAND, Key::E, Command::UseSelectionForFind),
                 (Modifiers::SHIFT, Key::F12, Command::GotoReferences),
                 (Modifiers::NONE, Key::F12, Command::GotoDefinition),
                 (Modifiers::NONE, Key::F9, Command::SortLinesIgnoreCase),

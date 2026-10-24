@@ -43,7 +43,7 @@ impl HeditApp {
                 for (title, groups) in [
                     ("File", vec![vec![Command::New, Command::NewWindow, Command::Open, Command::OpenFolder], vec![Command::RefreshFolder, Command::CloseFolder], vec![Command::Save, Command::SaveAs, Command::Rename, Command::Encoding], vec![Command::Close, Command::Reopen, Command::Shelf], if cfg!(target_os = "macos") { vec![] } else { vec![Command::Quit] }]),
                     ("Edit", vec![]),
-                    ("Find", vec![vec![Command::Find, Command::Replace, Command::FindPrevious, Command::ReplaceAll, Command::FindFiles]]),
+                    ("Find", vec![vec![Command::Find, Command::Replace, Command::FindPrevious, Command::ReplaceAll, Command::FindFiles], vec![Command::SelectAllMatches, Command::UseSelectionForFind, Command::UseSelectionForReplace, Command::QuickFindNext, Command::QuickFindPrevious]]),
                     ("View", vec![]),
                     ("Goto", vec![vec![Command::Switcher, Command::Goto, Command::Symbols, Command::GotoDefinition, Command::GotoReferences], vec![Command::NextTab, Command::PreviousTab, Command::RecentTab], vec![Command::NavBack, Command::NavForward], vec![Command::Bookmark, Command::NextBookmark, Command::PreviousBookmark, Command::Bookmarks]]),
                     ("Project", vec![vec![Command::OpenProject,Command::SaveProject,Command::SaveProjectAs,Command::RecentProjects],vec![Command::ProjectSettings]]),
