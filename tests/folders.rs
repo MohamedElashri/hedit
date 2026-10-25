@@ -1,5 +1,5 @@
 use hedit::{folder, session::FolderView, workspace::Workspace};
-use std::fs;
+use std::{fs, path::Path};
 
 #[test]
 fn listing_is_lazy_sorted_and_includes_hidden_files() {
@@ -31,7 +31,10 @@ fn fuzzy_search_finds_nested_paths_and_skips_generated_trees() {
     }
     let results = folder::quick_open(root.path().into(), "SRCPRJ").unwrap();
     assert_eq!(results.entries.len(), 1);
-    assert_eq!(results.entries[0].name, "src/project.rs");
+    assert_eq!(
+        Path::new(&results.entries[0].name),
+        Path::new("src/project.rs")
+    );
     let all = folder::quick_open(root.path().into(), "").unwrap();
     assert_eq!(all.entries.len(), 1);
     assert!(folder::quick_open(root.path().join("src/project.rs"), "").is_err());
@@ -128,11 +131,11 @@ fn multiple_roots_search_all_folders_and_distinguish_duplicate_names() {
     assert!(results
         .entries
         .iter()
-        .any(|e| e.name.contains("client/project/src/main.rs")));
+        .any(|e| Path::new(&e.name).ends_with("client/project/src/main.rs")));
     assert!(results
         .entries
         .iter()
-        .any(|e| e.name.contains("server/project/src/main.rs")));
+        .any(|e| Path::new(&e.name).ends_with("server/project/src/main.rs")));
     let filtered = folder::quick_open_roots(&roots, "server").unwrap();
     assert_eq!(filtered.entries.len(), 1);
     let mut with_missing = roots.clone();

@@ -191,8 +191,13 @@ fn missing_recovery_buffer_is_retained_in_future_manifests() {
     let (ws, errors) = Workspace::restore(directory.path().into()).unwrap();
     assert!(!errors.is_empty());
     ws.checkpoint().unwrap();
-    let manifest = fs::read_to_string(directory.path().join("session.json")).unwrap();
-    assert!(manifest.contains(path));
+    let updated: serde_json::Value =
+        serde_json::from_slice(&fs::read(directory.path().join("session.json")).unwrap()).unwrap();
+    assert!(updated["open"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|tab| tab["document"]["buffer"].as_str() == Some(path)));
 }
 
 #[test]

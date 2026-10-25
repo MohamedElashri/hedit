@@ -3476,6 +3476,8 @@ mod tests {
 
     #[test]
     fn folder_palette_finds_unopened_file_and_accepts_enter() {
+        use std::path::Path;
+
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path().join("project");
         std::fs::create_dir_all(root.join("src")).unwrap();
@@ -3497,15 +3499,17 @@ mod tests {
             thread::sleep(Duration::from_millis(10));
         }
         assert_eq!(
-            app.project
-                .search
-                .as_ref()
-                .unwrap()
-                .as_ref()
-                .unwrap()
-                .entries[0]
-                .name,
-            "src/unique.rs"
+            Path::new(
+                &app.project
+                    .search
+                    .as_ref()
+                    .unwrap()
+                    .as_ref()
+                    .unwrap()
+                    .entries[0]
+                    .name
+            ),
+            Path::new("src/unique.rs")
         );
         frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)]);
         finish_app_job(&mut app, &ctx);
