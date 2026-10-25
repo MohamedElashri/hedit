@@ -445,7 +445,9 @@ impl HeditApp {
     }
     fn tool_preferences(&mut self, ui: &mut egui::Ui) {
         if !hedit::debugger::LOCAL_TOOLS_SUPPORTED {
-            ui.label("CUDA source editing is available. Local CUDA tools are disabled on macOS.");
+            ui.label(
+                "CUDA source editing is available. Local CUDA tools are supported on Linux only.",
+            );
             return;
         }
         ui.weak("Configure NVIDIA tools here. Choose a program and arguments in the CUDA panel.");

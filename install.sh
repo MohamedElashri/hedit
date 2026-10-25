@@ -48,7 +48,7 @@ HELP
         Linux) platform=linux; tools='tar sha256sum mktemp install' ;;
         # The macOS app is universal, so one archive serves both architectures.
         Darwin) platform=macos; tools='ditto shasum mktemp' ;;
-        *) fail 'Release packages support Linux and macOS.' ;;
+        *) fail 'This installer supports Linux and macOS. On Windows, download the portable ZIP from GitHub Releases.' ;;
     esac
     for tool in $tools; do
         command -v "$tool" >/dev/null 2>&1 || fail "Required command not found: $tool."

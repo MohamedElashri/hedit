@@ -1,7 +1,7 @@
 # hedit user guide
 
-This guide covers hedit on Linux and macOS. Shortcuts are written for Linux; on
-macOS use **Cmd** for **Ctrl** and **Option** for **Alt** (the exceptions are
+This guide covers hedit on Linux, macOS, and Windows. Shortcuts use Ctrl on Linux
+and Windows; on macOS use **Cmd** for **Ctrl** and **Option** for **Alt** (the exceptions are
 listed under [Keyboard shortcuts](#keyboard-shortcuts)). The menus always show
 your platform's keys.
 
@@ -81,16 +81,47 @@ download you trust. On macOS, upgrade by running the installer again. See the
 [macOS build notes](DEVELOPER_GUIDE.md#macos-builds) for what is still being
 tested.
 
+### Windows installation
+
+Download `hedit-X.Y.Z-windows-x86_64.zip` and its `.sha256` file from
+[GitHub Releases](https://github.com/MohamedElashri/hedit/releases).
+The portable build needs Windows 10 or newer (x86-64) and an OpenGL-capable
+graphics driver. In PowerShell, verify and extract it:
+
+```powershell
+$archive = 'hedit-X.Y.Z-windows-x86_64.zip'
+$expected = (Get-Content "$archive.sha256").Split(' ')[0]
+if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne $expected) { throw 'Checksum mismatch' }
+Expand-Archive $archive -DestinationPath .
+.\hedit-X.Y.Z-windows-x86_64\hedit.exe
+```
+
+Keep the extracted folder anywhere writable. Add it to your user `PATH` if you
+want to open files with `hedit.exe` from a terminal. To upgrade, close all hedit
+windows and extract the newer ZIP into a new folder. Recovery and settings live
+in your Windows profile, separately from the executable. Windows upgrades use
+the ZIP; the shell installer supports Linux and macOS, and in-app installation
+supports Linux.
+
+Windows packages are unsigned. Native CI builds, tests, and checks the extracted
+executable; Open/Save dialogs, clipboard, display scaling, and recovery after
+closing a real window still need hands-on validation.
+
 ### Uninstall
 
 Remove `~/.local/bin/hedit`, `~/.local/share/applications/hedit.desktop`,
 `~/.local/share/icons/hicolor/scalable/apps/hedit.svg`, `~/.local/share/hedit/themes/`,
 and `~/.local/share/doc/hedit/`. Your session (unsaved work) is in
 `~/.local/share/hedit/session/` on Linux and
-`~/Library/Application Support/hedit.hedit/session/` on macOS; see
+`~/Library/Application Support/hedit.hedit/session/` on macOS. On Windows, delete
+the extracted app folder; recovery is in `%LOCALAPPDATA%\hedit\hedit\data\session\`.
+See
 [Recovery](#recovery) before deleting it.
 
 ## Updates
+
+On Windows, [replace the portable package](#windows-installation). On macOS,
+run the installer again or replace the app.
 
 On Linux, **Help → Check for updates…** looks up the latest stable release,
 shows its notes, and installs it when you click **Install update**. hedit never
@@ -384,7 +415,10 @@ the whole diff. hedit never changes your repository.
 **Ctrl+B** saves and builds the file, showing the output in a panel; click an error,
 or press **F4** / **Shift+F4**, to go to it. Built-in build systems cover CUDA
 (`nvcc`), C++ (`g++`), C (`gcc`), Rust (`cargo build`), Python, and Make, chosen by
-syntax; **Ctrl+Shift+B** picks one and remembers it. Add your own in
+syntax; **Ctrl+Shift+B** picks one and remembers it. Commands run through `sh`
+on Linux/macOS and `cmd.exe` on Windows; use the matching shell syntax and
+install your compiler or interpreter separately. The Python command is `python`
+on Windows and `python3` elsewhere. Add your own in
 [settings.json](#the-settings-file):
 
 ```json
@@ -468,8 +502,9 @@ are saved in `keybindings.json` as `{"command": "find_files", "shortcut":
 
 **Open settings.json** opens your settings as a file; saving it applies them, and
 edits from other editors apply when hedit regains focus. It lives in
-`~/.config/hedit/` on Linux and `~/Library/Application Support/hedit.hedit/` on
-macOS (or `HEDIT_CONFIG_DIR`), with `keybindings.json`, `snippets.json`,
+`~/.config/hedit/` on Linux, `~/Library/Application Support/hedit.hedit/` on
+macOS, and `%APPDATA%\hedit\hedit\config\` on Windows (or `HEDIT_CONFIG_DIR`),
+with `keybindings.json`, `snippets.json`,
 `macros.json`, and your themes. Comments and trailing commas are allowed, unknown
 keys are reported, and a file with errors is never overwritten.
 
@@ -592,7 +627,7 @@ files go to the open window.
 Change any shortcut under **Settings → Key Bindings**. Two-key shortcuts such as
 **Ctrl+K, Ctrl+D** mean: press the first, then the second.
 
-| Action | Linux | macOS |
+| Action | Linux / Windows | macOS |
 | --- | --- | --- |
 | New file / open file / new window | Ctrl+N / Ctrl+O / Ctrl+Shift+N | Cmd+N / Cmd+O / Cmd+Shift+N |
 | Save / save as | Ctrl+S / Ctrl+Shift+S | Cmd+S / Cmd+Shift+S |
@@ -649,7 +684,10 @@ files…**, and make sure you opened the same session (`--session-dir`). If the
 newest recovery data cannot be read, hedit uses the one before it and keeps the
 old data in `preserved-*` folders, which are never deleted automatically.
 
-The session is in `~/.local/share/hedit/session/` (or `$XDG_DATA_HOME/hedit/session`).
+On Linux the session is in `~/.local/share/hedit/session/` (or
+`$XDG_DATA_HOME/hedit/session`). On macOS it is in
+`~/Library/Application Support/hedit.hedit/session/`; on Windows it is in
+`%LOCALAPPDATA%\hedit\hedit\data\session\`.
 To back it up or rescue text by hand, close hedit and copy the whole folder first;
 small files are plain UTF-8 text in `buffers-*`, named in `session.json`. Recovery
 data is not encrypted.

@@ -5,6 +5,7 @@ Build, test, and release hedit. For using it, see the [user guide](USER_GUIDE.md
 - [Build and install](#build-and-install)
 - [Checks](#checks)
 - [macOS builds](#macos-builds)
+- [Windows builds](#windows-builds)
 - [Code map](#code-map)
 - [Rules to keep](#rules-to-keep)
 - [Themes and branding](#themes-and-branding)
@@ -31,7 +32,8 @@ make install DESTDIR=/tmp/stage PREFIX=/usr   # staged, to inspect the layout
 Every launch, including `make run`, re-executes itself detached from the
 terminal and returns once the window is up; later errors go to `hedit.log` in the
 session directory. Linux is the validated platform; macOS builds and passes CI
-but still needs hands-on GUI review; Windows is untested.
+but still needs hands-on GUI review. Windows builds have native CI checks;
+hands-on GUI validation is pending there too.
 
 ## Checks
 
@@ -87,6 +89,39 @@ Linux layouts and GNU tar. Updates are Linux-only; Mac users replace the app.
 Local CUDA tools are hidden on macOS. Before calling Mac support stable, check
 Open/Save As, the clipboard, Retina rendering, Cmd+Q with recovery, Finder
 document events, external changes, and saves on APFS on a clean Mac.
+
+## Windows builds
+
+Use the x86-64 MSVC Rust toolchain and Visual Studio Build Tools with **Desktop
+development with C++** and a Windows SDK. Python 3.11 or newer runs the packaging
+scripts; GNU Make is optional. From PowerShell:
+
+```powershell
+rustup default stable-x86_64-pc-windows-msvc
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked --no-fail-fast
+python scripts/test-windows-package.py
+$env:RUSTFLAGS = '-C target-feature=+crt-static'
+cargo build --release --locked
+python scripts/package-windows.py --smoke
+```
+
+The ZIP and SHA-256 file appear in `dist/`. The package includes `hedit.exe`,
+guides, license notices, themes, and examples. Static CRT linking keeps the C
+runtime inside the executable. The smoke check extracts to a path containing
+spaces, verifies the checksum and resources, and runs `--version` and `--help`.
+CI uses the same commands on `windows-2025` and publishes a Windows artifact on
+each push. Tagged releases include it alongside the Linux and macOS packages.
+
+Build systems use `cmd.exe /D /S /C` on Windows, with Cancel stopping the process
+tree through `taskkill`; Unix platforms use `sh`. Write custom `shell_cmd` values
+using the platform's shell syntax. The Python build uses `python` on Windows.
+CUDA source editing works, while the local CUDA tool panel remains Linux-only.
+Windows upgrades replace the portable folder; in-app updates remain Linux-only.
+
+Before calling Windows support stable, validate file dialogs, clipboard,
+high-DPI rendering, window close/recovery, non-ASCII paths, file replacement on
+NTFS, and opening files from Explorer on a clean Windows desktop.
 
 ## Code map
 
@@ -168,10 +203,10 @@ and an installer script. `Makefile`, `scripts/package-linux.py`, and
 `packaging/linux/install.sh` must install the same paths; update
 `scripts/smoke-package.py` when the layout changes.
 
-The CI workflow runs the Linux and macOS checks on every push, through the same
-Makefile targets as `make ci`; keep check commands in the Makefile, not in
-workflow files. Pushing a version tag runs the release workflow, which builds
-Linux x86-64 and ARM64 tarballs and the universal macOS app, tests them, and
+The CI workflow runs Linux, macOS, and Windows checks on every push. Linux and
+macOS use Makefile targets; Windows uses Cargo and Python directly, without
+requiring GNU Make. Pushing a version tag runs the release workflow, which builds
+Linux x86-64 and ARM64 tarballs, the universal macOS app, and a Windows x86-64 ZIP, tests them, and
 publishes them with checksums. Tags with a hyphen (`vX.Y.Z-rc.1`) publish as
 prereleases.
 

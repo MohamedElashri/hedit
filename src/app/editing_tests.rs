@@ -328,7 +328,11 @@ fn ctrl_b_saves_builds_and_f4_visits_errors() {
     let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
     app.settings.build_systems = vec![hedit::build::BuildSystem {
         name: "Check".into(),
-        shell_cmd: r#"cat "$file_name" > /dev/null; echo "$file_name:2:4: warning: two"; echo "$file_name:3:1: error: three"; exit 2"#.into(),
+        shell_cmd: if cfg!(windows) {
+            r#"type "$file_name" >nul& echo $file_name:2:4: warning: two& echo $file_name:3:1: error: three& exit 2"#
+        } else {
+            r#"cat "$file_name" > /dev/null; echo "$file_name:2:4: warning: two"; echo "$file_name:3:1: error: three"; exit 2"#
+        }.into(),
         file_regex: r"^(..[^:\n]*):(\d+):(\d+): (.*)$".into(),
         selector: vec!["python".into()],
         ..Default::default()

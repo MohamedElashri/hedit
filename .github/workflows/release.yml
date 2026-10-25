@@ -65,10 +65,14 @@ jobs:
     name: Build universal macOS app
     uses: ./.github/workflows/macos-probe.yml
 
+  windows:
+    name: Build Windows portable app
+    uses: ./.github/workflows/windows.yml
+
   publish:
     name: Publish GitHub release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build, macos]
+    needs: [build, macos, windows]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

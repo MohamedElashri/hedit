@@ -53,16 +53,14 @@ fn errors_are_found_with_each_default_file_regex() {
         (rust[0].file.clone(), rust[0].line),
         (PathBuf::from("/work/src/main.rs"), 2)
     );
+    let file = std::env::temp_dir().join("t.py");
     let python = locations(
-        "  File \"/tmp/t.py\", line 4, in <module>\n",
+        &format!("  File \"{}\", line 4, in <module>\n", file.display()),
         &regex("Python"),
         dir,
         0,
     );
-    assert_eq!(
-        (python[0].file.clone(), python[0].line),
-        (PathBuf::from("/tmp/t.py"), 4)
-    );
+    assert_eq!((python[0].file.clone(), python[0].line), (file, 4));
 }
 
 #[test]
@@ -113,19 +111,33 @@ fn collect(running: &Running) -> (String, Option<i32>) {
 #[test]
 fn builds_stream_merged_output_and_report_exit_codes() {
     let dir = tempfile::tempdir().unwrap();
-    let running = Running::start("echo out; echo err 1>&2; exit 3", dir.path(), || {}).unwrap();
+    let command = if cfg!(windows) {
+        "echo out& echo err>&2& exit 3"
+    } else {
+        "echo out; echo err 1>&2; exit 3"
+    };
+    let running = Running::start(command, dir.path(), || {}).unwrap();
     let (output, code) = collect(&running);
-    assert_eq!(output, "out\nerr\n");
+    assert_eq!(output.replace("\r\n", "\n"), "out\nerr\n");
     assert_eq!(code, Some(3));
+}
+
+fn slow_build(late: bool) -> &'static str {
+    match (cfg!(windows), late) {
+        (true, true) => "echo started& ping -n 31 127.0.0.1 >nul& echo late",
+        (true, false) => "echo started& ping -n 31 127.0.0.1 >nul",
+        (false, true) => "echo started; sleep 30; echo late",
+        (false, false) => "echo started; sleep 30",
+    }
 }
 
 #[test]
 fn cancelling_stops_the_commands_a_build_started() {
     let dir = tempfile::tempdir().unwrap();
     // The sleep is a grandchild of the build's shell.
-    let running = Running::start("echo started; sleep 30; echo late", dir.path(), || {}).unwrap();
+    let running = Running::start(slow_build(true), dir.path(), || {}).unwrap();
     match running.events.recv_timeout(Duration::from_secs(5)).unwrap() {
-        Event::Output(text) => assert_eq!(text, "started\n"),
+        Event::Output(text) => assert_eq!(text.replace("\r\n", "\n"), "started\n"),
         Event::Finished(..) => panic!("finished early"),
     }
     let started = Instant::now();
@@ -133,7 +145,7 @@ fn cancelling_stops_the_commands_a_build_started() {
     let (output, code) = collect(&running);
     assert!(started.elapsed() < Duration::from_secs(5));
     assert!(!output.contains("late"));
-    assert_eq!(code, None);
+    assert_ne!(code, Some(0));
 }
 
 #[test]
@@ -142,7 +154,7 @@ fn cancelling_while_the_shell_starts_a_command_still_stops_it() {
     // `sleep`; a process created as the signal lands must not survive.
     let dir = tempfile::tempdir().unwrap();
     for _ in 0..20 {
-        let running = Running::start("echo started; sleep 30", dir.path(), || {}).unwrap();
+        let running = Running::start(slow_build(false), dir.path(), || {}).unwrap();
         let _ = running.events.recv_timeout(Duration::from_secs(5)).unwrap();
         let started = Instant::now();
         running.cancel();
@@ -155,4 +167,37 @@ fn cancelling_while_the_shell_starts_a_command_still_stops_it() {
         }
         assert!(started.elapsed() < Duration::from_secs(3));
     }
+}
+
+#[test]
+fn gcc_errors_accept_windows_drive_letters() {
+    let regex = defaults()
+        .into_iter()
+        .find(|s| s.name == "C (gcc)")
+        .unwrap()
+        .file_regex;
+    let found = locations(
+        r"C:\work\file.c:12:3: error: missing symbol",
+        &regex,
+        Path::new("."),
+        0,
+    );
+    assert_eq!((found[0].line, found[0].column), (12, Some(3)));
+    assert!(found[0].file.to_string_lossy().ends_with(r"C:\work\file.c"));
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_builds_preserve_quoted_executable_paths_and_arguments() {
+    let dir = tempfile::tempdir().unwrap();
+    let script = dir.path().join("build script.cmd");
+    std::fs::write(&script, "@echo %~1\r\n@echo problem>&2\r\n@exit /b 7\r\n").unwrap();
+    let command = format!("\"{}\" \"argument with spaces\"", script.display());
+    let running = Running::start(&command, dir.path(), || {}).unwrap();
+    let (output, code) = collect(&running);
+    assert_eq!(
+        output.replace("\r\n", "\n"),
+        "argument with spaces\nproblem\n"
+    );
+    assert_eq!(code, Some(7));
 }

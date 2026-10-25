@@ -12,7 +12,7 @@
   <a href="DEVELOPER_GUIDE.md">Developer guide</a>
 </p>
 
-hedit is a native text editor for Linux and macOS for the work you leave open:
+hedit is a native text editor for Linux, macOS, and Windows for the work you leave open:
 code across project folders, large logs to inspect, and notes that do not need a
 filename yet. It keeps your files and unsaved text between sessions, completes
 words as you type, jumps to definitions, edits with multiple cursors, and reads
@@ -58,6 +58,13 @@ verify it with `shasum -a 256 -c`, then unzip it and move **hedit.app** to Appli
 Initial packages use an ad-hoc development signature; Developer ID signing
 and notarization are pending. Native GUI validation is also pending. See
 [macOS installation](USER_GUIDE.md#macos-installation) for details.
+
+Windows x86-64 builds ship as `hedit-<version>-windows-x86_64.zip` with a
+SHA-256 checksum. Extract the ZIP and run **hedit.exe** on Windows 10 or newer
+with an OpenGL-capable graphics driver. No installer or administrator access is
+needed. Windows builds have automated checks; hands-on GUI validation is pending.
+See [Windows installation](USER_GUIDE.md#windows-installation) for checksum
+verification and upgrades.
 
 Choose **Help → Check for updates…** to review and install a
 newer Linux release. Update checks, installations, and restarts are always manual.
@@ -130,7 +137,7 @@ and configurable tab stops support daily code editing.
 
 On Linux, choose **Tools → CUDA panel**, select a debug executable, and start CUDA-GDB or a
 sanitizer run. Install NVIDIA's CUDA Toolkit and a compatible driver separately.
-macOS keeps CUDA syntax highlighting and code editing; local CUDA debugging,
+macOS and Windows keep CUDA syntax highlighting and code editing; local CUDA debugging,
 Compute Sanitizer, and NVIDIA GPU tools are disabled there.
 See the [CUDA guide](USER_GUIDE.md#cuda-tools) for compilation flags, debugger
 controls, and tool requirements. Device debugging still needs validation on

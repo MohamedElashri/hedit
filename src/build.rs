@@ -24,7 +24,7 @@ pub struct BuildSystem {
     pub selector: Vec<String>,
 }
 
-const GCC_ERRORS: &str = r"^(..[^:\n]*):(\d+):(\d+): (.*)$";
+const GCC_ERRORS: &str = r"^(.+?):(\d+):(\d+): (.*)$";
 
 /// The built-in build systems; settings can add more or replace these by name.
 pub fn defaults() -> Vec<BuildSystem> {
@@ -66,7 +66,11 @@ pub fn defaults() -> Vec<BuildSystem> {
         ),
         system(
             "Python",
-            r#"python3 -u "$file""#,
+            if cfg!(windows) {
+                r#"python -u "$file""#
+            } else {
+                r#"python3 -u "$file""#
+            },
             "",
             r#"^\s*File "(.+)", line (\d+)"#,
             &["python"],
@@ -222,11 +226,26 @@ impl Running {
         dir: &Path,
         wake: impl Fn() + Send + Clone + 'static,
     ) -> Result<Self, String> {
-        let mut shell = Command::new("sh");
+        #[cfg(not(windows))]
+        let mut shell = {
+            let mut shell = Command::new("sh");
+            shell.arg("-c").arg(format!("exec 2>&1; {command}"));
+            shell
+        };
+        #[cfg(windows)]
+        let mut shell = {
+            use std::os::windows::process::CommandExt;
+            use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
+            let mut shell = Command::new("cmd.exe");
+            // /D disables AutoRun; /S removes the outer quotes. Pass the
+            // user's shell command verbatim, including quotes and operators.
+            shell
+                .args(["/D", "/S", "/C"])
+                .raw_arg(format!("\"({command}) 2>&1\""))
+                .creation_flags(CREATE_NO_WINDOW);
+            shell
+        };
         shell
-            .arg("-c")
-            // Merge stderr into stdout so messages keep their order.
-            .arg(format!("exec 2>&1; {command}"))
             .current_dir(dir)
             .stdin(Stdio::null())
             .stdout(Stdio::piped());
@@ -307,12 +326,24 @@ impl Running {
     }
 }
 
-/// Send SIGKILL to every process in the build's group.
+/// Stop the build and its child processes.
 fn kill_group(group: u32) {
     #[cfg(unix)]
     if let Some(group) = rustix::process::Pid::from_raw(group as i32) {
         let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
+        let _ = Command::new("taskkill.exe")
+            .args(["/PID", &group.to_string(), "/T", "/F"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    #[cfg(not(any(unix, windows)))]
     let _ = group;
 }

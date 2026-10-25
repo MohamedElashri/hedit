@@ -4,6 +4,16 @@ use std::path::{Path, PathBuf};
 
 /// Folders searched for installed fonts on this platform.
 pub fn font_dirs() -> Vec<PathBuf> {
+    if cfg!(windows) {
+        let windows = std::env::var_os("WINDIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
+        let mut dirs = vec![windows.join("Fonts")];
+        if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+            dirs.push(PathBuf::from(local).join("Microsoft/Windows/Fonts"));
+        }
+        return dirs;
+    }
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let mut dirs: Vec<PathBuf> = if cfg!(target_os = "macos") {
         vec!["/System/Library/Fonts".into(), "/Library/Fonts".into()]
@@ -333,6 +343,24 @@ fn covers(bytes: &[u8], index: u32, sample: &str) -> bool {
 
 /// Candidate (file, face index) pairs for `sample`, best first.
 fn candidates(sample: &str) -> Vec<(PathBuf, u32)> {
+    if cfg!(windows) {
+        return font_dirs()
+            .iter()
+            .flat_map(|dir| {
+                [
+                    "arial.ttf",
+                    "segoeui.ttf",
+                    "tahoma.ttf",
+                    "Nirmala.ttf",
+                    "LeelawUI.ttf",
+                    "meiryo.ttc",
+                    "msyh.ttc",
+                    "malgun.ttf",
+                ]
+                .map(|name| (dir.join(name), 0))
+            })
+            .collect();
+    }
     if cfg!(target_os = "macos") {
         return MACOS_FONTS.iter().map(|p| (PathBuf::from(p), 0)).collect();
     }

@@ -4297,9 +4297,9 @@ mod tests {
         settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(not(target_os = "linux"))]
     #[test]
-    fn macos_hides_cuda_tools_but_keeps_cuda_editing() {
+    fn unsupported_platforms_hide_cuda_tools_but_keep_cuda_editing() {
         let directory = tempfile::tempdir().unwrap();
         let (workspace, _) = Workspace::restore(directory.path().into()).unwrap();
         let ctx = egui::Context::default();
@@ -4312,7 +4312,14 @@ mod tests {
         assert_eq!(app.preferences_page, PreferencesPage::General);
         app.workspace.open[0].set_language(Some(syntax::Language::Cuda));
         assert_eq!(app.active().language(), syntax::Language::Cuda);
-        assert_eq!(Command::Open.shortcut(), "Cmd+O");
+        assert_eq!(
+            Command::Open.shortcut(),
+            if cfg!(target_os = "macos") {
+                "Cmd+O"
+            } else {
+                "Ctrl+O"
+            }
+        );
     }
     #[test]
     fn appearance_follows_system_and_saves_custom_themes() {

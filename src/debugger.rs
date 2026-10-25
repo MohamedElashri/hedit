@@ -14,14 +14,14 @@ use std::{
 
 pub const OUTPUT_LIMIT: usize = 512 * 1024;
 /// CUDA source editing is independent of local NVIDIA tool availability.
-pub const LOCAL_TOOLS_SUPPORTED: bool = !cfg!(target_os = "macos");
+pub const LOCAL_TOOLS_SUPPORTED: bool = cfg!(target_os = "linux");
 const RECORD_LIMIT: usize = 64 * 1024;
 
 fn require_local_tools() -> Result<(), String> {
     if LOCAL_TOOLS_SUPPORTED {
         Ok(())
     } else {
-        Err("Local CUDA debugging and NVIDIA tools are disabled on macOS. CUDA source editing is available.".into())
+        Err("Local CUDA debugging and NVIDIA tools are supported on Linux only; disabled on macOS and Windows. CUDA source editing is available.".into())
     }
 }
 
