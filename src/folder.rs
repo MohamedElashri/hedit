@@ -240,9 +240,9 @@ pub fn display_path(roots: &[PathBuf], path: &Path) -> String {
     else {
         return path.to_string_lossy().into_owned();
     };
-    let relative = path.strip_prefix(root).unwrap_or(path).to_string_lossy();
+    let relative = path.strip_prefix(root).unwrap_or(path);
     if roots.len() == 1 {
-        return relative.into_owned();
+        return relative.to_string_lossy().into_owned();
     }
     let leaf = root.file_name().unwrap_or(root.as_os_str());
     let unique = roots
@@ -250,8 +250,13 @@ pub fn display_path(roots: &[PathBuf], path: &Path) -> String {
         .filter(|other| other.file_name().unwrap_or(other.as_os_str()) == leaf)
         .count()
         == 1;
-    let label = if unique { leaf } else { root.as_os_str() }.to_string_lossy();
-    format!("{label}/{relative}")
+    let label = if unique { leaf } else { root.as_os_str() };
+    // Verbatim Windows paths only recognize backslashes as separators. Join
+    // natively so a canonical root never becomes a mixed-separator label.
+    Path::new(label)
+        .join(relative)
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// Search all roots with a shared entry, time and result budget. Traversal is
