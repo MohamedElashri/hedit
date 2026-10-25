@@ -159,8 +159,8 @@ fn overlapping_roots_do_not_duplicate_files_and_share_a_result_limit() {
     let unique: std::collections::HashSet<_> = results.entries.iter().map(|e| &e.path).collect();
     assert_eq!(unique.len(), 80);
     assert_eq!(
-        folder::display_path(&roots, &child.join("file-0.rs")),
-        "nested/file-0.rs"
+        Path::new(&folder::display_path(&roots, &child.join("file-0.rs"))),
+        Path::new("nested/file-0.rs")
     );
 }
 
