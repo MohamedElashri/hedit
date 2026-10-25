@@ -141,12 +141,14 @@ fn invalid_search_is_reported_inside_the_results_window() {
 #[test]
 fn stale_or_incomplete_replacement_previews_cannot_be_applied() {
     let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("file.txt");
+    let root = directory.path().join("project");
+    std::fs::create_dir(&root).unwrap();
+    let path = root.join("file.txt");
     std::fs::write(&path, "old text\n").unwrap();
     let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
     let ctx = egui::Context::default();
     let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
-    app.set_folder(hedit::folder::read_directory(directory.path().into()).unwrap());
+    app.set_folder(hedit::folder::read_directory(root).unwrap());
     app.query = "old".into();
     app.replacement = "new".into();
     app.folder_search(&ctx, true);
