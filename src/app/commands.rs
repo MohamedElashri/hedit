@@ -1117,11 +1117,7 @@ impl HeditApp {
             Command::SaveProjectAs => self.save_project(ctx, true),
             Command::RecentProjects => self.quality.recent_open = true,
             Command::ProjectSettings => {
-                self.quality.settings_project = true;
-                self.quality.settings_json =
-                    serde_json::to_string_pretty(&self.quality.project_settings)
-                        .unwrap_or_default();
-                self.quality.settings_open = true;
+                self.open_project_settings();
             }
             Command::Symbols => self.list_symbols(ctx),
             Command::GotoDefinition => self.look_up(ctx, false),

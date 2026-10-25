@@ -1,6 +1,5 @@
 use super::quality::{Config, FileOperation};
 use super::*;
-use hedit::{projects, search};
 use std::path::PathBuf;
 
 const SYMBOLS_FIELD: &str = "symbols-query";
@@ -26,7 +25,6 @@ const NAV_BACK: (Modifiers, Key) = (Modifiers::ALT, Key::ArrowLeft);
 #[cfg(not(target_os = "macos"))]
 const NAV_FORWARD: (Modifiers, Key) = (Modifiers::ALT, Key::ArrowRight);
 const SNIPPETS_FIELD: &str = "snippets-query";
-const FOLDER_FIELDS: [&str; 3] = ["folders-find", "folders-replace", "folders-filter"];
 
 pub(super) fn shortcut(value: &str) -> Result<Option<egui::KeyboardShortcut>, String> {
     if value.trim().is_empty() {
@@ -172,10 +170,10 @@ impl HeditApp {
                 }
             }
         } else if self.quality.folders_open
-            && FOLDER_FIELDS.into_iter().any(field)
+            && folder_search::FIELDS.into_iter().any(field)
             && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter))
         {
-            self.folder_search(ctx, false);
+            self.folder_search(ctx, self.quality.folder_replace);
         }
 
         let mut id = egui::Id::new(("editor", self.active().view.id, self.active().page.start));
@@ -310,55 +308,6 @@ impl HeditApp {
             }
         }
     }
-    fn folder_search_window(&mut self, ctx: &egui::Context) {
-        let mut open = true;
-        let mut find = false;
-        let mut preview = false;
-        let mut apply = false;
-        let mut undo = false;
-        let mut selected = None;
-        egui::Window::new("Find in folders").open(&mut open).max_width((ctx.screen_rect().width()-32.0).max(300.0)).max_height((ctx.screen_rect().height()-32.0).max(220.0)).vscroll(true).collapsible(false).default_width(760.0).default_height((ctx.screen_rect().height()-90.0).min(520.0)).show(ctx,|ui|{
-            ui.horizontal(|ui|{ui.label("Find");let response=ui.add(egui::TextEdit::singleline(&mut self.query).id(egui::Id::new(FOLDER_FIELDS[0])));if self.quality.folder_focus{response.request_focus();self.quality.folder_focus=false;}});
-            ui.horizontal(|ui|{ui.label("Replace");ui.add(egui::TextEdit::singleline(&mut self.replacement).id(egui::Id::new(FOLDER_FIELDS[1])));});
-            ui.horizontal(|ui|{ui.label("Files");ui.add(egui::TextEdit::singleline(&mut self.quality.filter).id(egui::Id::new(FOLDER_FIELDS[2])).hint_text("*.rs, *.cu — empty means all files"));});
-            ui.horizontal_wrapped(|ui|{ui.checkbox(&mut self.quality.options.regex,"Regex");ui.checkbox(&mut self.quality.options.case_sensitive,"Case sensitive");ui.checkbox(&mut self.quality.options.whole_word,"Whole words");});
-            ui.horizontal(|ui|{find=ui.add_enabled(!self.busy,egui::Button::new("Find all")).clicked();preview=ui.add_enabled(!self.busy,egui::Button::new("Preview replacements")).clicked();if self.busy&&ui.button("Cancel search").clicked(){self.cancel.store(true,Ordering::Relaxed);}
-                undo=!self.quality.replace_undo.is_empty()&&ui.add_enabled(!self.busy,egui::Button::new("Undo replacements")).on_hover_text("Put back the files the last replacement wrote, unless they changed since").clicked();});
-            ui.weak("Search respects .gitignore. Files over 16 MiB and unsupported/binary files are skipped. Open files are searched as they are now, saved or not.");
-            let results=&mut self.quality.results;
-            ui.label(format!("{} matches · {} files skipped{}",results.hits.len(),results.skipped,if results.truncated{" · result limit reached"}else{""}));
-            let valid=self.quality.preview_query.as_ref().is_some_and(|(q,r,f,o)|*q==self.query&&*r==self.replacement&&*f==self.quality.filter&&o.regex==self.quality.options.regex&&o.case_sensitive==self.quality.options.case_sensitive&&o.whole_word==self.quality.options.whole_word);
-            if !results.plans.is_empty(){
-                ui.label("Review changes below. Open files change in the editor and stay unsaved, so Undo works there; other files are written now and can be put back with Undo replacements.");
-                egui::ScrollArea::vertical().id_salt("replacement-files").max_height((ctx.screen_rect().height()-600.0).clamp(60.0,130.0)).show(ui,|ui|{
-                    for (index,plan) in results.plans.iter_mut().enumerate(){ui.horizontal(|ui|{ui.checkbox(&mut plan.selected,"");if ui.selectable_label(self.quality.preview_diff==Some(index),plan.path.display().to_string()).clicked(){self.quality.preview_diff=Some(index);}});}
-                });
-                if let Some(plan)=self.quality.preview_diff.and_then(|i|results.plans.get(i)){
-                    let index=self.quality.preview_diff.unwrap();if self.quality.preview_rendered.as_ref().is_none_or(|(i,_)|*i!=index){self.quality.preview_rendered=Some((index,search::diff(&plan.before,&plan.after,&plan.path)));}let diff=&self.quality.preview_rendered.as_ref().unwrap().1;egui::ScrollArea::both().id_salt("replacement-diff").max_height((ctx.screen_rect().height()-550.0).clamp(80.0,190.0)).show(ui,|ui|{ui.label(RichText::new(diff).monospace());});
-                }
-                apply=ui.add_enabled(!self.busy&&valid&&!results.truncated&&results.plans.iter().any(|p|p.selected),egui::Button::new("Apply reviewed replacements")).clicked();
-                if !valid{ui.colored_label(self.theme.warning.color(),"Search settings changed. Generate a fresh preview before applying.");}
-            }else{
-                let current=self.quality.result_current.and_then(|i|results.hits.get(i)).map(|h|(h.path.clone(),h.line));
-                let roots:Vec<PathBuf>=self.workspace.folders.iter().map(|f|PathBuf::from(&f.path)).collect();
-                let scroll=self.quality.result_shown!=self.quality.result_current;self.quality.result_shown=self.quality.result_current;
-                selected=result_rows(ui,&self.theme,&roots,&results.files,current,scroll,(ctx.screen_rect().height()-280.0).clamp(120.0,420.0));
-            }
-        });
-        self.quality.folders_open = open;
-        if find {
-            self.folder_search(ctx, false);
-        } else if preview {
-            self.folder_search(ctx, true);
-        } else if apply {
-            self.apply_folder_replacements(ctx);
-        } else if undo {
-            self.undo_folder_replacements(ctx);
-        }
-        if let Some(path) = selected {
-            self.pending_paths.push_back(path);
-        }
-    }
     fn symbols_window(&mut self, ctx: &egui::Context) {
         let mut open = true;
         let mut reload = false;
@@ -449,62 +398,47 @@ impl HeditApp {
         }
     }
     fn advanced_settings_window(&mut self, ctx: &egui::Context) {
+        if self.quality.settings_project {
+            self.project_settings_window(ctx);
+            return;
+        }
         let mut open = true;
         let mut save = false;
-        let project = self.quality.settings_project;
-        egui::Window::new(if project{"Project formatting settings"}else{"Key bindings and snippets"}).open(&mut open).max_width((ctx.screen_rect().width()-32.0).max(300.0)).max_height((ctx.screen_rect().height()-32.0).max(220.0)).vscroll(true).collapsible(false).default_width(740.0).show(ctx,|ui|{
-            if !project{
-                ui.label("Keybindings override defaults. Use Primary for Ctrl/Cmd, e.g. Primary+Shift+F. An empty shortcut unbinds a command.");
-                ui.label("Snippets support ${SELECTION}, fields ($1, ${1:text}) visited with Tab, and $0 for the final cursor. Type a trigger then Tab, or use Tools → Insert snippet.");
-                ui.collapsing("Command identifiers",|ui|{egui::ScrollArea::vertical().max_height(120.0).show(ui,|ui|{for command in Command::ALL{ui.label(format!("{} — {}",serde_json::to_value(command).unwrap().as_str().unwrap(),command.label()));}});});
-            }
-            if project{ui.label("Formatting: indent_style, indent_size, end_of_line, insert_final_newline, trim_trailing_whitespace, charset. Per-language entries use syntax identifiers such as rust, python and cpp.");}else{ui.label("Formatting defaults are under Settings → Formatting.");}
+        egui::Window::new("Key bindings and snippets").open(&mut open).max_width((ctx.screen_rect().width()-32.0).max(300.0)).max_height((ctx.screen_rect().height()-32.0).max(220.0)).vscroll(true).collapsible(false).default_width(740.0).show(ctx,|ui|{
+            ui.label("Keybindings override defaults. Use Primary for Ctrl/Cmd, e.g. Primary+Shift+F. An empty shortcut unbinds a command.");
+            ui.label("Snippets support ${SELECTION}, fields ($1, ${1:text}) visited with Tab, and $0 for the final cursor. Type a trigger then Tab, or use Tools → Insert snippet.");
+            ui.collapsing("Command identifiers",|ui|{egui::ScrollArea::vertical().max_height(120.0).show(ui,|ui|{for command in Command::ALL{ui.label(format!("{} — {}",serde_json::to_value(command).unwrap().as_str().unwrap(),command.label()));}});});
+            ui.label("Formatting defaults are under Settings → Formatting.");
             egui::ScrollArea::vertical().max_height((ctx.screen_rect().height()-260.0).clamp(100.0,380.0)).show(ui,|ui|{ui.add(egui::TextEdit::multiline(&mut self.quality.settings_json).code_editor().desired_rows(18).desired_width(f32::INFINITY));});
             save=ui.add_enabled(!self.busy,egui::Button::new("Save settings")).clicked();
         });
         self.quality.settings_open = open;
         if save {
             let result = (|| {
-                if project {
-                    let settings: projects::Defaults =
-                        serde_json::from_str(&self.quality.settings_json)
-                            .map_err(|e| e.to_string())?;
-                    settings.formatting.validate()?;
-                    for f in settings.languages.values() {
-                        f.validate()?;
+                let config: Config =
+                    serde_json::from_str(&self.quality.settings_json).map_err(|e| e.to_string())?;
+                let mut commands = std::collections::HashSet::new();
+                let mut shortcuts = Vec::new();
+                for binding in &config.keybindings {
+                    if !commands.insert(serde_json::to_string(&binding.command).unwrap()) {
+                        return Err("A command has more than one keyboard override.".into());
                     }
-                    if let Some(path) = &self.quality.project_path {
-                        let (mut definition, _) = projects::load(path)?;
-                        definition.settings = settings.clone();
-                        projects::atomic_json(path, &definition)?;
-                    }
-                    self.quality.project_settings = settings;
-                } else {
-                    let config: Config = serde_json::from_str(&self.quality.settings_json)
-                        .map_err(|e| e.to_string())?;
-                    let mut commands = std::collections::HashSet::new();
-                    let mut shortcuts = Vec::new();
-                    for binding in &config.keybindings {
-                        if !commands.insert(serde_json::to_string(&binding.command).unwrap()) {
-                            return Err("A command has more than one keyboard override.".into());
+                    if let Some(key) = shortcut(&binding.shortcut)? {
+                        if shortcuts.contains(&key) {
+                            return Err("Two commands use the same shortcut.".into());
                         }
-                        if let Some(key) = shortcut(&binding.shortcut)? {
-                            if shortcuts.contains(&key) {
-                                return Err("Two commands use the same shortcut.".into());
-                            }
-                            shortcuts.push(key);
-                        }
+                        shortcuts.push(key);
                     }
-                    if config.snippets.len() > 1000
-                        || config
-                            .snippets
-                            .iter()
-                            .any(|s| s.trigger.len() > 256 || s.body.len() > 64 * 1024)
-                    {
-                        return Err("Snippet collection exceeds supported limits.".into());
-                    }
-                    self.save_config(config)?;
                 }
+                if config.snippets.len() > 1000
+                    || config
+                        .snippets
+                        .iter()
+                        .any(|s| s.trigger.len() > 256 || s.body.len() > 64 * 1024)
+                {
+                    return Err("Snippet collection exceeds supported limits.".into());
+                }
+                self.save_config(config)?;
                 Ok(())
             })();
             self.report(result);
@@ -614,98 +548,4 @@ impl HeditApp {
             self.quality.snippets_open = false;
         }
     }
-}
-
-/// Matches grouped by file, each with a line of context, scrolled lazily.
-/// Returns the place clicked, as `path:line[:column]`.
-fn result_rows(
-    ui: &mut egui::Ui,
-    theme: &Theme,
-    roots: &[PathBuf],
-    files: &[search::FileHits],
-    current: Option<(PathBuf, usize)>,
-    // Scroll to the current match only when F4 moved to it.
-    scroll: bool,
-    height: f32,
-) -> Option<PathBuf> {
-    enum Row {
-        File(usize),
-        Gap,
-        Line(usize, usize),
-    }
-    let mut rows = vec![];
-    for (f, file) in files.iter().enumerate() {
-        rows.push(Row::File(f));
-        for (l, line) in file.lines.iter().enumerate() {
-            if l > 0 && file.lines[l - 1].line + 1 != line.line {
-                rows.push(Row::Gap);
-            }
-            rows.push(Row::Line(f, l));
-        }
-    }
-    let mut selected = None;
-    let font = FontId::monospace(12.0);
-    egui::ScrollArea::vertical()
-        .id_salt("folder-hits")
-        .max_height(height)
-        .auto_shrink([false, true])
-        .show_rows(ui, 20.0, rows.len(), |ui, range| {
-            for row in &rows[range] {
-                match *row {
-                    Row::File(f) => {
-                        let file = &files[f];
-                        let name = hedit::folder::display_path(roots, &file.path);
-                        let label = format!(
-                            "{name}  ·  {} {}",
-                            file.count,
-                            if file.count == 1 { "match" } else { "matches" }
-                        );
-                        ui.add_sized(
-                            [ui.available_width(), 20.0],
-                            egui::Label::new(RichText::new(label).strong())
-                                .halign(egui::Align::LEFT),
-                        );
-                    }
-                    Row::Gap => {
-                        ui.add_sized(
-                            [ui.available_width(), 20.0],
-                            egui::Label::new(RichText::new("   …").color(theme.muted.color()))
-                                .halign(egui::Align::LEFT),
-                        );
-                    }
-                    Row::Line(f, l) => {
-                        let file = &files[f];
-                        let line = &file.lines[l];
-                        let text =
-                            format!("{:>6}  {}", line.line, hedit::bidi::display(&line.text));
-                        let mut rich = RichText::new(text).font(font.clone());
-                        if line.column.is_none() {
-                            rich = rich.color(theme.muted.color());
-                        }
-                        let is_current = current
-                            .as_ref()
-                            .is_some_and(|(p, n)| *p == file.path && *n == line.line);
-                        let response = ui.add_sized(
-                            [ui.available_width(), 20.0],
-                            egui::Button::new(rich)
-                                .frame(is_current)
-                                .selected(is_current)
-                                .wrap_mode(egui::TextWrapMode::Truncate),
-                        );
-                        if is_current && scroll {
-                            response.scroll_to_me(None);
-                        }
-                        if response.clicked() {
-                            let column = line.column.map_or(String::new(), |c| format!(":{c}"));
-                            selected = Some(PathBuf::from(format!(
-                                "{}:{}{column}",
-                                file.path.display(),
-                                line.line
-                            )));
-                        }
-                    }
-                }
-            }
-        });
-    selected
 }

@@ -1,9 +1,21 @@
 # Changelog
 
-## [0.1.6] - Unreleased
+## [0.1.6] - 2026-10-25
+
+### Added
+
+- Project Settings offers synchronized GUI and JSON tabs for project defaults
+  and per-language formatting overrides, with explicit inheritance and inline
+  validation.
 
 ### Changed
 
+- Modified files on disk now offer Save, Don't Save, or Cancel when closing
+  tabs or quitting, including deleted and not-yet-created files. Untitled notes
+  retain their recovery behavior.
+- Find in folders now has fixed search controls and actions, collapsible file
+  groups, highlighted matches, optional context, and a separate replacement
+  review with a file list and diff.
 - The About window has a compact layout with version information and a single
   row of links.
 - The Update window uses concise status messages, clearer actions, and
@@ -11,6 +23,10 @@
 
 ### Fixed
 
+- Explicit UTF-8 formatting removes a byte-order mark; UTF-8 with BOM adds it.
+- Folder-search navigation now reveals off-screen matches and follows clicked
+  results. Changed or incomplete replacement previews cannot be applied, and
+  search errors are shown inside the results window.
 - Session restore and project reopening preserve selected encodings, including
   Windows-1252, Latin-1, and UTF-16 files without a byte-order mark.
 - A failed reload no longer replaces the current buffer with an unreadable disk
@@ -20,11 +36,6 @@
 - The syntax menu in the status bar showed a box instead of its arrow.
 - File-open errors, such as trying to open a binary file, now disappear
   automatically after five seconds.
-- Closing modified files on disk now offers Save, Don't Save, or Cancel,
-  including bulk tab closes and quitting. Untitled notes keep their recovery
-  behavior.
-- Don't Save closes deleted or never-created files without recreating them or
-  leaving stale recovery tabs.
 - A shelf full of unsaved notes no longer blocks closing unchanged disk files;
   the notes remain on the shelf.
 - `hedit --wait` now keeps waiting for new files opened with relative paths

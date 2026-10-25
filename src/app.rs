@@ -19,6 +19,9 @@ mod editor_layout;
 mod find_live;
 mod find_tools;
 mod fold_gutter;
+mod folder_search;
+#[cfg(test)]
+mod folder_search_tests;
 mod font_picker;
 mod goto_anything;
 #[cfg(test)]
@@ -31,6 +34,9 @@ mod panes;
 mod paste_history;
 mod preferences;
 mod project;
+mod project_settings;
+#[cfg(test)]
+mod project_settings_tests;
 mod quality;
 #[cfg(test)]
 mod quality_tests;
@@ -1040,6 +1046,15 @@ impl HeditApp {
                 }
                 Ok(Action::Notice(message)) => self.notice = message,
                 Ok(Action::Nothing) => (),
+                Err(error)
+                    if matches!(self.quality.folder_state, folder_search::State::Searching) =>
+                {
+                    self.quality.folder_state = if error == "Search cancelled." {
+                        folder_search::State::Cancelled
+                    } else {
+                        folder_search::State::Failed(error)
+                    };
+                }
                 Err(error) if ROUTINE.contains(&error.as_str()) => {
                     self.quality.match_status = error.trim_end_matches('.').into();
                     self.notice = error;

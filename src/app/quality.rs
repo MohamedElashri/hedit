@@ -36,6 +36,12 @@ pub(super) struct Quality {
     pub match_status: String,
     pub last_find: Option<LastFind>,
     pub folders_open: bool,
+    pub folder_replace: bool,
+    pub folder_context: bool,
+    pub folder_collapsed: std::collections::HashSet<PathBuf>,
+    pub folder_state: folder_search::State,
+    pub folder_snapshot: Option<(String, String, search::Options)>,
+    pub folder_regex: Option<regex::Regex>,
     pub filter: String,
     pub results: search::Results,
     /// Open files changed by the last replacement, and why others were not.
@@ -55,6 +61,7 @@ pub(super) struct Quality {
     pub settings_project: bool,
     pub project_path: Option<PathBuf>,
     pub project_settings: projects::Defaults,
+    pub project_editor: project_settings::Editor,
     pub recent: Vec<PathBuf>,
     pub symbols_open: bool,
     pub symbols: Vec<intelligence::Symbol>,
@@ -189,8 +196,15 @@ impl HeditApp {
                 }
             }
             Event::Results(results) => {
+                self.quality.folder_state = folder_search::State::Ready;
+                self.quality.folder_regex = self
+                    .quality
+                    .folder_snapshot
+                    .as_ref()
+                    .and_then(|(q, _, options)| options.compile(q).ok());
                 self.quality.results = results;
                 self.quality.result_current = None;
+                self.quality.result_shown = None;
                 self.quality.results_newer = true;
                 self.quality.preview_diff = None;
                 self.quality.preview_rendered = None;
@@ -213,6 +227,7 @@ impl HeditApp {
                         "Updated {count} files on disk and {edited} open files (unsaved; undo in each file)."
                     ),
                 };
+                self.quality.folder_state = folder_search::State::Applied(self.notice.clone());
                 self.changed();
                 if !errors.is_empty() {
                     self.error = Some(errors.join("\n"));
@@ -220,6 +235,7 @@ impl HeditApp {
             }
             Event::Restored(count, errors) => {
                 self.notice = format!("Restored {count} files.");
+                self.quality.folder_state = folder_search::State::Applied(self.notice.clone());
                 if !errors.is_empty() {
                     self.error = Some(errors.join("\n"));
                 }
@@ -577,15 +593,15 @@ impl HeditApp {
                 &charset
             };
             let shared = self.workspace.editor.get(self.active().view.id).unwrap();
-            let result = shared.lock().unwrap().set_encoding(charset);
-            if let Err(e) = result {
+            let mut doc = shared.lock().unwrap();
+            if let Err(e) = doc.set_encoding(charset) {
                 self.error = Some(e);
                 return false;
             }
-            if needs_bom {
-                shared.lock().unwrap().set_bom(true);
+            if doc.info().encoding == "UTF-8" {
+                doc.set_bom(needs_bom);
             }
-            self.workspace.open[self.workspace.active].page.info = shared.lock().unwrap().info();
+            self.workspace.open[self.workspace.active].page.info = doc.info();
         }
         true
     }
@@ -717,6 +733,12 @@ impl HeditApp {
             return;
         }
         self.quality.results = Default::default();
+        self.quality.folder_state = folder_search::State::Searching;
+        self.quality.folder_regex = None;
+        self.quality.result_current = None;
+        self.quality.result_shown = None;
+        self.quality.results_newer = false;
+        self.quality.folder_collapsed.clear();
         self.quality.preview_diff = None;
         self.quality.preview_rendered = None;
         let roots = self
@@ -731,6 +753,7 @@ impl HeditApp {
             self.quality.filter.clone(),
             self.quality.options.clone(),
         );
+        self.quality.folder_snapshot = Some((query.clone(), filter.clone(), options.clone()));
         self.quality.preview_query = preview.then(|| {
             (
                 query.clone(),
@@ -765,6 +788,10 @@ impl HeditApp {
         });
     }
     pub(super) fn apply_folder_replacements(&mut self, ctx: &egui::Context) {
+        if self.busy || !self.folder_preview_valid() || self.quality.results.truncated {
+            self.notice = "Generate a fresh, complete replacement preview before applying.".into();
+            return;
+        }
         let plans = std::mem::take(&mut self.quality.results.plans);
         // Files open in the editor change there, as one undo step each, and
         // stay unsaved; only files that are not open are written.

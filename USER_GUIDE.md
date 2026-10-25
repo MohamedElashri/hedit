@@ -162,9 +162,19 @@ section. Folders, expanded directories, and what is shown come back next time.
 and project formatting settings; reopen it with **Open project…**, **Recent
 projects…**, or `hedit file.hedit-project`. The `.hedit-workspace` file beside it
 keeps your own tabs, unsaved text, and layout for that project; keep it out of
-version control. **Project → Project settings…** sets formatting for the project
-(`indent_style`, `indent_size`, `end_of_line`, `insert_final_newline`,
-`trim_trailing_whitespace`, `charset`). Matching `.editorconfig` files apply on top.
+version control.
+
+**Project → Project settings…** has **GUI** and **JSON** tabs for the same draft.
+In the GUI, edit **Project defaults** or choose **Add language…** for an override.
+Controls cover indentation, tab width, line endings, encoding, final newlines,
+and trailing whitespace. **Inherit** uses the project default for a language
+override, or editor settings for project defaults. Matching `.editorconfig`
+files take precedence.
+
+Choose **Save settings** to apply the draft and update the open `.hedit-project`
+file. Without an open project, settings apply to the current workspace. Closing
+without saving discards the draft. Invalid JSON stays available to correct and
+does not apply settings.
 
 ### Windows
 
@@ -294,11 +304,13 @@ Whole words, and Selection only.
 
 **Ctrl+Shift+F** searches every open folder, including unsaved changes in open
 files, optionally limited to files such as `*.rs, *.cu`. Git ignore rules apply.
-Results are grouped by file with a line of context; click one to go there, or
-press **F4** and **Shift+F4** to step through them.
+Results appear in collapsible file groups, with line numbers and highlighted
+matches. Turn on **Context** to see surrounding lines. Click a match to open it,
+or use **Next** / **Previous** (**F4** / **Shift+F4**) to step through results.
 
-To replace, choose **Preview replacements**, check each file's changes, and click
-**Apply reviewed replacements**. Open files change in the editor, unsaved, so you
+To replace, turn on **Replace**, enter the replacement text, and choose
+**Preview**. Select files in the list, review the diff beside it, and choose
+**Apply to … files**. Open files change in the editor, unsaved, so you
 can undo them there; other files are written only if they have not changed since
 the preview, and **Undo replacements** puts them back.
 
