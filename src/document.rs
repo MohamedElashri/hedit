@@ -510,17 +510,27 @@ impl Document {
     /// Drop edits and undo history without writing to disk. Keep revisions
     /// increasing so recovery checkpoints cannot reuse an older buffer/history.
     pub fn discard_changes(&mut self) -> Result<Page, String> {
+        self.reload(0)
+    }
+    /// Read a fresh disk copy and its requested page before replacing the
+    /// current buffer. A failed read leaves the original text and history intact.
+    pub fn reload(&mut self, offset: u64) -> Result<Page, String> {
         let path = self
             .path
             .as_ref()
-            .ok_or("No disk file to discard changes to.")?;
+            .ok_or("This file has no disk copy to reload.")?;
         let mut replacement = if self.encoding == "UTF-8" {
             Self::open(self.id, path)?
         } else {
             Self::open_with_encoding(self.id, path, &self.encoding)?
         };
         replacement.revision = self.revision.wrapping_add(1);
-        let page = replacement.page(0)?;
+        let offset = if offset == u64::MAX {
+            replacement.size.saturating_sub(PAGE_SIZE)
+        } else {
+            offset
+        };
+        let page = replacement.load_page(offset)?;
         *self = replacement;
         Ok(page)
     }
@@ -679,8 +689,15 @@ impl Document {
         Ok(doc)
     }
     pub fn open_or_new(id: u64, path: &Path) -> Result<Self, String> {
+        Self::open_or_new_with_encoding(id, path, "UTF-8")
+    }
+    /// Restore a named buffer using its selected encoding, including when the
+    /// file has not been created yet. UTF-8 retains automatic BOM detection.
+    pub fn open_or_new_with_encoding(id: u64, path: &Path, label: &str) -> Result<Self, String> {
+        let label = crate::text_encoding::canonical(label)?;
         match fs::symlink_metadata(path) {
-            Ok(_) => Self::open(id, path),
+            Ok(_) if label == "UTF-8" => Self::open(id, path),
+            Ok(_) => Self::open_with_encoding(id, path, label),
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 let parent = fs::canonicalize(path.parent().ok_or("Invalid file directory.")?)
                     .map_err(err)?;
@@ -688,6 +705,8 @@ impl Document {
                     return Err("Choose an existing directory for the new file.".into());
                 }
                 let mut doc = Self::empty(id);
+                doc.encoding = label.into();
+                doc.bom = label.starts_with("UTF-16");
                 doc.path = Some(parent.join(path.file_name().ok_or("Invalid filename.")?));
                 doc.dirty = true;
                 doc.saved_version = None;
@@ -1347,7 +1366,11 @@ impl Document {
                 .path
                 .as_ref()
                 .ok_or("The session has no file or buffer.")?;
-            let mut doc = Self::open(id, path)?;
+            let mut doc = if saved.encoding == "UTF-8" {
+                Self::open(id, path)?
+            } else {
+                Self::open_with_encoding(id, path, &saved.encoding)?
+            };
             doc.paged |= saved.paged;
             return Ok(doc);
         };

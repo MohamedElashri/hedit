@@ -2,6 +2,36 @@ use super::tests::{finish_app_job, frame, frame_size, key, text_rect};
 use super::*;
 
 #[test]
+fn projects_reopen_clean_files_in_their_selected_encoding() {
+    for (encoding, text) in [("windows-1252", "café €\n"), ("UTF-16LE", "café λ\n")] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("notes.txt");
+        let project = directory.path().join("work.hedit-project");
+        let bytes = hedit::text_encoding::encode(text, encoding, false).unwrap();
+        std::fs::write(&path, &bytes).unwrap();
+        let (mut ws, _) = Workspace::restore(directory.path().join("session")).unwrap();
+        let mut doc = Document::open_with_encoding(ws.editor.id(), &path, encoding).unwrap();
+        let page = doc.page(0).unwrap();
+        ws.add(doc, page).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, ws, vec![], vec![]);
+        app.quality.project_path = Some(project.clone());
+        app.save_project(&ctx, false);
+        finish_app_job(&mut app, &ctx);
+        drop(app);
+
+        let (ws, _) = Workspace::restore(directory.path().join("fresh-session")).unwrap();
+        let mut app = HeditApp::from_context(&ctx, None, ws, vec![], vec![]);
+        app.load_project(&ctx, Some(project));
+        finish_app_job(&mut app, &ctx);
+        assert_eq!(app.active().page.text, text);
+        assert_eq!(app.active().page.info.encoding, encoding);
+        assert!(!app.active().page.info.dirty);
+        assert_eq!(std::fs::read(path).unwrap(), bytes);
+    }
+}
+
+#[test]
 fn advanced_find_replace_all_and_editorconfig_save_keep_backend_and_undo_together() {
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(directory.path().join(".editorconfig"),"root = true\n[*.py]\nindent_size = 2\ntrim_trailing_whitespace = true\ninsert_final_newline = true\nend_of_line = crlf\n").unwrap();

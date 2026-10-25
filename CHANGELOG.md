@@ -11,6 +11,12 @@
 
 ### Fixed
 
+- Session restore and project reopening preserve selected encodings, including
+  Windows-1252, Latin-1, and UTF-16 files without a byte-order mark.
+- A failed reload no longer replaces the current buffer with an unreadable disk
+  copy. Successful reloads invalidate stale revisions and cursor undo history.
+- Recovery checkpoints no longer fail when a tab is discarded or evicted while
+  a checkpoint is running.
 - The syntax menu in the status bar showed a box instead of its arrow.
 - File-open errors, such as trying to open a binary file, now disappear
   automatically after five seconds.

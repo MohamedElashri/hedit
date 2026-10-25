@@ -2,6 +2,42 @@ use hedit::{document::Document, intelligence, projects, search, workspace::Works
 use std::{path::Path, sync::atomic::AtomicBool};
 
 #[test]
+fn clean_files_restore_their_selected_encoding_without_a_recovery_buffer() {
+    for (encoding, text) in [
+        ("windows-1252", "café €\n"),
+        ("ISO-8859-1", "café\u{0080}\n"),
+        ("UTF-16LE", "café λ\n"),
+    ] {
+        for closed in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("notes.txt");
+            let bytes = hedit::text_encoding::encode(text, encoding, false).unwrap();
+            std::fs::write(&path, &bytes).unwrap();
+            let session = directory.path().join("session");
+            let (mut ws, _) = Workspace::restore(session.clone()).unwrap();
+            let mut doc = Document::open_with_encoding(ws.editor.id(), &path, encoding).unwrap();
+            let page = doc.page(0).unwrap();
+            ws.add(doc, page).unwrap();
+            if closed {
+                ws.close(ws.active).unwrap();
+            }
+            ws.checkpoint().unwrap();
+            drop(ws);
+            let (mut restored, errors) = Workspace::restore(session).unwrap();
+            assert!(errors.is_empty(), "{encoding}: {errors:?}");
+            if closed {
+                restored.reopen().unwrap();
+            }
+            let buffer = &restored.open[restored.active];
+            assert_eq!(buffer.page.text, text);
+            assert_eq!(buffer.page.info.encoding, encoding);
+            assert!(!buffer.page.info.dirty);
+            assert_eq!(std::fs::read(path).unwrap(), bytes);
+        }
+    }
+}
+
+#[test]
 fn unicode_regex_search_scopes_captures_and_literal_replacements() {
     let text = "α_name alpha ALPHA alphabet\nβ_name";
     let mut options = search::Options {

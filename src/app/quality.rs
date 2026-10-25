@@ -1072,7 +1072,7 @@ impl HeditApp {
             let mut tabs = Vec::new();
             for tab in &state.tabs {
                 let mut doc = if let Some(path) = &tab.path {
-                    Document::open_or_new(editor.id(), path)?
+                    Document::open_or_new_with_encoding(editor.id(), path, &tab.encoding)?
                 } else {
                     Document::empty(editor.id())
                 };

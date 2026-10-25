@@ -1,7 +1,7 @@
 //! Hot exit snapshots. The index is replaced only after every buffer is synced.
 use crate::{
     document::{Document, Info, SavedDocument, SnapshotSources},
-    Editor,
+    Editor, SharedDocument,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -121,6 +121,23 @@ struct StoreState {
 pub struct SessionStore {
     directory: PathBuf,
     state: Mutex<StoreState>,
+}
+/// Pin the documents referenced by a view before starting a background save.
+/// Closing or evicting a tab cannot invalidate an in-flight checkpoint.
+pub struct SessionSnapshot {
+    view: SessionView,
+    documents: std::collections::HashMap<u64, SharedDocument>,
+}
+impl SessionSnapshot {
+    pub fn capture(editor: &Editor, view: SessionView) -> Result<Self, String> {
+        let documents = view
+            .open
+            .iter()
+            .chain(&view.closed)
+            .map(|tab| Ok((tab.id, editor.get(tab.id)?)))
+            .collect::<Result<_, String>>()?;
+        Ok(Self { view, documents })
+    }
 }
 impl Drop for SessionStore {
     fn drop(&mut self) {
@@ -361,6 +378,13 @@ impl SessionStore {
         Ok(restored)
     }
     pub fn save(&self, editor: &Editor, view: SessionView) -> Result<(), String> {
+        self.save_snapshot(SessionSnapshot::capture(editor, view)?)
+    }
+    pub fn save_snapshot(&self, snapshot: SessionSnapshot) -> Result<(), String> {
+        let SessionSnapshot {
+            view,
+            documents: pinned,
+        } = snapshot;
         if view.closed.len() > 50 {
             return Err("Closed-file history exceeds 50 entries.".into());
         }
@@ -419,7 +443,10 @@ impl SessionStore {
         let mut documents = Vec::new();
         for (closed, entries) in [(false, view.open), (true, view.closed)] {
             for tab in entries {
-                let shared = editor.get(tab.id)?;
+                let shared = pinned
+                    .get(&tab.id)
+                    .cloned()
+                    .ok_or("The checkpoint is missing a document.")?;
                 // Capture immutable pieces briefly; disk streaming must not block editing.
                 let doc = shared.lock().map_err(err)?.clone();
                 let result = (|| {

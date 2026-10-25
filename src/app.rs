@@ -36,6 +36,8 @@ mod quality;
 mod quality_tests;
 mod quality_windows;
 #[cfg(test)]
+mod recovery_tests;
+#[cfg(test)]
 mod rtl_tests;
 #[cfg(test)]
 mod screenshot_tests;
@@ -88,6 +90,7 @@ enum Action {
     Folders(Vec<hedit::folder::FolderListing>),
     Created(String, bool),
     Page(u64, Page, Option<(usize, usize)>),
+    Reloaded(u64, Page, Option<(usize, usize)>),
     History(u64, Page, bool, Vec<hedit::advanced::Selection>),
     Saved(u64, Info),
     SaveTo(u64, PathBuf),
@@ -494,9 +497,19 @@ impl HeditApp {
         if self.checkpoint_pending {
             return;
         }
-        let editor = Arc::clone(&self.workspace.editor);
+        self.checkpoint_at = Instant::now();
         let store: Arc<SessionStore> = Arc::clone(&self.workspace.store);
-        let view = self.workspace.view();
+        let snapshot = match hedit::session::SessionSnapshot::capture(
+            &self.workspace.editor,
+            self.workspace.view(),
+        ) {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                self.error = Some(format!("{CHECKPOINT_FAILED}\n{error}"));
+                self.cancel_close();
+                return;
+            }
+        };
         // Background operations may hold a document lock while scanning a large
         // file. Never block the UI here; the next edit/result or exit also saves
         // project state, while the recovery worker can wait independently.
@@ -512,9 +525,8 @@ impl HeditApp {
         let sender = self.checkpoint_tx.clone();
         let ctx = ctx.clone();
         self.checkpoint_pending = true;
-        self.checkpoint_at = Instant::now();
         self.checkpoint_worker = Some(thread::spawn(move || {
-            let result = store.save(&editor, view).and_then(|()| {
+            let result = store.save_snapshot(snapshot).and_then(|()| {
                 if let Some((path, state)) = project_state {
                     hedit::projects::atomic_json(&path.with_extension("hedit-workspace"), &state?)
                 } else {
@@ -620,7 +632,6 @@ impl HeditApp {
     fn load_page(&mut self, ctx: &egui::Context, offset: u64, reload: bool) {
         let editor = Arc::clone(&self.workspace.editor);
         let id = self.active().page.info.id;
-        let path = self.active().page.info.path.clone();
         let selection = (self.active().view.anchor, self.active().view.head);
         if reload && self.active().page.info.dirty {
             self.error = Some(
@@ -631,23 +642,26 @@ impl HeditApp {
         self.job(ctx, move || {
             let shared = editor.get(id)?;
             let mut doc = shared.lock().map_err(|e| e.to_string())?;
-            if reload {
-                let path = path.ok_or("This unsaved file has no disk copy to reload.")?;
-                let replacement = Document::open(id, &PathBuf::from(path))?;
-                *doc = replacement;
-            }
-            let offset = if offset == u64::MAX {
-                doc.info().size.saturating_sub(PAGE_SIZE)
+            let page = if reload {
+                doc.reload(offset)?
             } else {
-                offset
+                let offset = if offset == u64::MAX {
+                    doc.info().size.saturating_sub(PAGE_SIZE)
+                } else {
+                    offset
+                };
+                doc.load_page(offset)?
             };
-            let page = doc.load_page(offset)?;
             let count = page.text.chars().count();
-            Ok(Action::Page(
-                id,
-                page,
-                reload.then_some((selection.0.min(count), selection.1.min(count))),
-            ))
+            Ok(if reload {
+                Action::Reloaded(
+                    id,
+                    page,
+                    Some((selection.0.min(count), selection.1.min(count))),
+                )
+            } else {
+                Action::Page(id, page, None)
+            })
         });
     }
     fn save_file(&mut self, ctx: &egui::Context, save_as: bool) {
@@ -817,6 +831,7 @@ impl HeditApp {
             if !side {
                 self.busy = false;
             }
+            let reloaded = matches!(&event, Ok(Action::Reloaded(..)));
             match event {
                 Ok(Action::Quality(event)) => self.quality_event(ctx, *event),
                 Ok(Action::Activate(id)) => {
@@ -910,7 +925,7 @@ impl HeditApp {
                         self.changed();
                     }
                 }
-                Ok(Action::Page(id, page, selection)) => {
+                Ok(Action::Page(id, page, selection) | Action::Reloaded(id, page, selection)) => {
                     if let Some(index) = self
                         .workspace
                         .open
@@ -919,6 +934,12 @@ impl HeditApp {
                     {
                         self.workspace.active = index;
                         let buffer = &mut self.workspace.open[index];
+                        if reloaded {
+                            buffer.cursor_undo.clear();
+                            buffer.cursor_redo.clear();
+                            buffer.pending_selection = None;
+                            buffer.changes.clear();
+                        }
                         buffer.set_page(page);
                         buffer.external = false;
                         if let Some((anchor, head)) = selection {
