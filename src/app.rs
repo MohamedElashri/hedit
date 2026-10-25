@@ -96,6 +96,7 @@ enum Action {
     DebugProgram(PathBuf),
     /// Open a `path:line` location.
     OpenAt(PathBuf),
+    OpenFailed(String),
     /// A font loaded for the `font_face` setting.
     /// A font for `font_face`: its name, file bytes, and face index.
     Font(String, Vec<u8>, u32),
@@ -108,6 +109,7 @@ enum Action {
 }
 type SoftState = (u64, Vec<hedit::advanced::Selection>);
 const CHECKPOINT_FAILED: &str = "RECOVERY CHECKPOINT FAILED";
+const FILE_ERROR_TIME: Duration = Duration::from_secs(5);
 /// Job outcomes that are expected answers, shown as notices rather than errors.
 const ROUTINE: [&str; 2] = ["No matches found.", "Search cancelled."];
 
@@ -163,6 +165,8 @@ pub struct HeditApp {
     exit_ready: bool,
     pending_paths: VecDeque<PathBuf>,
     error: Option<String>,
+    /// File-open errors expire; keep the message so a newer error is not hidden.
+    transient_error: Option<(String, Instant)>,
     notice: String,
     /// The notice on display in the status bar and when it appeared.
     notice_shown: (String, Instant),
@@ -343,6 +347,7 @@ impl HeditApp {
             } else {
                 Some(errors.join("\n"))
             },
+            transient_error: None,
             notice: "Ready.".into(),
             notice_shown: ("Ready.".into(), Instant::now()),
             settings,
@@ -546,7 +551,7 @@ impl HeditApp {
             .iter()
             .map(|b| (b.page.info.path.clone(), b.page.info.id))
             .collect();
-        self.job(ctx, move || {
+        let open = move || -> Result<Action, String> {
             let path = match path {
                 Some(path) => path,
                 None => match rfd::FileDialog::new()
@@ -609,7 +614,8 @@ impl HeditApp {
             let page = doc.page(offset.saturating_sub(4096))?;
             let cursor = page.text[..(offset - page.start) as usize].chars().count();
             Ok(Action::Add(doc, page, cursor))
-        });
+        };
+        self.job(ctx, move || Ok(open().unwrap_or_else(Action::OpenFailed)));
     }
     fn load_page(&mut self, ctx: &egui::Context, offset: u64, reload: bool) {
         let editor = Arc::clone(&self.workspace.editor);
@@ -989,6 +995,14 @@ impl HeditApp {
                     settings_store::set_editor_font(ctx, self.editor_font.clone());
                 }
                 Ok(Action::OpenAt(path)) => self.pending_paths.push_back(path),
+                Ok(Action::OpenFailed(error)) => {
+                    if self.quality.incoming.is_some() {
+                        self.quality.incoming_error = Some(error.clone());
+                    }
+                    self.transient_error = Some((error.clone(), Instant::now()));
+                    self.error = Some(error);
+                    self.cancel_close();
+                }
                 Ok(Action::DebugProgram(path)) => {
                     self.debug_program = path.to_string_lossy().into_owned();
                 }
@@ -1023,6 +1037,7 @@ impl HeditApp {
                 }
             }
         }
+        self.expire_error(Instant::now());
         self.advance_close();
         if !self.busy && !self.closing {
             if let Some(path) = self.pending_paths.pop_front() {
@@ -1047,6 +1062,16 @@ impl HeditApp {
             self.checkpoint(ctx);
         }
     }
+    fn expire_error(&mut self, now: Instant) {
+        if let Some((message, shown)) = &self.transient_error {
+            if self.error.as_ref() != Some(message) {
+                self.transient_error = None;
+            } else if now.saturating_duration_since(*shown) >= FILE_ERROR_TIME {
+                self.error = None;
+                self.transient_error = None;
+            }
+        }
+    }
     /// When the next frame is needed without input: soon while work is in
     /// flight, at the next checkpoint or git refresh, or never when idle.
     fn next_wake(&self, ctx: &egui::Context) -> Option<Duration> {
@@ -1065,6 +1090,9 @@ impl HeditApp {
         }
         let due = |since: Instant, every: Duration| every.saturating_sub(since.elapsed());
         [
+            self.transient_error
+                .as_ref()
+                .map(|(_, shown)| due(*shown, FILE_ERROR_TIME)),
             (self.generation != self.persisted)
                 .then(|| due(self.checkpoint_at, Duration::from_secs(2))),
             // Followed logs and files on disk are checked once a second.
@@ -1531,6 +1559,7 @@ impl HeditApp {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                         if controls::close_button(ui, "Dismiss · Esc").clicked() {
                             self.error = None;
+                            self.transient_error = None;
                         }
                         if retry && ui.button("Retry checkpoint").clicked() {
                             self.checkpoint(&ctx);

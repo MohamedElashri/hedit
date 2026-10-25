@@ -5,6 +5,8 @@
 ### Fixed
 
 - The syntax menu in the status bar showed a box instead of its arrow.
+- File-open errors, such as trying to open a binary file, now disappear
+  automatically after five seconds.
 - Closing modified files on disk now offers Save, Don't Save, or Cancel,
   including bulk tab closes and quitting. Untitled notes keep their recovery
   behavior.

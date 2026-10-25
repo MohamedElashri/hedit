@@ -186,6 +186,80 @@ fn routine_search_outcomes_are_notices_not_errors() {
     assert_eq!(app.notice, "No matches found.");
 }
 
+fn open_binary(ctx: &egui::Context, app: &mut HeditApp, path: &std::path::Path) {
+    std::fs::write(path, [0, 1, 2, 3]).unwrap();
+    app.open(ctx, Some(path.to_owned()));
+    let started = Instant::now();
+    while app.busy || app.checkpoint_pending || app.generation != app.persisted {
+        assert!(started.elapsed() < Duration::from_secs(5));
+        app.receive(ctx);
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(app.error.as_deref().unwrap().contains("binary file"));
+}
+
+#[test]
+fn binary_file_error_expires_and_wakes_an_idle_window() {
+    let (directory, ctx, mut app) = app_with("keep my notes");
+    let id = app.active().view.id;
+    open_binary(&ctx, &mut app, &directory.path().join("image.bin"));
+    let (message, shown) = app.transient_error.clone().unwrap();
+    let output = frame(&ctx, &mut app, vec![]);
+    assert!(output
+        .shapes
+        .iter()
+        .any(|s| text_rect(&s.shape, &message).is_some()));
+    let wake = app
+        .next_wake(&ctx)
+        .expect("repaint when the banner expires");
+    assert!(wake > Duration::ZERO && wake <= FILE_ERROR_TIME);
+    app.expire_error(shown + FILE_ERROR_TIME - Duration::from_millis(1));
+    assert_eq!(app.error.as_ref(), Some(&message));
+    app.expire_error(shown + FILE_ERROR_TIME);
+    assert!(app.error.is_none());
+    assert!(app.transient_error.is_none());
+    let output = frame(&ctx, &mut app, vec![]);
+    assert!(!output
+        .shapes
+        .iter()
+        .any(|s| text_rect(&s.shape, &message).is_some()));
+    assert_eq!(app.next_wake(&ctx), None, "no polling after expiry");
+    assert_eq!(app.active().view.id, id);
+    assert_eq!(app.active().page.text, "keep my notes");
+}
+
+#[test]
+fn binary_error_timeout_does_not_dismiss_newer_save_or_recovery_errors() {
+    for error in [
+        "Could not save notes.txt: permission denied.",
+        "RECOVERY CHECKPOINT FAILED\nDisk full.",
+    ] {
+        let (directory, ctx, mut app) = app_with("keep my notes");
+        open_binary(&ctx, &mut app, &directory.path().join("image.bin"));
+        let shown = app.transient_error.as_ref().unwrap().1;
+        app.error = Some(error.into());
+        app.expire_error(shown + FILE_ERROR_TIME);
+        assert_eq!(app.error.as_deref(), Some(error));
+        assert!(app.transient_error.is_none());
+    }
+}
+
+#[test]
+fn another_binary_error_gets_a_fresh_timeout_and_can_still_be_dismissed() {
+    let (directory, ctx, mut app) = app_with("notes");
+    let path = directory.path().join("image.bin");
+    open_binary(&ctx, &mut app, &path);
+    app.transient_error.as_mut().unwrap().1 = Instant::now() - Duration::from_secs(4);
+    let old_deadline = app.transient_error.as_ref().unwrap().1 + FILE_ERROR_TIME;
+    open_binary(&ctx, &mut app, &path);
+    app.expire_error(old_deadline);
+    assert!(app.error.is_some(), "the new message gets all five seconds");
+    escape(&ctx, &mut app);
+    assert!(app.error.is_none());
+    assert!(app.transient_error.is_none());
+    assert_eq!(app.active().page.text, "notes");
+}
+
 #[test]
 fn an_idle_window_schedules_no_redraws() {
     let (_directory, ctx, mut app) = app_with("");

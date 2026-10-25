@@ -152,6 +152,7 @@ impl HeditApp {
             return;
         }
         if self.error.take().is_some() {
+            self.transient_error = None;
             ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));
             return;
         }
