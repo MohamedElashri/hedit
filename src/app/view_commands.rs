@@ -41,24 +41,17 @@ impl HeditApp {
         self.open_pick_list(ctx, "Open recent file", "Filter recent files…", items);
     }
     /// Close every tab, or only those without unsaved changes. Pinned tabs
-    /// stay; closed files with changes go to the shelf as usual.
+    /// stay; disk-backed files prompt before discarding changes.
     pub(super) fn close_tabs(&mut self, unmodified: bool) {
-        let mut closed = 0;
-        for index in (0..self.workspace.open.len()).rev() {
-            let b = &self.workspace.open[index];
-            if b.view.pinned || (unmodified && b.page.info.dirty) {
-                continue;
-            }
-            match self.workspace.close(index) {
-                Ok(()) => closed += 1,
-                Err(error) => {
-                    self.error = Some(error);
-                    break;
-                }
-            }
-        }
-        self.notice = format!("Closed {closed} tabs.");
-        self.changed();
+        let tabs = self
+            .workspace
+            .open
+            .iter()
+            .rev()
+            .filter(|b| !b.view.pinned && (!unmodified || !b.page.info.dirty))
+            .map(|b| b.view.id)
+            .collect();
+        self.request_close(tabs);
     }
     /// Alt+F2: a cursor on every bookmarked line.
     pub(super) fn select_bookmarks(&mut self) {

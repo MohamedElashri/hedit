@@ -507,6 +507,23 @@ impl Document {
         self.dirty = false;
         self.page(0)
     }
+    /// Drop edits and undo history without writing to disk. Keep revisions
+    /// increasing so recovery checkpoints cannot reuse an older buffer/history.
+    pub fn discard_changes(&mut self) -> Result<Page, String> {
+        let path = self
+            .path
+            .as_ref()
+            .ok_or("No disk file to discard changes to.")?;
+        let mut replacement = if self.encoding == "UTF-8" {
+            Self::open(self.id, path)?
+        } else {
+            Self::open_with_encoding(self.id, path, &self.encoding)?
+        };
+        replacement.revision = self.revision.wrapping_add(1);
+        let page = replacement.page(0)?;
+        *self = replacement;
+        Ok(page)
+    }
     fn write_encoded_content(&self, output: &mut File) -> Result<(), String> {
         if self.encoding == "UTF-8" {
             return self.write_content(output);

@@ -225,19 +225,18 @@ impl HeditApp {
     pub(super) fn close_tab_group(&mut self, right: bool) {
         let current = self.active().view.id;
         let active = self.workspace.active;
-        for index in (0..self.workspace.open.len()).rev() {
-            if self.workspace.open[index].view.id == current
-                || self.workspace.open[index].view.pinned
-                || right && index <= active
-            {
-                continue;
-            }
-            if let Err(e) = self.workspace.close(index) {
-                self.error = Some(e);
-                break;
-            }
-        }
-        self.changed();
+        let tabs = self
+            .workspace
+            .open
+            .iter()
+            .enumerate()
+            .rev()
+            .filter(|(index, b)| {
+                b.view.id != current && !b.view.pinned && (!right || *index > active)
+            })
+            .map(|(_, b)| b.view.id)
+            .collect();
+        self.request_close(tabs);
     }
     pub(super) fn finish_preview(&mut self) {
         if !self.quality.preview_request {

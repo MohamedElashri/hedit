@@ -132,8 +132,14 @@ A dot on a tab marks unsaved changes.
 
 ### Closing and the shelf
 
-Closing a tab (**Ctrl+W**) puts it on the *shelf* with its text, selection, and
-bookmarks, so nothing is lost. **Ctrl+Shift+T** reopens the last one, and **File →
+Closing a modified file on disk (**Ctrl+W**) asks whether to **Save**, **Don't
+Save**, or **Cancel**. Save writes your changes before closing; Don't Save
+discards them and keeps the disk copy; Cancel leaves the file open. Quitting or
+closing the window asks the same question for each modified file on disk.
+Untitled notes keep their recovery copies without prompting.
+
+Closed tabs go on the *shelf* with their selection and bookmarks. After Don't
+Save, reopening shows the disk copy. **Ctrl+Shift+T** reopens the last tab, and **File →
 Browse closed files…** lists them all. **File → Close all tabs** (**Ctrl+K,
 Ctrl+W**) and **Close unmodified tabs** close many at once. The shelf holds 50
 files; only saved, unchanged ones are dropped to make room.

@@ -1342,8 +1342,7 @@ impl HeditApp {
             Command::Save => self.save_file(ctx, false),
             Command::SaveAs => self.save_file(ctx, true),
             Command::Close => {
-                let r = self.workspace.close(self.workspace.active);
-                self.report(r);
+                self.request_close(vec![self.active().view.id]);
             }
             Command::Reopen => {
                 let r = self.workspace.reopen();
@@ -1352,8 +1351,7 @@ impl HeditApp {
             Command::Shelf => self.shelf_open = true,
             Command::Rename => self.open_unsaved_file_name(),
             Command::Quit => {
-                self.closing = true;
-                self.checkpoint(ctx);
+                self.request_quit();
             }
             Command::Undo => self.history(ctx, false),
             Command::Redo => self.history(ctx, true),

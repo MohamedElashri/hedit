@@ -295,8 +295,7 @@ impl HeditApp {
                 self.focus_editor = true;
             }
             if let Some(index) = close {
-                let result = self.workspace.close(index);
-                self.report(result);
+                self.request_close(vec![self.workspace.open[index].view.id]);
             }
             if let Some(command) = action {
                 self.execute(ctx, command);

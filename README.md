@@ -91,7 +91,9 @@ Inside the editor:
 
 Close a tab with **Ctrl+W** and reopen it with **Ctrl+Shift+T**, or use
 **File → Browse closed files…** to find an older closed file. Use **Ctrl+S**
-whenever you want a normal saved file.
+whenever you want a normal saved file. Closing a modified file on disk or quitting
+asks whether to **Save**, **Don't Save**, or **Cancel**. Untitled notes stay in
+recovery without a prompt.
 
 ## Everyday shortcuts
 

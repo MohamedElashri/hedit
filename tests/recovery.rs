@@ -38,6 +38,73 @@ fn untitled_and_closed_buffers_survive_restarts_and_keep_selection() {
 }
 
 #[test]
+fn discarding_restored_edits_does_not_reuse_old_checkpoint_history() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("notes.txt");
+    fs::write(&path, "original\n").unwrap();
+    let session = directory.path().join("session");
+    let (mut ws, _) = Workspace::restore(session.clone()).unwrap();
+    let mut doc = Document::open(ws.editor.id(), &path).unwrap();
+    let page = doc.page(0).unwrap();
+    ws.add(doc, page).unwrap();
+    edit(&mut ws, "saved edits\n");
+    let id = ws.open[ws.active].view.id;
+    ws.open[ws.active].page.info = ws
+        .editor
+        .get(id)
+        .unwrap()
+        .lock()
+        .unwrap()
+        .save(None)
+        .unwrap();
+    ws.checkpoint().unwrap();
+    drop(ws);
+
+    let (mut ws, errors) = Workspace::restore(session.clone()).unwrap();
+    assert!(errors.is_empty());
+    // A restored document starts at revision zero with saved undo history.
+    ws.checkpoint().unwrap();
+    edit(&mut ws, "discard these edits\n");
+    let shared = ws.editor.get(ws.open[ws.active].view.id).unwrap();
+    let page = shared.lock().unwrap().discard_changes().unwrap();
+    ws.open[ws.active].set_page(page);
+    ws.checkpoint().unwrap();
+    drop(shared);
+    drop(ws);
+
+    let (ws, errors) = Workspace::restore(session).unwrap();
+    assert!(errors.is_empty());
+    let shared = ws.editor.get(ws.open[ws.active].view.id).unwrap();
+    let mut doc = shared.lock().unwrap();
+    let revision = doc.info().revision;
+    assert_eq!(
+        doc.history(false, 0, revision).unwrap().text,
+        "saved edits\n"
+    );
+    assert_eq!(fs::read_to_string(path).unwrap(), "saved edits\n");
+}
+
+#[test]
+fn failed_discard_keeps_edits_and_undo_history() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("notes.txt");
+    fs::write(&path, "original\n").unwrap();
+    let mut doc = Document::open(1, &path).unwrap();
+    let info = doc
+        .replace(0, doc.info().size, "edited\n".into(), 0)
+        .unwrap();
+    fs::remove_file(path).unwrap();
+    assert!(doc.discard_changes().is_err());
+    assert_eq!(doc.page(0).unwrap().text, "edited\n");
+    assert_eq!(doc.info().revision, info.revision);
+    assert!(doc.info().dirty);
+    assert_eq!(
+        doc.history(false, 0, info.revision).unwrap().text,
+        "original\n"
+    );
+}
+
+#[test]
 fn second_process_cannot_write_the_same_session() {
     let directory = tempfile::tempdir().unwrap();
     let (ws, _) = Workspace::restore(directory.path().into()).unwrap();

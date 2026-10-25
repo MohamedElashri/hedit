@@ -6,6 +6,9 @@ mod changes;
 mod chords;
 mod chrome;
 mod clipboard_lines;
+mod close;
+#[cfg(test)]
+mod close_tests;
 mod commands;
 mod controls;
 mod definitions;
@@ -88,6 +91,7 @@ enum Action {
     History(u64, Page, bool, Vec<hedit::advanced::Selection>),
     Saved(u64, Info),
     SaveTo(u64, PathBuf),
+    Discarded(u64, Page),
     ThemeImported(Theme),
     DebugProgram(PathBuf),
     /// Open a `path:line` location.
@@ -155,6 +159,7 @@ pub struct HeditApp {
     busy: bool,
     cancel: Arc<AtomicBool>,
     closing: bool,
+    close_flow: Option<close::CloseFlow>,
     exit_ready: bool,
     pending_paths: VecDeque<PathBuf>,
     error: Option<String>,
@@ -330,6 +335,7 @@ impl HeditApp {
             busy: false,
             cancel: Arc::new(AtomicBool::new(false)),
             closing: false,
+            close_flow: None,
             exit_ready: false,
             pending_paths: paths.into(),
             error: if errors.is_empty() {
@@ -925,6 +931,12 @@ impl HeditApp {
                     }
                 }
                 Ok(Action::SaveTo(id, path)) => self.save_to_path(ctx, id, Some(path)),
+                Ok(Action::Discarded(id, page)) => {
+                    if let Some(buffer) = self.workspace.open.iter_mut().find(|b| b.view.id == id) {
+                        *buffer = Buffer::new(page, Some(buffer.view.clone()));
+                    }
+                    self.changed();
+                }
                 Ok(Action::Saved(id, info)) => {
                     // Compare resolved paths: the config folder may be reached
                     // through a symlink, such as /var → /private/var on macOS.
@@ -991,7 +1003,7 @@ impl HeditApp {
                         self.quality.incoming_error = Some(error.clone());
                     }
                     self.error = Some(error);
-                    self.closing = false;
+                    self.cancel_close();
                 }
             }
         }
@@ -1007,16 +1019,22 @@ impl HeditApp {
                 }
                 Err(error) => {
                     self.error = Some(format!("{CHECKPOINT_FAILED}\n{error}\nKeep hedit open and save your files to disk."));
-                    self.closing = false;
+                    self.cancel_close();
                 }
             }
         }
+        self.advance_close();
         if !self.busy && !self.closing {
             if let Some(path) = self.pending_paths.pop_front() {
                 self.open(ctx, Some(path));
             }
         }
-        if self.closing && !self.busy && !self.checkpoint_pending && !self.updates.installing() {
+        if self.closing
+            && self.close_flow.is_none()
+            && !self.busy
+            && !self.checkpoint_pending
+            && !self.updates.installing()
+        {
             if self.generation == self.persisted {
                 self.exit_ready = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -1033,7 +1051,7 @@ impl HeditApp {
     /// flight, at the next checkpoint or git refresh, or never when idle.
     fn next_wake(&self, ctx: &egui::Context) -> Option<Duration> {
         let working = self.busy
-            || self.closing
+            || (self.closing && self.close_flow.is_none())
             || self.checkpoint_pending
             || self.updates.active()
             || self.quality.incoming.is_some()
@@ -1121,6 +1139,9 @@ impl HeditApp {
         });
     }
     fn shortcuts(&mut self, ctx: &egui::Context) {
+        if self.close_flow.is_some() {
+            return;
+        }
         self.play_step(ctx);
         self.plain_ime_commits(ctx);
         self.record_input(ctx);
@@ -3115,7 +3136,7 @@ impl eframe::App for HeditApp {
         self.poll_git(ctx);
         if ctx.input(|i| i.viewport().close_requested()) && !self.exit_ready {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            self.closing = true;
+            self.request_quit();
         }
         self.sync_appearance(ctx);
         // Follow full screen changes made outside hedit, such as by the window manager.
@@ -3166,6 +3187,7 @@ impl eframe::App for HeditApp {
         self.updates_window(ctx);
         self.quality_windows(ctx);
         self.record_copies(ctx);
+        self.close_dialog(ctx);
         let paths: Vec<_> = ctx.input(|i| {
             i.raw
                 .dropped_files
@@ -3276,6 +3298,7 @@ mod tests {
             app.folder_dialog(ctx);
             app.quality_windows(ctx);
             app.record_copies(ctx);
+            app.close_dialog(ctx);
         });
         assert!(!output.shapes.is_empty());
         output

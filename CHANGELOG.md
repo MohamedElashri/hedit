@@ -5,6 +5,9 @@
 ### Fixed
 
 - The syntax menu in the status bar showed a box instead of its arrow.
+- Closing modified files on disk now offers Save, Don't Save, or Cancel,
+  including bulk tab closes and quitting. Untitled notes keep their recovery
+  behavior.
 
 ## [0.1.5] - 2026-10-25
 
