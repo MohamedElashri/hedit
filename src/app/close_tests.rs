@@ -24,6 +24,69 @@ fn edit(app: &mut HeditApp, text: &str) {
 }
 
 #[test]
+fn last_blank_tab_has_no_close_button_and_ignores_close_actions() {
+    let directory = tempfile::tempdir().unwrap();
+    let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    let id = app.active().view.id;
+    let name = app.active().view.name.clone();
+    frame(&ctx, &mut app, vec![]);
+    let output = frame(&ctx, &mut app, vec![]);
+    assert!(!app.command_enabled(Command::Close));
+    assert!(!output
+        .shapes
+        .iter()
+        .any(|s| text_rect(&s.shape, "×").is_some()));
+    assert!(!output
+        .shapes
+        .iter()
+        .any(|s| text_rect(&s.shape, "OPEN FILES").is_some()));
+    let tab = output
+        .shapes
+        .iter()
+        .find_map(|s| text_rect(&s.shape, &name))
+        .unwrap();
+    for pressed in [true, false] {
+        frame(
+            &ctx,
+            &mut app,
+            vec![
+                egui::Event::PointerMoved(tab.center()),
+                egui::Event::PointerButton {
+                    pos: tab.center(),
+                    button: egui::PointerButton::Middle,
+                    pressed,
+                    modifiers: Modifiers::NONE,
+                },
+            ],
+        );
+    }
+    frame(&ctx, &mut app, vec![key(Key::W, Modifiers::COMMAND)]);
+    for command in [Command::Close, Command::CloseAll, Command::CloseUnmodified] {
+        app.execute(&ctx, command);
+        assert_eq!(app.workspace.open.len(), 1);
+        assert_eq!(app.active().view.id, id);
+        assert_eq!(app.active().view.name, name);
+        assert!(app.workspace.closed.is_empty());
+        assert!(!app.closing);
+    }
+    app.execute(&ctx, Command::New);
+    assert!(app.command_enabled(Command::Close));
+    let output = frame(&ctx, &mut app, vec![]);
+    assert!(output
+        .shapes
+        .iter()
+        .any(|s| text_rect(&s.shape, "×").is_some()));
+    app.execute(&ctx, Command::CloseAll);
+    assert_eq!(app.workspace.open.len(), 1);
+    assert_eq!(app.active().view.id, id);
+    assert_eq!(app.workspace.closed.len(), 1);
+    app.execute(&ctx, Command::Quit);
+    assert!(app.closing, "the empty tab must not prevent quitting");
+}
+
+#[test]
 fn close_prompts_without_writing_and_cancel_keeps_edits() {
     let (_directory, ctx, mut app, path, id) = disk_app();
     app.execute(&ctx, Command::Close);

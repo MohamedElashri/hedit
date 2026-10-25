@@ -115,6 +115,7 @@ impl HeditApp {
                         ui.horizontal(|ui| {
                             for (index, buffer) in self.workspace.open.iter().enumerate() {
                                 let active = index == self.workspace.active;
+                                let can_close = self.workspace.can_close(index);
                                 let title: String = hedit::bidi::display(&buffer.view.name)
                                     .chars()
                                     .take(30)
@@ -182,6 +183,7 @@ impl HeditApp {
                                                     select = Some(index);
                                                 }
                                                 if response.clicked_by(egui::PointerButton::Middle)
+                                                    && can_close
                                                 {
                                                     close = Some(index);
                                                 }
@@ -207,7 +209,13 @@ impl HeditApp {
                                                             ui.close_menu();
                                                         }
                                                     }
-                                                    if ui.button("Close tab").clicked() {
+                                                    if ui
+                                                        .add_enabled(
+                                                            can_close,
+                                                            egui::Button::new("Close tab"),
+                                                        )
+                                                        .clicked()
+                                                    {
                                                         close = Some(index);
                                                         ui.close_menu();
                                                     }
@@ -222,29 +230,30 @@ impl HeditApp {
                                                         ui.close_menu();
                                                     }
                                                 });
-                                                if ui
-                                                    .add(
-                                                        egui::Button::new(
-                                                            RichText::new(
-                                                                if buffer.page.info.dirty {
-                                                                    "●"
+                                                if can_close
+                                                    && ui
+                                                        .add(
+                                                            egui::Button::new(
+                                                                RichText::new(
+                                                                    if buffer.page.info.dirty {
+                                                                        "●"
+                                                                    } else {
+                                                                        "×"
+                                                                    },
+                                                                )
+                                                                .size(11.0)
+                                                                .color(if buffer.page.info.dirty {
+                                                                    theme.accent.color()
                                                                 } else {
-                                                                    "×"
-                                                                },
+                                                                    theme.muted.color()
+                                                                }),
                                                             )
-                                                            .size(11.0)
-                                                            .color(if buffer.page.info.dirty {
-                                                                theme.accent.color()
-                                                            } else {
-                                                                theme.muted.color()
-                                                            }),
+                                                            .frame(false),
                                                         )
-                                                        .frame(false),
-                                                    )
-                                                    .on_hover_text(
-                                                        "Close tab · text stays on the shelf",
-                                                    )
-                                                    .clicked()
+                                                        .on_hover_text(
+                                                            "Close tab · text stays on the shelf",
+                                                        )
+                                                        .clicked()
                                                 {
                                                     close = Some(index);
                                                 }
@@ -619,7 +628,6 @@ impl HeditApp {
             return;
         }
         let theme = self.theme.clone();
-        let mut select = None;
         egui::SidePanel::left("buffers")
             .default_width(205.0)
             .min_width(140.0)
@@ -630,59 +638,6 @@ impl HeditApp {
                     .inner_margin(egui::Margin::symmetric(10, 14)),
             )
             .show(ctx, |ui| {
-                ui.label(
-                    RichText::new("OPEN FILES")
-                        .size(10.0)
-                        .strong()
-                        .color(theme.muted.color()),
-                );
-                ui.add_space(7.0);
-                egui::ScrollArea::vertical()
-                    .id_salt("buffer-list")
-                    .max_height(
-                        if !self.workspace.folders.is_empty() && self.settings.show_folders {
-                            (ui.available_height() * 0.28).clamp(60.0, 180.0)
-                        } else {
-                            (ui.available_height() - 115.0).max(60.0)
-                        },
-                    )
-                    .show(ui, |ui| {
-                        for (index, buffer) in self.workspace.open.iter().enumerate() {
-                            let active = index == self.workspace.active;
-                            let text = format!(
-                                "{}  {}",
-                                if buffer.page.info.dirty { "●" } else { "·" },
-                                hedit::bidi::display(&buffer.view.name)
-                            );
-                            let response = ui
-                                .add(
-                                    egui::Button::new(RichText::new(text).size(12.0).color(
-                                        if active {
-                                            theme.text.color()
-                                        } else {
-                                            theme.muted.color()
-                                        },
-                                    ))
-                                    .selected(active)
-                                    .fill(if active {
-                                        theme.elevated.color()
-                                    } else {
-                                        theme.panel.color()
-                                    })
-                                    .stroke(egui::Stroke::NONE)
-                                    .min_size(egui::vec2(ui.available_width(), 27.0))
-                                    .truncate(),
-                                )
-                                .on_hover_text(
-                                    buffer.page.info.path.as_deref().unwrap_or("Unsaved file"),
-                                );
-                            if response.clicked() {
-                                select = Some(index);
-                            }
-                        }
-                    });
-                ui.add_space(16.0);
-                ui.separator();
                 if ui
                     .add(
                         egui::Button::new(
@@ -702,13 +657,6 @@ impl HeditApp {
                 }
                 ui.add_enabled_ui(!self.busy && !self.closing, |ui| self.folder_tree(ui));
             });
-        if !self.busy && !self.closing {
-            if let Some(index) = select {
-                self.workspace.active = index;
-                self.changed();
-                self.focus_editor = true;
-            }
-        }
     }
     pub(super) fn search_panel(&mut self, ctx: &egui::Context) {
         if !self.find_open {

@@ -212,9 +212,19 @@ impl Workspace {
     pub fn checkpoint(&self) -> Result<(), String> {
         self.store.save(&self.editor, self.view())
     }
+    /// Keep the last empty, unnamed scratchpad as the editor's blank state.
+    pub fn can_close(&self, index: usize) -> bool {
+        self.open.get(index).is_some_and(|buffer| {
+            self.open.len() > 1
+                || buffer.page.info.path.is_some()
+                || buffer.view.custom_name.is_some()
+                || buffer.page.info.paged
+                || !buffer.page.text.is_empty()
+        })
+    }
     /// Close keeps the document, including untitled text, on a recoverable shelf.
     pub fn close(&mut self, index: usize) -> Result<(), String> {
-        if index >= self.open.len() {
+        if !self.can_close(index) {
             return Ok(());
         }
         // Never silently evict an unsaved buffer from the 50-item history.

@@ -3594,7 +3594,7 @@ mod tests {
         );
         assert!(
             app.settings.show_sidebar,
-            "hiding folders keeps the open-files sidebar"
+            "hiding folders keeps the closed-files shortcut"
         );
         assert!(!app.settings.show_folders);
         let output = frame(&ctx, &mut app, vec![]);
@@ -3605,7 +3605,7 @@ mod tests {
         assert!(output
             .shapes
             .iter()
-            .any(|s| text_rect(&s.shape, "OPEN FILES").is_some()));
+            .any(|s| text_rect(&s.shape, "CLOSED FILES    0").is_some()));
         let started = Instant::now();
         while app.checkpoint_pending {
             app.receive(&ctx);
@@ -4250,7 +4250,7 @@ mod tests {
         assert!(!output
             .shapes
             .iter()
-            .any(|s| text_rect(&s.shape, "OPEN FILES").is_some()));
+            .any(|s| text_rect(&s.shape, "CLOSED FILES    0").is_some()));
         assert_eq!(
             (
                 app.settings.show_sidebar,
@@ -4264,7 +4264,7 @@ mod tests {
         assert!(output
             .shapes
             .iter()
-            .any(|s| text_rect(&s.shape, "OPEN FILES").is_some()));
+            .any(|s| text_rect(&s.shape, "CLOSED FILES    0").is_some()));
         let mut storage = MemoryStorage::default();
         eframe::App::save(&mut app, &mut storage);
         drop(app);

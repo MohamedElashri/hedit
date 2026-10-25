@@ -954,6 +954,7 @@ impl HeditApp {
             return false;
         }
         match command {
+            Command::Close => self.workspace.can_close(self.workspace.active),
             Command::NextOccurrence
             | Command::AllOccurrences
             | Command::SkipOccurrence

@@ -9,6 +9,64 @@ fn edit(ws: &mut Workspace, text: &str) {
 }
 
 #[test]
+fn closing_the_last_empty_untitled_tab_keeps_its_identity_and_shelf() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut ws, _) = Workspace::restore(directory.path().into()).unwrap();
+    let id = ws.open[0].view.id;
+    let name = ws.open[0].view.name.clone();
+    for _ in 0..5 {
+        assert!(!ws.can_close(0));
+        ws.close(0).unwrap();
+        assert_eq!(ws.open.len(), 1);
+        assert_eq!(ws.open[0].view.id, id);
+        assert_eq!(ws.open[0].view.name, name);
+        assert!(ws.closed.is_empty());
+    }
+    edit(&mut ws, "note");
+    assert!(ws.can_close(0));
+    edit(&mut ws, "");
+    ws.close(0).unwrap();
+    assert_eq!(ws.open[0].view.id, id);
+    // Keeping the blank tab also preserves the undo history of deleted text.
+    let page = ws
+        .editor
+        .get(id)
+        .unwrap()
+        .lock()
+        .unwrap()
+        .history(false, 0, ws.open[0].page.info.revision)
+        .unwrap();
+    assert_eq!(page.text, "note");
+}
+
+#[test]
+fn other_empty_tabs_disk_files_and_named_scratchpads_can_close() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut ws, _) = Workspace::restore(directory.path().join("session")).unwrap();
+    let first = ws.open[0].view.id;
+    ws.new_buffer().unwrap();
+    assert!(ws.can_close(1));
+    ws.close(1).unwrap();
+    assert_eq!(ws.open[0].view.id, first);
+    assert!(!ws.can_close(0));
+    ws.name_scratchpad(0, "Planned notes").unwrap();
+    assert!(ws.can_close(0));
+    ws.close(0).unwrap();
+    assert!(ws.closed.iter().any(|view| view.id == first));
+    let path = directory.path().join("empty.txt");
+    fs::write(&path, "").unwrap();
+    let mut doc = Document::open(ws.editor.id(), &path).unwrap();
+    let id = doc.id;
+    let page = doc.page(0).unwrap();
+    ws.add(doc, page).unwrap();
+    ws.close(0).unwrap();
+    assert_eq!(ws.open[0].view.id, id);
+    assert!(ws.can_close(0));
+    ws.close(0).unwrap();
+    assert!(ws.closed.iter().any(|view| view.id == id));
+}
+
+#[test]
 fn scratchpad_name_survives_edits_shelf_and_restart_without_creating_a_file() {
     let directory = tempfile::tempdir().unwrap();
     let (mut ws, _) = Workspace::restore(directory.path().into()).unwrap();

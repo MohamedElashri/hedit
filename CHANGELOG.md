@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Removed the duplicate open-file list from the sidebar, leaving folders and
+  closed-file recovery alongside the tab bar.
+
+### Fixed
+
+- Closing the sole empty untitled tab no longer creates another numbered tab
+  or adds blank entries to the closed-files shelf; its close action is disabled.
+
 ## [0.1.6] - 2026-10-25
 
 ### Added

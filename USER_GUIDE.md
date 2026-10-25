@@ -137,6 +137,8 @@ Save**, or **Cancel**. Save writes your changes before closing; Don't Save
 discards them and keeps the disk copy; Cancel leaves the file open. Quitting or
 closing the window asks the same question for each modified file on disk.
 Untitled notes keep their recovery copies without prompting.
+The sole empty untitled tab stays open as the editor's blank state and has no
+close button. Add another tab or type text to make it closable.
 
 Closed tabs go on the *shelf* with their selection and bookmarks. After Don't
 Save, reopening shows the disk copy. **Ctrl+Shift+T** reopens the last tab, and **File →
@@ -152,6 +154,8 @@ rename, move, duplicate, trash, copy the path of, or reveal it; nothing is
 overwritten without asking. **File → Refresh folders** picks up outside changes.
 Folders such as `.git`, `node_modules`, and `target` are hidden from the tree and
 searches; change the list under **Settings → Folders & Search**.
+Open files appear in the tab bar; the sidebar contains folders and a shortcut
+to closed-file recovery.
 
 **Ctrl+K, Ctrl+B** shows or hides the sidebar and **Ctrl+Alt+B** just its folder
 section. Folders, expanded directories, and what is shown come back next time.
