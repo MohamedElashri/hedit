@@ -2,6 +2,67 @@ use super::tests::{finish_app_job, frame, frame_size, key, text_rect};
 use super::*;
 
 #[test]
+fn failed_sidebar_preview_does_not_turn_the_next_explicit_open_into_a_preview() {
+    let directory = tempfile::tempdir().unwrap();
+    let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    let first_path = directory.path().join("first.txt");
+    let next_path = directory.path().join("next.txt");
+    let binary = directory.path().join("binary.dat");
+    std::fs::write(&first_path, "first").unwrap();
+    std::fs::write(&next_path, "next").unwrap();
+    std::fs::write(&binary, [0, 1, 0, 2]).unwrap();
+    app.quality.preview_request = true;
+    app.open(&ctx, Some(first_path));
+    finish_app_job(&mut app, &ctx);
+    let first = app.active().view.id;
+    app.quality.preview_request = true;
+    app.open(&ctx, Some(binary));
+    let started = Instant::now();
+    while app.busy {
+        app.receive(&ctx);
+        assert!(started.elapsed() < Duration::from_secs(5));
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(app.error.take().is_some());
+    app.transient_error = None;
+    assert!(!app.quality.preview_request);
+    app.open(&ctx, Some(next_path));
+    finish_app_job(&mut app, &ctx);
+    assert_eq!(app.quality.preview, Some(first));
+    assert_ne!(app.active().view.id, first);
+    assert!(app.workspace.open.iter().any(|b| b.view.id == first));
+}
+
+#[test]
+fn reopening_a_shelved_file_finishes_the_sidebar_preview() {
+    let directory = tempfile::tempdir().unwrap();
+    let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    let first_path = directory.path().join("first.txt");
+    let second_path = directory.path().join("second.txt");
+    std::fs::write(&first_path, "first").unwrap();
+    std::fs::write(&second_path, "second").unwrap();
+    app.open(&ctx, Some(second_path.clone()));
+    finish_app_job(&mut app, &ctx);
+    let second = app.active().view.id;
+    app.execute(&ctx, Command::Close);
+    app.quality.preview_request = true;
+    app.open(&ctx, Some(first_path));
+    finish_app_job(&mut app, &ctx);
+    let first = app.active().view.id;
+    app.quality.preview_request = true;
+    app.open(&ctx, Some(second_path));
+    finish_app_job(&mut app, &ctx);
+    assert!(!app.quality.preview_request);
+    assert_eq!(app.quality.preview, Some(second));
+    assert_eq!(app.active().view.id, second);
+    assert!(!app.workspace.open.iter().any(|b| b.view.id == first));
+}
+
+#[test]
 fn projects_reopen_clean_files_in_their_selected_encoding() {
     for (encoding, text) in [("windows-1252", "café €\n"), ("UTF-16LE", "café λ\n")] {
         let directory = tempfile::tempdir().unwrap();

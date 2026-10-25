@@ -9,6 +9,10 @@
 
 ### Fixed
 
+- Sidebar preview requests now finish when reopening shelved files and clear
+  after failed opens, so a later explicit open is not treated as a preview.
+- Cancelling Go to Anything restores extra selections and horizontal scrolling.
+- Go to Anything now honors the requested column in large, paged files.
 - Closing the sole empty untitled tab no longer creates another numbered tab
   or adds blank entries to the closed-files shelf; its close action is disabled.
 

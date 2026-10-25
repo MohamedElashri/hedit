@@ -84,7 +84,9 @@ pub(super) struct Origin {
     id: u64,
     anchor: usize,
     head: usize,
+    selections: Vec<hedit::advanced::Selection>,
     scroll_top: f64,
+    scroll_left: f64,
 }
 
 impl HeditApp {
@@ -92,7 +94,7 @@ impl HeditApp {
     pub(super) fn jump_to_line(&mut self, ctx: &egui::Context, line: usize, column: Option<usize>) {
         if self.active().page.info.paged {
             self.goto = line.to_string();
-            self.goto_line(ctx);
+            self.goto_location(ctx, line.max(1) as u64, column.unwrap_or(1).max(1) as u64);
             return;
         }
         let index = self.workspace.active;
@@ -127,7 +129,9 @@ impl HeditApp {
                 id: b.view.id,
                 anchor: b.view.anchor,
                 head: b.view.head,
+                selections: b.view.selections.clone(),
                 scroll_top: b.view.scroll_top,
+                scroll_left: b.view.scroll_left,
             });
         }
         self.jump_to_line(ctx, line, column);
@@ -148,8 +152,11 @@ impl HeditApp {
         let b = &mut self.workspace.open[index];
         b.view.anchor = origin.anchor;
         b.view.head = origin.head;
+        b.view.selections = origin.selections;
         b.view.scroll_top = origin.scroll_top;
+        b.view.scroll_left = origin.scroll_left;
         b.restore_cursor = true;
+        b.reveal_cursor = false;
         self.changed();
     }
     /// Apply a Go to Anything target after choosing a file: jump in an open

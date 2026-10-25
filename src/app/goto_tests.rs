@@ -40,6 +40,67 @@ fn palette(ctx: &egui::Context, app: &mut HeditApp, query: &str) {
 }
 
 #[test]
+fn cancelling_a_goto_preview_restores_extra_selections_and_horizontal_scroll() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+    workspace.open[0].page.text = "alpha beta\ngamma delta\nlast line\n".into();
+    workspace.edit(0, "").unwrap();
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    app.set_selections(vec![
+        hedit::advanced::Selection { anchor: 5, head: 0 },
+        hedit::advanced::Selection {
+            anchor: 11,
+            head: 16,
+        },
+    ]);
+    app.workspace.open[0].view.scroll_top = 20.0;
+    app.workspace.open[0].view.scroll_left = 150.0;
+    let selections = app.selections();
+    app.preview_line(&ctx, 2, Some(4));
+    assert!(app.active().view.selections.is_empty());
+    // A second preview must still restore the original view, not the first preview.
+    app.preview_line(&ctx, 3, None);
+    app.workspace.open[0].view.scroll_top = 40.0;
+    app.workspace.open[0].view.scroll_left = 0.0;
+    app.cancel_goto_preview();
+    assert_eq!(app.selections(), selections);
+    assert_eq!(app.active().view.scroll_top, 20.0);
+    assert_eq!(app.active().view.scroll_left, 150.0);
+    assert!(!app.workspace.open[0].reveal_cursor);
+}
+
+#[test]
+fn goto_in_a_paged_file_honors_the_requested_column() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("large.txt");
+    let line = "αβγδεζηθ abcdefghijklmnopqrstuvwxyz\n";
+    std::fs::write(&path, line.repeat(70_000)).unwrap();
+    let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    app.open(&ctx, Some(path));
+    finish_app_job(&mut app, &ctx);
+    assert!(app.active().page.info.paged);
+    app.jump_to_line(&ctx, 60_000, Some(6));
+    finish_app_job(&mut app, &ctx);
+    let buffer = app.active();
+    let byte = buffer
+        .page
+        .text
+        .chars()
+        .take(buffer.view.head)
+        .map(char::len_utf8)
+        .sum::<usize>();
+    assert!(buffer.page.start > 0);
+    assert_eq!(
+        buffer.page.start + byte as u64,
+        59_999 * line.len() as u64 + "αβγδε".len() as u64
+    );
+    assert_eq!(buffer.page.text[byte..].chars().next(), Some('ζ'));
+}
+
+#[test]
 fn symbols_lines_and_text_are_previewed_then_chosen_or_cancelled() {
     let directory = tempfile::tempdir().unwrap();
     let (mut workspace, _) = Workspace::restore(directory.path().into()).unwrap();

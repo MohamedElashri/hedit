@@ -805,7 +805,6 @@ impl HeditApp {
         self.replace_advanced(false);
     }
     fn goto_line(&mut self, ctx: &egui::Context) {
-        self.navigation_mark();
         let Ok(line) = self.goto.parse::<u64>() else {
             self.error = Some("Enter a positive line number.".into());
             return;
@@ -813,12 +812,16 @@ impl HeditApp {
         if line == 0 {
             return;
         }
+        self.goto_location(ctx, line, 1);
+    }
+    fn goto_location(&mut self, ctx: &egui::Context, line: u64, column: u64) {
+        self.navigation_mark();
         let id = self.active().page.info.id;
         let editor = Arc::clone(&self.workspace.editor);
         self.job(ctx, move || {
             let shared = editor.get(id)?;
             let mut doc = shared.lock().map_err(|e| e.to_string())?;
-            let offset = doc.location_offset(line, 1)?;
+            let offset = doc.location_offset(line, column)?;
             let page = doc.page(offset.saturating_sub(4096))?;
             let cursor = page.text[..(offset - page.start) as usize].chars().count();
             Ok(Action::Page(id, page, Some((cursor, cursor))))
@@ -865,8 +868,14 @@ impl HeditApp {
                                 buffer.view.head = cursor;
                                 buffer.reveal_cursor = true;
                             }
+                            self.finish_preview();
+                            self.navigation_mark();
+                        } else {
+                            self.quality.preview_request = false;
                         }
                         self.report(result);
+                    } else {
+                        self.quality.preview_request = false;
                     }
                 }
                 Ok(Action::Folder(listing)) => self.set_folder(listing),
@@ -1034,6 +1043,7 @@ impl HeditApp {
                 }
                 Ok(Action::OpenAt(path)) => self.pending_paths.push_back(path),
                 Ok(Action::OpenFailed(error)) => {
+                    self.quality.preview_request = false;
                     if self.quality.incoming.is_some() {
                         self.quality.incoming_error = Some(error.clone());
                     }
