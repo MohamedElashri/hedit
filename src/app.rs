@@ -91,7 +91,7 @@ enum Action {
     History(u64, Page, bool, Vec<hedit::advanced::Selection>),
     Saved(u64, Info),
     SaveTo(u64, PathBuf),
-    Discarded(u64, Page),
+    Discarded(u64, Option<Page>),
     ThemeImported(Theme),
     DebugProgram(PathBuf),
     /// Open a `path:line` location.
@@ -938,8 +938,19 @@ impl HeditApp {
                 }
                 Ok(Action::SaveTo(id, path)) => self.save_to_path(ctx, id, Some(path)),
                 Ok(Action::Discarded(id, page)) => {
-                    if let Some(buffer) = self.workspace.open.iter_mut().find(|b| b.view.id == id) {
-                        *buffer = Buffer::new(page, Some(buffer.view.clone()));
+                    if let Some(index) = self.workspace.open.iter().position(|b| b.view.id == id) {
+                        if let Some(page) = page {
+                            let buffer = &mut self.workspace.open[index];
+                            let mut view = buffer.view.clone();
+                            view.page_start = page.start;
+                            let count = page.text.chars().count();
+                            view.anchor = view.anchor.min(count);
+                            view.head = view.head.min(count);
+                            *buffer = Buffer::new(page, Some(view));
+                        } else if let Err(error) = self.workspace.forget(index) {
+                            self.error = Some(error);
+                            self.cancel_close();
+                        }
                     }
                     self.changed();
                 }

@@ -231,6 +231,10 @@ impl Workspace {
                     .unwrap_or(false)
             });
             let Some(clean) = clean else {
+                let buffer = &self.open[index];
+                if !buffer.page.info.dirty && buffer.page.info.path.is_some() {
+                    return self.forget(index);
+                }
                 return Err("The closed-files shelf is full of unsaved text. Reopen and save a file before closing more.".into());
             };
             let removed = self.closed.remove(clean);
@@ -238,6 +242,18 @@ impl Workspace {
         }
         let buffer = self.open.remove(index);
         self.closed.push(buffer.view);
+        self.after_close(index)
+    }
+    /// Explicitly discard a tab without adding it to recovery or the shelf.
+    pub fn forget(&mut self, index: usize) -> Result<(), String> {
+        let Some(buffer) = self.open.get(index) else {
+            return Ok(());
+        };
+        self.editor.remove(buffer.view.id)?;
+        self.open.remove(index);
+        self.after_close(index)
+    }
+    fn after_close(&mut self, index: usize) -> Result<(), String> {
         if index < self.active {
             self.active -= 1;
         }

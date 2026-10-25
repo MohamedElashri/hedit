@@ -120,7 +120,20 @@ impl HeditApp {
                 self.job(ctx, move || {
                     let shared = editor.get(id)?;
                     let mut doc = shared.lock().map_err(|e| e.to_string())?;
-                    let page = doc.discard_changes()?;
+                    let page = match doc.discard_changes() {
+                        Ok(page) => Some(page),
+                        Err(error) => {
+                            // There is no disk copy to put on the shelf when
+                            // a named file was never saved or was deleted.
+                            let missing = doc.info().path.is_some_and(|path| {
+                                matches!(std::path::Path::new(&path).try_exists(), Ok(false))
+                            });
+                            if !missing {
+                                return Err(error);
+                            }
+                            None
+                        }
+                    };
                     Ok(Action::Discarded(id, page))
                 });
             }

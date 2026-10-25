@@ -174,35 +174,54 @@ impl HeditApp {
         self.navigation_dialog(ctx);
         if self.about_open {
             let mut open = true;
+            let mut close = false;
             egui::Window::new("About hedit")
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(false)
+                .default_width(400.0)
+                .frame(
+                    egui::Frame::window(&ctx.style())
+                        .inner_margin(12.0)
+                        .corner_radius(10),
+                )
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(ctx, |ui| {
-                    ui.horizontal(|ui| {
-                        brand::paint(
-                            ui,
-                            36.0,
-                            self.theme.accent.color(),
-                            self.theme.muted.color(),
-                        );
-                        ui.heading("hedit");
-                    });
-                    ui.label("Keep your train of thought.");
-                    ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
+                    controls::info_header(
+                        ui,
+                        &self.theme,
+                        "hedit",
+                        &format!("Version {}", env!("CARGO_PKG_VERSION")),
+                        false,
+                    );
+                    ui.add_space(8.0);
+                    ui.weak("Keep your train of thought.");
+                    ui.add_space(8.0);
                     ui.separator();
-                    ui.hyperlink_to(
-                        "User guide",
-                        "https://github.com/MohamedElashri/hedit/blob/main/USER_GUIDE.md",
-                    );
-                    ui.hyperlink_to(
-                        "Releases",
-                        "https://github.com/MohamedElashri/hedit/releases",
-                    );
-                    ui.label("MIT licensed");
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.hyperlink_to(
+                            "User guide",
+                            "https://github.com/MohamedElashri/hedit/blob/main/USER_GUIDE.md",
+                        );
+                        ui.weak("·");
+                        ui.hyperlink_to("GitHub", "https://github.com/MohamedElashri/hedit");
+                        ui.weak("·");
+                        ui.hyperlink_to(
+                            "MIT License",
+                            "https://github.com/MohamedElashri/hedit/blob/main/LICENSE",
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            close = ui
+                                .add_sized([72.0, 28.0], egui::Button::new("Close"))
+                                .clicked();
+                        });
+                    });
                 });
-            self.about_open = open;
+            self.about_open = open && !close;
+            if !self.about_open {
+                self.focus_editor = true;
+            }
         }
     }
     fn general_preferences(&mut self, ui: &mut egui::Ui) {

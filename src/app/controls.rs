@@ -2,6 +2,51 @@
 //! cancelling look and behave the same everywhere.
 use super::*;
 
+/// Compact identity shared by the About and Update windows.
+pub(super) fn info_header(
+    ui: &mut egui::Ui,
+    theme: &Theme,
+    title: &str,
+    subtitle: &str,
+    loading: bool,
+) {
+    ui.horizontal(|ui| {
+        brand::paint(ui, 48.0, theme.accent.color(), theme.muted.color());
+        ui.add_space(4.0);
+        ui.vertical(|ui| {
+            ui.label(RichText::new(title).size(22.0).strong());
+            ui.label(RichText::new(subtitle).small().color(theme.muted.color()));
+        });
+        if loading {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spinner();
+            });
+        }
+    });
+}
+
+pub(super) fn primary_button(
+    ui: &mut egui::Ui,
+    theme: &Theme,
+    label: &str,
+    enabled: bool,
+) -> egui::Response {
+    ui.add_enabled(
+        enabled,
+        egui::Button::new(RichText::new(label).color(if enabled {
+            theme.background.color()
+        } else {
+            theme.muted.color()
+        }))
+        .fill(if enabled {
+            theme.accent.color()
+        } else {
+            theme.elevated.color()
+        })
+        .min_size(egui::vec2(72.0, 28.0)),
+    )
+}
+
 /// The close button for panels, bars and banners: an × drawn like the one in
 /// window title bars, highlighted on hover.
 pub(super) fn close_button(ui: &mut egui::Ui, hint: &str) -> egui::Response {

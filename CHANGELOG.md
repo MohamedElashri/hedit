@@ -2,6 +2,13 @@
 
 ## [0.1.6] - Unreleased
 
+### Changed
+
+- The About window has a compact layout with version information and a single
+  row of links.
+- The Update window uses concise status messages, clearer actions, and
+  expandable release notes and installation details.
+
 ### Fixed
 
 - The syntax menu in the status bar showed a box instead of its arrow.
@@ -10,6 +17,12 @@
 - Closing modified files on disk now offers Save, Don't Save, or Cancel,
   including bulk tab closes and quitting. Untitled notes keep their recovery
   behavior.
+- Don't Save closes deleted or never-created files without recreating them or
+  leaving stale recovery tabs.
+- A shelf full of unsaved notes no longer blocks closing unchanged disk files;
+  the notes remain on the shelf.
+- `hedit --wait` now keeps waiting for new files opened with relative paths
+  until their tabs close.
 
 ## [0.1.5] - 2026-10-25
 

@@ -203,6 +203,56 @@ fn enter_saves_and_closes_from_the_prompt() {
 }
 
 #[test]
+fn dont_save_closes_missing_files_without_recreating_or_recovering_them() {
+    for saved_before in [false, true] {
+        for command in [Command::Close, Command::Quit] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("missing.txt");
+            if saved_before {
+                std::fs::write(&path, "original\n").unwrap();
+            }
+            let session = directory.path().join("session");
+            let (workspace, _) = Workspace::restore(session.clone()).unwrap();
+            let ctx = egui::Context::default();
+            let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+            edit(&mut app, "keep these notes");
+            app.open(&ctx, Some(path.clone()));
+            finish_app_job(&mut app, &ctx);
+            edit(&mut app, "discard these edits");
+            let id = app.active().view.id;
+            if saved_before {
+                std::fs::remove_file(&path).unwrap();
+            }
+            app.execute(&ctx, command);
+            assert!(app.close_flow.is_some());
+            app.choose_close(&ctx, Choice::Discard);
+            finish_app_job(&mut app, &ctx);
+            assert!(app.close_flow.is_none());
+            assert!(!path.exists());
+            assert!(!app.workspace.open.iter().any(|b| b.view.id == id));
+            assert!(!app.workspace.closed.iter().any(|b| b.id == id));
+            assert!(app.workspace.editor.get(id).is_err());
+            if command == Command::Quit {
+                let started = Instant::now();
+                while !app.exit_ready {
+                    assert!(started.elapsed() < Duration::from_secs(5));
+                    app.receive(&ctx);
+                    assert!(app.error.is_none(), "{:?}", app.error);
+                    thread::sleep(Duration::from_millis(5));
+                }
+            }
+            app.workspace.checkpoint().unwrap();
+            drop(app);
+            let (restored, errors) = Workspace::restore(session).unwrap();
+            assert!(errors.is_empty(), "{errors:?}");
+            assert_eq!(restored.open.len(), 1);
+            assert_eq!(restored.open[0].page.text, "keep these notes");
+            assert!(restored.closed.is_empty());
+        }
+    }
+}
+
+#[test]
 fn clean_files_and_untitled_notes_close_without_prompting() {
     let (_directory, ctx, mut app, _path, id) = disk_app();
     app.save_to_path(&ctx, id, None);

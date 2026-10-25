@@ -15,7 +15,23 @@ pub(super) struct Wait {
 /// The path part of `file:line:column`, resolved like an open file's path.
 fn resolve(path: &Path) -> PathBuf {
     let (path, _, _) = hedit::cli::location(path);
-    std::fs::canonicalize(&path).unwrap_or(path)
+    let path = if path.is_absolute() {
+        path
+    } else {
+        std::env::current_dir().map_or_else(|_| path.clone(), |cwd| cwd.join(&path))
+    };
+    std::fs::canonicalize(&path)
+        .ok()
+        .or_else(|| {
+            // New files have no canonical path yet; match open_or_new, which
+            // resolves their parent before assigning the document's path.
+            Some(
+                std::fs::canonicalize(path.parent()?)
+                    .ok()?
+                    .join(path.file_name()?),
+            )
+        })
+        .unwrap_or(path)
 }
 
 fn release(file: &Path) {
@@ -75,5 +91,39 @@ impl HeditApp {
             .iter()
             .any(|w| !w.seen && !w.paths.is_empty())
             .then_some(Duration::from_millis(500))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::{close::Choice, tests::finish_app_job};
+
+    #[test]
+    fn waiting_for_a_new_relative_path_does_not_release_while_it_is_open() {
+        let directory = tempfile::tempdir().unwrap();
+        let name = format!(
+            "hedit-wait-{}.txt",
+            directory.path().file_name().unwrap().to_string_lossy()
+        );
+        let relative = PathBuf::from(".").join(name);
+        let absolute = std::env::current_dir().unwrap().join(&relative);
+        assert!(!absolute.exists());
+        let released = directory.path().join("released");
+        let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        app.wait_for(std::slice::from_ref(&relative), released.clone());
+        app.open(&ctx, Some(relative));
+        finish_app_job(&mut app, &ctx);
+        app.waits[0].since = Instant::now() - Duration::from_secs(6);
+        app.track_waits();
+        assert!(!released.exists(), "the new file is still open");
+        app.execute(&ctx, Command::Close);
+        app.choose_close(&ctx, Choice::Discard);
+        finish_app_job(&mut app, &ctx);
+        app.track_waits();
+        assert!(released.exists(), "closing releases the waiting terminal");
+        assert!(!absolute.exists());
     }
 }

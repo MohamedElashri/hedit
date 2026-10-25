@@ -34,7 +34,7 @@ impl Updates {
         self.release = None;
         self.installation = None;
         self.location_error = None;
-        self.message = "Checking the latest stable GitHub release…".into();
+        self.message = "Checking for updates…".into();
         let client = Client::default();
         let (tx, rx) = mpsc::channel();
         self.events = Some(rx);
@@ -148,58 +148,173 @@ impl HeditApp {
         if !self.updates.open {
             return;
         }
+        let active = self.updates.active();
+        let installed = self.updates.installed.is_some();
+        let newer = self
+            .updates
+            .release
+            .as_ref()
+            .is_some_and(|r| r.newer_than(env!("CARGO_PKG_VERSION")).unwrap_or(false));
+        let current = format!("Current version {}", env!("CARGO_PKG_VERSION"));
+        let (title, subtitle) = if let Some(version) = &self.updates.installed {
+            ("Update installed", format!("Version {version}"))
+        } else if self.updates.installing {
+            ("Installing update", current)
+        } else if active {
+            ("Checking for updates", current)
+        } else if self.updates.error.is_some() {
+            (
+                if self.updates.release.is_some() {
+                    "Update failed"
+                } else {
+                    "Update check failed"
+                },
+                current,
+            )
+        } else if newer {
+            let version = &self.updates.release.as_ref().unwrap().version;
+            (
+                "Update available",
+                format!("Version {version} · Current {}", env!("CARGO_PKG_VERSION")),
+            )
+        } else if self.updates.release.is_some() {
+            ("Up to date", current)
+        } else {
+            ("Software updates", current)
+        };
         let mut open = true;
+        let mut close = false;
         let mut check = false;
         let mut install = false;
         let mut quit = false;
-        egui::Window::new("Check for updates").id(egui::Id::new("updates"))
-            .open(&mut open).collapsible(false).default_width(560.0).min_width(380.0)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
-                ui.heading("hedit updates");
-                ui.label(format!("Running version {}", env!("CARGO_PKG_VERSION")));
-                ui.weak("Checks and installations happen only when you request them.");
-                ui.add_space(10.0);
-                egui::ScrollArea::vertical().id_salt("update-details")
-                    .max_height((ctx.screen_rect().height() - 300.0).clamp(80.0, 240.0))
+        egui::Window::new("Software updates")
+            .id(egui::Id::new("updates"))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(400.0)
+            .frame(
+                egui::Frame::window(&ctx.style())
+                    .inner_margin(12.0)
+                    .corner_radius(10),
+            )
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                controls::info_header(ui, &self.theme, title, &subtitle, active);
+                ui.add_space(12.0);
+                if self.updates.installing {
+                    ui.add(egui::Label::new(&self.updates.message).wrap());
+                    ui.weak("You can keep editing while this finishes.");
+                } else if installed {
+                    ui.label("Reopen hedit to use the new version.");
+                } else if newer && self.updates.installation.is_none() {
+                    ui.weak("Manual installation required.");
+                }
+                // Keep long notes and diagnostic paths out of the default view.
+                egui::ScrollArea::vertical()
+                    .id_salt("update-details")
+                    .max_height((ctx.screen_rect().height() - 310.0).clamp(60.0, 180.0))
                     .show(ui, |ui| {
-                if self.updates.active() { ui.horizontal(|ui| { ui.spinner(); ui.label(&self.updates.message); }); }
-                else { ui.label(&self.updates.message); }
-                if let Some(error) = &self.updates.error { ui.colored_label(self.theme.error.color(), error); }
-                if let Some(release) = &self.updates.release {
-                    ui.hyperlink_to(format!("Release {} on GitHub ↗", release.tag), release.url());
-                    if !release.notes.is_empty() {
-                        egui::CollapsingHeader::new("Release notes").default_open(true).show(ui, |ui| {
-                            ui.add(egui::Label::new(&release.notes).wrap().selectable(true));
-                        });
-                    }
-                }
-                });
-                ui.add_space(8.0);
-                if self.updates.installed.is_none() && self.updates.release.as_ref().is_some_and(|r| r.newer_than(env!("CARGO_PKG_VERSION")).unwrap_or(false)) {
-                    if let Some(installation) = &self.updates.installation {
-                        let location = format!("Update location: {}", installation.location().display());
-                        ui.add(egui::Label::new(&location).truncate()).on_hover_text(location);
-                    }
-                    if let Some(error) = &self.updates.location_error { ui.colored_label(self.theme.warning.color(), error); }
-                }
-                if self.updates.installed.is_some() {
-                    ui.label("Quit and reopen hedit when you are ready to use the new version. Your current workspace stays open until then.");
-                    quit = ui.add_enabled(!self.busy && !self.closing, egui::Button::new("Quit hedit")).clicked();
-                } else {
-                    let active = self.updates.active();
-                    ui.horizontal(|ui| {
-                        check = ui.add_enabled(!active, egui::Button::new("Check again")).clicked();
-                        let newer = self.updates.release.as_ref().is_some_and(|r| r.newer_than(env!("CARGO_PKG_VERSION")).unwrap_or(false));
-                        install = ui.add_enabled(!active && newer && self.updates.installation.is_some(), egui::Button::new("Install update")).clicked();
+                        if !installed && !active {
+                            if let Some(release) = &self.updates.release {
+                                if !release.notes.is_empty() {
+                                    egui::CollapsingHeader::new("Release notes")
+                                        .default_open(false)
+                                        .show(ui, |ui| {
+                                            ui.add(
+                                                egui::Label::new(&release.notes)
+                                                    .wrap()
+                                                    .selectable(true),
+                                            );
+                                        });
+                                }
+                            }
+                        }
+                        if !installed
+                            && (self.updates.error.is_some()
+                                || newer
+                                    && (self.updates.location_error.is_some()
+                                        || self.updates.installation.is_some()))
+                        {
+                            egui::CollapsingHeader::new("Details")
+                                .default_open(false)
+                                .show(ui, |ui| {
+                                    if let Some(error) = &self.updates.error {
+                                        ui.add(
+                                            egui::Label::new(
+                                                RichText::new(error)
+                                                    .color(self.theme.error.color()),
+                                            )
+                                            .wrap()
+                                            .selectable(true),
+                                        );
+                                    }
+                                    if let Some(error) = &self.updates.location_error {
+                                        ui.add(egui::Label::new(error).wrap().selectable(true));
+                                    }
+                                    if let Some(installation) = &self.updates.installation {
+                                        ui.weak("Install location");
+                                        ui.add(
+                                            egui::Label::new(
+                                                installation.location().display().to_string(),
+                                            )
+                                            .wrap()
+                                            .selectable(true),
+                                        );
+                                    }
+                                });
+                        }
                     });
-                    if self.updates.installing { ui.weak("You can close this dialog and keep editing. Quitting hedit will wait for installation to finish."); }
-                    else { ui.weak("Downloads are verified against the release’s SHA-256 checksum. Installation does not restart the editor."); }
-                }
+                ui.add_space(8.0);
                 ui.separator();
-                ui.hyperlink_to("All releases / manual installation ↗", hedit::update::RELEASES_URL);
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.hyperlink_to("All releases", hedit::update::RELEASES_URL);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if installed {
+                            quit = controls::primary_button(
+                                ui,
+                                &self.theme,
+                                "Quit hedit",
+                                !self.busy && !self.closing,
+                            )
+                            .clicked();
+                        } else if newer && !active {
+                            if self.updates.installation.is_some() {
+                                install = controls::primary_button(
+                                    ui,
+                                    &self.theme,
+                                    "Install update",
+                                    true,
+                                )
+                                .clicked();
+                            } else if controls::primary_button(
+                                ui,
+                                &self.theme,
+                                "Download update",
+                                true,
+                            )
+                            .clicked()
+                            {
+                                ctx.open_url(egui::OpenUrl::new_tab(
+                                    self.updates.release.as_ref().unwrap().url(),
+                                ));
+                            }
+                        } else if !active {
+                            check = controls::primary_button(ui, &self.theme, "Check again", true)
+                                .clicked();
+                        }
+                        close = ui
+                            .add_sized(
+                                [64.0, 28.0],
+                                egui::Button::new(if installed { "Later" } else { "Close" }),
+                            )
+                            .clicked();
+                    });
+                });
             });
-        self.updates.open = open;
-        if !open {
+        self.updates.open = open && !close;
+        if !self.updates.open {
             self.focus_editor = true;
         }
         if check {
@@ -265,7 +380,7 @@ mod tests {
         assert!(!app.updates.installing());
     }
     #[test]
-    fn compact_update_dialog_keeps_install_action_visible_and_does_not_check_on_render() {
+    fn compact_update_dialog_keeps_actions_visible_and_does_not_check_on_render() {
         fn find(shape: &egui::Shape, text: &str) -> Option<egui::Rect> {
             match shape {
                 egui::Shape::Text(t) if t.galley.job.text == text => {
@@ -298,7 +413,7 @@ mod tests {
                 .unwrap()
                 .shapes
                 .iter()
-                .find_map(|s| find(&s.shape, "Install update"))
+                .find_map(|s| find(&s.shape, "Download update"))
                 .unwrap();
             assert!(screen.contains_rect(rect));
             assert!(!app.updates.active());
@@ -322,15 +437,42 @@ mod tests {
             app.updates.message = "hedit 9.4.0 is available.".into();
             app.updates.location_error =
                 Some("Source build: install a release package to enable updates in place.".into());
-            for (state, size) in [("available", [720.0, 480.0]), ("installed", [720.0, 480.0])] {
+            for (state, size) in [
+                ("available", [720.0, 480.0]),
+                ("installed", [720.0, 480.0]),
+                ("current", [720.0, 480.0]),
+                ("error", [720.0, 480.0]),
+                ("checking", [720.0, 480.0]),
+                ("installing", [720.0, 480.0]),
+                ("about", [720.0, 480.0]),
+            ] {
+                app.about_open = state == "about";
+                app.updates.open = state != "about";
+                let mut latest = release();
+                if state == "current" {
+                    latest.version = env!("CARGO_PKG_VERSION").parse().unwrap();
+                }
+                app.updates.release = if matches!(state, "error" | "checking") {
+                    None
+                } else {
+                    Some(latest)
+                };
+                app.updates.error = (state == "error").then(|| {
+                    "Could not connect. Check your internet connection and try again.".into()
+                });
+                let (_progress, events) = mpsc::channel();
+                app.updates.events = matches!(state, "checking" | "installing").then_some(events);
+                app.updates.installing = state == "installing";
+                app.updates.message = if state == "installing" {
+                    "Downloading update…".into()
+                } else {
+                    "Checking for updates…".into()
+                };
                 app.updates.installed = if state == "installed" {
                     Some("9.4.0".into())
                 } else {
                     None
                 };
-                if state == "installed" {
-                    app.updates.message = "hedit 9.4.0 is installed.".into();
-                }
                 let mut last = None;
                 for _ in 0..4 {
                     last = Some(ctx.run(
@@ -344,6 +486,7 @@ mod tests {
                         |ctx| {
                             app.chrome(ctx);
                             app.editor(ctx);
+                            app.preferences(ctx);
                             app.updates_window(ctx);
                         },
                     ));

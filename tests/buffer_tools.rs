@@ -56,6 +56,33 @@ fn shelf_reopens_selected_entry_and_retains_unselected_entries() {
 }
 
 #[test]
+fn closing_a_clean_disk_file_keeps_a_full_shelf_of_unsaved_notes() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("saved.txt");
+    fs::write(&path, "saved text").unwrap();
+    let (mut ws, _) = Workspace::restore(directory.path().join("session")).unwrap();
+    for n in 0..50 {
+        edit(&mut ws, &format!("unsaved note {n}"));
+        ws.close(ws.active).unwrap();
+    }
+    let notes: Vec<_> = ws.closed.iter().map(|view| view.id).collect();
+    let mut doc = Document::open(ws.editor.id(), &path).unwrap();
+    let id = doc.id;
+    let page = doc.page(0).unwrap();
+    ws.add(doc, page).unwrap();
+    ws.close(ws.active).unwrap();
+    assert_eq!(
+        ws.closed.iter().map(|view| view.id).collect::<Vec<_>>(),
+        notes
+    );
+    assert!(ws.editor.get(id).is_err());
+    assert!(ws.active < ws.open.len());
+    assert_eq!(fs::read_to_string(path).unwrap(), "saved text");
+    ws.reopen_at(0).unwrap();
+    assert_eq!(ws.open[ws.active].page.text, "unsaved note 0");
+}
+
+#[test]
 fn failed_shelf_read_does_not_remove_the_entry() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("file.txt");
