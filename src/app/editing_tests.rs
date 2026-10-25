@@ -1632,6 +1632,8 @@ fn close_all_and_unmodified_keep_pinned_and_changed_files() {
     app.execute(&ctx, Command::CloseUnmodified);
     assert_eq!(count(&app), 2, "the changed and the pinned files stay");
     app.execute(&ctx, Command::CloseAll);
+    assert!(app.close_flow.is_some());
+    app.choose_close(&ctx, super::close::Choice::Discard);
     assert_eq!(
         app.workspace.open.iter().filter(|b| b.view.pinned).count(),
         1

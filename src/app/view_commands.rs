@@ -41,7 +41,7 @@ impl HeditApp {
         self.open_pick_list(ctx, "Open recent file", "Filter recent files…", items);
     }
     /// Close every tab, or only those without unsaved changes. Pinned tabs
-    /// stay; disk-backed files prompt before discarding changes.
+    /// stay; unsaved files and non-empty untitled tabs prompt before closing.
     pub(super) fn close_tabs(&mut self, unmodified: bool) {
         let tabs = self
             .workspace

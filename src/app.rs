@@ -100,6 +100,7 @@ enum Action {
     History(u64, Page, bool, Vec<hedit::advanced::Selection>),
     Saved(u64, Info),
     SaveTo(u64, PathBuf),
+    SaveCancelled,
     Discarded(u64, Option<Page>),
     ThemeImported(Theme),
     DebugProgram(PathBuf),
@@ -701,7 +702,7 @@ impl HeditApp {
                 }
                 Ok(match dialog.save_file() {
                     Some(path) => Action::SaveTo(id, path),
-                    None => Action::Nothing,
+                    None => Action::SaveCancelled,
                 })
             });
         } else {
@@ -973,6 +974,10 @@ impl HeditApp {
                     }
                 }
                 Ok(Action::SaveTo(id, path)) => self.save_to_path(ctx, id, Some(path)),
+                Ok(Action::SaveCancelled) => {
+                    self.cancel_close();
+                    self.focus_editor = true;
+                }
                 Ok(Action::Discarded(id, page)) => {
                     if let Some(index) = self.workspace.open.iter().position(|b| b.view.id == id) {
                         if let Some(page) = page {

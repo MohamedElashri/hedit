@@ -9,6 +9,9 @@
 
 ### Fixed
 
+- Non-empty untitled tabs now offer Save, Don't Save, or Cancel before closing.
+  Save opens Save As; cancelling it leaves the tab open. Notes closed without
+  saving appear in Closed Files and retain their text across restarts.
 - Sidebar preview requests now finish when reopening shelved files and clear
   after failed opens, so a later explicit open is not treated as a preview.
 - Cancelling Go to Anything restores extra selections and horizontal scrolling.

@@ -174,6 +174,9 @@ fn quit_resolves_disk_edits_and_keeps_untitled_notes_in_recovery() {
         app.receive(&ctx);
         assert!(app.close_flow.is_some());
         assert!(!app.exit_ready);
+        assert!(app.active().page.info.path.is_none());
+        app.choose_close(&ctx, Choice::Discard);
+        assert!(app.active().page.info.path.is_some());
         app.choose_close(&ctx, choice);
         finish_app_job(&mut app, &ctx);
         let started = Instant::now();
@@ -288,6 +291,11 @@ fn dont_save_closes_missing_files_without_recreating_or_recovering_them() {
             }
             app.execute(&ctx, command);
             assert!(app.close_flow.is_some());
+            if command == Command::Quit {
+                // Acknowledge the untitled note before the disk-file prompt.
+                app.choose_close(&ctx, Choice::Discard);
+                assert_eq!(app.active().view.id, id);
+            }
             app.choose_close(&ctx, Choice::Discard);
             finish_app_job(&mut app, &ctx);
             assert!(app.close_flow.is_none());
@@ -316,7 +324,7 @@ fn dont_save_closes_missing_files_without_recreating_or_recovering_them() {
 }
 
 #[test]
-fn clean_files_and_untitled_notes_close_without_prompting() {
+fn clean_files_close_without_prompting_but_nonempty_untitled_tabs_prompt() {
     let (_directory, ctx, mut app, _path, id) = disk_app();
     app.save_to_path(&ctx, id, None);
     finish_app_job(&mut app, &ctx);
@@ -325,8 +333,106 @@ fn clean_files_and_untitled_notes_close_without_prompting() {
     assert!(!app.closing);
     edit(&mut app, "scratch notes");
     app.execute(&ctx, Command::Close);
-    assert!(app.close_flow.is_none());
-    app.execute(&ctx, Command::Reopen);
+    assert!(app.close_flow.is_some());
+    frame(&ctx, &mut app, vec![]);
+    let output = frame(&ctx, &mut app, vec![]);
+    for label in ["Save", "Don't Save", "Cancel"] {
+        assert!(output
+            .shapes
+            .iter()
+            .any(|s| text_rect(&s.shape, label).is_some()));
+    }
+    click_label(&ctx, &mut app, "Cancel");
     assert_eq!(app.active().page.text, "scratch notes");
+    assert!(app.close_flow.is_none());
+}
+
+#[test]
+fn nonempty_closed_notes_appear_in_closed_files_and_reopen_after_restart() {
+    let directory = tempfile::tempdir().unwrap();
+    let session = directory.path().join("session");
+    let (workspace, _) = Workspace::restore(session.clone()).unwrap();
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    edit(&mut app, "recover these notes\nwith another line λ");
+    let text = app.active().page.text.clone();
+    let id = app.active().view.id;
+    app.execute(&ctx, Command::Close);
+    frame(&ctx, &mut app, vec![]);
+    click_label(&ctx, &mut app, "Don't Save");
+    assert!(app.close_flow.is_none());
+    assert!(!app.workspace.open.iter().any(|b| b.view.id == id));
+    assert_eq!(app.workspace.closed.len(), 1);
+    app.workspace.checkpoint().unwrap();
+    drop(app);
+    let (workspace, errors) = Workspace::restore(session).unwrap();
+    assert!(errors.is_empty(), "{errors:?}");
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    app.execute(&ctx, Command::Shelf);
+    frame(&ctx, &mut app, vec![]);
+    let output = frame(&ctx, &mut app, vec![]);
+    assert!(output
+        .shapes
+        .iter()
+        .any(|s| text_rect(&s.shape, "recover these notes").is_some()));
+    click_label(&ctx, &mut app, "Reopen");
+    assert_eq!(app.active().page.text, text);
     assert!(app.active().page.info.path.is_none());
+    assert!(app.workspace.closed.is_empty());
+}
+
+#[test]
+fn cancelling_save_as_cancels_close_and_a_chosen_path_saves_then_shelves_the_note() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("saved-notes.txt");
+    let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    edit(&mut app, "keep these notes\n");
+    let id = app.active().view.id;
+    app.execute(&ctx, Command::Close);
+    // Deliver the native Save As dialog's cancellation/result without opening it in tests.
+    app.tx.send(Ok(Action::SaveCancelled)).unwrap();
+    app.receive(&ctx);
+    assert!(!app.closing);
+    assert!(app.close_flow.is_none());
+    assert_eq!(app.active().view.id, id);
+    assert_eq!(app.active().page.text, "keep these notes\n");
+    assert!(app.workspace.closed.is_empty());
+    assert!(!path.exists());
+    app.execute(&ctx, Command::Close);
+    app.tx.send(Ok(Action::SaveTo(id, path.clone()))).unwrap();
+    app.receive(&ctx);
+    finish_app_job(&mut app, &ctx);
+    assert!(!app.closing);
+    assert_eq!(std::fs::read_to_string(path).unwrap(), "keep these notes\n");
+    assert!(!app.workspace.open.iter().any(|b| b.view.id == id));
+    assert!(app.workspace.closed.iter().any(|b| b.id == id));
+    app.execute(&ctx, Command::Reopen);
+    assert_eq!(app.active().page.text, "keep these notes\n");
+    assert!(!app.active().page.info.dirty);
+}
+
+#[test]
+fn bulk_close_prompts_for_each_nonempty_note_and_keeps_both_on_the_shelf() {
+    let directory = tempfile::tempdir().unwrap();
+    let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    edit(&mut app, "first note");
+    let first = app.active().view.id;
+    app.execute(&ctx, Command::New);
+    edit(&mut app, "second note");
+    let second = app.active().view.id;
+    app.execute(&ctx, Command::CloseAll);
+    for id in [second, first] {
+        assert!(app.close_flow.is_some());
+        assert_eq!(app.active().view.id, id);
+        app.choose_close(&ctx, Choice::Discard);
+        assert!(app.workspace.closed.iter().any(|b| b.id == id));
+    }
+    assert!(app.close_flow.is_none());
+    assert_eq!(app.workspace.open.len(), 1);
+    assert!(app.active().page.text.is_empty());
+    assert_eq!(app.workspace.closed.len(), 2);
 }
