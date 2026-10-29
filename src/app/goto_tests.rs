@@ -1,6 +1,6 @@
 //! Go to Anything: @symbol, :line, and #text in Go to file.
 use super::goto_anything::{parse, Target};
-use super::tests::{finish_app_job, frame, key};
+use super::tests::{click_label, finish_app_job, frame, key};
 use super::*;
 
 #[test]
@@ -201,4 +201,152 @@ fn find_selects_matches_while_typing_and_highlights_them_all() {
     app.settings.match_selection = false;
     app.set_selections(vec![hedit::advanced::Selection { anchor: 4, head: 7 }]);
     assert!(app.selection_highlights().is_none());
+}
+
+#[test]
+fn find_reveals_offscreen_matches_without_leaving_the_search_field() {
+    for (query, wrap) in [("needle", true), ("a café sentence", false)] {
+        let padding = if wrap {
+            String::new()
+        } else {
+            "λ ".repeat(150)
+        };
+        let gap = "another line\n".repeat(120);
+        let text = format!("{gap}{padding}{query}\n{gap}{query}\n{gap}");
+        let directory = tempfile::tempdir().unwrap();
+        let (mut workspace, _) = Workspace::restore(directory.path().into()).unwrap();
+        workspace.open[0].page.text = text.clone();
+        workspace.edit(0, "").unwrap();
+        let ctx = egui::Context::default();
+        ctx.style_mut(|style| style.scroll_animation = egui::style::ScrollAnimation::none());
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        app.settings.word_wrap = wrap;
+        frame(&ctx, &mut app, vec![]);
+        frame(&ctx, &mut app, vec![key(Key::F, Modifiers::COMMAND)]);
+        frame(&ctx, &mut app, vec![egui::Event::Text(query.into())]);
+
+        let assert_visible = |app: &mut HeditApp, occurrence: usize| {
+            // Let the scroll offset and scrollbar layout settle.
+            frame(&ctx, app, vec![]);
+            frame(&ctx, app, vec![]);
+            let output = frame(&ctx, app, vec![]);
+            assert!(app.find_input_focused(&ctx));
+            let start = text.match_indices(query).nth(occurrence).unwrap().0;
+            let anchor = text[..start].chars().count();
+            let head = anchor + query.chars().count();
+            assert_eq!(
+                (app.active().view.anchor, app.active().view.head),
+                (anchor, head)
+            );
+            let (_, bidi) = app.editor_layout.last().unwrap();
+            fn visible(
+                shape: &egui::Shape,
+                clip: egui::Rect,
+                text: &str,
+                bidi: &bidi_view::BidiRows,
+                anchor: usize,
+                head: usize,
+            ) -> bool {
+                match shape {
+                    egui::Shape::Vec(shapes) => shapes
+                        .iter()
+                        .any(|shape| visible(shape, clip, text, bidi, anchor, head)),
+                    egui::Shape::Text(shape) if shape.galley.text() == text => {
+                        [anchor, head].into_iter().all(|at| {
+                            clip.contains_rect(
+                                bidi_view::caret_rect(&shape.galley, bidi, at)
+                                    .translate(shape.pos.to_vec2()),
+                            )
+                        })
+                    }
+                    _ => false,
+                }
+            }
+            assert!(
+                output.shapes.iter().any(|shape| visible(
+                    &shape.shape,
+                    shape.clip_rect,
+                    &text,
+                    &bidi,
+                    anchor,
+                    head,
+                )),
+                "the selected match must be visible (wrap={wrap}, occurrence={occurrence}, top={})",
+                app.active().view.scroll_top
+            );
+        };
+        assert_visible(&mut app, 0);
+        assert!(app.active().view.scroll_top > 0.0);
+        if !wrap {
+            assert!(app.active().view.scroll_left > 0.0);
+        }
+        // Enter follows later matches and wraps to the first; Shift+Enter
+        // follows previous matches and wraps to the last.
+        for (modifiers, occurrence) in [
+            (Modifiers::NONE, 1),
+            (Modifiers::NONE, 0),
+            (Modifiers::SHIFT, 1),
+            (Modifiers::SHIFT, 0),
+        ] {
+            frame(&ctx, &mut app, vec![key(Key::Enter, modifiers)]);
+            finish_app_job(&mut app, &ctx);
+            frame(&ctx, &mut app, vec![]);
+            assert_visible(&mut app, occurrence);
+        }
+        assert_eq!(app.active().page.text, text);
+    }
+}
+
+#[test]
+fn live_find_respects_selection_only_and_updates_when_toggled() {
+    let text = "hit α hit β hit";
+    let directory = tempfile::tempdir().unwrap();
+    let (mut workspace, _) = Workspace::restore(directory.path().into()).unwrap();
+    workspace.open[0].page.text = text.into();
+    workspace.edit(0, "").unwrap();
+    workspace.open[0].view.anchor = 4;
+    workspace.open[0].view.head = 11;
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![key(Key::F, Modifiers::COMMAND)]);
+    frame(&ctx, &mut app, vec![egui::Event::Text("hit".into())]);
+    assert_eq!(app.find_highlights().unwrap().len(), 3);
+    click_label(&ctx, &mut app, "Selection only");
+    assert_eq!(app.quality.match_status, "1 of 1");
+    assert_eq!(app.find_highlights().unwrap().as_slice(), [(6, 9)]);
+    // Narrowing the query must not jump to a match outside the scope.
+    app.query = "hit β hit".into();
+    app.find_as_you_type();
+    assert_eq!(app.quality.match_status, "No matches");
+    assert_eq!((app.active().view.anchor, app.active().view.head), (4, 4));
+    click_label(&ctx, &mut app, "Selection only");
+    assert_eq!(app.quality.match_status, "1 of 1");
+    assert_eq!((app.active().view.anchor, app.active().view.head), (6, 15));
+    assert_eq!(app.active().page.text, text);
+}
+
+#[test]
+fn live_find_counts_zero_width_regex_matches_and_enter_advances() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut workspace, _) = Workspace::restore(directory.path().into()).unwrap();
+    workspace.open[0].page.text = "α\nβ\nγ".into();
+    workspace.edit(0, "").unwrap();
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    app.quality.options.regex = true;
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![key(Key::F, Modifiers::COMMAND)]);
+    frame(&ctx, &mut app, vec![egui::Event::Text("^".into())]);
+    assert_eq!(app.quality.match_status, "1 of 3");
+    assert_eq!((app.active().view.anchor, app.active().view.head), (0, 0));
+    for head in [2, 4, 0] {
+        frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)]);
+        finish_app_job(&mut app, &ctx);
+        assert_eq!(
+            (app.active().view.anchor, app.active().view.head),
+            (head, head)
+        );
+    }
+    assert_eq!(app.active().page.text, "α\nβ\nγ");
 }

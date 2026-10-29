@@ -2457,15 +2457,16 @@ impl HeditApp {
                             });
                         }
                         if restore && buffer.reveal_cursor {
-                            if let Some(range) = output.cursor_range {
-                                let rect = bidi_view::caret_rect(
-                                    &output.galley,
-                                    &bidi_rows,
-                                    range.primary.ccursor.index,
-                                )
+                            // TextEdit only returns a cursor range when focused.
+                            // Find keeps focus in its field, so reveal the stored
+                            // selection head in display coordinates instead.
+                            let head = output.cursor_range.map_or_else(
+                                || projection.display(buffer.view.head),
+                                |range| range.primary.ccursor.index,
+                            );
+                            let rect = bidi_view::caret_rect(&output.galley, &bidi_rows, head)
                                 .translate(output.galley_pos.to_vec2());
-                                ui.scroll_to_rect(rect, Some(egui::Align::Center));
-                            }
+                            ui.scroll_to_rect(rect, Some(egui::Align::Center));
                         }
                         if let Some(range) = output.cursor_range {
                             let range = range.as_ccursor_range();

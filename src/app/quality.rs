@@ -110,6 +110,24 @@ pub(super) struct LastFind {
     start: usize,
     end: usize,
 }
+impl LastFind {
+    pub(super) fn at(
+        buffer: &hedit::workspace::Buffer,
+        query: &str,
+        options: &search::Options,
+    ) -> Self {
+        Self {
+            id: buffer.view.id,
+            revision: buffer.page.info.revision,
+            query: query.to_owned(),
+            options: options.clone(),
+            start: buffer.page.start as usize
+                + hedit::advanced::byte(&buffer.page.text, buffer.view.anchor),
+            end: buffer.page.start as usize
+                + hedit::advanced::byte(&buffer.page.text, buffer.view.head),
+        }
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum FileOperation {
     Rename,

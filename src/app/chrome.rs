@@ -714,9 +714,13 @@ impl HeditApp {
                     if options.iter().any(|r| r.changed()) {
                         self.find_as_you_type();
                     }
-                    ui.add_enabled_ui(self.quality.scope.is_some(), |ui| {
-                        ui.checkbox(&mut self.quality.selection_only, "Selection only");
+                    let selection_changed = ui.add_enabled_ui(self.quality.scope.is_some(), |ui| {
+                        ui.checkbox(&mut self.quality.selection_only, "Selection only")
+                            .changed()
                     });
+                    if selection_changed.inner {
+                        self.find_as_you_type();
+                    }
                     if ui
                         .add_enabled(!self.busy, egui::Button::new("Previous"))
                         .clicked()

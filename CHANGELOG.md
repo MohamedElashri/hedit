@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.9] - 2026-10-29
+
+### Fixed
+
+- Find now scrolls to off-screen matches while typing and navigating results,
+  including matches beyond the horizontal edge, while keeping the search field focused.
+- Find as you type now respects Selection only, refreshes immediately when it is
+  toggled, and limits highlights and match counts to the selected text.
+- Find as you type now recognizes zero-width regular expressions such as `^`
+  and `\b`; Enter advances past the current empty match instead of selecting it again.
+
 ## [0.1.8] - 2026-10-25
 
 ### Added

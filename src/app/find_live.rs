@@ -22,6 +22,7 @@ struct Key {
     start: u64,
     query: String,
     options: Options,
+    scope: std::ops::Range<usize>,
 }
 
 /// Match ranges in characters, at most `limit` of them.
@@ -29,9 +30,11 @@ fn find_ranges(
     text: &str,
     query: &str,
     options: &Options,
+    scope: std::ops::Range<usize>,
     limit: usize,
 ) -> Option<Vec<(usize, usize)>> {
     let regex = options.compile(query).ok()?;
+    let scoped = text.get(scope.clone())?;
     let mut ranges = Vec::new();
     let (mut byte, mut char) = (0, 0);
     let mut to_char = |target: usize| {
@@ -39,12 +42,9 @@ fn find_ranges(
         byte = target;
         char
     };
-    for m in regex.find_iter(text).take(limit) {
-        if m.start() == m.end() {
-            continue;
-        }
-        let a = to_char(m.start());
-        let b = to_char(m.end());
+    for m in regex.find_iter(scoped).take(limit) {
+        let a = to_char(scope.start + m.start());
+        let b = to_char(scope.start + m.end());
         ranges.push((a, b));
     }
     Some(ranges)
@@ -62,7 +62,13 @@ impl LiveFind {
                 return Some(Arc::clone(ranges));
             }
         }
-        let ranges = Arc::new(find_ranges(text, &key.query, &key.options, 20_000)?);
+        let ranges = Arc::new(find_ranges(
+            text,
+            &key.query,
+            &key.options,
+            key.scope.clone(),
+            20_000,
+        )?);
         *slot = Some((key, Arc::clone(&ranges)));
         Some(ranges)
     }
@@ -77,6 +83,7 @@ impl HeditApp {
             start: b.page.start,
             query: query.to_owned(),
             options,
+            scope: 0..b.page.text.len(),
         }
     }
     /// Every match of the Find bar's query on the page, when Find is open.
@@ -84,7 +91,18 @@ impl HeditApp {
         if !self.find_open || self.query.is_empty() {
             return None;
         }
-        let key = self.live_key(&self.query, self.quality.options.clone());
+        let mut key = self.live_key(&self.query, self.quality.options.clone());
+        if let Some((_, start, end)) = self
+            .quality
+            .scope
+            .filter(|(view, _, _)| self.quality.selection_only && *view == key.view)
+        {
+            let page = &self.active().page;
+            key.scope = start
+                .saturating_sub(page.start as usize)
+                .min(page.text.len())
+                ..end.saturating_sub(page.start as usize).min(page.text.len());
+        }
         let text = &self.workspace.open[self.workspace.active].page.text;
         self.live_find.cached(key, text, false)
     }
@@ -145,11 +163,14 @@ impl HeditApp {
                 let (start, end) = ranges[i];
                 b.view.anchor = start;
                 b.view.head = end;
+                self.quality.last_find =
+                    Some(quality::LastFind::at(b, &self.query, &self.quality.options));
                 self.quality.match_status = format!("{} of {}", i + 1, ranges.len());
             }
             None => {
                 b.view.anchor = origin;
                 b.view.head = origin;
+                self.quality.last_find = None;
                 self.quality.match_status = "No matches".into();
             }
         }
