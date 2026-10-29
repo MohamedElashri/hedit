@@ -43,7 +43,7 @@ impl HeditApp {
                 for (title, groups) in [
                     ("File", vec![vec![Command::New, Command::NewWindow, Command::Open, Command::OpenFolder], vec![Command::RefreshFolder, Command::CloseFolder], vec![Command::Save, Command::SaveAs, Command::Rename, Command::Encoding], vec![Command::OpenRecent], vec![Command::Close, Command::CloseAll, Command::CloseUnmodified, Command::Reopen, Command::Shelf], if cfg!(target_os = "macos") { vec![] } else { vec![Command::Quit] }]),
                     ("Edit", vec![]),
-                    ("Find", vec![vec![Command::Find, Command::Replace, Command::FindPrevious, Command::ReplaceAll, Command::FindFiles], vec![Command::SelectAllMatches, Command::UseSelectionForFind, Command::UseSelectionForReplace, Command::QuickFindNext, Command::QuickFindPrevious]]),
+                    ("Find", vec![vec![Command::Find, Command::Replace, Command::FindPrevious, Command::FindFiles], vec![Command::SelectAllMatches, Command::UseSelectionForFind, Command::UseSelectionForReplace, Command::QuickFindNext, Command::QuickFindPrevious]]),
                     ("View", vec![]),
                     ("Goto", vec![vec![Command::Switcher, Command::Goto, Command::Symbols, Command::GotoDefinition, Command::GotoReferences], vec![Command::NextTab, Command::PreviousTab, Command::RecentTab], vec![Command::NextChange, Command::PreviousChange], vec![Command::NavBack, Command::NavForward], vec![Command::Bookmark, Command::NextBookmark, Command::PreviousBookmark, Command::SelectBookmarks, Command::ClearBookmarks, Command::Bookmarks]]),
                     ("Project", vec![vec![Command::OpenProject,Command::SaveProject,Command::SaveProjectAs,Command::RecentProjects],vec![Command::ProjectSettings]]),
@@ -730,11 +730,30 @@ impl HeditApp {
                     ui.label(&self.quality.match_status);
                 });
                 if self.replace_open {
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         ui.label("With");
-                        let width = (ui.available_width() - 150.0).max(100.0);
+                        let buttons = ["Replace selected", "Replace all"].map(|label| {
+                            egui::WidgetText::from(label).into_galley(
+                                ui,
+                                Some(egui::TextWrapMode::Extend),
+                                f32::INFINITY,
+                                egui::TextStyle::Button,
+                            )
+                        });
+                        let button_width: f32 = buttons
+                            .iter()
+                            .map(|text| text.size().x + 2.0 * ui.spacing().button_padding.x)
+                            .sum();
+                        let margin = egui::Margin::symmetric(4, 2);
+                        let width = (ui.available_width()
+                            - button_width
+                            - 2.0 * ui.spacing().item_spacing.x
+                            - margin.sum().x)
+                            .max(100.0);
                         let response = bidi_view::field(ui, &mut self.replacement, |edit| {
-                            edit.desired_width(width).hint_text("Replacement text")
+                            edit.desired_width(width)
+                                .margin(margin)
+                                .hint_text("Replacement text")
                         });
                         if response.lost_focus()
                             && ui.input(|i| i.key_pressed(Key::Enter))
@@ -747,7 +766,7 @@ impl HeditApp {
                         if ui
                             .add_enabled(
                                 self.command_enabled(Command::Replace),
-                                egui::Button::new("Replace selected"),
+                                egui::Button::new(buttons[0].clone()),
                             )
                             .clicked()
                         {
@@ -757,7 +776,7 @@ impl HeditApp {
                         if ui
                             .add_enabled(
                                 self.command_enabled(Command::Replace),
-                                egui::Button::new("Replace all"),
+                                egui::Button::new(buttons[1].clone()),
                             )
                             .clicked()
                         {
@@ -915,6 +934,18 @@ impl HeditApp {
         }
     }
     fn view_menu(&self, ui: &mut egui::Ui, action: &mut Option<Command>) {
+        command_group(
+            ui,
+            self,
+            "Markdown",
+            &[
+                Command::MarkdownSource,
+                Command::MarkdownSplit,
+                Command::MarkdownPreview,
+                Command::MarkdownRefresh,
+            ],
+            action,
+        );
         command_group(
             ui,
             self,

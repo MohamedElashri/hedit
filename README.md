@@ -25,6 +25,7 @@ large-log viewing.
 
 - Recovery checkpoints, closed-file history, and undo/redo across sessions.
 - Multiple cursors, split panes, completions, and go-to-definition.
+- Markdown source, live split preview, and rendered reading modes, with math and Mermaid diagrams.
 - Paged large files and read-only log following.
 - Right-to-left Arabic and Hebrew, UTF-8/UTF-16, and legacy encodings.
 - CUDA source editing everywhere; local CUDA tools on Linux.

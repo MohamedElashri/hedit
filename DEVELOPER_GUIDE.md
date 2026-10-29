@@ -138,6 +138,7 @@ without a window belongs in the library, with tests under `tests/`.
 | Process and updates | `cli.rs`, `launcher.rs`, `ipc.rs`, `windows.rs`, `update.rs`, `update/`, `build.rs`, `debugger.rs` |
 | Window | `app.rs` (frame loop, shortcuts, editor drawing), `app/chrome.rs` (menus, tabs, sidebar, status bar), `app/commands.rs` (every command, the palette) |
 | App features | One file each in `src/app/`, named after the feature: `auto_complete.rs`, `definitions.rs`, `spell_check.rs`, `macros.rs`, `snippet_fields.rs`, `find_tools.rs`, `changes.rs`, `fold_gutter.rs`, `font_picker.rs`, and so on |
+| Markdown | `app/markdown.rs` (source/preview layout, background preparation, links, local images), `app/markdown_media.rs` (cached native math and Mermaid rendering), `app/markdown_tests.rs`; per-tab modes are stored in `session.rs` |
 | Settings | `settings.rs` (the `settings.json` schema), `app/settings_store.rs`, `app/preferences.rs`, `app/settings_pages.rs` |
 
 Every menu item, shortcut, and palette entry goes through `Command` in
@@ -244,3 +245,14 @@ The spell checker's en_US dictionary (`assets/dictionaries/en_US.aff` and
 `en_US.dic`) is from SCOWL and is built into the binary. Its notices are in
 [assets/dictionaries/en_US-LICENSE.txt](assets/dictionaries/en_US-LICENSE.txt),
 which ships with the packages; keep the two together.
+
+Math rendering uses `latex-rust` and its embedded STIX Two Math font. Keep the
+[font license](assets/licenses/STIX-Two-Math-OFL.txt),
+[renderer notice](assets/licenses/latex-rust-NOTICE.txt),
+[MIT license](assets/licenses/latex-rust-MIT.txt),
+[modified color table](assets/licenses/latex-rust-dvipsnames.tsv), and its
+[LPPL license](assets/licenses/LPPL-1.3c.txt) in distributed
+packages. Mermaid uses `mermaid-rs-renderer`; `resvg` rasterizes both kinds of SVG
+on worker threads without a browser or network fetches. Keep the
+[Mermaid MIT notice](assets/licenses/mermaid-rs-renderer-MIT.txt) and
+[resvg MIT notice](assets/licenses/resvg-MIT.txt) with the packages too.

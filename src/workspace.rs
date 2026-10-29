@@ -63,6 +63,7 @@ impl Buffer {
             tab_size: Some(4),
             custom_name: None,
             bookmarks: vec![],
+            markdown_view: Default::default(),
         });
         view.tab_size = Some(view.tab_size.unwrap_or(4).clamp(1, 8));
         if detect {

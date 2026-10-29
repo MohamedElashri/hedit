@@ -27,6 +27,10 @@ mod goto_anything;
 #[cfg(test)]
 mod goto_tests;
 mod macros;
+mod markdown;
+mod markdown_media;
+#[cfg(test)]
+mod markdown_tests;
 #[cfg(test)]
 mod overlay_tests;
 mod overlays;
@@ -222,6 +226,7 @@ pub struct HeditApp {
     /// Cursors made by Add cursor above/below and the column they keep.
     line_cursor_goal: Option<(Vec<hedit::advanced::Selection>, usize)>,
     live_find: find_live::LiveFind,
+    markdown: markdown::Markdown,
     /// Where the cursor was before Go to Anything previewed a result.
     goto_origin: Option<goto_anything::Origin>,
     /// The `font_face` in use, or being loaded.
@@ -388,6 +393,7 @@ impl HeditApp {
                 .unwrap_or_default(),
             line_cursor_goal: None,
             live_find: Default::default(),
+            markdown: Default::default(),
             goto_origin: None,
             font_applied: String::new(),
             editor_font: None,
@@ -830,6 +836,10 @@ impl HeditApp {
     }
     fn receive(&mut self, ctx: &egui::Context) {
         while let Ok(event) = self.rx.try_recv() {
+            let opened = matches!(
+                &event,
+                Ok(Action::Add(..) | Action::Activate(..) | Action::Reopen(..) | Action::Page(..))
+            );
             // Fonts and Git markers load beside jobs, not as them.
             let side = match &event {
                 Ok(Action::Quality(event)) => {
@@ -863,6 +873,7 @@ impl HeditApp {
                         let result = self.workspace.reopen_at(index);
                         if result.is_ok() {
                             if let Some((page, cursor)) = location {
+                                self.reveal_markdown_source(ctx);
                                 let buffer = &mut self.workspace.open[self.workspace.active];
                                 buffer.set_page(page);
                                 buffer.view.anchor = cursor;
@@ -949,6 +960,9 @@ impl HeditApp {
                         .position(|b| b.page.info.id == id)
                     {
                         self.workspace.active = index;
+                        if !reloaded && selection.is_some() {
+                            self.reveal_markdown_source(ctx);
+                        }
                         let buffer = &mut self.workspace.open[index];
                         if reloaded {
                             buffer.cursor_undo.clear();
@@ -973,10 +987,21 @@ impl HeditApp {
                         self.navigation_mark();
                     }
                 }
-                Ok(Action::SaveTo(id, path)) => self.save_to_path(ctx, id, Some(path)),
+                Ok(Action::SaveTo(id, path)) => {
+                    self.save_to_path(ctx, id, Some(path));
+                    // Formatting can fail before a save worker starts, after
+                    // the native Save As dialog has already returned a path.
+                    if !self.busy {
+                        self.cancel_close();
+                    }
+                }
                 Ok(Action::SaveCancelled) => {
-                    self.cancel_close();
-                    self.focus_editor = true;
+                    // Cancel a pending tab closure, but let an app shutdown
+                    // preserve the unsaved buffer through session recovery.
+                    if self.close_flow.is_some() {
+                        self.cancel_close();
+                    }
+                    self.focus_editor = !self.closing;
                 }
                 Ok(Action::Discarded(id, page)) => {
                     if let Some(index) = self.workspace.open.iter().position(|b| b.view.id == id) {
@@ -1081,6 +1106,9 @@ impl HeditApp {
                     self.error = Some(error);
                     self.cancel_close();
                 }
+            }
+            if !side && !self.busy {
+                self.finish_markdown_link(ctx, opened);
             }
         }
         while let Ok(checkpoint) = self.checkpoint_rx.try_recv() {
@@ -1447,6 +1475,7 @@ impl HeditApp {
         }
         if self.focus_editor
             && self.panes.mode != 0
+            && !self.markdown_preview_only()
             && !self.preferences_open
             && !self.palette
             && !self.find_focus
@@ -1455,7 +1484,7 @@ impl HeditApp {
         {
             ctx.memory_mut(|m| m.request_focus(editor_id));
         }
-        if ctx.memory(|m| m.has_focus(editor_id)) {
+        if !self.markdown_preview_only() && ctx.memory(|m| m.has_focus(editor_id)) {
             self.completion_keys(ctx);
             self.clipboard_events(ctx);
             let line_cursor = if cfg!(target_os = "macos") {
@@ -1582,6 +1611,7 @@ impl HeditApp {
         }
     }
     fn editor(&mut self, ctx: &egui::Context) {
+        self.markdown.retain_documents(ctx, &self.workspace.open);
         self.apply_editor_style(ctx);
         let theme = self.theme.clone();
         egui::CentralPanel::default()
@@ -1632,6 +1662,9 @@ impl HeditApp {
         ui.add_space(6.0);
     }
     fn editor_pane(&mut self, ui: &mut egui::Ui, pane_id: usize) {
+        self.markdown_pane(ui, pane_id);
+    }
+    fn editor_source_pane(&mut self, ui: &mut egui::Ui, pane_id: usize) {
         if self.distraction_free {
             let mut rect = ui.available_rect_before_wrap();
             let width = ui

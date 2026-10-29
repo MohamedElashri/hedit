@@ -34,6 +34,10 @@ with tempfile.TemporaryDirectory(prefix='hedit-package-smoke-') as work:
                      'share/doc/hedit/README.md', 'share/doc/hedit/USER_GUIDE.md',
                      'share/doc/hedit/DEVELOPER_GUIDE.md', 'share/doc/hedit/LICENSE',
                      'share/doc/hedit/assets/hedit-lockup-light.svg',
+                     'share/doc/hedit/assets/licenses/STIX-Two-Math-OFL.txt',
+                     'share/doc/hedit/assets/licenses/latex-rust-NOTICE.txt',
+                     'share/doc/hedit/assets/licenses/latex-rust-dvipsnames.tsv',
+                     'share/doc/hedit/assets/licenses/LPPL-1.3c.txt',
                      'share/hedit/themes/hedit-ink.json']:
         assert (prefix / relative).is_file(), relative
     assert (package / 'examples/cuda/vector_add.cu').is_file()

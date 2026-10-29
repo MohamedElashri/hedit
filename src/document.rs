@@ -124,6 +124,12 @@ pub struct SavedPiece {
     len: u64,
 }
 impl SavedDocument {
+    pub(crate) fn without_history(&self) -> Option<Self> {
+        let mut content = self.clone();
+        content.history.take()?;
+        Some(content)
+    }
+
     pub fn missing_source_file(&self) -> bool {
         !self.dirty
             && self.buffer.is_none()

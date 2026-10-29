@@ -1,11 +1,8 @@
-//! Resolve unsaved changes before closing tabs, retaining untitled notes on the shelf.
+//! Confirm tab closure; preserve open buffers in session recovery on quit.
 use super::*;
 
 pub(super) struct CloseFlow {
     tabs: VecDeque<u64>,
-    quit: bool,
-    /// Untitled notes acknowledged during quit remain in session recovery.
-    preserved: std::collections::HashSet<u64>,
 }
 
 fn needs_confirmation(buffer: &Buffer) -> bool {
@@ -25,25 +22,20 @@ pub(super) enum Choice {
 
 impl HeditApp {
     pub(super) fn request_close(&mut self, tabs: Vec<u64>) {
-        self.begin_close(tabs, false);
-    }
-
-    pub(super) fn request_quit(&mut self) {
-        let tabs = self.workspace.open.iter().map(|b| b.view.id).collect();
-        self.begin_close(tabs, true);
-    }
-
-    fn begin_close(&mut self, tabs: Vec<u64>, quit: bool) {
         if self.closing {
             return;
         }
         self.closing = true;
-        self.close_flow = Some(CloseFlow {
-            tabs: tabs.into(),
-            quit,
-            preserved: Default::default(),
-        });
+        self.close_flow = Some(CloseFlow { tabs: tabs.into() });
         self.advance_close();
+    }
+
+    pub(super) fn request_quit(&mut self) {
+        // Leave every tab open for session recovery. receive() waits for jobs
+        // and a successful checkpoint before allowing the window to close.
+        self.close_flow = None;
+        self.closing = true;
+        self.focus_editor = false;
     }
 
     pub(super) fn cancel_close(&mut self) {
@@ -60,23 +52,9 @@ impl HeditApp {
         }
         while let Some(flow) = self.close_flow.as_mut() {
             let Some(&id) = flow.tabs.front() else {
-                let quit = flow.quit;
-                // A job already running when the window closed may have
-                // opened another unsaved tab after the initial list.
-                if quit {
-                    if let Some(buffer) = self
-                        .workspace
-                        .open
-                        .iter()
-                        .find(|b| needs_confirmation(b) && !flow.preserved.contains(&b.view.id))
-                    {
-                        flow.tabs.push_back(buffer.view.id);
-                        continue;
-                    }
-                }
                 self.close_flow = None;
-                self.closing = quit;
-                self.focus_editor = !quit;
+                self.closing = false;
+                self.focus_editor = true;
                 return;
             };
             let Some(index) = self.workspace.open.iter().position(|b| b.view.id == id) else {
@@ -84,7 +62,7 @@ impl HeditApp {
                 continue;
             };
             let buffer = &self.workspace.open[index];
-            if needs_confirmation(buffer) && !flow.preserved.contains(&id) {
+            if needs_confirmation(buffer) {
                 if self.workspace.active != index {
                     self.workspace.active = index;
                     self.changed();
@@ -93,15 +71,13 @@ impl HeditApp {
                 return;
             }
             flow.tabs.pop_front();
-            if !flow.quit {
-                let result = self.workspace.close(index);
-                if let Err(error) = result {
-                    self.error = Some(error);
-                    self.cancel_close();
-                    return;
-                }
-                self.changed();
+            let result = self.workspace.close(index);
+            if let Err(error) = result {
+                self.error = Some(error);
+                self.cancel_close();
+                return;
             }
+            self.changed();
         }
     }
 
@@ -135,19 +111,13 @@ impl HeditApp {
                     return;
                 };
                 if self.workspace.open[index].page.info.path.is_none() {
-                    let quit = self.close_flow.as_ref().is_some_and(|flow| flow.quit);
-                    if !quit {
-                        if let Err(error) = self.workspace.close(index) {
-                            self.error = Some(error);
-                            self.cancel_close();
-                            return;
-                        }
+                    if let Err(error) = self.workspace.close(index) {
+                        self.error = Some(error);
+                        self.cancel_close();
+                        return;
                     }
                     if let Some(flow) = self.close_flow.as_mut() {
                         flow.tabs.pop_front();
-                        if quit {
-                            flow.preserved.insert(id);
-                        }
                     }
                     self.changed();
                     self.advance_close();
@@ -205,8 +175,6 @@ impl HeditApp {
             ui.add_space(8.0);
             ui.label(if buffer.page.info.path.is_some() {
                 "Your changes will be lost if you don't save them."
-            } else if self.close_flow.as_ref().is_some_and(|flow| flow.quit) {
-                "Your note will be restored when you reopen hedit."
             } else {
                 "Your note will remain in Closed Files if you don't save it."
             });

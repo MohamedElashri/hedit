@@ -82,6 +82,16 @@ pub(super) fn rasterize(
     size: egui::Vec2,
     scale: f32,
 ) -> Vec<u8> {
+    rasterize_with_textures(ctx, output, size, scale, &Default::default())
+}
+
+pub(super) fn rasterize_with_textures(
+    ctx: &egui::Context,
+    output: egui::FullOutput,
+    size: egui::Vec2,
+    scale: f32,
+    textures: &std::collections::HashMap<egui::TextureId, egui::ColorImage>,
+) -> Vec<u8> {
     let size = size * scale;
     let (width, height) = (size.x as usize, size.y as usize);
     let font = ctx.fonts(|f| f.image());
@@ -139,21 +149,29 @@ pub(super) fn rasterize(
                     };
                     let color: [f32; 4] =
                         [0, 1, 2, 3].map(|c| mix(&|v| v.color.to_array()[c] as f32 / 255.0));
-                    let coverage = if mesh.texture_id == egui::TextureId::default() {
+                    let sample = if mesh.texture_id == egui::TextureId::default() {
                         let (u, t) = (mix(&|v| v.uv.x), mix(&|v| v.uv.y));
                         let (u, t) = (
                             (u * font.size[0] as f32) as usize,
                             (t * font.size[1] as f32) as usize,
                         );
-                        font.pixels
-                            [t.min(font.size[1] - 1) * font.size[0] + u.min(font.size[0] - 1)]
+                        [font.pixels
+                            [t.min(font.size[1] - 1) * font.size[0] + u.min(font.size[0] - 1)];
+                            4]
+                    } else if let Some(texture) = textures.get(&mesh.texture_id) {
+                        let x = (mix(&|v| v.uv.x) * texture.size[0] as f32) as usize;
+                        let y = (mix(&|v| v.uv.y) * texture.size[1] as f32) as usize;
+                        texture.pixels[y.min(texture.size[1] - 1) * texture.size[0]
+                            + x.min(texture.size[0] - 1)]
+                        .to_array()
+                        .map(|c| c as f32 / 255.0)
                     } else {
-                        1.0
+                        [1.0; 4]
                     };
                     let pixel = &mut canvas[y * width + x];
-                    let alpha = color[3] * coverage;
+                    let alpha = color[3] * sample[3];
                     for c in 0..3 {
-                        pixel[c] = color[c] * coverage + pixel[c] * (1.0 - alpha);
+                        pixel[c] = color[c] * sample[c] + pixel[c] * (1.0 - alpha);
                     }
                 }
             }

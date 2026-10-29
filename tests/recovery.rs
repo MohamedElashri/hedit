@@ -201,6 +201,66 @@ fn missing_recovery_buffer_is_retained_in_future_manifests() {
 }
 
 #[test]
+fn damaged_undo_history_does_not_hide_intact_open_or_closed_notes() {
+    for closed in [false, true] {
+        for damage in ["missing", "truncated", "metadata"] {
+            let directory = tempfile::tempdir().unwrap();
+            let (mut ws, _) = Workspace::restore(directory.path().into()).unwrap();
+            edit(&mut ws, "earlier text");
+            edit(&mut ws, "latest notes λ\n");
+            if closed {
+                ws.close(ws.active).unwrap();
+            }
+            ws.checkpoint().unwrap();
+            drop(ws);
+            let manifest = directory.path().join("session.json");
+            let mut saved: serde_json::Value =
+                serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+            let tab = &mut saved[if closed { "closed" } else { "open" }][0];
+            let history = &mut tab["document"]["history"];
+            if damage == "metadata" {
+                history["undo"][0]["size"] = (33 * 1024 * 1024).into();
+                fs::write(&manifest, serde_json::to_vec(&saved).unwrap()).unwrap();
+            } else {
+                let source = history["undo"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find_map(|state| state["pieces"][0]["buffer"].as_str())
+                    .unwrap();
+                let source = directory.path().join(source);
+                if damage == "missing" {
+                    fs::remove_file(source).unwrap();
+                } else {
+                    fs::write(source, "").unwrap();
+                }
+            }
+            let (mut ws, errors) = Workspace::restore(directory.path().into()).unwrap();
+            assert!(
+                errors.iter().any(|error| error.contains("undo history")),
+                "{errors:?}"
+            );
+            if closed {
+                assert_eq!(
+                    ws.closed.len(),
+                    1,
+                    "{damage}: the note must remain on the shelf"
+                );
+                ws.reopen().unwrap();
+            }
+            assert_eq!(ws.open[ws.active].page.text, "latest notes λ\n", "{damage}");
+            assert!(ws.open[ws.active].page.info.dirty);
+            // Future checkpoints must not reattach the damaged history.
+            ws.checkpoint().unwrap();
+            drop(ws);
+            let (ws, errors) = Workspace::restore(directory.path().into()).unwrap();
+            assert!(errors.is_empty(), "{errors:?}");
+            assert_eq!(ws.open[ws.active].page.text, "latest notes λ\n");
+        }
+    }
+}
+
+#[test]
 fn closed_history_never_evicts_unsaved_snippets() {
     let directory = tempfile::tempdir().unwrap();
     let (mut ws, _) = Workspace::restore(directory.path().into()).unwrap();

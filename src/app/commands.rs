@@ -3,6 +3,10 @@ use super::*;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum Command {
+    MarkdownSource,
+    MarkdownSplit,
+    MarkdownPreview,
+    MarkdownRefresh,
     FindFiles,
     FindPrevious,
     SelectAllMatches,
@@ -205,6 +209,10 @@ pub(super) enum Command {
 }
 impl Command {
     pub(super) const ALL: &'static [Self] = &[
+        Self::MarkdownSource,
+        Self::MarkdownSplit,
+        Self::MarkdownPreview,
+        Self::MarkdownRefresh,
         Self::FindFiles,
         Self::FindPrevious,
         Self::SelectAllMatches,
@@ -437,6 +445,10 @@ impl Command {
     }
     pub(super) fn label(self) -> &'static str {
         match self {
+            Self::MarkdownSource => "Markdown: show source",
+            Self::MarkdownSplit => "Markdown: split source and preview",
+            Self::MarkdownPreview => "Markdown: render preview",
+            Self::MarkdownRefresh => "Markdown: refresh preview",
             Self::FindFiles => "Find in folders…",
             Self::FindPrevious => "Find previous",
             Self::SelectAllMatches => "Select all matches",
@@ -954,6 +966,12 @@ impl HeditApp {
             return false;
         }
         match command {
+            Command::MarkdownSource => self.active().language() == syntax::Language::Markdown,
+            Command::MarkdownSplit | Command::MarkdownPreview => self.markdown_available(),
+            Command::MarkdownRefresh => {
+                self.markdown_available()
+                    && self.active().view.markdown_view != hedit::session::MarkdownView::Source
+            }
             Command::Close => self.workspace.can_close(self.workspace.active),
             Command::NextOccurrence
             | Command::AllOccurrences
@@ -1047,6 +1065,15 @@ impl HeditApp {
     }
     pub(super) fn command_selected(&self, command: Command) -> bool {
         match command {
+            Command::MarkdownSource => {
+                self.active().view.markdown_view == hedit::session::MarkdownView::Source
+            }
+            Command::MarkdownSplit => {
+                self.active().view.markdown_view == hedit::session::MarkdownView::Split
+            }
+            Command::MarkdownPreview => {
+                self.active().view.markdown_view == hedit::session::MarkdownView::Preview
+            }
             Command::PinTab => self.active().view.pinned,
             Command::AutoIndent => self.settings.auto_indent,
             Command::SmartIndent => self.settings.smart_indent,
@@ -1097,10 +1124,36 @@ impl HeditApp {
         if !self.command_enabled(command) {
             return;
         }
+        if self.markdown_preview_only()
+            && matches!(
+                command,
+                Command::Find
+                    | Command::Replace
+                    | Command::FindPrevious
+                    | Command::Goto
+                    | Command::GotoDefinition
+                    | Command::GotoReferences
+                    | Command::Symbols
+                    | Command::NavBack
+                    | Command::NavForward
+            )
+        {
+            self.set_markdown_view(ctx, hedit::session::MarkdownView::Split);
+        }
         if command.opens_window() {
             self.close_transient(ctx);
         }
         match command {
+            Command::MarkdownSource => {
+                self.set_markdown_view(ctx, hedit::session::MarkdownView::Source)
+            }
+            Command::MarkdownSplit => {
+                self.set_markdown_view(ctx, hedit::session::MarkdownView::Split)
+            }
+            Command::MarkdownPreview => {
+                self.set_markdown_view(ctx, hedit::session::MarkdownView::Preview)
+            }
+            Command::MarkdownRefresh => self.refresh_markdown(ctx),
             Command::FindFiles => {
                 self.quality.folders_open = true;
                 self.quality.folder_focus = true;

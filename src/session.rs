@@ -14,6 +14,15 @@ use tempfile::{Builder, NamedTempFile};
 
 const MANIFEST_LIMIT: u64 = 16 * 1024 * 1024;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MarkdownView {
+    #[default]
+    Source,
+    Split,
+    Preview,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TabView {
@@ -39,6 +48,8 @@ pub struct TabView {
     pub custom_name: Option<String>,
     #[serde(default)]
     pub bookmarks: Vec<Bookmark>,
+    #[serde(default)]
+    pub markdown_view: MarkdownView,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Bookmark {
@@ -329,7 +340,23 @@ impl SessionStore {
         };
         for (closed, entries) in [(false, saved.open), (true, saved.closed)] {
             for (index, mut entry) in entries.into_iter().enumerate() {
-                match Document::recover(editor.id(), &entry.document, &self.directory) {
+                let id = editor.id();
+                let recovered =
+                    Document::recover(id, &entry.document, &self.directory).or_else(|error| {
+                        // Undo data is optional: a damaged history file must
+                        // not hide a note whose current text is still intact.
+                        let Some(content) = entry.document.without_history() else {
+                            return Err(error);
+                        };
+                        let doc = Document::recover(id, &content, &self.directory)?;
+                        restored.errors.push(format!(
+                            "Recovered {} without undo history: {error}",
+                            entry.view.name
+                        ));
+                        entry.document = content;
+                        Ok(doc)
+                    });
+                match recovered {
                     Ok(doc) => {
                         let info = doc.info();
                         if entry.document.buffer.is_some() || entry.document.pieces.is_some() {

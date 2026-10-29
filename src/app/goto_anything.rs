@@ -87,11 +87,13 @@ pub(super) struct Origin {
     selections: Vec<hedit::advanced::Selection>,
     scroll_top: f64,
     scroll_left: f64,
+    markdown_view: hedit::session::MarkdownView,
 }
 
 impl HeditApp {
     /// Move the cursor to a 1-based line and column in the active file.
     pub(super) fn jump_to_line(&mut self, ctx: &egui::Context, line: usize, column: Option<usize>) {
+        self.reveal_markdown_source(ctx);
         if self.active().page.info.paged {
             self.goto = line.to_string();
             self.goto_location(ctx, line.max(1) as u64, column.unwrap_or(1).max(1) as u64);
@@ -132,6 +134,7 @@ impl HeditApp {
                 selections: b.view.selections.clone(),
                 scroll_top: b.view.scroll_top,
                 scroll_left: b.view.scroll_left,
+                markdown_view: b.view.markdown_view,
             });
         }
         self.jump_to_line(ctx, line, column);
@@ -155,6 +158,7 @@ impl HeditApp {
         b.view.selections = origin.selections;
         b.view.scroll_top = origin.scroll_top;
         b.view.scroll_left = origin.scroll_left;
+        b.view.markdown_view = origin.markdown_view;
         b.restore_cursor = true;
         b.reveal_cursor = false;
         self.changed();

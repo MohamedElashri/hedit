@@ -151,9 +151,9 @@ fn dont_save_discards_from_shelf_undo_and_recovery_without_writing() {
 }
 
 #[test]
-fn escape_cancels_quit_and_shortcuts_cannot_edit_behind_prompt() {
+fn escape_cancels_tab_close_and_shortcuts_cannot_edit_behind_prompt() {
     let (_directory, ctx, mut app, path, id) = disk_app();
-    app.execute(&ctx, Command::Quit);
+    app.execute(&ctx, Command::Close);
     frame(&ctx, &mut app, vec![key(Key::W, Modifiers::COMMAND)]);
     assert!(app.close_flow.is_some());
     assert_eq!(app.active().view.id, id);
@@ -165,44 +165,58 @@ fn escape_cancels_quit_and_shortcuts_cannot_edit_behind_prompt() {
 }
 
 #[test]
-fn quit_resolves_disk_edits_and_keeps_untitled_notes_in_recovery() {
-    for choice in [Choice::Save, Choice::Discard] {
+fn quit_preserves_all_unsaved_buffers_without_prompting_across_restarts() {
+    for window_close in [false, true] {
         let (directory, ctx, mut app, path, _) = disk_app();
         app.workspace.active = 0;
         edit(&mut app, "scratch notes");
-        app.execute(&ctx, Command::Quit);
-        app.receive(&ctx);
-        assert!(app.close_flow.is_some());
-        assert!(!app.exit_ready);
-        assert!(app.active().page.info.path.is_none());
-        app.choose_close(&ctx, Choice::Discard);
-        assert!(app.active().page.info.path.is_some());
-        app.choose_close(&ctx, choice);
-        finish_app_job(&mut app, &ctx);
-        let started = Instant::now();
-        while !app.exit_ready {
-            assert!(started.elapsed() < Duration::from_secs(5));
-            app.receive(&ctx);
-            thread::sleep(Duration::from_millis(5));
+        for _ in 0..3 {
+            let ids: Vec<_> = app.workspace.open.iter().map(|b| b.view.id).collect();
+            if window_close {
+                // The native window-close handler uses the same request.
+                app.request_quit();
+            } else {
+                app.execute(&ctx, Command::Quit);
+            }
+            assert!(app.close_flow.is_none(), "quitting must not ask to save");
+            let output = frame(&ctx, &mut app, vec![]);
+            for label in ["Save", "Don't Save", "Cancel"] {
+                assert!(!output
+                    .shapes
+                    .iter()
+                    .any(|s| text_rect(&s.shape, label).is_some()));
+            }
+            finish_quit(&mut app, &ctx);
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), "original\n");
+            drop(app);
+            let (restored, errors) = Workspace::restore(directory.path().join("session")).unwrap();
+            assert!(errors.is_empty(), "{errors:?}");
+            assert_eq!(
+                restored.open.iter().map(|b| b.view.id).collect::<Vec<_>>(),
+                ids
+            );
+            assert!(restored
+                .open
+                .iter()
+                .any(|b| { b.page.info.path.is_none() && b.page.text == "scratch notes" }));
+            assert!(restored.open.iter().any(|b| {
+                b.page.info.path.is_some() && b.page.text == "edited\n" && b.page.info.dirty
+            }));
+            assert!(restored.closed.is_empty());
+            app = HeditApp::from_context(&ctx, None, restored, vec![], vec![]);
         }
-        let expected = if matches!(choice, Choice::Save) {
-            "edited\n"
-        } else {
-            "original\n"
-        };
-        assert_eq!(std::fs::read_to_string(path).unwrap(), expected);
-        drop(app);
-        let (restored, errors) = Workspace::restore(directory.path().join("session")).unwrap();
-        assert!(errors.is_empty(), "{errors:?}");
-        assert!(restored
-            .open
-            .iter()
-            .any(|b| b.page.info.path.is_none() && b.page.text == "scratch notes"));
-        assert!(restored
-            .open
-            .iter()
-            .any(|b| b.page.info.path.is_some() && b.page.text == expected && !b.page.info.dirty));
     }
+}
+
+fn finish_quit(app: &mut HeditApp, ctx: &egui::Context) {
+    let started = Instant::now();
+    while !app.exit_ready {
+        assert!(started.elapsed() < Duration::from_secs(5));
+        app.receive(ctx);
+        assert!(app.error.is_none(), "{:?}", app.error);
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(app.generation, app.persisted);
 }
 
 #[test]
@@ -269,7 +283,7 @@ fn enter_saves_and_closes_from_the_prompt() {
 }
 
 #[test]
-fn dont_save_closes_missing_files_without_recreating_or_recovering_them() {
+fn missing_files_are_discarded_on_tab_close_but_preserved_on_quit() {
     for saved_before in [false, true] {
         for command in [Command::Close, Command::Quit] {
             let directory = tempfile::tempdir().unwrap();
@@ -284,43 +298,135 @@ fn dont_save_closes_missing_files_without_recreating_or_recovering_them() {
             edit(&mut app, "keep these notes");
             app.open(&ctx, Some(path.clone()));
             finish_app_job(&mut app, &ctx);
-            edit(&mut app, "discard these edits");
+            edit(&mut app, "unsaved edits");
             let id = app.active().view.id;
             if saved_before {
                 std::fs::remove_file(&path).unwrap();
             }
             app.execute(&ctx, command);
-            assert!(app.close_flow.is_some());
-            if command == Command::Quit {
-                // Acknowledge the untitled note before the disk-file prompt.
+            if command == Command::Close {
+                assert!(app.close_flow.is_some());
                 app.choose_close(&ctx, Choice::Discard);
-                assert_eq!(app.active().view.id, id);
+                finish_app_job(&mut app, &ctx);
+                assert!(!app.workspace.open.iter().any(|b| b.view.id == id));
+                assert!(!app.workspace.closed.iter().any(|b| b.id == id));
+                assert!(app.workspace.editor.get(id).is_err());
+                app.workspace.checkpoint().unwrap();
+            } else {
+                assert!(app.close_flow.is_none());
+                finish_quit(&mut app, &ctx);
             }
-            app.choose_close(&ctx, Choice::Discard);
-            finish_app_job(&mut app, &ctx);
             assert!(app.close_flow.is_none());
             assert!(!path.exists());
-            assert!(!app.workspace.open.iter().any(|b| b.view.id == id));
-            assert!(!app.workspace.closed.iter().any(|b| b.id == id));
-            assert!(app.workspace.editor.get(id).is_err());
-            if command == Command::Quit {
-                let started = Instant::now();
-                while !app.exit_ready {
-                    assert!(started.elapsed() < Duration::from_secs(5));
-                    app.receive(&ctx);
-                    assert!(app.error.is_none(), "{:?}", app.error);
-                    thread::sleep(Duration::from_millis(5));
-                }
-            }
-            app.workspace.checkpoint().unwrap();
             drop(app);
             let (restored, errors) = Workspace::restore(session).unwrap();
             assert!(errors.is_empty(), "{errors:?}");
-            assert_eq!(restored.open.len(), 1);
             assert_eq!(restored.open[0].page.text, "keep these notes");
             assert!(restored.closed.is_empty());
+            if command == Command::Close {
+                assert_eq!(restored.open.len(), 1);
+            } else {
+                assert_eq!(restored.open.len(), 2);
+                assert_eq!(restored.open[1].view.id, id);
+                assert_eq!(restored.open[1].page.text, "unsaved edits");
+                assert!(restored.open[1].page.info.dirty);
+            }
         }
     }
+}
+
+#[test]
+fn quitting_during_a_tab_close_prompt_preserves_the_tab() {
+    let (directory, ctx, mut app, path, id) = disk_app();
+    app.execute(&ctx, Command::Close);
+    assert!(app.close_flow.is_some());
+    app.request_quit();
+    assert!(app.close_flow.is_none());
+    finish_quit(&mut app, &ctx);
+    assert_eq!(std::fs::read_to_string(path).unwrap(), "original\n");
+    drop(app);
+    let (restored, errors) = Workspace::restore(directory.path().join("session")).unwrap();
+    assert!(errors.is_empty(), "{errors:?}");
+    assert!(restored
+        .open
+        .iter()
+        .any(|b| b.view.id == id && b.page.text == "edited\n"));
+}
+
+#[test]
+fn quitting_waits_for_inflight_buffers_and_checkpoints_them() {
+    let (directory, ctx, mut app, _, _) = disk_app();
+    let id = app.workspace.editor.id();
+    let mut doc = Document::empty(id);
+    doc.replace(
+        0,
+        0,
+        "arrived during shutdown λ".into(),
+        doc.info().revision,
+    )
+    .unwrap();
+    let page = doc.page(0).unwrap();
+    let (release, wait) = mpsc::channel();
+    app.job(&ctx, move || {
+        wait.recv().map_err(|e| e.to_string())?;
+        Ok(Action::Add(doc, page, 0))
+    });
+    app.request_quit();
+    app.receive(&ctx);
+    assert!(!app.exit_ready);
+    assert!(app.closing);
+    assert!(app.close_flow.is_none());
+    release.send(()).unwrap();
+    finish_quit(&mut app, &ctx);
+    drop(app);
+    let (restored, errors) = Workspace::restore(directory.path().join("session")).unwrap();
+    assert!(errors.is_empty(), "{errors:?}");
+    assert!(restored.open.iter().any(|b| {
+        b.view.id == id && b.page.text == "arrived during shutdown λ" && b.page.info.dirty
+    }));
+}
+
+#[test]
+fn failed_quit_checkpoint_keeps_the_window_and_unsaved_edits_then_retries() {
+    let (directory, ctx, mut app, path, _) = disk_app();
+    // Finish any earlier checkpoint before blocking replacement of the manifest.
+    let started = Instant::now();
+    while app.checkpoint_pending {
+        assert!(started.elapsed() < Duration::from_secs(5));
+        app.receive(&ctx);
+        thread::sleep(Duration::from_millis(5));
+    }
+    let manifest = directory.path().join("session/session.json");
+    if manifest.exists() {
+        std::fs::rename(&manifest, manifest.with_extension("before-failure.json")).unwrap();
+    }
+    std::fs::create_dir(&manifest).unwrap();
+    edit(&mut app, "recover after failure\n");
+    app.request_quit();
+    app.receive(&ctx);
+    assert!(app.checkpoint_pending);
+    while app.checkpoint_pending {
+        assert!(started.elapsed() < Duration::from_secs(5));
+        app.receive(&ctx);
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(!app.exit_ready);
+    assert!(!app.closing);
+    assert!(app.error.as_ref().unwrap().starts_with(CHECKPOINT_FAILED));
+    assert_eq!(app.active().page.text, "recover after failure\n");
+    assert!(app.active().page.info.dirty);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "original\n");
+    std::fs::remove_dir(&manifest).unwrap();
+    app.error = None;
+    app.request_quit();
+    finish_quit(&mut app, &ctx);
+    drop(app);
+    let (restored, errors) = Workspace::restore(directory.path().join("session")).unwrap();
+    assert!(errors.is_empty(), "{errors:?}");
+    assert_eq!(
+        restored.open[restored.active].page.text,
+        "recover after failure\n"
+    );
 }
 
 #[test]
@@ -435,4 +541,55 @@ fn bulk_close_prompts_for_each_nonempty_note_and_keeps_both_on_the_shelf() {
     assert_eq!(app.workspace.open.len(), 1);
     assert!(app.active().page.text.is_empty());
     assert_eq!(app.workspace.closed.len(), 2);
+}
+
+#[test]
+fn cancelling_pending_save_as_during_quit_still_preserves_the_session() {
+    let directory = tempfile::tempdir().unwrap();
+    let session = directory.path().join("session");
+    let (workspace, _) = Workspace::restore(session.clone()).unwrap();
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    edit(&mut app, "pending save λ");
+    // Deliver the native dialog's cancellation after the window-close request.
+    app.busy = true;
+    app.request_quit();
+    app.tx.send(Ok(Action::SaveCancelled)).unwrap();
+    app.receive(&ctx);
+    assert!(
+        app.closing,
+        "a cancelled Save As must not cancel app shutdown"
+    );
+    assert!(app.close_flow.is_none());
+    finish_quit(&mut app, &ctx);
+    drop(app);
+    let (restored, errors) = Workspace::restore(session).unwrap();
+    assert!(errors.is_empty(), "{errors:?}");
+    assert_eq!(restored.open[restored.active].page.text, "pending save λ");
+}
+
+#[test]
+fn save_as_formatting_failure_cancels_tab_close_and_keeps_the_note() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join(".editorconfig"),
+        "root = true\n[*.txt]\ncharset = latin1\n",
+    )
+    .unwrap();
+    let path = directory.path().join("note.txt");
+    let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    edit(&mut app, "keep this λ");
+    let id = app.active().view.id;
+    app.execute(&ctx, Command::Close);
+    app.tx.send(Ok(Action::SaveTo(id, path.clone()))).unwrap();
+    app.receive(&ctx);
+    assert!(app.error.is_some(), "Latin-1 cannot encode λ");
+    assert!(!app.busy);
+    assert!(!app.closing);
+    assert!(app.close_flow.is_none());
+    assert_eq!(app.active().view.id, id);
+    assert_eq!(app.active().page.text, "keep this λ");
+    assert!(!path.exists());
 }

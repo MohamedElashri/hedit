@@ -168,8 +168,13 @@ Closing a modified file or a non-empty untitled tab (**Ctrl+W**) asks whether to
 and opens Save As for untitled tabs; cancelling Save As leaves the tab open.
 For a file on disk, Don't Save discards edits and keeps the disk copy. For an
 untitled note, it closes the tab without writing a file and keeps its text in
-**Closed Files**. Cancel leaves the tab open. Quitting or closing the window asks
-the same question; untitled notes kept without saving are restored next time.
+**Closed Files**. Cancel leaves the tab open. Quitting or closing the window
+preserves all open tabs and unsaved changes automatically, without a save prompt.
+They are restored when you reopen hedit, including untitled notes and edits to
+files on disk. Quitting does not write those edits to the original files. If
+recovery cannot be written, the window stays open and shows an error.
+If a note's text is intact but its recovery undo history is damaged, hedit restores
+the note and warns that its undo history is unavailable.
 The sole empty untitled tab stays open as the editor's blank state and has no
 close button. Add another tab or type text to make it closable.
 
@@ -450,6 +455,51 @@ Fortran, Julia, MATLAB, R, Verilog, VHDL, diffs, CSV, and logs. Most are highlig
 with full syntax definitions that understand embedded languages and multi-line
 strings; plain text, logs, and CSV use a faster built-in highlighter. Large files
 show quick colors first and full colors a moment later.
+
+### Markdown preview
+
+Markdown files (`.md`, `.markdown`, and `.mdown`) have a toolbar with **Source**,
+**Split**, and **Preview**. Split shows editable source alongside the rendered
+document and stacks the views in narrow windows. Preview shows the rendered
+document; switch back to Source or Split to type. Unsaved changes appear live,
+and each tab's view mode is kept between launches. For an untitled note, choose
+**Markdown** from the language picker in the status bar.
+
+The preview renders headings, emphasis, links, lists, task lists, quotes, tables,
+and code blocks. Section links scroll to their headings, including headings in
+quotes and lists. Markdown file links stay in Preview and honor `#section`
+fragments; other file links open in the editor. Local PNG and JPEG images resolve
+relative to the Markdown file's folder; Save As updates that folder. Images from web URLs are not fetched,
+and embedded HTML is displayed as text. Preview is available for fully loaded
+documents up to 2 MiB; larger or paged files remain editable in Source.
+
+Use `$E = mc^2$` for inline LaTeX math and `$$ … $$` for a displayed equation.
+Fenced `math` blocks also render equations. Escape literal dollar signs as `\$`
+when writing prices or other text that should not become math. Fenced `mermaid`
+blocks render diagrams, for example:
+
+````markdown
+```mermaid
+flowchart LR
+    A[Write Markdown] --> B[Preview]
+```
+````
+
+Equations and diagrams render locally in the background and follow the preview's
+theme. Unsupported or malformed input stays visible as source with an error on
+hover. Native Mermaid rendering supports common diagram types, including
+flowcharts and sequence diagrams; some Mermaid features may be unsupported.
+Individual equations are limited to 16 KiB, and diagrams to 64 KiB, 1,000 lines,
+256 nodes, and 1,024 edges.
+
+Use **Refresh** in the Markdown toolbar or **View → Markdown** to reload the
+preview, equations, diagrams, and local images, including images that were missing
+or changed on disk. Switching from Source back to Split or Preview also refreshes
+rendered media.
+
+The same commands are in **View → Markdown** and the command palette. Find,
+Replace, Go to line, and search-result navigation expose the source when used
+from Preview. Cancelling a Go to Anything preview restores the original view mode.
 
 ## Views and layout
 

@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.1.10] - 2026-10-30
+
+### Added
+
+- Markdown files have Source, Split, and Preview modes, with live rendering of
+  unsaved edits, headings, formatted text, lists, tables, and code blocks. Split
+  stacks the views in narrow windows, and each tab's mode survives session recovery.
+  Commands are available in View → Markdown and the command palette.
+- Markdown previews render LaTeX equations using `$…$`, `$$…$$`, or fenced `math`
+  blocks, and diagrams using fenced `mermaid` blocks. Rendering runs locally in
+  the background and follows the preview's theme. Unsupported or malformed input
+  remains readable as source with an error on hover.
+- Fully loaded Markdown documents up to 2 MiB can be previewed. Local PNG/JPEG
+  images resolve relative to the document, and Refresh reloads preview media.
+  Section links navigate headings, including those inside quotes and lists;
+  Markdown file links open in Preview and honor section fragments.
+- Find, Replace, Go to line, and search-result navigation expose Markdown source
+  when needed. Cancelling Go to Anything restores the original view mode, and
+  external file reloads update Preview without switching views.
+
+### Changed
+
+- Removed the redundant Replace all in file entry from the Find menu. Replace
+  all remains available in the bottom Find toolbar.
+
+### Fixed
+
+- The bottom Find toolbar keeps Replace selected and Replace all visible instead
+  of clipping them past the window edge, including at compact window sizes.
+- Quitting or closing the window now preserves all open tabs and unsaved changes
+  for the next launch without a Save / Don't Save / Cancel prompt. Confirmation
+  remains for closing individual tabs. Shutdown waits for session recovery to
+  finish and keeps the window open if recovery fails.
+- Cancelling a pending Save As dialog during shutdown no longer cancels quitting;
+  the unsaved buffer is preserved in the session instead.
+- A Save As formatting or encoding failure now cancels tab closure and leaves the
+  note editable, rather than leaving the close dialog stuck.
+- Missing, truncated, or invalid undo history no longer prevents intact notes
+  from reopening, including notes in Closed Files. Recovery warns when undo
+  history could not be restored.
+
 ## [0.1.9] - 2026-10-29
 
 ### Fixed

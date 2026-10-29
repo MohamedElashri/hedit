@@ -202,6 +202,7 @@ impl HeditApp {
                 if let Some(index) = self.workspace.open.iter().position(|b| b.view.id == id) {
                     self.navigation_mark();
                     self.workspace.active = index;
+                    self.reveal_markdown_source(ctx);
                     let b = &mut self.workspace.open[index];
                     b.set_page(page);
                     b.view.anchor = a;

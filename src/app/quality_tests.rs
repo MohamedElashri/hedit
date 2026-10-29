@@ -2,6 +2,48 @@ use super::tests::{finish_app_job, frame, frame_size, key, text_rect};
 use super::*;
 
 #[test]
+fn bottom_replace_buttons_stay_visible_and_replace_all_is_one_undo_step() {
+    for size in [egui::vec2(1280.0, 820.0), egui::vec2(720.0, 480.0)] {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+        workspace.open[0].page.text = "cat cat dog".into();
+        workspace.edit(0, "").unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        app.execute(&ctx, Command::Replace);
+        app.query = "cat".into();
+        app.replacement = "fox".into();
+        let mut output = frame_size(&ctx, &mut app, vec![], size);
+        for _ in 0..2 {
+            output = frame_size(&ctx, &mut app, vec![], size);
+        }
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+        let mut replace_all = None;
+        for label in ["Replace selected", "Replace all"] {
+            let shape = output
+                .shapes
+                .iter()
+                .find_map(|shape| text_rect(&shape.shape, label).map(|rect| (shape, rect)))
+                .unwrap_or_else(|| panic!("missing {label} at {size:?}"));
+            assert!(
+                screen.contains_rect(shape.1) && shape.0.clip_rect.contains_rect(shape.1),
+                "{label} is clipped at {size:?}: {:?}",
+                shape.1
+            );
+            if label == "Replace all" {
+                replace_all = Some(shape.1.center());
+            }
+        }
+        super::tests::click_at(&ctx, &mut app, replace_all.unwrap(), size);
+        assert_eq!(app.active().page.text, "fox fox dog");
+        assert_eq!(app.quality.match_status, "Replaced 2 matches");
+        app.history(&ctx, false);
+        finish_app_job(&mut app, &ctx);
+        assert_eq!(app.active().page.text, "cat cat dog");
+    }
+}
+
+#[test]
 fn failed_sidebar_preview_does_not_turn_the_next_explicit_open_into_a_preview() {
     let directory = tempfile::tempdir().unwrap();
     let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
