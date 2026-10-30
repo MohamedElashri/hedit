@@ -669,3 +669,209 @@ fn export_markdown_nested_previews() {
         .unwrap();
     }
 }
+
+#[test]
+fn markdown_preview_button_uses_the_full_editor_area_after_split() {
+    let paragraph = "The preview should use the available editor width. ".repeat(50);
+    let (_directory, ctx, mut app) = fixture(&format!("# Wide preview\n\n{paragraph}\n"));
+    let size = egui::vec2(1920.0, 1080.0);
+    app.execute(&ctx, Command::MarkdownSplit);
+    for _ in 0..3 {
+        frame_size(&ctx, &mut app, vec![], size);
+    }
+    let output = frame_size(&ctx, &mut app, vec![], size);
+    let preview = output
+        .shapes
+        .iter()
+        .find_map(|s| text_rect(&s.shape, "Preview"))
+        .unwrap();
+    super::tests::click_at(&ctx, &mut app, preview.center(), size);
+    for _ in 0..3 {
+        frame_size(&ctx, &mut app, vec![], size);
+    }
+    let output = frame_size(&ctx, &mut app, vec![], size);
+    assert_eq!(app.active().view.markdown_view, MarkdownView::Preview);
+    let paragraph = output
+        .shapes
+        .iter()
+        .find_map(|s| text_rect(&s.shape, paragraph.trim_end()))
+        .unwrap();
+    assert!(
+        paragraph.right() >= size.x - 80.0,
+        "preview text remained in a narrow column: {paragraph:?}"
+    );
+    let status = egui::containers::panel::PanelState::load(&ctx, egui::Id::new("status"))
+        .unwrap()
+        .rect;
+    assert!(
+        output
+            .shapes
+            .iter()
+            .any(|s| matches!(&s.shape, egui::Shape::Rect(r)
+        if r.fill == app.theme.surface.color() && r.rect.right() >= size.x - 8.0
+            && r.rect.bottom() >= status.top() - 8.0)),
+        "preview background did not fill the editor area"
+    );
+}
+
+#[test]
+fn markdown_separated_quoted_lists_do_not_inherit_the_intervening_document_height() {
+    let question =
+        "A new numbered question following the intervening text and an earlier quoted list. "
+            .repeat(5)
+            .trim_end()
+            .to_owned();
+    let mut source = "> An introductory paragraph in an earlier review.\n>\n".to_owned();
+    for n in 1..=5 {
+        source.push_str(&format!(
+            "> {n}. {}\n>\n",
+            "An earlier numbered question with some explanation. ".repeat(4)
+        ));
+    }
+    source.push_str("> Closing remarks in the earlier quote.\n\n");
+    source
+        .push_str(&"The first answer uses $x$ and a detailed explanation of the work. ".repeat(10));
+    source.push_str("\n\n");
+    source.push_str(&"The next answer discusses how to proceed with the review. ".repeat(10));
+    source.push_str(&format!(
+        "\n\n> A later section:\n\n> 1. {question}\n\nThe answer follows the new question.\n"
+    ));
+    for mode in [Command::MarkdownPreview, Command::MarkdownSplit] {
+        let (_directory, ctx, mut app) = fixture(&source);
+        app.set_theme(&ctx, Theme::paper());
+        app.execute(&ctx, mode);
+        let size = egui::vec2(1280.0, 10000.0);
+        for _ in 0..3 {
+            frame_size(&ctx, &mut app, vec![], size);
+        }
+        let output = frame_size(&ctx, &mut app, vec![], size);
+        let rect = |label| {
+            output
+                .shapes
+                .iter()
+                .find_map(|s| text_rect(&s.shape, label))
+                .unwrap()
+        };
+        let title = rect("A later section:");
+        let question = rect(&question);
+        let answer = rect("The answer follows the new question.");
+        assert!(
+            question.top() - title.bottom() < 70.0,
+            "gap before the later quoted list: {title:?} -> {question:?}"
+        );
+        assert!(
+            answer.top() - question.bottom() < 70.0,
+            "gap after the later quoted list: {question:?} -> {answer:?}"
+        );
+        assert_eq!(app.active().page.text, source);
+        assert!(!app.active().page.info.dirty);
+    }
+}
+
+#[test]
+#[ignore = "renders HEDIT_MARKDOWN_REPRO into HEDIT_PREVIEW_DIR for local diagnosis"]
+fn export_markdown_repro() {
+    let source = std::fs::read_to_string(
+        std::env::var_os("HEDIT_MARKDOWN_REPRO").expect("set HEDIT_MARKDOWN_REPRO"),
+    )
+    .unwrap();
+    let directory =
+        PathBuf::from(std::env::var_os("HEDIT_PREVIEW_DIR").expect("set HEDIT_PREVIEW_DIR"));
+    std::fs::create_dir_all(&directory).unwrap();
+    for (mode, name) in [
+        (Command::MarkdownPreview, "preview"),
+        (Command::MarkdownSplit, "split"),
+    ] {
+        let (_temporary, ctx, mut app) = fixture(&source);
+        app.set_theme(&ctx, Theme::paper());
+        app.execute(&ctx, mode);
+        let size = egui::vec2(1280.0, 30000.0);
+        let started = Instant::now();
+        loop {
+            let output = frame_size(&ctx, &mut app, vec![], size);
+            if !app.markdown.media.pending() && started.elapsed() > Duration::from_secs(2) {
+                let svg = crate::preview::export(
+                    &output.shapes,
+                    [size.x, size.y],
+                    app.theme.background.color(),
+                );
+                std::fs::write(directory.join(format!("review-{name}.svg")), svg).unwrap();
+                let report: Vec<_> = output
+                    .shapes
+                    .iter()
+                    .filter_map(|s| match &s.shape {
+                        egui::Shape::Text(t) => Some(format!(
+                            "{:?}\t{:?}",
+                            t.galley.rect.translate(t.pos.to_vec2()),
+                            t.galley.job.text
+                        )),
+                        _ => None,
+                    })
+                    .collect();
+                std::fs::write(
+                    directory.join(format!("review-{name}.txt")),
+                    report.join("\n"),
+                )
+                .unwrap();
+                break;
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(20),
+                "preview did not settle"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+}
+
+#[test]
+fn markdown_nested_quoted_blocks_keep_content_and_reference_links() {
+    let source = "> Outer quote before the nested blocks.\n>\n> > Inner quote with a [linked note][note].\n> >\n> > 1. First inner item.\n> > 2. Second inner item.\n>\n> Outer quote continues here.\n>\n> | Column | Value |\n> | --- | --- |\n> | Entry | Present |\n>\n> ```rust\n> let value = 1;\n> ```\n\nThe text after all nested blocks.\n\n[note]: other.md\n";
+    let (directory, ctx, mut app) = fixture(source);
+    std::fs::write(directory.path().join("other.md"), "# Linked document\n").unwrap();
+    app.execute(&ctx, Command::MarkdownPreview);
+    let size = egui::vec2(1280.0, 3000.0);
+    for _ in 0..3 {
+        frame_size(&ctx, &mut app, vec![], size);
+    }
+    let output = frame_size(&ctx, &mut app, vec![], size);
+    for label in [
+        "First inner item.",
+        "Second inner item.",
+        "Outer quote continues here.",
+        "Entry",
+        "Present",
+        "let value = 1;",
+        "The text after all nested blocks.",
+    ] {
+        assert!(
+            output
+                .shapes
+                .iter()
+                .any(|s| text_rect(&s.shape, label).is_some()),
+            "missing {label:?}"
+        );
+    }
+    assert_eq!(app.active().page.text, source);
+    // Wrapped inline links include preceding indentation in their galley bounds;
+    // click a visible glyph rather than the center of that padded rectangle.
+    let link = output
+        .shapes
+        .iter()
+        .find_map(|s| match &s.shape {
+            egui::Shape::Text(t) if t.galley.job.text == "linked note" => {
+                let row = &t.galley.rows[0];
+                let glyph = &row.glyphs[0];
+                Some(
+                    t.pos
+                        + egui::vec2(glyph.pos.x + glyph.advance_width / 2.0, row.rect.center().y),
+                )
+            }
+            _ => None,
+        })
+        .unwrap();
+    super::tests::click_at(&ctx, &mut app, link, size);
+    finish_app_job(&mut app, &ctx);
+    assert_eq!(app.active().page.text, "# Linked document\n");
+    assert_eq!(app.active().view.markdown_view, MarkdownView::Preview);
+}

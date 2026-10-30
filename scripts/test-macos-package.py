@@ -62,6 +62,8 @@ class MacPackage(unittest.TestCase):
                 self.assertEqual(bundle.read('hedit.app/Contents/MacOS/hedit'), b'universal fixture')
                 self.assertIn('hedit.app/Contents/Resources/hedit.icns', bundle.namelist())
                 self.assertIn('hedit.app/Contents/Resources/Documentation/LICENSE', bundle.namelist())
+                self.assertEqual(bundle.read('hedit.app/Contents/Resources/Documentation/assets/licenses/egui_commonmark-MIT.txt'),
+                                 (packager.ROOT / 'assets/licenses/egui_commonmark-MIT.txt').read_bytes())
                 self.assertIn('hedit.app/Contents/Resources/themes/hedit-ink.json', bundle.namelist())
             digest = hashlib.sha256(archive.read_bytes()).hexdigest()
             self.assertEqual(archive.with_name(archive.name + '.sha256').read_text(), f'{digest}  {archive.name}\n')

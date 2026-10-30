@@ -34,6 +34,7 @@ with tempfile.TemporaryDirectory(prefix='hedit-package-smoke-') as work:
                      'share/doc/hedit/README.md', 'share/doc/hedit/USER_GUIDE.md',
                      'share/doc/hedit/DEVELOPER_GUIDE.md', 'share/doc/hedit/LICENSE',
                      'share/doc/hedit/assets/hedit-lockup-light.svg',
+                     'share/doc/hedit/assets/licenses/egui_commonmark-MIT.txt',
                      'share/doc/hedit/assets/licenses/STIX-Two-Math-OFL.txt',
                      'share/doc/hedit/assets/licenses/latex-rust-NOTICE.txt',
                      'share/doc/hedit/assets/licenses/latex-rust-dvipsnames.tsv',

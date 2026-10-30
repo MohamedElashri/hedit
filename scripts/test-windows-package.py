@@ -47,7 +47,8 @@ class WindowsPackage(unittest.TestCase):
                 self.assertEqual(bundle.read(prefix + 'hedit.exe'), binary.read_bytes())
                 for relative in ['README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md', 'LICENSE',
                                  'themes/hedit-ink.json', 'assets/hedit.svg',
-                                 'assets/dictionaries/en_US-LICENSE.txt', 'examples/cuda/vector_add.cu']:
+                                 'assets/dictionaries/en_US-LICENSE.txt', 'assets/licenses/egui_commonmark-MIT.txt',
+                                 'examples/cuda/vector_add.cu']:
                     self.assertEqual(bundle.read(prefix + relative), (packager.ROOT / relative).read_bytes())
                 self.assertTrue(all(name.startswith(prefix) and '\\' not in name for name in bundle.namelist()))
                 self.assertNotIn(prefix + 'install.sh', bundle.namelist())

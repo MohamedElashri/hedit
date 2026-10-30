@@ -46,6 +46,10 @@ winit = { version = "0.30.13", default-features = false, features = ["wayland-cs
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_System_Threading"] }
 
+# Process nested Markdown blocks normally; see vendor/egui_commonmark/PATCH.md.
+[patch.crates-io]
+egui_commonmark = { path = "vendor/egui_commonmark" }
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

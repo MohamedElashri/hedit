@@ -256,3 +256,7 @@ packages. Mermaid uses `mermaid-rs-renderer`; `resvg` rasterizes both kinds of S
 on worker threads without a browser or network fetches. Keep the
 [Mermaid MIT notice](assets/licenses/mermaid-rs-renderer-MIT.txt) and
 [resvg MIT notice](assets/licenses/resvg-MIT.txt) with the packages too.
+
+The native Markdown renderer includes a local dependency patch for nested block
+layout; see [the patch notes](vendor/egui_commonmark/PATCH.md). Keep its
+[MIT notice](assets/licenses/egui_commonmark-MIT.txt) with distributed packages.

@@ -13,6 +13,11 @@
 
 ### Fixed
 
+- Markdown Preview fills the available editor area instead of stopping at a fixed
+  reading width. Short documents also fill the preview background.
+- Quoted numbered lists no longer introduce large blank vertical gaps later in
+  long Markdown documents. Nested quotes, lists, and other blocks now complete
+  their normal rendering lifecycle.
 - Empty untitled tabs are omitted from Closed Files, including session recovery.
 - Closing an unsaved tab with Don't Save no longer fails when Closed Files has
   50 unsaved notes. Unsaved notes remain recoverable beyond the recent-file limit,

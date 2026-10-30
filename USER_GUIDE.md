@@ -462,8 +462,8 @@ show quick colors first and full colors a moment later.
 
 Markdown files (`.md`, `.markdown`, and `.mdown`) have a toolbar with **Source**,
 **Split**, and **Preview**. Split shows editable source alongside the rendered
-document and stacks the views in narrow windows. Preview shows the rendered
-document; switch back to Source or Split to type. Unsaved changes appear live,
+document and stacks the views in narrow windows. Preview fills the editor area
+with the rendered document; switch back to Source or Split to type. Unsaved changes appear live,
 and each tab's view mode is kept between launches. For an untitled note, choose
 **Markdown** from the language picker in the status bar.
 

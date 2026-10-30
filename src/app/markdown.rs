@@ -533,6 +533,10 @@ impl HeditApp {
     }
 
     fn markdown_preview(&mut self, ui: &mut egui::Ui, pane: usize) {
+        // The preview is a full editor surface, even for short documents.
+        let viewport = ui.available_rect_before_wrap();
+        ui.painter()
+            .rect_filled(viewport, 0.0, self.theme.surface.color());
         let b = self.active();
         let (id, revision, path) = (b.view.id, b.page.info.revision, b.page.info.path.clone());
         let root = document_root(path.as_deref());
@@ -717,7 +721,7 @@ impl HeditApp {
                         .fill(surface)
                         .inner_margin(20.0)
                         .show(ui, |ui| {
-                            ui.set_width(ui.available_width().min(860.0));
+                            ui.set_width(ui.available_width());
                             ui.style_mut().text_styles.insert(
                                 egui::TextStyle::Body,
                                 FontId::proportional(font_size + 2.0),
