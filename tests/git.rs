@@ -1,8 +1,5 @@
 use hedit::git::{DiffKind, Git, Operation, Selection};
-use std::{
-    path::{Path, PathBuf},
-    sync::atomic::Ordering,
-};
+use std::{path::Path, sync::atomic::Ordering};
 
 fn repo() -> (tempfile::TempDir, Git) {
     let directory = tempfile::tempdir().unwrap();
@@ -192,10 +189,12 @@ fn stale_hunk_and_discard_are_rejected_and_discard_keeps_a_backup() {
 fn filenames_are_literal_and_renames_deletions_binary_and_empty_files_work() {
     let (directory, git) = repo();
     let root = directory.path();
+    // Windows permits brackets, but not an asterisk in an actual filename.
+    let glob_path = if cfg!(windows) { "[a].txt" } else { "[a]*.txt" };
     for path in [
         "white space.txt",
         "é.txt",
-        "[a]*.txt",
+        glob_path,
         "-option.txt",
         "empty.txt",
     ] {
@@ -242,14 +241,25 @@ fn filenames_are_literal_and_renames_deletions_binary_and_empty_files_work() {
 
 #[cfg(unix)]
 #[test]
-fn nul_status_preserves_newlines_and_non_utf8_paths() {
-    use std::os::unix::ffi::OsStringExt;
+fn nul_status_preserves_filesystem_supported_paths() {
+    use std::path::PathBuf;
     let (directory, git) = repo();
     let root = directory.path();
     let paths = vec![
         PathBuf::from("line\nbreak.txt"),
-        PathBuf::from(std::ffi::OsString::from_vec(b"non-utf8-\xff.txt".to_vec())),
+        PathBuf::from("unicode-λ.txt"),
     ];
+    // APFS rejects non-UTF-8 file names. Its raw Git-path parser is tested
+    // independently, without asking the filesystem to create an invalid name.
+    #[cfg(not(target_os = "macos"))]
+    let paths = {
+        use std::os::unix::ffi::OsStringExt;
+        let mut paths = paths;
+        paths.push(PathBuf::from(std::ffi::OsString::from_vec(
+            b"non-utf8-\xff.txt".to_vec(),
+        )));
+        paths
+    };
     for path in &paths {
         std::fs::write(root.join(path), "hello\n").unwrap();
     }
@@ -261,7 +271,7 @@ fn nul_status_preserves_newlines_and_non_utf8_paths() {
     commit(&git, root, "Literal paths");
     let oid = git.command(root, &["rev-parse", "HEAD"]).unwrap();
     let files = git.commit_files(root, oid.trim()).unwrap();
-    assert_eq!(files.len(), 2);
+    assert_eq!(files.len(), paths.len());
     assert!(paths.iter().all(|p| files.iter().any(|f| &f.path == p)));
 }
 

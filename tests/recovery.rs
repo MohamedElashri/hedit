@@ -596,6 +596,7 @@ fn closing_blank_untitled_tabs_skips_the_shelf_but_preserves_whitespace_and_disk
     ws.close(ws.active).unwrap();
     let path = directory.path().join("empty.txt");
     fs::write(&path, "").unwrap();
+    let path = path.canonicalize().unwrap();
     let mut doc = Document::open(ws.editor.id(), &path).unwrap();
     let page = doc.page(0).unwrap();
     ws.add(doc, page).unwrap();

@@ -1305,3 +1305,23 @@ impl Diff {
         Some(format!("{}{}", header, &self.patch[start..end]))
     }
 }
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    #[test]
+    fn status_parser_preserves_raw_non_utf8_paths_without_filesystem_io() {
+        use std::os::unix::ffi::OsStrExt;
+        let snapshot = parse_status(b"? non-utf8-\xff.txt\0? line\nbreak.txt\0").unwrap();
+        assert_eq!(snapshot.files.len(), 2);
+        assert_eq!(
+            snapshot.files[0].path.as_os_str().as_bytes(),
+            b"non-utf8-\xff.txt"
+        );
+        assert_eq!(
+            snapshot.files[1].path.as_os_str().as_bytes(),
+            b"line\nbreak.txt"
+        );
+        assert!(snapshot.files.iter().all(FileStatus::untracked));
+    }
+}
