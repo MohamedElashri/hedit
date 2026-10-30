@@ -4,6 +4,11 @@
 
 ### Added
 
+- A native Source Control workspace with a dedicated sidebar, repository selection,
+  clone/init, staged and working changes, unified and side-by-side diffs, hunk
+  staging, commits/amend, history with a parent graph, branch/remote management,
+  conflict review and resolution, stashes, fetch, fast-forward pull, and push.
+  Uses installed Git; unsaved-buffer guards and backups protect working text.
 - An offline User Guide opens from Help, About, the command palette, or F1.
   Contents and section links navigate the bundled documentation; related developer
   notes and license notices are readable without a browser or network access.

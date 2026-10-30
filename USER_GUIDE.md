@@ -18,6 +18,7 @@ outside the modal.
 - [Editing](#editing)
 - [Finding and navigating](#finding-and-navigating)
 - [Writing code](#writing-code)
+- [Source Control](#source-control)
 - [Markdown preview](#markdown-preview)
 - [Views and layout](#views-and-layout)
 - [Large files and logs](#large-files-and-logs)
@@ -427,8 +428,9 @@ snippet's syntax limits it to one language.
 Markers in the gutter show lines changed since Git's last commit, or since the
 last save for files outside Git (`mini_diff`). Hover a marker to see the change.
 **Ctrl+K, Ctrl+.** and **Ctrl+K, Ctrl+,** go to the next and previous change, and
-**Ctrl+K, Ctrl+Z** reverts the change at the cursor. **Tools → Git changes…** shows
-the whole diff. hedit never changes your repository.
+**Ctrl+K, Ctrl+Z** reverts the change at the cursor as an undoable editor edit.
+**Tools → Compare file with Git HEAD…** compares the current editor text with
+the last commit. For staging and repository operations, use [Source Control](#source-control).
 
 ### Build systems
 
@@ -471,7 +473,98 @@ with full syntax definitions that understand embedded languages and multi-line
 strings; plain text, logs, and CSV use a faster built-in highlighter. Large files
 show quick colors first and full colors a moment later.
 
-### Markdown preview
+## Source Control
+
+Open **Tools → Source Control**, the **Source Control** button in the folder
+sidebar, or **Ctrl+Shift+G** (**Cmd+Shift+G** on macOS). This native workspace uses
+Git installed on your `PATH` (Git 2.30 or newer). Your existing Git identity,
+credential helpers, SSH agent, signing settings, hooks, and remotes apply.
+It does not require a browser or a hosting-service account.
+
+The repository selector discovers repositories from your workspace folders and
+the active file. **…** opens another repository or clones a URL/local repository
+into a new folder. Enter the full destination path when cloning. A folder without
+Git can be initialized from the sidebar. **Files** or **Ctrl+W** returns to the
+editor; open tabs, cursor positions, and unsaved text remain available.
+
+### Review, stage, and commit
+
+**Changes** separates conflicts, staged files, and working changes. Select a file
+to compare the **working tree with the index**, or the **index with HEAD** for
+staged files. New files have a text preview; binary files show a summary. **Unified**
+and **Side by side** share colored additions/deletions, line numbers, and horizontal
+scrolling. Narrow windows use Unified automatically. **Copy diff** copies the
+complete patch, including headers hidden from the visual review.
+
+- **+** stages a file; **−** unstages it. Section actions stage/unstage all files
+  in that section, including files hidden by the filter.
+- **Stage hunk** and **Unstage hunk** select individual changes in ordinary text
+  files. New/deleted files, mode changes, binary files, and some unusual path
+  encodings use whole-file staging. Changed diffs must be refreshed before a hunk
+  can be applied.
+- Enter a message and choose **Commit staged**. Only the index is committed.
+  Unsaved editor edits are not included. **Amend** replaces the latest commit and
+  asks for confirmation because it changes the commit ID.
+- **Discard working changes…** restores a tracked file from the index after
+  confirmation. A copy of an existing regular file is kept under the session's
+  `git-backups` directory; **Git output** reports its path. Staged text is kept.
+  Untracked files, links, and submodules are not deleted by this action.
+
+Save edited files before staging them. Actions that can change working files
+(switching branches, merging, stashing, pulling, or restoring) are blocked while
+the repository has unsaved open buffers. Save or close those tabs first; closing
+nonempty unsaved text preserves it in Closed Files. Git can also refuse operations
+when saved working changes would be overwritten.
+
+### History, branches, and stashes
+
+**History** shows commits reachable from local branches, remote branches, tags,
+and HEAD, with a parent graph and reference labels. Select a commit, then a file,
+to review its diff against its first parent. Root commits compare with an empty
+tree. Copy a commit ID, cherry-pick a commit, or create a reverting commit from
+the detail toolbar. Merge commits that need a mainline selection should be
+cherry-picked/reverted in a terminal. History initially loads 200 commits;
+**Load more commits** extends this up to 2,000.
+
+**Branches** creates and switches local branches, creates local tracking branches
+from remote branches, merges into the current branch, and deletes merged local
+branches. The **…** menu beside a branch holds its actions. Git refuses deletion
+of an unmerged branch. Remotes can be added and removed here too.
+
+**Stashes** saves tracked and untracked working changes with a description.
+**Apply** restores the saved working/index state and keeps the stash; **Drop…**
+removes it after confirmation. If applying produces conflicts, resolve and stage
+them before continuing other work.
+
+### Conflicts and remotes
+
+Conflicts appear in their own group. Select one to review **Current · ours**,
+**Incoming · theirs**, and the common ancestor where available. **Use Current…**
+or **Use Incoming…** replaces the working file after confirmation and backup;
+review and stage it afterward. **Open to resolve** opens the normal editor to
+combine both sides manually. Save, then **Stage resolved file** or **+** to mark
+it resolved. For a deletion conflict, keep/delete the file in the editor or a
+terminal, then stage the result. Binary, non-UTF-8, link, submodule, and large
+conflicts may need a terminal. During rebase, Current is the branch being rebased
+onto and Incoming is the commit being replayed. An operation banner offers
+**Continue** and **Abort…** for merges, cherry-picks, reverts, and rebases.
+
+**Fetch** updates remote references. **Pull** only fast-forwards the upstream;
+divergent histories require an explicit merge or a terminal rebase. **Push** uses
+Git's configured destination. **Publish** lets a branch without an upstream pick
+a remote and sets its upstream. These actions never force-push. Configure
+credentials outside hedit if Git reports that authentication is unavailable;
+terminal password prompts are disabled, while configured credential helpers and
+SSH agents remain usable.
+
+Git work runs in the background. **Refresh** reloads repository state, which also
+refreshes every four seconds while this workspace is visible. **Cancel** stops
+the current operation; refresh afterward to inspect its outcome. Git commands
+time out after 30 seconds locally or 120 seconds for network operations and have
+a 24 MiB output limit. **Git output** keeps recent action results. The normal
+editor and offline guide work without Git installed.
+
+## Markdown preview
 
 Markdown files (`.md`, `.markdown`, and `.mdown`) have a toolbar with **Source**,
 **Split**, and **Preview**. Split shows editable source alongside the rendered
@@ -755,6 +848,7 @@ Change any shortcut under **Settings → Key Bindings**. Two-key shortcuts such 
 | Record / play macro | Ctrl+Alt+Q / Ctrl+Alt+Shift+Q | Control+Q / Control+Shift+Q |
 | Spell check / next misspelling | F6 / Ctrl+F6 | F6 / Cmd+F6 |
 | Next change / revert change | Ctrl+K, Ctrl+. / Ctrl+K, Ctrl+Z | Cmd+K, Cmd+. / Cmd+K, Cmd+Z |
+| Source Control | Ctrl+Shift+G | Cmd+Shift+G |
 | Bookmark / next bookmark / select all bookmarks | Ctrl+F2 / F2 / Alt+F2 | Cmd+F2 / F2 / Option+F2 |
 | Build / build with / next error or match | Ctrl+B / Ctrl+Shift+B / F4 | Cmd+B / Cmd+Shift+B / F4 |
 | Column layouts and grid | Alt+Shift+1–5 | Cmd+Option+1–5 |

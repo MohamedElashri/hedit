@@ -60,6 +60,7 @@ mod settings_store;
 #[cfg(test)]
 mod settings_tests;
 mod snippet_fields;
+mod source_control;
 mod spell_check;
 mod tab_switch;
 #[cfg(test)]
@@ -165,6 +166,7 @@ impl Drop for RequestWatch {
 pub struct HeditApp {
     _requests: RequestWatch,
     quality: quality::Quality,
+    source_control: source_control::SourceControl,
     workspace: Workspace,
     project: project::ProjectBrowser,
     tx: Sender<Result<Action, String>>,
@@ -345,6 +347,7 @@ impl HeditApp {
         let mut app = Self {
             _requests: RequestWatch::start(ctx, workspace.store.directory().to_owned()),
             quality: Default::default(),
+            source_control: source_control::SourceControl::load(storage),
             project,
             workspace,
             tx,
@@ -1189,6 +1192,7 @@ impl HeditApp {
         }
         let due = |since: Instant, every: Duration| every.saturating_sub(since.elapsed());
         [
+            self.source_control.due(),
             self.transient_error
                 .as_ref()
                 .map(|(_, shown)| due(*shown, FILE_ERROR_TIME)),
@@ -1243,6 +1247,9 @@ impl HeditApp {
     /// caret where composition began, so after the first letter it dropped
     /// them all; type such commits as plain text instead.
     fn plain_ime_commits(&mut self, ctx: &egui::Context) {
+        if self.source_control.open {
+            return;
+        }
         ctx.input_mut(|input| {
             for event in &mut input.events {
                 let egui::Event::Ime(ime) = event else {
@@ -1266,6 +1273,10 @@ impl HeditApp {
         });
     }
     fn shortcuts(&mut self, ctx: &egui::Context) {
+        if self.source_control.prompt.is_some() {
+            self.escape(ctx);
+            return;
+        }
         if self.close_flow.is_some() {
             return;
         }
@@ -1297,6 +1308,9 @@ impl HeditApp {
         let cmd = Modifiers::COMMAND;
         let shift = Modifiers { shift: true, ..cmd };
         let take = |m, k| ctx.input_mut(|i| i.consume_key(m, k));
+        if !self.overridden(Command::SourceControl) && take(shift, Key::G) {
+            self.execute(ctx, Command::SourceControl);
+        }
         // Layouts as in Sublime: Alt+Shift+N on Linux, Cmd+Option+N on macOS.
         let layout = if cfg!(target_os = "macos") {
             Modifiers { alt: true, ..cmd }
@@ -1488,6 +1502,7 @@ impl HeditApp {
             editor_id = editor_id.with(self.panes.focused);
         }
         if self.focus_editor
+            && !self.source_control.open
             && self.panes.mode != 0
             && !self.markdown_preview_only()
             && !self.preferences_open
@@ -1498,7 +1513,10 @@ impl HeditApp {
         {
             ctx.memory_mut(|m| m.request_focus(editor_id));
         }
-        if !self.markdown_preview_only() && ctx.memory(|m| m.has_focus(editor_id)) {
+        if !self.source_control.open
+            && !self.markdown_preview_only()
+            && ctx.memory(|m| m.has_focus(editor_id))
+        {
             self.completion_keys(ctx);
             self.clipboard_events(ctx);
             let line_cursor = if cfg!(target_os = "macos") {
@@ -1625,6 +1643,10 @@ impl HeditApp {
         }
     }
     fn editor(&mut self, ctx: &egui::Context) {
+        if self.source_control.open {
+            self.source_control_editor(ctx);
+            return;
+        }
         self.markdown.retain_documents(ctx, &self.workspace.open);
         self.apply_editor_style(ctx);
         let theme = self.theme.clone();
@@ -3309,6 +3331,7 @@ impl eframe::App for HeditApp {
         self.receive(ctx);
         self.poll_incoming(ctx);
         self.project.poll();
+        self.poll_source_control(ctx);
         if self.quality.preview.is_some_and(|id| {
             self.workspace
                 .open
@@ -3390,6 +3413,7 @@ impl eframe::App for HeditApp {
         }
     }
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        self.source_control.save(storage);
         eframe::set_value(storage, "recent_projects", &self.quality.recent);
         eframe::set_value(storage, "recent_files", &self.recent_files);
         eframe::set_value(storage, "project_path", &self.quality.project_path);
@@ -3473,6 +3497,7 @@ mod tests {
             ..Default::default()
         };
         let output = ctx.run(input, |ctx| {
+            app.poll_source_control(ctx);
             app.shortcuts(ctx);
             app.chrome(ctx);
             app.gpu(ctx);

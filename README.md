@@ -25,6 +25,8 @@ large-log viewing.
 
 - Recovery checkpoints, closed-file history, and undo/redo across sessions.
 - Multiple cursors, split panes, completions, and go-to-definition.
+- Native Git workspace with staging, visual diffs, commits, history, branches,
+  conflict review, stashes, and remote operations using your installed Git.
 - Markdown source, synchronized split preview, and reading modes, with math and Mermaid diagrams.
 - Dark and light themes, plus an offline User Guide built into the app.
 - Paged large files and read-only log following.

@@ -138,6 +138,7 @@ impl HeditApp {
                                 vec![
                                     Command::Palette,
                                     Command::Gpu,
+                                    Command::SourceControl,
                                     Command::GitDiff,
                                     Command::RevertChange,
                                     Command::CompareDisk,
@@ -228,6 +229,9 @@ impl HeditApp {
         self.tabs(ctx);
     }
     fn tabs(&mut self, ctx: &egui::Context) {
+        if self.source_control.open {
+            return;
+        }
         if !self.settings.show_tab_bar || self.distraction_free {
             return;
         }
@@ -750,6 +754,10 @@ impl HeditApp {
         ));
     }
     fn buffer_sidebar(&mut self, ctx: &egui::Context) {
+        if self.source_control.open {
+            self.source_control_sidebar(ctx);
+            return;
+        }
         if !self.settings.show_sidebar || self.distraction_free {
             return;
         }
@@ -765,6 +773,17 @@ impl HeditApp {
             )
             .show(ctx, |ui| {
                 ui.set_min_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    ui.strong("Files");
+                    if ui
+                        .button("Source Control")
+                        .on_hover_text("Git status, diffs, commits and branches · Ctrl+Shift+G")
+                        .clicked()
+                    {
+                        self.open_source_control(ctx);
+                    }
+                });
+                ui.add_space(8.0);
                 ui.spacing_mut().item_spacing.y = 0.0;
                 if ui
                     .add(

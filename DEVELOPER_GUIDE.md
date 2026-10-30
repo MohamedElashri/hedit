@@ -143,6 +143,7 @@ without a window belongs in the library, with tests under `tests/`.
 | --- | --- |
 | Documents, sessions, recovery | `document.rs` (piece table, pages, saves, undo), `workspace.rs`, `session.rs`, `text_encoding.rs` |
 | Editing | `advanced.rs` (selections, folding, display projection), `editing.rs`, `text_commands.rs`, `completion.rs`, `intelligence.rs` (symbols, snippets, definitions, Git), `spelling.rs`, `bidi.rs` |
+| Source Control | `git.rs` (bounded Git processes, status/diff/history parsing, index/worktree operations); `app/source_control.rs` (native sidebar, review workspace, background state) |
 | Search and folders | `search.rs` (search, guarded replacement), `folder.rs` (listings, fuzzy matching), `projects.rs` (projects, EditorConfig) |
 | Syntax and look | `syntax.rs`, `syntax/` (grammars, lexer, keywords), `theme.rs`, `fonts.rs`, `brand.rs` |
 | Process and updates | `cli.rs`, `launcher.rs`, `ipc.rs`, `windows.rs`, `update.rs`, `update/`, `build.rs`, `debugger.rs` |
@@ -191,6 +192,23 @@ Build systems deliberately run `shell_cmd` through the platform shell; expand
 file variables with the build runner's quoting rules. Other operations must not
 construct shell commands from file names. Debugger, Git, build, and NVIDIA tool
 output is bounded.
+
+**Git changes saved repository state.** Source Control requires the installed
+Git executable (2.30+); no shell or embedded web UI is involved. Keep commands
+on background workers and serialize repository actions. Parse porcelain v2 with
+NUL records so paths containing spaces, newlines, and non-UTF-8 bytes stay intact
+on Unix. Pass literal pathspecs only to path-taking commands: applying
+`--literal-pathspecs` globally breaks `stash --include-untracked` cleanup on Git
+2.43. Preserve first-parent semantics for merge-commit file diffs. The history
+graph follows object parents, not display order alone.
+
+Block stage actions for unsaved selected files and worktree mutations for unsaved
+repository buffers. Never replace dirty buffers with Git output. Partial staging
+and discard validate the reviewed diff; conflict replacement validates working
+text. Back up regular files before discard/conflict replacement, then report the
+backup path. Keep existing Git gutter comparison independent of index operations.
+Tests in `tests/git.rs` use disposable repositories and local bare remotes;
+`app/source_control_tests.rs` exercises the native UI and unsaved-buffer guards.
 
 **Large files are paged.** Files over 2 MiB load in about 256 KiB pages;
 commands that need the whole text must check `page.info.paged`.

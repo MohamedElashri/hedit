@@ -8,6 +8,7 @@ pub mod document;
 pub mod editing;
 pub mod folder;
 pub mod fonts;
+pub mod git;
 pub mod intelligence;
 pub mod ipc;
 pub mod projects;

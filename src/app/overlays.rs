@@ -5,6 +5,7 @@ use super::*;
 /// Overlays from topmost to bottom, the order Escape closes them in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Overlay {
+    GitPrompt,
     UserGuide,
     Palette,
     Goto,
@@ -29,7 +30,8 @@ pub(super) enum Overlay {
     Build,
 }
 impl Overlay {
-    const ALL: [Self; 22] = [
+    const ALL: [Self; 23] = [
+        Self::GitPrompt,
         Self::UserGuide,
         Self::Palette,
         Self::Goto,
@@ -70,6 +72,7 @@ impl HeditApp {
     }
     pub(super) fn overlay_open(&self, overlay: Overlay) -> bool {
         match overlay {
+            Overlay::GitPrompt => self.source_control.prompt.is_some(),
             Overlay::UserGuide => self.guide.open,
             Overlay::Palette => self.palette,
             Overlay::Goto => self.goto_open,
@@ -96,6 +99,7 @@ impl HeditApp {
     }
     pub(super) fn close_overlay(&mut self, ctx: &egui::Context, overlay: Overlay) {
         match overlay {
+            Overlay::GitPrompt => self.source_control.prompt = None,
             Overlay::UserGuide => self.guide.open = false,
             Overlay::Palette => {
                 self.cancel_theme_palette(ctx);

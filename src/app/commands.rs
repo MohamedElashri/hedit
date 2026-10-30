@@ -27,6 +27,7 @@ pub(super) enum Command {
     NavForward,
     CompareDisk,
     GitDiff,
+    SourceControl,
     NextChange,
     PreviousChange,
     RevertChange,
@@ -234,6 +235,7 @@ impl Command {
         Self::NavForward,
         Self::CompareDisk,
         Self::GitDiff,
+        Self::SourceControl,
         Self::NextChange,
         Self::PreviousChange,
         Self::RevertChange,
@@ -471,7 +473,8 @@ impl Command {
             Self::NavBack => "Navigate back",
             Self::NavForward => "Navigate forward",
             Self::CompareDisk => "Compare with disk…",
-            Self::GitDiff => "Git changes…",
+            Self::GitDiff => "Compare file with Git HEAD…",
+            Self::SourceControl => "Source Control",
             Self::NextChange => "Next change",
             Self::PreviousChange => "Previous change",
             Self::RevertChange => "Revert change",
@@ -664,6 +667,7 @@ impl Command {
     }
     fn shortcut_label(self) -> &'static str {
         match self {
+            Self::SourceControl => "Ctrl+Shift+G",
             Self::UserGuide => "F1",
             Self::FindFiles => "Ctrl+Shift+F",
             Self::CloseAll => "Ctrl+K, Ctrl+W",
@@ -977,7 +981,9 @@ impl HeditApp {
                 self.markdown_available()
                     && self.active().view.markdown_view != hedit::session::MarkdownView::Source
             }
-            Command::Close => self.workspace.can_close(self.workspace.active),
+            Command::Close => {
+                self.source_control.open || self.workspace.can_close(self.workspace.active)
+            }
             Command::NextOccurrence
             | Command::AllOccurrences
             | Command::SkipOccurrence
@@ -1070,6 +1076,7 @@ impl HeditApp {
     }
     pub(super) fn command_selected(&self, command: Command) -> bool {
         match command {
+            Command::SourceControl => self.source_control.open,
             Command::MarkdownSource => {
                 self.active().view.markdown_view == hedit::session::MarkdownView::Source
             }
@@ -1129,6 +1136,30 @@ impl HeditApp {
         if !self.command_enabled(command) {
             return;
         }
+        if self.source_control.open {
+            if command == Command::Close {
+                self.source_control.open = false;
+                self.focus_editor = true;
+                return;
+            }
+            if !matches!(
+                command,
+                Command::SourceControl
+                    | Command::Palette
+                    | Command::UserGuide
+                    | Command::About
+                    | Command::Settings
+                    | Command::KeyBindings
+                    | Command::Appearance
+                    | Command::Fullscreen
+                    | Command::DistractionFree
+                    | Command::Quit
+                    | Command::Updates
+            ) {
+                self.source_control.open = false;
+                self.focus_editor = true;
+            }
+        }
         if self.markdown_preview_only()
             && matches!(
                 command,
@@ -1185,6 +1216,7 @@ impl HeditApp {
             Command::NavForward => self.navigate(ctx, true),
             Command::CompareDisk => self.compare_disk(ctx, false),
             Command::GitDiff => self.compare_disk(ctx, true),
+            Command::SourceControl => self.open_source_control(ctx),
             Command::NextChange => self.next_change(ctx, true),
             Command::PreviousChange => self.next_change(ctx, false),
             Command::RevertChange => self.revert_change(),
