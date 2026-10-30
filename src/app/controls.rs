@@ -2,6 +2,144 @@
 //! cancelling look and behave the same everywhere.
 use super::*;
 
+/// The same workspace selector in Files and Source Control. Labels stay visible
+/// in a narrow sidebar, and the entire segment is a keyboard-accessible target.
+pub(super) fn workspace_switcher(
+    ui: &mut egui::Ui,
+    theme: &Theme,
+    git: bool,
+    shortcut: &str,
+) -> Option<bool> {
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 32.0), egui::Sense::hover());
+    ui.painter().rect_filled(rect, 5.0, theme.surface.color());
+    ui.painter().rect_stroke(
+        rect,
+        5.0,
+        egui::Stroke::new(1.0, theme.border.color()),
+        egui::StrokeKind::Inside,
+    );
+    let split = rect.left() + rect.width() * 0.37;
+    let compact = rect.width() < 190.0;
+    let mut changed = None;
+    for (source, label, part) in [
+        (
+            false,
+            "Files",
+            egui::Rect::from_min_max(rect.min, egui::pos2(split, rect.bottom())),
+        ),
+        (
+            true,
+            if compact { "Git" } else { "Source Control" },
+            egui::Rect::from_min_max(egui::pos2(split, rect.top()), rect.max),
+        ),
+    ] {
+        let response = ui.interact(
+            part,
+            ui.id().with(("workspace-mode", source)),
+            egui::Sense::click(),
+        );
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(
+                egui::WidgetType::SelectableLabel,
+                ui.is_enabled(),
+                git == source,
+                label,
+            )
+        });
+        let active = source == git;
+        if active || response.hovered() || response.has_focus() {
+            ui.painter().rect_filled(
+                part.shrink(2.0),
+                3.0,
+                if active {
+                    theme.selection.color()
+                } else {
+                    theme.hover().color()
+                },
+            );
+        }
+        let color = if active {
+            theme.text.color()
+        } else {
+            theme.muted.color()
+        };
+        let font = FontId::proportional(12.0);
+        let galley = ui.painter().layout_no_wrap(label.into(), font, color);
+        let icon = part.width() > 62.0;
+        let width = galley.size().x + if icon { 22.0 } else { 0.0 };
+        let left = part.center().x - width / 2.0;
+        if icon {
+            let origin = egui::pos2(left, part.center().y - 8.0);
+            let stroke = egui::Stroke::new(1.4, color);
+            if source {
+                let a = origin + egui::vec2(3.0, 2.0);
+                let b = origin + egui::vec2(3.0, 14.0);
+                let c = origin + egui::vec2(13.0, 3.0);
+                ui.painter().line_segment([a, b], stroke);
+                ui.painter().line_segment([b, c], stroke);
+                for point in [a, b, c] {
+                    ui.painter().circle_filled(point, 2.3, color);
+                }
+            } else {
+                ui.painter().rect_stroke(
+                    egui::Rect::from_min_size(
+                        origin + egui::vec2(4.0, 1.0),
+                        egui::vec2(10.0, 12.0),
+                    ),
+                    1.0,
+                    stroke,
+                    egui::StrokeKind::Inside,
+                );
+                ui.painter().line_segment(
+                    [
+                        origin + egui::vec2(1.0, 4.0),
+                        origin + egui::vec2(1.0, 15.0),
+                    ],
+                    stroke,
+                );
+                ui.painter().line_segment(
+                    [
+                        origin + egui::vec2(1.0, 15.0),
+                        origin + egui::vec2(11.0, 15.0),
+                    ],
+                    stroke,
+                );
+            }
+        }
+        ui.painter().galley(
+            egui::pos2(
+                left + if icon { 22.0 } else { 0.0 },
+                part.center().y - galley.size().y / 2.0,
+            ),
+            galley,
+            color,
+        );
+        if response.has_focus() {
+            ui.painter().rect_stroke(
+                part.shrink(2.0),
+                3.0,
+                egui::Stroke::new(1.0, theme.accent.color()),
+                egui::StrokeKind::Inside,
+            );
+        }
+        let keyboard = response.has_focus()
+            && ui.input_mut(|i| {
+                i.consume_key(Modifiers::NONE, Key::Enter)
+                    || i.consume_key(Modifiers::NONE, Key::Space)
+            });
+        if ui.is_enabled() && (response.clicked() || keyboard) && !active {
+            changed = Some(source);
+        }
+        response.on_hover_text(if source {
+            format!("Source Control · {shortcut}")
+        } else {
+            "Files · return to the editor".into()
+        });
+    }
+    changed
+}
+
 /// Compact identity shared by the About and Update windows.
 pub(super) fn info_header(
     ui: &mut egui::Ui,

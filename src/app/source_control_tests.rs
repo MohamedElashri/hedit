@@ -232,6 +232,43 @@ fn shortcut_close_and_commit_drafts_preserve_editor_state() {
 }
 
 #[test]
+fn workspace_switcher_preserves_drafts_and_files_across_themes_and_small_sidebars() {
+    let (_directory, ctx, mut app, _git) = fixture();
+    app.source_control.draft = "Keep my commit message".into();
+    let id = app.active().view.id;
+    for theme in ["Hedit Ink", "Hedit Paper"] {
+        app.set_theme(&ctx, hedit::theme::builtin(theme).unwrap());
+        click_label(&ctx, &mut app, "Files");
+        assert!(!app.source_control.open);
+        // Repaint after the mode switch so the Files panel has settled.
+        frame(&ctx, &mut app, vec![]);
+        click_label(&ctx, &mut app, "Source Control");
+        finish_git(&ctx, &mut app);
+        assert!(app.source_control.open);
+        assert_eq!(app.source_control.draft, "Keep my commit message");
+        assert_eq!(app.active().view.id, id);
+        assert!(app.workspace.closed.is_empty());
+    }
+    // Both targets remain entirely inside a sidebar at its minimum width.
+    let output = ctx.run(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(160.0, 80.0),
+            )),
+            ..Default::default()
+        },
+        |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                controls::workspace_switcher(ui, &app.theme, false, "Ctrl+Shift+G");
+            });
+        },
+    );
+    assert!(visible(&output, "Files"));
+    assert!(visible(&output, "Git"));
+}
+
+#[test]
 #[ignore = "writes native source control preview images"]
 fn source_control_visual_preview() {
     let (directory, ctx, mut app, git) = fixture();

@@ -773,16 +773,15 @@ impl HeditApp {
             )
             .show(ctx, |ui| {
                 ui.set_min_width(ui.available_width());
-                ui.horizontal(|ui| {
-                    ui.strong("Files");
-                    if ui
-                        .button("Source Control")
-                        .on_hover_text("Git status, diffs, commits and branches · Ctrl+Shift+G")
-                        .clicked()
-                    {
-                        self.open_source_control(ctx);
-                    }
-                });
+                if controls::workspace_switcher(
+                    ui,
+                    &theme,
+                    false,
+                    &self.shortcut_text(Command::SourceControl),
+                ) == Some(true)
+                {
+                    self.open_source_control(ctx);
+                }
                 ui.add_space(8.0);
                 ui.spacing_mut().item_spacing.y = 0.0;
                 if ui

@@ -485,19 +485,31 @@ impl HeditApp {
             .frame(
                 egui::Frame::new()
                     .fill(theme.panel.color())
-                    .inner_margin(12.0),
+                    .inner_margin(egui::Margin::symmetric(8, 10)),
             )
             .show(ctx, |ui| {
+                if controls::workspace_switcher(
+                    ui,
+                    &theme,
+                    true,
+                    &self.shortcut_text(Command::SourceControl),
+                ) == Some(false)
+                {
+                    self.source_control.open = false;
+                    self.focus_editor = true;
+                    ctx.memory_mut(|m| {
+                        if let Some(id) = m.focused() {
+                            m.surrender_focus(id);
+                        }
+                    });
+                }
+                ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if ui
-                        .button("Files")
-                        .on_hover_text("Return to the editor")
-                        .clicked()
-                    {
-                        self.source_control.open = false;
-                        self.focus_editor = true;
-                    }
-                    ui.strong("Source Control");
+                    ui.label(
+                        RichText::new("Repository")
+                            .small()
+                            .color(theme.muted.color()),
+                    );
                     ui.add_enabled_ui(!self.source_control.pending, |ui| {
                         ui.menu_button("…", |ui| {
                             if ui.button("Clone repository…").clicked() {
