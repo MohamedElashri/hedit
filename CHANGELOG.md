@@ -4,6 +4,8 @@
 
 ### Changed
 
+- Simplified Software Update to a short status message and contextual actions.
+  Release notes open in the browser; diagnostics appear only after a failure.
 - Refreshed the editor with compact tabs, a quieter folder
   tree, a slim status bar, and more compact command and completion lists.
 - Hedit Ink and Hedit Paper use neutral palettes. Stored copies of the original

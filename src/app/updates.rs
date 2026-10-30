@@ -155,121 +155,129 @@ impl HeditApp {
             .release
             .as_ref()
             .is_some_and(|r| r.newer_than(env!("CARGO_PKG_VERSION")).unwrap_or(false));
-        let current = format!("Current version {}", env!("CARGO_PKG_VERSION"));
-        let (title, subtitle) = if let Some(version) = &self.updates.installed {
-            ("Update installed", format!("Version {version}"))
+        let failed = self.updates.error.is_some();
+        let (title, description) = if let Some(version) = &self.updates.installed {
+            (
+                "Update installed",
+                format!("hedit {version} will be ready when you reopen the app."),
+            )
         } else if self.updates.installing {
-            ("Installing update", current)
+            ("Installing update…", self.updates.message.clone())
         } else if active {
-            ("Checking for updates", current)
-        } else if self.updates.error.is_some() {
+            (
+                "Checking for updates…",
+                "Looking for the latest version of hedit.".into(),
+            )
+        } else if failed {
             (
                 if self.updates.release.is_some() {
-                    "Update failed"
+                    "Unable to install update"
                 } else {
-                    "Update check failed"
+                    "Unable to check for updates"
                 },
-                current,
+                "Please try again. If the problem continues, download the latest release.".into(),
             )
         } else if newer {
             let version = &self.updates.release.as_ref().unwrap().version;
             (
-                "Update available",
-                format!("Version {version} · Current {}", env!("CARGO_PKG_VERSION")),
+                "A new version is available",
+                if self.updates.installation.is_some() {
+                    format!("Update to hedit {version}.")
+                } else {
+                    format!("Download hedit {version} to update this installation.")
+                },
             )
         } else if self.updates.release.is_some() {
-            ("Up to date", current)
+            (
+                "You’re up to date",
+                "You’re using the latest version of hedit.".into(),
+            )
         } else {
-            ("Software updates", current)
+            (
+                "Software Update",
+                "Check for the latest version of hedit.".into(),
+            )
         };
         let mut open = true;
         let mut close = false;
         let mut check = false;
         let mut install = false;
         let mut quit = false;
-        egui::Window::new("Software updates")
+        egui::Window::new("Software Update")
             .id(egui::Id::new("updates"))
-            .open(&mut open)
+            .title_bar(false)
             .collapsible(false)
             .resizable(false)
-            .default_width(400.0)
+            .default_width(360.0)
+            .max_width((ctx.screen_rect().width() - 64.0).max(240.0))
             .frame(
                 egui::Frame::window(&ctx.style())
-                    .inner_margin(12.0)
-                    .corner_radius(10),
+                    .inner_margin(20.0)
+                    .corner_radius(6),
             )
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
-                controls::info_header(ui, &self.theme, title, &subtitle, active);
-                ui.add_space(12.0);
-                if self.updates.installing {
-                    ui.add(egui::Label::new(&self.updates.message).wrap());
-                    ui.weak("You can keep editing while this finishes.");
-                } else if installed {
-                    ui.label("Reopen hedit to use the new version.");
-                } else if newer && self.updates.installation.is_none() {
-                    ui.weak("Manual installation required.");
-                }
-                // Keep long notes and diagnostic paths out of the default view.
-                egui::ScrollArea::vertical()
-                    .id_salt("update-details")
-                    .max_height((ctx.screen_rect().height() - 310.0).clamp(60.0, 180.0))
-                    .show(ui, |ui| {
-                        if !installed && !active {
-                            if let Some(release) = &self.updates.release {
-                                if !release.notes.is_empty() {
-                                    egui::CollapsingHeader::new("Release notes")
-                                        .default_open(false)
-                                        .show(ui, |ui| {
-                                            ui.add(
-                                                egui::Label::new(&release.notes)
-                                                    .wrap()
-                                                    .selectable(true),
-                                            );
-                                        });
-                                }
-                            }
-                        }
-                        if !installed
-                            && (self.updates.error.is_some()
-                                || newer
-                                    && (self.updates.location_error.is_some()
-                                        || self.updates.installation.is_some()))
-                        {
-                            egui::CollapsingHeader::new("Details")
-                                .default_open(false)
-                                .show(ui, |ui| {
-                                    if let Some(error) = &self.updates.error {
-                                        ui.add(
-                                            egui::Label::new(
-                                                RichText::new(error)
-                                                    .color(self.theme.error.color()),
-                                            )
-                                            .wrap()
-                                            .selectable(true),
-                                        );
-                                    }
-                                    if let Some(error) = &self.updates.location_error {
-                                        ui.add(egui::Label::new(error).wrap().selectable(true));
-                                    }
-                                    if let Some(installation) = &self.updates.installation {
-                                        ui.weak("Install location");
-                                        ui.add(
-                                            egui::Label::new(
-                                                installation.location().display().to_string(),
-                                            )
-                                            .wrap()
-                                            .selectable(true),
-                                        );
-                                    }
-                                });
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new("Software Update")
+                            .size(12.0)
+                            .color(self.theme.muted.color()),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if controls::close_button(ui, "Close · Esc").clicked() {
+                            open = false;
                         }
                     });
+                });
+                ui.add_space(18.0);
+                if active {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(RichText::new(title).size(19.0).strong());
+                    });
+                } else {
+                    ui.label(RichText::new(title).size(19.0).strong());
+                }
+                ui.add_space(6.0);
+                ui.add(egui::Label::new(&description).wrap());
                 ui.add_space(8.0);
+                ui.label(
+                    RichText::new(format!("Current version {}", env!("CARGO_PKG_VERSION")))
+                        .size(11.0)
+                        .color(self.theme.muted.color()),
+                );
+                if newer && !active && !installed {
+                    ui.add_space(6.0);
+                    ui.hyperlink_to(
+                        "Release notes ↗",
+                        self.updates.release.as_ref().unwrap().url(),
+                    );
+                }
+                // Diagnostics are available only when an operation failed. Successful
+                // checks never expose paths, installation internals, or raw release text.
+                if failed && !active {
+                    ui.add_space(8.0);
+                    egui::CollapsingHeader::new("Error details")
+                        .default_open(false)
+                        .show(ui, |ui| {
+                            egui::ScrollArea::vertical()
+                                .id_salt("update-error")
+                                .max_height((ctx.screen_rect().height() - 330.0).clamp(40.0, 120.0))
+                                .show(ui, |ui| {
+                                    if let Some(error) = &self.updates.error {
+                                        ui.add(egui::Label::new(error).wrap().selectable(true));
+                                    }
+                                });
+                            ui.hyperlink_to(
+                                "Download latest release ↗",
+                                hedit::update::RELEASES_URL,
+                            );
+                        });
+                }
+                ui.add_space(20.0);
                 ui.separator();
-                ui.add_space(4.0);
+                ui.add_space(10.0);
                 ui.horizontal(|ui| {
-                    ui.hyperlink_to("All releases", hedit::update::RELEASES_URL);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if installed {
                             quit = controls::primary_button(
@@ -284,7 +292,11 @@ impl HeditApp {
                                 install = controls::primary_button(
                                     ui,
                                     &self.theme,
-                                    "Install update",
+                                    if failed {
+                                        "Try again"
+                                    } else {
+                                        "Install update"
+                                    },
                                     true,
                                 )
                                 .clicked();
@@ -300,16 +312,42 @@ impl HeditApp {
                                     self.updates.release.as_ref().unwrap().url(),
                                 ));
                             }
-                        } else if !active {
-                            check = controls::primary_button(ui, &self.theme, "Check again", true)
-                                .clicked();
-                        }
-                        close = ui
-                            .add_sized(
-                                [64.0, 28.0],
-                                egui::Button::new(if installed { "Later" } else { "Close" }),
+                        } else if !active && (failed || self.updates.release.is_none()) {
+                            check = controls::primary_button(
+                                ui,
+                                &self.theme,
+                                if failed {
+                                    "Try again"
+                                } else {
+                                    "Check for updates"
+                                },
+                                true,
                             )
                             .clicked();
+                        } else if !active {
+                            close =
+                                controls::primary_button(ui, &self.theme, "Done", true).clicked();
+                            check = ui
+                                .add(
+                                    egui::Button::new("Check again")
+                                        .frame(false)
+                                        .min_size(egui::vec2(80.0, 28.0)),
+                                )
+                                .clicked();
+                        }
+                        if installed || active || newer || failed || self.updates.release.is_none()
+                        {
+                            close = ui
+                                .add_sized(
+                                    [64.0, 28.0],
+                                    egui::Button::new(if installed || newer && !active {
+                                        "Later"
+                                    } else {
+                                        "Close"
+                                    }),
+                                )
+                                .clicked();
+                        }
                     });
                 });
             });
@@ -394,32 +432,224 @@ mod tests {
         let (workspace, _) = Workspace::restore(directory.path().into()).unwrap();
         let ctx = egui::Context::default();
         let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
-        app.updates.open = true;
-        app.updates.release = Some(release());
-        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(720.0, 480.0));
         for preset in hedit::theme::builtins() {
             app.set_theme(&ctx, preset.clone());
-            let mut output = None;
-            for _ in 0..4 {
-                output = Some(ctx.run(
+            for size in [egui::vec2(720.0, 480.0), egui::vec2(480.0, 360.0)] {
+                let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+                for (state, button) in [
+                    ("available", "Download update"),
+                    ("current", "Done"),
+                    ("failed", "Try again"),
+                    ("checking", "Close"),
+                    ("installing", "Close"),
+                    ("installed", "Quit hedit"),
+                ] {
+                    let mut latest = release();
+                    if state == "current" {
+                        latest.version = env!("CARGO_PKG_VERSION").parse().unwrap();
+                    }
+                    let (_tx, rx) = mpsc::channel();
+                    app.updates = Updates {
+                        open: true,
+                        release: (!matches!(state, "failed" | "checking")).then_some(latest),
+                        installed: (state == "installed").then(|| "9.4.0".into()),
+                        error: (state == "failed").then(|| "Sensitive diagnostic path".repeat(100)),
+                        installing: state == "installing",
+                        events: matches!(state, "checking" | "installing").then_some(rx),
+                        message: "Downloading update…".into(),
+                        ..Default::default()
+                    };
+                    let mut output = None;
+                    for _ in 0..4 {
+                        output = Some(ctx.run(
+                            egui::RawInput {
+                                screen_rect: Some(screen),
+                                ..Default::default()
+                            },
+                            |ctx| app.updates_window(ctx),
+                        ));
+                    }
+                    let output = output.unwrap();
+                    let rect = output
+                        .shapes
+                        .iter()
+                        .find_map(|s| find(&s.shape, button))
+                        .unwrap_or_else(|| panic!("missing {button}: {state}"));
+                    assert!(
+                        screen.contains_rect(rect),
+                        "{}: {state} at {size:?}",
+                        preset.name
+                    );
+                    assert!(!output
+                        .shapes
+                        .iter()
+                        .any(|s| find(&s.shape, "Install location").is_some()));
+                    assert!(!output.shapes.iter().any(|s| find(
+                        &s.shape,
+                        &"Sensitive diagnostic path".repeat(100)
+                    )
+                    .is_some()));
+                    assert_eq!(
+                        app.updates.active(),
+                        matches!(state, "checking" | "installing")
+                    );
+                    assert_eq!(app.updates.installing(), state == "installing");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn redesign_expanded_update_errors_keep_retry_and_close_visible() {
+        use super::super::tests::text_rect;
+        for size in [egui::vec2(720.0, 480.0), egui::vec2(480.0, 360.0)] {
+            let directory = tempfile::tempdir().unwrap();
+            let (workspace, _) = Workspace::restore(directory.path().into()).unwrap();
+            let ctx = egui::Context::default();
+            ctx.style_mut(|style| style.animation_time = 0.0);
+            let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+            let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+            app.updates = Updates {
+                open: true,
+                error: Some("Could not read /a/very/long/path: connection failed. ".repeat(100)),
+                ..Default::default()
+            };
+            let mut draw = |events| {
+                ctx.run(
                     egui::RawInput {
                         screen_rect: Some(screen),
+                        events,
+                        focused: true,
                         ..Default::default()
                     },
                     |ctx| app.updates_window(ctx),
-                ));
+                )
+            };
+            for _ in 0..3 {
+                draw(vec![]);
             }
-            let rect = output
-                .unwrap()
+            let output = draw(vec![]);
+            let header = output
                 .shapes
                 .iter()
-                .find_map(|s| find(&s.shape, "Download update"))
-                .unwrap();
-            assert!(screen.contains_rect(rect));
-            assert!(!app.updates.active());
-            assert!(!app.updates.installing());
+                .find_map(|s| text_rect(&s.shape, "Error details"))
+                .unwrap()
+                .center();
+            for pressed in [true, false] {
+                draw(vec![
+                    egui::Event::PointerMoved(header),
+                    egui::Event::PointerButton {
+                        pos: header,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: Modifiers::NONE,
+                    },
+                ]);
+            }
+            for _ in 0..3 {
+                draw(vec![]);
+            }
+            let output = draw(vec![]);
+            for label in ["Try again", "Close", "Download latest release ↗"] {
+                let (shape, rect) = output
+                    .shapes
+                    .iter()
+                    .find_map(|s| text_rect(&s.shape, label).map(|rect| (s, rect)))
+                    .unwrap_or_else(|| panic!("missing {label} at {size:?}"));
+                assert!(
+                    screen.contains_rect(rect) && shape.clip_rect.contains_rect(rect),
+                    "{label} was clipped at {size:?}: {rect:?}"
+                );
+            }
         }
     }
+
+    #[test]
+    fn redesign_update_close_buttons_preserve_installation_and_return_editor_focus() {
+        use super::super::tests::text_rect;
+        for (state, button) in [
+            ("installing", "Close"),
+            ("available", "Later"),
+            ("current", "Done"),
+            ("installed", "Later"),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let (workspace, _) = Workspace::restore(directory.path().into()).unwrap();
+            let ctx = egui::Context::default();
+            let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+            let (tx, rx) = mpsc::channel();
+            let mut latest = release();
+            if state == "current" {
+                latest.version = env!("CARGO_PKG_VERSION").parse().unwrap();
+            }
+            app.focus_editor = false;
+            app.updates = Updates {
+                open: true,
+                release: Some(latest),
+                installing: state == "installing",
+                events: (state == "installing").then_some(rx),
+                installed: (state == "installed").then(|| "9.4.0".into()),
+                message: "Downloading update…".into(),
+                ..Default::default()
+            };
+            let mut draw = |events| {
+                ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(720.0, 480.0),
+                        )),
+                        events,
+                        focused: true,
+                        ..Default::default()
+                    },
+                    |ctx| app.updates_window(ctx),
+                )
+            };
+            for _ in 0..3 {
+                draw(vec![]);
+            }
+            let output = draw(vec![]);
+            let at = output
+                .shapes
+                .iter()
+                .find_map(|s| text_rect(&s.shape, button))
+                .unwrap()
+                .center();
+            for pressed in [true, false] {
+                draw(vec![
+                    egui::Event::PointerMoved(at),
+                    egui::Event::PointerButton {
+                        pos: at,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: Modifiers::NONE,
+                    },
+                ]);
+            }
+            assert!(
+                !app.updates.open,
+                "{state}: {button} did not close the dialog"
+            );
+            assert!(app.focus_editor);
+            assert!(
+                !app.closing,
+                "dismissing the dialog must not quit the editor"
+            );
+            assert_eq!(app.updates.active(), state == "installing");
+            if state == "installing" {
+                assert!(app.updates.installing());
+                tx.send(Event::Progress("Installing update…")).unwrap();
+                tx.send(Event::Installed(Ok("9.4.0".into()))).unwrap();
+                app.updates.poll();
+                assert_eq!(app.updates.installed.as_deref(), Some("9.4.0"));
+                assert!(!app.updates.active());
+                assert!(!app.updates.installing());
+                assert!(!app.closing);
+            }
+        }
+    }
+
     #[test]
     #[ignore = "writes update dialog SVG previews to HEDIT_PREVIEW_DIR"]
     fn export_update_previews() {
@@ -491,12 +721,16 @@ mod tests {
                         },
                     ));
                 }
-                let svg = crate::preview::export(
-                    &last.unwrap().shapes,
-                    size,
-                    app.theme.background.color(),
-                );
+                let last = last.unwrap();
+                let svg = crate::preview::export(&last.shapes, size, app.theme.background.color());
                 std::fs::write(output.join(format!("update-{name}-{state}.svg")), svg).unwrap();
+                let ppm = super::super::rtl_tests::rasterize(
+                    &ctx,
+                    last,
+                    egui::vec2(size[0], size[1]),
+                    1.0,
+                );
+                std::fs::write(output.join(format!("update-{name}-{state}.ppm")), ppm).unwrap();
             }
         }
     }

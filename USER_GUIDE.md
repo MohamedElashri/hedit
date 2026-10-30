@@ -124,7 +124,7 @@ On Windows, [replace the portable package](#windows-installation). On macOS,
 run the installer again or replace the app.
 
 On Linux, **Help → Check for updates…** looks up the latest stable release,
-shows its notes, and installs it when you click **Install update**. hedit never
+links to release notes, and installs it when you click **Install update**. hedit never
 checks, installs, or restarts on its own. Keep working while it installs; the new
 version runs the next time you start hedit.
 
