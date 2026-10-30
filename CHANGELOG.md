@@ -5,29 +5,45 @@
 ### Added
 
 - A native Source Control workspace with a dedicated sidebar, repository selection,
-  clone/init, staged and working changes, unified and side-by-side diffs, hunk
-  staging, commits/amend, history with a parent graph, branch/remote management,
-  conflict review and resolution, stashes, fetch, fast-forward pull, and push.
-  Uses installed Git; unsaved-buffer guards and backups protect working text.
+  clone/init, separate staged, working, untracked, and conflict groups, unified
+  and side-by-side diffs, whole-file and hunk staging, and copyable patches.
+  Open it from Tools, the sidebar switch, or Ctrl/Cmd+Shift+G. Source Control
+  uses installed Git 2.30 or newer and your existing Git configuration,
+  credentials, signing settings, and hooks.
+- Git commits use staged changes only, with optional amend and commit-message
+  drafts preserved across repository changes and restarts. Commit history has a
+  parent graph, reference labels, first-parent file comparisons, copyable commit
+  IDs, cherry-pick, and revert actions.
+- Git branch and remote management includes local and tracking branch creation,
+  switching, merging, safe branch deletion, adding/removing remotes, fetch,
+  fast-forward pull, push, and publishing a branch with an upstream. Stashes can
+  save tracked and untracked work, restore the index, and be applied or dropped.
+- Native Git conflict review shows Current, Incoming, and the common ancestor.
+  Resolve manually in the editor or choose a side, then stage the result. Merge,
+  cherry-pick, revert, and rebase operations offer Continue and Abort controls.
+  Unsaved-buffer guards, reviewed-change validation, and backups protect working
+  text during discard and conflict replacement. Git work runs in the background
+  with refresh, cancellation, timeouts, and a recent operation log.
 - An offline User Guide opens from Help, About, the command palette, or F1.
   Contents and section links navigate the bundled documentation; related developer
   notes and license notices are readable without a browser or network access.
-
-- Five dark palettes: Ayu Dark, Night Owl, Cobalt2, Everforest Dark, and Kanagawa
-  Wave. Five light palettes: Ayu Light, Light Owl, Quiet Light, Everforest Light,
-  and Flexoki Light. All are available in the theme picker and gallery.
-- Five more dark palettes: Tomorrow Night, Horizon, Iceberg Dark, PaperColor
-  Dark, and SynthWave ’84. Five more light palettes: Tomorrow, Horizon Bright,
-  Iceberg Light, PaperColor Light, and Alabaster.
+- Twenty new palettes bring the built-in catalog to 38 themes. The ten dark
+  palettes are Ayu Dark, Night Owl, Cobalt2, Everforest Dark, Kanagawa Wave,
+  Tomorrow Night, Horizon, Iceberg Dark, PaperColor Dark, and SynthWave ’84.
+  The ten light palettes are Ayu Light, Light Owl, Quiet Light, Everforest Light,
+  Flexoki Light, Tomorrow, Horizon Bright, Iceberg Light, PaperColor Light, and
+  Alabaster. All are available in the theme picker and gallery, with palette
+  credits and license notices bundled.
 
 ### Changed
 
 - Files and Source Control share a segmented sidebar switch with native vector
-  icons, a clear active state, larger click targets, and compact labels.
+  icons, a clear active state, larger click targets, keyboard focus, and compact
+  labels. Switching views preserves editor tabs and commit-message drafts.
 - Markdown previews and offline documentation share clearer typography with real
-  semibold headings, readable spacing, accented links, wrapping tables, and native
-  code blocks with syntax colors, horizontal scrolling, and a Copy button.
-
+  semibold headings, bundled reader fonts, readable spacing, underlined links,
+  wrapping tables, and selectable native code blocks with syntax colors,
+  horizontal scrolling, and a Copy button. Document colors follow the active theme.
 - Refreshed the editor with compact tabs, a quieter folder tree,
   a slim status bar, and more compact command and completion lists.
 - Hedit Ink and Hedit Paper use neutral palettes. Stored copies of the original
@@ -36,6 +52,10 @@
   Release notes open in the browser; diagnostics appear only after a failure.
 - Markdown Split synchronizes vertical scrolling between the source and preview
   in both directions, including when the panes are stacked in narrow windows.
+  Scrolling keeps the caret, selections, and horizontal positions intact and
+  stays independent between editor groups and documents.
+- Refreshed the README, user guide, and developer guide to match current editing,
+  recovery, Markdown, theme, Git, platform, packaging, and release behavior.
 - GitHub release descriptions now use the version's changelog entry, so published
   release notes include the actual changes.
 
@@ -611,6 +631,9 @@ Initial release of hedit.
 - User and developer guides, plus Makefile commands for formatting, linting,
   tests, packaging, and CI validation.
 
+[0.1.11]: https://github.com/MohamedElashri/hedit/compare/v0.1.10...v0.1.11
+[0.1.10]: https://github.com/MohamedElashri/hedit/compare/v0.1.9...v0.1.10
+[0.1.9]: https://github.com/MohamedElashri/hedit/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/MohamedElashri/hedit/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/MohamedElashri/hedit/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/MohamedElashri/hedit/compare/v0.1.5...v0.1.6
