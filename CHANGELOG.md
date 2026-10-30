@@ -4,6 +4,8 @@
 
 ### Changed
 
+- Markdown Split synchronizes vertical scrolling between the source and preview
+  in both directions, including when the panes are stacked in narrow windows.
 - Simplified Software Update to a short status message and contextual actions.
   Release notes open in the browser; diagnostics appear only after a failure.
 - Refreshed the editor with compact tabs, a quieter folder

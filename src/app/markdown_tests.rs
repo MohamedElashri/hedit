@@ -875,3 +875,218 @@ fn markdown_nested_quoted_blocks_keep_content_and_reference_links() {
     assert_eq!(app.active().page.text, "# Linked document\n");
     assert_eq!(app.active().view.markdown_view, MarkdownView::Preview);
 }
+
+fn scroll_markdown(
+    ctx: &egui::Context,
+    app: &mut HeditApp,
+    size: egui::Vec2,
+    at: egui::Pos2,
+    delta: f32,
+) {
+    frame_size(
+        ctx,
+        app,
+        vec![
+            egui::Event::PointerMoved(at),
+            egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(0.0, delta),
+                modifiers: Modifiers::NONE,
+            },
+        ],
+        size,
+    );
+    for _ in 0..40 {
+        frame_size(ctx, app, vec![], size);
+    }
+}
+
+#[test]
+fn markdown_split_scrolls_both_directions_without_moving_the_caret_or_editing_text() {
+    let source: String = (0..60).map(|n| format!("## Section {n}\n\nA paragraph with **formatting** and enough words to wrap in the rendered preview.\n\n> 1. A quoted question.\n>\n> A quoted answer.\n\n```rust\nlet value = {n};\n```\n\n")).collect();
+    for size in [egui::vec2(1280.0, 820.0), egui::vec2(720.0, 600.0)] {
+        let (_directory, ctx, mut app) = fixture(&source);
+        app.execute(&ctx, Command::MarkdownSplit);
+        for _ in 0..4 {
+            frame_size(&ctx, &mut app, vec![], size);
+        }
+        let id = app.active().view.id;
+        let revision = app.active().page.info.revision;
+        let caret = (app.active().view.anchor, app.active().view.head);
+        let (editor, preview) = app.markdown.scroll.snapshot(id, 0).unwrap();
+        assert!(editor.max > 0.0 && preview.max > 0.0);
+        scroll_markdown(&ctx, &mut app, size, editor.rect.center(), -400.0);
+        let (editor, preview) = app.markdown.scroll.snapshot(id, 0).unwrap();
+        assert!(editor.offset > 100.0, "editor did not scroll: {editor:?}");
+        assert!(
+            preview.offset > 100.0,
+            "preview did not follow: {preview:?}"
+        );
+        let before = (editor.offset, preview.offset);
+        scroll_markdown(&ctx, &mut app, size, preview.rect.center(), -500.0);
+        let (editor, preview) = app.markdown.scroll.snapshot(id, 0).unwrap();
+        assert!(
+            editor.offset > before.0 + 10.0,
+            "editor did not follow preview: {before:?} -> {editor:?}"
+        );
+        assert!(preview.offset > before.1 + 100.0);
+        let settled = (editor.offset, preview.offset);
+        for _ in 0..8 {
+            frame_size(&ctx, &mut app, vec![], size);
+        }
+        let (editor, preview) = app.markdown.scroll.snapshot(id, 0).unwrap();
+        assert!(
+            (editor.offset - settled.0).abs() < 1.0 && (preview.offset - settled.1).abs() < 1.0,
+            "synchronized panes drifted: {settled:?} -> ({}, {})",
+            editor.offset,
+            preview.offset
+        );
+        scroll_markdown(&ctx, &mut app, size, preview.rect.center(), -100000.0);
+        let (editor, preview) = app.markdown.scroll.snapshot(id, 0).unwrap();
+        assert!(
+            (editor.max - editor.offset).abs() < 1.0 && (preview.max - preview.offset).abs() < 1.0,
+            "panes did not reach the bottom together: {editor:?}, {preview:?}"
+        );
+        scroll_markdown(&ctx, &mut app, size, preview.rect.center(), 100000.0);
+        let (editor, preview) = app.markdown.scroll.snapshot(id, 0).unwrap();
+        assert!(
+            editor.offset < 1.0 && preview.offset < 1.0,
+            "panes did not return to the top"
+        );
+        assert_eq!(app.active().page.text, source);
+        assert_eq!(app.active().page.info.revision, revision);
+        assert_eq!((app.active().view.anchor, app.active().view.head), caret);
+    }
+}
+
+#[test]
+fn markdown_split_scrolling_is_scoped_to_the_document_and_handles_short_content() {
+    let source = "# Section\n\nA paragraph that stays in its document.\n\n".repeat(100);
+    let (directory, ctx, mut app) = fixture(&source);
+    app.execute(&ctx, Command::MarkdownSplit);
+    for _ in 0..4 {
+        frame(&ctx, &mut app, vec![]);
+    }
+    let first = app.active().view.id;
+    let (editor, _) = app.markdown.scroll.snapshot(first, 0).unwrap();
+    scroll_markdown(
+        &ctx,
+        &mut app,
+        egui::vec2(1280.0, 820.0),
+        editor.rect.center(),
+        -1000.0,
+    );
+    let other = directory.path().join("short.md");
+    std::fs::write(&other, "# Short note\n\nOne paragraph.\n").unwrap();
+    app.open(&ctx, Some(other));
+    finish_app_job(&mut app, &ctx);
+    app.execute(&ctx, Command::MarkdownSplit);
+    for _ in 0..4 {
+        frame(&ctx, &mut app, vec![]);
+    }
+    let id = app.active().view.id;
+    assert!(app.markdown.scroll.snapshot(first, 0).is_none());
+    let (editor, preview) = app.markdown.scroll.snapshot(id, 0).unwrap();
+    assert!(
+        preview.offset < 1.0 && editor.offset < 1.0,
+        "inherited another document's scroll"
+    );
+    scroll_markdown(
+        &ctx,
+        &mut app,
+        egui::vec2(1280.0, 820.0),
+        preview.rect.center(),
+        -500.0,
+    );
+    let (editor, preview) = app.markdown.scroll.snapshot(id, 0).unwrap();
+    assert!(editor.offset.is_finite() && preview.offset == 0.0);
+    app.execute(&ctx, Command::MarkdownSource);
+    frame(&ctx, &mut app, vec![]);
+    assert!(app.markdown.scroll.snapshot(id, 0).is_none());
+}
+
+#[test]
+fn markdown_split_sync_keeps_its_place_when_wrapped_math_content_resizes() {
+    let source = format!(
+        "{MEDIA_SAMPLE}\n\n{}",
+        (0..40)
+            .map(|n| format!(
+                "## Section {n}\n\n{}\n\n",
+                "A longer paragraph with café and Ελληνικά text for wrapping. ".repeat(n % 5 + 2)
+            ))
+            .collect::<String>()
+    );
+    let (_directory, ctx, mut app) = fixture(&source);
+    app.settings.word_wrap = true;
+    app.execute(&ctx, Command::MarkdownSplit);
+    finish_media(&ctx, &mut app, 4);
+    for _ in 0..4 {
+        frame(&ctx, &mut app, vec![]);
+    }
+    let id = app.active().view.id;
+    let (_, preview) = app.markdown.scroll.snapshot(id, 0).unwrap();
+    scroll_markdown(
+        &ctx,
+        &mut app,
+        egui::vec2(1280.0, 820.0),
+        preview.rect.center(),
+        -1800.0,
+    );
+    let source_line = |app: &HeditApp| {
+        let (viewport, _) = app.markdown.scroll.snapshot(id, 0).unwrap();
+        let (galley, _) = app.editor_layout.last().unwrap();
+        let at = galley
+            .cursor_from_pos(egui::vec2(0.0, (viewport.offset - 2.0).max(0.0)))
+            .ccursor
+            .index;
+        source.chars().take(at).filter(|&ch| ch == '\n').count()
+    };
+    let before = source_line(&app);
+    assert!(before > 5);
+    for _ in 0..12 {
+        frame_size(&ctx, &mut app, vec![], egui::vec2(720.0, 600.0));
+    }
+    let after = source_line(&app);
+    assert!(
+        before.abs_diff(after) <= 1,
+        "resizing lost the corresponding source paragraph: {before} -> {after}"
+    );
+    assert_eq!(app.active().page.text, source);
+    assert!(!app.active().page.info.dirty);
+}
+
+#[test]
+fn markdown_split_sync_keeps_editor_groups_and_horizontal_scroll_independent() {
+    let source = (0..60)
+        .map(|n| {
+            format!(
+                "## Section {n}\n\n{}\n\n",
+                "A very long source line. ".repeat(30)
+            )
+        })
+        .collect::<String>();
+    let (_directory, ctx, mut app) = fixture(&source);
+    app.execute(&ctx, Command::MarkdownSplit);
+    app.split(1);
+    let size = egui::vec2(1920.0, 1080.0);
+    for _ in 0..4 {
+        frame_size(&ctx, &mut app, vec![], size);
+    }
+    let id = app.active().view.id;
+    let (editor, _) = app.markdown.scroll.snapshot(id, 0).unwrap();
+    let (other_editor, other_preview) = app.markdown.scroll.snapshot(id, 1).unwrap();
+    scroll_markdown(&ctx, &mut app, size, editor.rect.center(), -500.0);
+    let (editor, preview) = app.markdown.scroll.snapshot(id, 0).unwrap();
+    assert!(editor.offset > 0.0 && preview.offset > 0.0);
+    let (other_source, other_rendered) = app.markdown.scroll.snapshot(id, 1).unwrap();
+    assert_eq!(other_source.offset, other_editor.offset);
+    assert_eq!(other_rendered.offset, other_preview.offset);
+    // Horizontal scrolling remains local to the source and is not reset by sync.
+    let index = app.workspace.active;
+    app.workspace.open[index].view.scroll_left = 120.0;
+    app.workspace.open[index].restore_cursor = true;
+    frame_size(&ctx, &mut app, vec![], size);
+    scroll_markdown(&ctx, &mut app, size, preview.rect.center(), -300.0);
+    assert!((app.active().view.scroll_left - 120.0).abs() < 1.0);
+    assert_eq!(app.active().page.text, source);
+}

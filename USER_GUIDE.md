@@ -467,6 +467,10 @@ with the rendered document; switch back to Source or Split to type. Unsaved chan
 and each tab's view mode is kept between launches. For an untitled note, choose
 **Markdown** from the language picker in the status bar.
 
+In Split, scrolling either pane also scrolls the other to the corresponding part
+of the document. This works side by side and in the stacked layout. Horizontal
+scrolling stays independent.
+
 The preview renders headings, emphasis, links, lists, task lists, quotes, tables,
 and code blocks. Section links scroll to their headings, including headings in
 quotes and lists. Markdown file links stay in Preview and honor `#section`

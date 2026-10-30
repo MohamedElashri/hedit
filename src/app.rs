@@ -29,6 +29,7 @@ mod goto_tests;
 mod macros;
 mod markdown;
 mod markdown_media;
+mod markdown_scroll;
 #[cfg(test)]
 mod markdown_tests;
 #[cfg(test)]
@@ -1689,6 +1690,8 @@ impl HeditApp {
         let context = ui.ctx().clone();
         let ctx = &context;
         let theme = self.theme.clone();
+        let markdown_split = self.markdown_available()
+            && self.active().view.markdown_view == hedit::session::MarkdownView::Split;
         let find_matches = self.find_highlights();
         let word_matches = self.selection_highlights();
 
@@ -1923,6 +1926,21 @@ impl HeditApp {
             }
             galley
         };
+        let markdown_navigation = buffer.reveal_cursor
+            || self
+                .scroll_request
+                .is_some_and(|(view, _)| view == buffer.view.id)
+            || ctx.memory(|m| m.has_focus(id))
+                && ctx.input(|input| {
+                    input.events.iter().any(|event| {
+                        matches!(
+                            event,
+                            egui::Event::Key { pressed: true, .. }
+                                | egui::Event::Text(_)
+                                | egui::Event::Ime(egui::ImeEvent::Commit(_))
+                        )
+                    })
+                });
         let mut scroll = egui::ScrollArea::both()
             .id_salt((
                 "page-scroll",
@@ -1943,6 +1961,14 @@ impl HeditApp {
             // Scrolling alone leaves the cursor where it is, even off screen.
             scroll = scroll.vertical_scroll_offset(top.1 as f32);
         }
+        if markdown_split {
+            if let Some(top) = self.markdown.scroll.source_offset(buffer.view.id, pane_id) {
+                if !markdown_navigation {
+                    scroll = scroll.vertical_scroll_offset(top);
+                }
+            }
+        }
+        let mut markdown_layout = None;
         let restore = buffer.restore_cursor;
         let gutter = if self.settings.line_numbers {
             let digits = (memchr::memchr_iter(b'\n', buffer.page.text.as_bytes()).count() + 1)
@@ -1997,6 +2023,7 @@ impl HeditApp {
             .scope_builder(egui::UiBuilder::new().max_rect(editor_area), |ui| {
                 ui.set_clip_rect(ui.clip_rect().intersect(editor_area));
                 scroll.show(ui, |ui| {
+                    let content_top = ui.max_rect().top();
                     let gutter_rect = egui::Rect::from_min_max(
                         ui.clip_rect().min,
                         egui::pos2(ui.clip_rect().left() + gutter, ui.clip_rect().bottom()),
@@ -2056,6 +2083,14 @@ impl HeditApp {
                             ui.visuals_mut().selection.bg_fill = egui::Color32::TRANSPARENT;
                         }
                         let mut output = edit.show(ui);
+                        if markdown_split {
+                            markdown_layout = Some((
+                                Arc::clone(&output.galley),
+                                Arc::clone(&projection),
+                                output.galley_pos.y - content_top,
+                            ));
+                        }
+
                         let bidi_rows: Arc<bidi_view::BidiRows> = latest_bidi.take();
                         if bidi_rows.any() {
                             bidi_view::interact(
@@ -2819,6 +2854,20 @@ impl HeditApp {
                     ));
                 }
             }
+        }
+        if let Some((galley, projection, inset)) = markdown_layout {
+            self.markdown.scroll.source(
+                active_view,
+                pane_id,
+                markdown_scroll::Source {
+                    viewport: markdown_scroll::Viewport::new(&scroll_output, editor_area),
+                    galley,
+                    projection,
+                    inset,
+                    revision: self.workspace.open[index].page.info.revision,
+                    navigation: markdown_navigation,
+                },
+            );
         }
         if let Some(at) = word_menu_at {
             if self.settings.spell_check {

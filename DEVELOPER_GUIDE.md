@@ -138,7 +138,7 @@ without a window belongs in the library, with tests under `tests/`.
 | Process and updates | `cli.rs`, `launcher.rs`, `ipc.rs`, `windows.rs`, `update.rs`, `update/`, `build.rs`, `debugger.rs` |
 | Window | `app.rs` (frame loop, shortcuts, editor drawing), `app/chrome.rs` (menus, tabs, sidebar, status bar), `app/commands.rs` (every command, the palette) |
 | App features | One file each in `src/app/`, named after the feature: `auto_complete.rs`, `definitions.rs`, `spell_check.rs`, `macros.rs`, `snippet_fields.rs`, `find_tools.rs`, `changes.rs`, `fold_gutter.rs`, `font_picker.rs`, and so on |
-| Markdown | `app/markdown.rs` (source/preview layout, background preparation, links, local images), `app/markdown_media.rs` (cached native math and Mermaid rendering), `app/markdown_tests.rs`; per-tab modes are stored in `session.rs` |
+| Markdown | `app/markdown.rs` (source/preview layout, background preparation, links, local images), `app/markdown_scroll.rs` (bidirectional split scrolling), `app/markdown_media.rs` (cached native math and Mermaid rendering), `app/markdown_tests.rs`; per-tab modes are stored in `session.rs` |
 | Settings | `settings.rs` (the `settings.json` schema), `app/settings_store.rs`, `app/preferences.rs`, `app/settings_pages.rs` |
 
 Every menu item, shortcut, and palette entry goes through `Command` in

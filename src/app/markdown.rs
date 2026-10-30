@@ -20,6 +20,7 @@ pub(super) struct Markdown {
     anchor: Option<(u64, String)>,
     pending_link: Option<String>,
     pub(super) media: Arc<Media>,
+    pub(super) scroll: markdown_scroll::Sync,
 }
 
 struct Links {
@@ -41,6 +42,8 @@ struct Prepared {
     rendered: String,
     headings: HashMap<String, usize>,
     figures: Vec<Figure>,
+    heading_chars: Vec<usize>,
+    source_len: usize,
 }
 
 /// Add invisible scroll targets while keeping the complete Markdown document
@@ -55,6 +58,8 @@ fn prepare(text: &str) -> Prepared {
     let mut list_depth = 0usize;
     let mut figure: Option<(usize, String, Figure)> = None;
     let mut figures = vec![];
+    let mut heading_chars = Vec::new();
+    let (mut counted_byte, mut counted_chars) = (0, 0);
     // Match the renderer, including dollar-delimited inline/display math.
     let options = pulldown_cmark::Options::ENABLE_TABLES
         | pulldown_cmark::Options::ENABLE_TASKLISTS
@@ -101,6 +106,9 @@ fn prepare(text: &str) -> Prepared {
                     Tag::Link { dest_url, .. } => targets.push(dest_url.into_string()),
                     Tag::Heading { .. } => {
                         let index = headings.len();
+                        counted_chars += text[counted_byte..span.start].chars().count();
+                        counted_byte = span.start;
+                        heading_chars.push(counted_chars);
                         rendered.push_str(&text[copied..span.start]);
                         // Keep a nested heading inside its quote/list. List
                         // markers become continuation indentation on the new
@@ -199,6 +207,8 @@ fn prepare(text: &str) -> Prepared {
         targets,
         headings,
         figures,
+        heading_chars,
+        source_len: counted_chars + text[counted_byte..].chars().count(),
     }
 }
 
@@ -348,6 +358,7 @@ impl Markdown {
     }
 
     pub(super) fn retain_documents(&mut self, ctx: &egui::Context, open: &[Buffer]) {
+        self.scroll.retain(open);
         let closed: Vec<_> = self
             .images
             .roots
@@ -434,6 +445,7 @@ impl HeditApp {
         if b.view.markdown_view == view {
             return;
         }
+        self.markdown.scroll.reset(b.view.id);
         b.view.markdown_view = view;
         // A hidden TextEdit must not keep handling typing or clipboard events.
         if view == MarkdownView::Preview {
@@ -527,6 +539,11 @@ impl HeditApp {
                     ui.set_clip_rect(ui.clip_rect().intersect(preview));
                     self.markdown_preview(ui, pane);
                 });
+                let id = self.active().view.id;
+                if let Some(top) = self.markdown.scroll.synchronize(ui.ctx(), id, pane) {
+                    self.workspace.open[self.workspace.active].view.scroll_top = f64::from(top);
+                    self.generation = self.generation.wrapping_add(1);
+                }
                 ui.allocate_rect(area, egui::Sense::hover());
             }
         }
@@ -664,12 +681,21 @@ impl HeditApp {
         }
         let found = Arc::new(AtomicBool::new(false));
         let seen = found.clone();
+        let section_positions = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let positions = std::rc::Rc::clone(&section_positions);
         let html = move |ui: &mut egui::Ui, html: &str| {
             if let Some(marker) = html
                 .trim()
                 .strip_prefix("<!--hedit-markdown-anchor:")
                 .and_then(|s| s.strip_suffix("-->"))
             {
+                if let Ok(index) = marker.parse::<usize>() {
+                    if let Some(&source) = figures.heading_chars.get(index) {
+                        positions
+                            .borrow_mut()
+                            .push((source as f32, ui.next_widget_position().y));
+                    }
+                }
                 if marker.parse::<usize>().ok() == anchor && anchor.is_some() {
                     ui.scroll_to_rect(
                         egui::Rect::from_min_size(ui.next_widget_position(), egui::vec2(1.0, 1.0)),
@@ -692,6 +718,12 @@ impl HeditApp {
                 ui.label(html);
             }
         };
+        let split = self.active().view.markdown_view == MarkdownView::Split;
+        let synchronized_offset = if split {
+            self.markdown.scroll.preview_offset(id, pane)
+        } else {
+            None
+        };
         let cache = self
             .markdown
             .cache
@@ -702,47 +734,69 @@ impl HeditApp {
         }
         let font_size = self.settings.font_size;
         let surface = self.theme.surface.color();
-        ui.push_id(("markdown", id, pane), |ui| {
-            egui::ScrollArea::both()
+        let mut content_top = 0.0;
+        let output = ui.push_id(("markdown", id, pane), |ui| {
+            let mut scroll = egui::ScrollArea::both()
                 .id_salt("rendered")
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    if top {
-                        ui.scroll_to_rect(
-                            egui::Rect::from_min_size(
-                                ui.next_widget_position(),
-                                egui::vec2(1.0, 1.0),
-                            ),
-                            Some(egui::Align::Min),
+                .auto_shrink([false, false]);
+            if let Some(offset) = synchronized_offset {
+                scroll = scroll.vertical_scroll_offset(offset);
+            }
+            scroll.show(ui, |ui| {
+                content_top = ui.max_rect().top();
+                if top {
+                    ui.scroll_to_rect(
+                        egui::Rect::from_min_size(ui.next_widget_position(), egui::vec2(1.0, 1.0)),
+                        Some(egui::Align::Min),
+                    );
+                    found.store(true, Ordering::Relaxed);
+                }
+                egui::Frame::new()
+                    .fill(surface)
+                    .inner_margin(20.0)
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.style_mut()
+                            .text_styles
+                            .insert(egui::TextStyle::Body, FontId::proportional(font_size + 2.0));
+                        ui.style_mut().text_styles.insert(
+                            egui::TextStyle::Heading,
+                            FontId::proportional(font_size + 14.0),
                         );
-                        found.store(true, Ordering::Relaxed);
-                    }
-                    egui::Frame::new()
-                        .fill(surface)
-                        .inner_margin(20.0)
-                        .show(ui, |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.style_mut().text_styles.insert(
-                                egui::TextStyle::Body,
-                                FontId::proportional(font_size + 2.0),
-                            );
-                            ui.style_mut().text_styles.insert(
-                                egui::TextStyle::Heading,
-                                FontId::proportional(font_size + 14.0),
-                            );
-                            ui.style_mut()
-                                .text_styles
-                                .insert(egui::TextStyle::Monospace, FontId::monospace(font_size));
-                            ui.style_mut().url_in_tooltip = true;
-                            CommonMarkViewer::new()
-                                .default_implicit_uri_scheme(format!("{IMAGE_SCHEME}{id}/"))
-                                .max_image_width(Some(ui.available_width().max(0.0) as usize))
-                                .render_html_fn(Some(&html))
-                                .render_math_fn(Some(&math))
-                                .show(ui, cache, &prepared.rendered);
-                        });
-                });
+                        ui.style_mut()
+                            .text_styles
+                            .insert(egui::TextStyle::Monospace, FontId::monospace(font_size));
+                        ui.style_mut().url_in_tooltip = true;
+                        CommonMarkViewer::new()
+                            .default_implicit_uri_scheme(format!("{IMAGE_SCHEME}{id}/"))
+                            .max_image_width(Some(ui.available_width().max(0.0) as usize))
+                            .render_html_fn(Some(&html))
+                            .render_math_fn(Some(&math))
+                            .show(ui, cache, &prepared.rendered);
+                    });
+            })
         });
+        if split {
+            let output = output.inner;
+            let mut sections = vec![(0.0, 0.0)];
+            for (source, y) in section_positions.take() {
+                let y = (y - content_top).max(0.0);
+                if source > sections.last().unwrap().0 && y > sections.last().unwrap().1 {
+                    sections.push((source, y));
+                }
+            }
+            sections.push((prepared.source_len as f32, output.content_size.y));
+            self.markdown.scroll.preview(
+                id,
+                pane,
+                markdown_scroll::Preview {
+                    viewport: markdown_scroll::Viewport::new(&output, viewport),
+                    sections,
+                    revision,
+                    navigation: found.load(Ordering::Relaxed),
+                },
+            );
+        }
         let clicked = prepared
             .targets
             .iter()
