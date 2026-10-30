@@ -137,7 +137,7 @@ fn export_readme_screenshots() {
     let output =
         PathBuf::from(std::env::var_os("HEDIT_PREVIEW_DIR").expect("set HEDIT_PREVIEW_DIR"));
     std::fs::create_dir_all(&output).unwrap();
-    for (theme, name) in [("One Dark", "dark"), ("One Light", "light")] {
+    for (theme, name) in [(hedit::theme::INK, "dark"), (hedit::theme::PAPER, "light")] {
         std::fs::write(output.join(format!("screenshot-{name}.ppm")), scene(theme)).unwrap();
     }
 }

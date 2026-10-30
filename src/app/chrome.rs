@@ -38,7 +38,7 @@ impl HeditApp {
         let mut action = None;
         let mut open_menu = None;
         egui::TopBottomPanel::top("menu-bar").frame(egui::Frame::new().fill(theme.panel.color())
-            .inner_margin(egui::Margin::symmetric(8, 3))).show(ctx, |ui| {
+            .inner_margin(egui::Margin::symmetric(8, 1))).show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 for (title, groups) in [
                     ("File", vec![vec![Command::New, Command::NewWindow, Command::Open, Command::OpenFolder], vec![Command::RefreshFolder, Command::CloseFolder], vec![Command::Save, Command::SaveAs, Command::Rename, Command::Encoding], vec![Command::OpenRecent], vec![Command::Close, Command::CloseAll, Command::CloseUnmodified, Command::Reopen, Command::Shelf], if cfg!(target_os = "macos") { vec![] } else { vec![Command::Quit] }]),
@@ -76,9 +76,6 @@ impl HeditApp {
                         }
                     });
                 }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(RichText::new("hedit").small().color(theme.muted.color()));
-                });
             });
         });
         if self.open_menu != open_menu {
@@ -105,13 +102,18 @@ impl HeditApp {
             .frame(
                 egui::Frame::new()
                     .fill(theme.panel.color())
-                    .inner_margin(egui::Margin::symmetric(0, 0)),
+                    .inner_margin(egui::Margin {
+                        left: 6,
+                        right: 6,
+                        top: 5,
+                        bottom: 0,
+                    }),
             )
             .show(ctx, |ui| {
                 egui::ScrollArea::horizontal()
                     .id_salt("tab-strip")
                     .show(ui, |ui| {
-                        ui.spacing_mut().item_spacing.x = 1.0;
+                        ui.spacing_mut().item_spacing.x = 2.0;
                         ui.horizontal(|ui| {
                             for (index, buffer) in self.workspace.open.iter().enumerate() {
                                 let active = index == self.workspace.active;
@@ -130,13 +132,19 @@ impl HeditApp {
                                 } else {
                                     title
                                 };
-                                let output = egui::Frame::new()
+                                egui::Frame::new()
                                     .fill(if active {
                                         theme.background.color()
                                     } else {
-                                        theme.surface.color()
+                                        theme.panel.color()
                                     })
-                                    .inner_margin(egui::Margin::symmetric(12, 7))
+                                    .corner_radius(egui::CornerRadius {
+                                        nw: 5,
+                                        ne: 5,
+                                        sw: 0,
+                                        se: 0,
+                                    })
+                                    .inner_margin(egui::Margin::symmetric(12, 4))
                                     .show(ui, |ui| {
                                         ui.push_id(buffer.page.info.id, |ui| {
                                             ui.horizontal(|ui| {
@@ -158,7 +166,7 @@ impl HeditApp {
                                                             }),
                                                         )
                                                         .frame(false)
-                                                        .min_size(egui::vec2(80.0, 20.0))
+                                                        .min_size(egui::vec2(96.0, 20.0))
                                                         .sense(egui::Sense::click_and_drag()),
                                                     )
                                                     .on_hover_text(
@@ -231,42 +239,17 @@ impl HeditApp {
                                                     }
                                                 });
                                                 if can_close
-                                                    && ui
-                                                        .add(
-                                                            egui::Button::new(
-                                                                RichText::new(
-                                                                    if buffer.page.info.dirty {
-                                                                        "●"
-                                                                    } else {
-                                                                        "×"
-                                                                    },
-                                                                )
-                                                                .size(11.0)
-                                                                .color(if buffer.page.info.dirty {
-                                                                    theme.accent.color()
-                                                                } else {
-                                                                    theme.muted.color()
-                                                                }),
-                                                            )
-                                                            .frame(false),
-                                                        )
-                                                        .on_hover_text(
-                                                            "Close tab · text stays on the shelf",
-                                                        )
-                                                        .clicked()
+                                                    && controls::tab_close_button(
+                                                        ui,
+                                                        buffer.page.info.dirty,
+                                                    )
+                                                    .clicked()
                                                 {
                                                     close = Some(index);
                                                 }
                                             });
                                         });
                                     });
-                                if active {
-                                    let r = output.response.rect;
-                                    ui.painter().line_segment(
-                                        [r.left_top(), r.right_top()],
-                                        egui::Stroke::new(2.0, theme.accent.color()),
-                                    );
-                                }
                             }
                             if ui
                                 .add_enabled(
@@ -321,7 +304,7 @@ impl HeditApp {
             .frame(
                 egui::Frame::new()
                     .fill(theme.panel.color())
-                    .inner_margin(egui::Margin::symmetric(10, 3)),
+                    .inner_margin(egui::Margin::symmetric(10, 0)),
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
@@ -334,11 +317,16 @@ impl HeditApp {
                     let (line, col) = (line + 1, col + 1);
                     ui.label(
                         RichText::new(format!(
-                            "{}Ln {line}, Col {col}",
+                            "{}Line {line}, Column {col}",
                             if buffer.page.info.paged { "Page " } else { "" }
                         ))
                         .size(11.0),
-                    );
+                    )
+                    .on_hover_text(format!(
+                        "{} · {}",
+                        buffer.view.name,
+                        format_bytes(buffer.page.info.size)
+                    ));
                     if !buffer.view.selections.is_empty() {
                         ui.label(
                             RichText::new(format!("{} cursors", buffer.view.selections.len() + 1))
@@ -366,11 +354,17 @@ impl HeditApp {
                     let age = self.notice_shown.1.elapsed();
                     if age < NOTICE_TIME && self.notice != "Ready." {
                         ui.separator();
-                        ui.label(
-                            RichText::new(&self.notice)
-                                .size(11.0)
-                                .color(theme.muted.color()),
-                        );
+                        let width = (ui.available_width() - 340.0).max(0.0);
+                        ui.add_sized(
+                            [width, 18.0],
+                            egui::Label::new(
+                                RichText::new(&self.notice)
+                                    .size(11.0)
+                                    .color(theme.muted.color()),
+                            )
+                            .truncate(),
+                        )
+                        .on_hover_text(&self.notice);
                         ctx.request_repaint_after(NOTICE_TIME - age);
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -379,30 +373,23 @@ impl HeditApp {
                         } else if self.checkpoint_pending {
                             ("Checkpointing…", theme.warning)
                         } else if self.persisted == self.generation {
-                            ("Recovery up to date", theme.success)
+                            ("Recovery up to date", theme.muted)
                         } else {
                             ("Recovery pending", theme.warning)
                         };
                         if ui
                             .add(
                                 egui::Button::new(
-                                    RichText::new(label).size(11.0).color(color.color()),
+                                    RichText::new("●").size(9.0).color(color.color()),
                                 )
                                 .frame(false),
                             )
-                            .on_hover_text("View recovery settings and checkpoint status")
+                            .on_hover_text(format!("{label} · Recovery settings"))
                             .clicked()
                         {
                             self.open_preferences(PreferencesPage::Recovery);
                         }
-                        ui.separator();
                         self.language_menu(ui);
-                        let info = &self.active().page.info;
-                        ui.label(
-                            RichText::new(format_bytes(info.size))
-                                .size(11.0)
-                                .color(theme.muted.color()),
-                        );
                         self.status_menus(ui, &mut status_action);
                     });
                 });
@@ -492,7 +479,7 @@ impl HeditApp {
         let response = ui.add(
             egui::Button::new(
                 RichText::new(format!("{} ⏷", language.label()))
-                    .size(14.0)
+                    .size(11.0)
                     .color(
                         if selected.is_some() {
                             self.theme.accent
@@ -502,7 +489,8 @@ impl HeditApp {
                         .color(),
                     ),
             )
-            .min_size(egui::vec2(156.0, 28.0))
+            .frame(false)
+            .min_size(egui::vec2(90.0, 22.0))
             .selected(ui.memory(|memory| memory.is_popup_open(popup_id))),
         );
         if response.clicked() {
@@ -629,15 +617,17 @@ impl HeditApp {
         }
         let theme = self.theme.clone();
         egui::SidePanel::left("buffers")
-            .default_width(205.0)
+            .default_width(220.0)
             .min_width(140.0)
             .max_width(360.0)
             .frame(
                 egui::Frame::new()
                     .fill(theme.panel.color())
-                    .inner_margin(egui::Margin::symmetric(10, 14)),
+                    .inner_margin(egui::Margin::symmetric(8, 10)),
             )
             .show(ctx, |ui| {
+                ui.set_min_width(ui.available_width());
+                ui.spacing_mut().item_spacing.y = 0.0;
                 if ui
                     .add(
                         egui::Button::new(
@@ -666,7 +656,7 @@ impl HeditApp {
             .frame(
                 egui::Frame::new()
                     .fill(self.theme.surface.color())
-                    .inner_margin(egui::Margin::symmetric(12, 8)),
+                    .inner_margin(egui::Margin::symmetric(10, 6)),
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {

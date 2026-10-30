@@ -37,15 +37,15 @@ fn last_blank_tab_has_no_close_button_and_ignores_close_actions() {
     assert!(!output
         .shapes
         .iter()
-        .any(|s| text_rect(&s.shape, "×").is_some()));
-    assert!(!output
-        .shapes
-        .iter()
         .any(|s| text_rect(&s.shape, "OPEN FILES").is_some()));
+    let tabs = egui::containers::panel::PanelState::load(&ctx, egui::Id::new("tabs"))
+        .unwrap()
+        .rect;
     let tab = output
         .shapes
         .iter()
-        .find_map(|s| text_rect(&s.shape, &name))
+        .filter_map(|s| text_rect(&s.shape, &name))
+        .find(|rect| tabs.contains(rect.center()))
         .unwrap();
     for pressed in [true, false] {
         frame(
@@ -74,10 +74,12 @@ fn last_blank_tab_has_no_close_button_and_ignores_close_actions() {
     app.execute(&ctx, Command::New);
     assert!(app.command_enabled(Command::Close));
     let output = frame(&ctx, &mut app, vec![]);
-    assert!(output
-        .shapes
-        .iter()
-        .any(|s| text_rect(&s.shape, "×").is_some()));
+    let tabs = egui::containers::panel::PanelState::load(&ctx, egui::Id::new("tabs"))
+        .unwrap()
+        .rect;
+    assert!(output.shapes.iter().filter(|s| matches!(&s.shape,
+        egui::Shape::LineSegment { points, stroke } if stroke.width == 1.7 && points.iter().all(|p| tabs.contains(*p))
+    )).count() >= 2);
     app.execute(&ctx, Command::CloseAll);
     assert_eq!(app.workspace.open.len(), 1);
     assert_eq!(app.active().view.id, id);

@@ -1656,10 +1656,11 @@ impl HeditApp {
         .collapsible(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_TOP, [0.0, 70.0])
-        .default_width(520.0)
+        .default_width(560.0)
+        .frame(egui::Frame::window(&ctx.style()).inner_margin(10.0).corner_radius(4))
         .show(ctx, |ui| {
             let response = bidi_view::field(ui, &mut self.palette_query, |edit| {
-                edit.desired_width(f32::INFINITY).hint_text(if let Some(list) = &self.pick_list {
+                edit.desired_width(f32::INFINITY).font(egui::FontId::proportional(16.0)).margin(egui::Margin::symmetric(8, 7)).hint_text(if let Some(list) = &self.pick_list {
                     list.hint
                 } else if commands {
                     "Type a command…"

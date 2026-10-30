@@ -14,7 +14,7 @@ pub(super) struct Row<'a> {
 pub(super) fn show(ui: &mut egui::Ui, theme: &Theme, row: Row<'_>) -> egui::Response {
     ui.push_id(row.path, |ui| {
         let (rect, response) =
-            ui.allocate_exact_size(egui::vec2(ui.available_width(), 25.0), egui::Sense::click());
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), 23.0), egui::Sense::click());
         response.widget_info(|| {
             egui::WidgetInfo::selected(
                 egui::WidgetType::SelectableLabel,
@@ -26,15 +26,11 @@ pub(super) fn show(ui: &mut egui::Ui, theme: &Theme, row: Row<'_>) -> egui::Resp
         if ui.is_rect_visible(rect) {
             let visuals = ui.style().interact_selectable(&response, row.selected);
             if row.selected || response.hovered() || response.has_focus() {
-                ui.painter().rect_filled(rect, 3.0, visuals.weak_bg_fill);
+                ui.painter().rect_filled(rect, 0.0, visuals.weak_bg_fill);
             }
             let left = rect.left() + row.depth.min(32) as f32 * 12.0;
             let cy = rect.center().y;
-            let color = if row.directory {
-                theme.warning.color()
-            } else {
-                theme.muted.color()
-            };
+            let color = theme.muted.color();
             let stroke = egui::Stroke::new(1.2, color);
             if row.directory {
                 let chevron = if row.expanded {

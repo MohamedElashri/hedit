@@ -38,12 +38,37 @@ __global__ void scale(float* data, int n) {
 }
 struct Result { const char* label = \"done\"; };";
 
+// Older versions persisted entire built-in palettes in window state. Refresh
+// only exact, unmodified defaults; a user's colors must survive the redesign.
+const LEGACY_INK: &str = "#10161F #161E29 #131A24 #202B39 #2B3949 #DCE6F0 #8DA0B4 #64D8CB #264E54 #EEFCFA
+    #EDBE7B #F69797 #93D3A1 #859CA3 #BEA7F4 #B0D29A #EDBE7B #64D8CB #DCE6F0 #DCE6F0 #EDBE7B #DCE6F0 #BEA7F4 #BEA7F4";
+const LEGACY_PAPER: &str = "#FAF8F3 #F0EEE8 #F4F2EC #E5E7DF #CCD2CB #243832 #556B62 #147568 #D1E8DE #163E33
+    #8B5918 #AA3540 #287847 #59776B #7354A3 #426D26 #95552A #147568 #243832 #243832 #95552A #243832 #7354A3 #7354A3";
+
+pub(super) fn refresh_saved_theme(theme: Theme) -> Theme {
+    let legacy = match (theme.name.as_str(), theme.dark) {
+        (catalog::INK, true) => LEGACY_INK,
+        (catalog::PAPER, false) => LEGACY_PAPER,
+        _ => return theme,
+    };
+    if Role::ALL
+        .into_iter()
+        .zip(legacy.split_whitespace())
+        .all(|(role, color)| theme.color(role).hex() == color)
+    {
+        catalog::builtin(&theme.name).expect("built-in default")
+    } else {
+        theme
+    }
+}
+
 impl Appearance {
     pub(super) fn load(storage: Option<&dyn eframe::Storage>, theme: &Theme) -> Self {
         let stored = |key: &str, fallback: Theme| {
             storage
                 .and_then(|s| s.get_string(key))
                 .and_then(|json| Theme::from_json(&json).ok())
+                .map(refresh_saved_theme)
                 .unwrap_or(fallback)
         };
         let dir = if cfg!(test) {
@@ -1005,4 +1030,38 @@ fn theme_card(
         ui.visuals().text_color(),
     );
     response
+}
+
+#[cfg(test)]
+mod migration_tests {
+    use super::*;
+
+    #[test]
+    fn refreshes_only_exact_legacy_defaults_and_both_appearance_slots() {
+        let mut storage = super::super::tests::MemoryStorage::default();
+        for (key, name, colors) in [
+            ("theme_dark", catalog::INK, LEGACY_INK),
+            ("theme_light", catalog::PAPER, LEGACY_PAPER),
+        ] {
+            let mut old = catalog::builtin(name).unwrap();
+            for (role, color) in Role::ALL.into_iter().zip(colors.split_whitespace()) {
+                *old.color_mut(role) = Rgb::try_from(color.to_owned()).unwrap();
+            }
+            assert_ne!(old, catalog::builtin(name).unwrap());
+            assert_eq!(
+                refresh_saved_theme(old.clone()),
+                catalog::builtin(name).unwrap()
+            );
+            eframe::Storage::set_string(&mut storage, key, old.to_json().unwrap());
+            old.accent = Rgb::new(12, 34, 56);
+            assert_eq!(
+                refresh_saved_theme(old.clone()),
+                old,
+                "preserve customized colors even under a built-in name"
+            );
+        }
+        let appearance = Appearance::load(Some(&storage), &Theme::default());
+        assert_eq!(appearance.dark, Theme::default());
+        assert_eq!(appearance.light, Theme::paper());
+    }
 }

@@ -147,7 +147,7 @@ your own. **Ctrl+S** saves to disk, asking for a path the first time.
 ### Opening and switching
 
 Open files with **Ctrl+O**, by dragging them into the window, or from the terminal.
-A dot on a tab marks unsaved changes.
+A dot on a tab marks unsaved changes. Hover over it to reveal the close button.
 
 - **Ctrl+P** finds open files and files in your folders by letters in order
   (`srcprj` finds `src/project.rs`).
@@ -193,7 +193,7 @@ rename, move, duplicate, trash, copy the path of, or reveal it; nothing is
 overwritten without asking. **File → Refresh folders** picks up outside changes.
 Folders such as `.git`, `node_modules`, and `target` are hidden from the tree and
 searches; change the list under **Settings → Folders & Search**.
-Open files appear in the tab bar; the sidebar contains folders and a shortcut
+Open files appear in the tab bar. The sidebar contains folders and a shortcut
 to closed-file recovery.
 
 **Ctrl+K, Ctrl+B** shows or hides the sidebar and **Ctrl+Alt+B** just its folder
@@ -523,7 +523,8 @@ from Preview. Cancelling a Go to Anything preview restores the original view mod
   whitespace, indentation guides, the minimap, the tab bar, and the status bar.
 
 The status bar shows the cursor position, indentation, line endings, encoding,
-syntax, and recovery state; click any of them to change it.
+and syntax. The small dot at the right shows recovery state; hover for details
+or click to open recovery settings. Hover over the cursor position for file size.
 
 ## Large files and logs
 

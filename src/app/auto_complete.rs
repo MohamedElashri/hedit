@@ -393,21 +393,35 @@ impl HeditApp {
                     .fill(theme.panel.color())
                     .inner_margin(4.0)
                     .show(ui, |ui| {
-                        ui.set_min_width(220.0);
+                        ui.set_width(280.0_f32.min((ctx.screen_rect().width() - 24.0).max(100.0)));
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        ui.visuals_mut().selection.stroke.width = 0.0;
                         for (index, choice) in popup.choices.iter().enumerate() {
                             let (label, detail) = match choice {
                                 Choice::Word(word) => (word.as_str(), ""),
                                 Choice::Snippet(s) => (s.trigger.as_str(), s.description.as_str()),
                             };
+                            // Button shortcut text never wraps or truncates on its own.
+                            // Bound the description before it takes width from the label.
+                            let detail_galley = egui::WidgetText::from(detail).into_galley(
+                                ui,
+                                Some(egui::TextWrapMode::Truncate),
+                                ui.available_width() * 0.45,
+                                egui::TextStyle::Small,
+                            );
                             let response = ui.add(
                                 egui::Button::new(RichText::new(label).font(font.clone()))
                                     .selected(index == popup.selected)
-                                    .shortcut_text(detail)
-                                    .frame(index == popup.selected)
-                                    .min_size(egui::vec2(ui.available_width(), 0.0)),
+                                    .shortcut_text(detail_galley)
+                                    .frame(false)
+                                    .truncate()
+                                    .min_size(egui::vec2(ui.available_width(), 24.0)),
                             );
                             if response.clicked() {
                                 clicked = Some(index);
+                            }
+                            if !detail.is_empty() {
+                                response.on_hover_text(detail);
                             }
                         }
                     });
@@ -415,5 +429,91 @@ impl HeditApp {
         if let Some(index) = clicked {
             self.commit_choice(index);
         }
+    }
+}
+
+#[cfg(test)]
+mod redesign_tests {
+    use super::*;
+
+    #[test]
+    fn redesign_completion_stays_on_screen_with_long_snippet_descriptions() {
+        let directory = tempfile::tempdir().unwrap();
+        let (workspace, _) = Workspace::restore(directory.path().into()).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        let size = egui::vec2(720.0, 480.0);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+        app.workspace.open[0].page.text = "for".into();
+        app.workspace.edit(0, "").unwrap();
+        app.workspace.open[0].view.anchor = 3;
+        app.workspace.open[0].view.head = 3;
+        let word = "format_with_a_long_identifier".repeat(20);
+        app.settings.font_size = 28.0;
+        app.auto.popup = Some(Popup {
+            view: app.active().view.id,
+            start: 0,
+            typed: "for".into(),
+            selected: 0,
+            choices: vec![
+                Choice::Snippet(hedit::intelligence::Snippet {
+                    trigger: "for".into(),
+                    description: "A very long snippet description ".repeat(40),
+                    body: "for item in items {}".into(),
+                    language: None,
+                }),
+                Choice::Word(word.clone()),
+            ],
+        });
+        app.caret_screen = Some(egui::Rect::from_min_size(
+            egui::pos2(680.0, 400.0),
+            egui::vec2(2.0, 30.0),
+        ));
+        for _ in 0..4 {
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |ctx| app.completion_popup(ctx),
+            );
+        }
+        let popup = egui::AreaState::load(&ctx, egui::Id::new("completion-popup"))
+            .unwrap()
+            .rect();
+        assert!(
+            screen.contains_rect(popup),
+            "completion escaped the window: {popup:?}"
+        );
+        assert!(
+            popup.width() <= 300.0,
+            "completion ignored its compact width: {popup:?}"
+        );
+        // Click the truncated word, then undo: truncation must affect only display.
+        let position = egui::pos2(popup.left() + 30.0, popup.bottom() - 20.0);
+        for pressed in [true, false] {
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    focused: true,
+                    events: vec![
+                        egui::Event::PointerMoved(position),
+                        egui::Event::PointerButton {
+                            pos: position,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: Modifiers::NONE,
+                        },
+                    ],
+                    ..Default::default()
+                },
+                |ctx| app.completion_popup(ctx),
+            );
+        }
+        assert_eq!(app.active().page.text, word);
+        assert!(app.auto.popup.is_none());
+        app.history(&ctx, false);
+        super::super::tests::finish_app_job(&mut app, &ctx);
+        assert_eq!(app.active().page.text, "for");
     }
 }

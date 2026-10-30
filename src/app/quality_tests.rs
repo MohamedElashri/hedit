@@ -476,11 +476,15 @@ fn dragging_tabs_reorders_them_without_changing_the_active_document() {
     let mut app = HeditApp::from_context(&ctx, None, ws, vec![], vec![]);
     frame(&ctx, &mut app, vec![]);
     let output = frame(&ctx, &mut app, vec![]);
+    let tabs = egui::containers::panel::PanelState::load(&ctx, egui::Id::new("tabs"))
+        .unwrap()
+        .rect;
     let position = |label| {
         output
             .shapes
             .iter()
-            .find_map(|s| text_rect(&s.shape, label))
+            .filter_map(|s| text_rect(&s.shape, label))
+            .find(|rect| tabs.contains(rect.center()))
             .unwrap()
             .center()
     };

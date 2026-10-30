@@ -269,8 +269,7 @@ impl HeditApp {
             return;
         }
         self.project.poll();
-        ui.add_space(12.0);
-        ui.separator();
+        ui.add_space(16.0);
         ui.horizontal(|ui| {
             ui.label(
                 RichText::new("FOLDERS")
@@ -279,14 +278,14 @@ impl HeditApp {
                     .color(self.theme.muted.color()),
             );
             if ui
-                .small_button("+")
+                .add(egui::Button::new("+").frame(false))
                 .on_hover_text("Add folders to workspace")
                 .clicked()
             {
                 self.open_folder(ui.ctx());
             }
             if ui
-                .small_button("↻")
+                .add(egui::Button::new("↻").frame(false))
                 .on_hover_text("Refresh folders")
                 .clicked()
             {
@@ -314,6 +313,7 @@ impl HeditApp {
             }
             return;
         }
+        ui.add_space(6.0);
         let folders = self.workspace.folders.clone();
         egui::ScrollArea::vertical()
             .id_salt("folder-tree")

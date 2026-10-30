@@ -237,9 +237,9 @@ const BUILTINS: &[Builtin] = &[
     // background surface panel elevated border text muted accent selection selection_text
     // warning error success | comment keyword string number cuda function type constant operator property preprocessor
     Builtin { name: INK, dark: true, colors: [
-        "#10161F", "#161E29", "#131A24", "#202B39", "#2B3949", "#DCE6F0", "#8DA0B4", "#64D8CB", "#264E54", "#EEFCFA",
-        "#EDBE7B", "#F69797", "#93D3A1",
-        "#859CA3", "#BEA7F4", "#B0D29A", "#EDBE7B", "#64D8CB", "#DCE6F0", "#DCE6F0", "#EDBE7B", "#DCE6F0", "#BEA7F4", "#BEA7F4"] },
+        "#303030", "#383838", "#262626", "#424242", "#454545", "#D8DEE9", "#A0A0A0", "#E9B56B", "#4B5668", "#F5F5F5",
+        "#E9B56B", "#EC7B85", "#A6C88A",
+        "#909090", "#C5A5D9", "#A6C88A", "#D6AA78", "#78C4CC", "#83B6DE", "#E3C68F", "#D6AA78", "#C5A5D9", "#C5A5D9", "#C5A5D9"] },
     Builtin { name: "One Dark", dark: true, colors: [
         "#282C34", "#2C313A", "#21252B", "#333842", "#3E4451", "#ABB2BF", "#8B929E", "#528BFF", "#3E4451", "#E6E9EF",
         "#E5C07B", "#E06C75", "#98C379",
@@ -281,9 +281,9 @@ const BUILTINS: &[Builtin] = &[
         "#F6C177", "#EB6F92", "#9CCFD8",
         "#6E6A86", "#31748F", "#F6C177", "#EBBCBA", "#9CCFD8", "#EBBCBA", "#9CCFD8", "#EBBCBA", "#908CAA", "#C4A7E7", "#EB6F92"] },
     Builtin { name: PAPER, dark: false, colors: [
-        "#FAF8F3", "#F0EEE8", "#F4F2EC", "#E5E7DF", "#CCD2CB", "#243832", "#556B62", "#147568", "#D1E8DE", "#163E33",
-        "#8B5918", "#AA3540", "#287847",
-        "#59776B", "#7354A3", "#426D26", "#95552A", "#147568", "#243832", "#243832", "#95552A", "#243832", "#7354A3", "#7354A3"] },
+        "#FAFAFA", "#F2F2F2", "#E8E8E8", "#DDDDDD", "#CECECE", "#383838", "#686868", "#8B5C18", "#D6E2F0", "#273444",
+        "#8B5C18", "#AA3540", "#357544",
+        "#787878", "#7952A3", "#50782D", "#A05A2C", "#197885", "#2868A5", "#876320", "#A05A2C", "#7952A3", "#383838", "#7952A3"] },
     Builtin { name: "One Light", dark: false, colors: [
         "#FAFAFA", "#F0F0F1", "#EAEAEB", "#E5E5E6", "#DBDBDC", "#383A42", "#696C77", "#526FFF", "#E5E5E6", "#232324",
         "#C18401", "#E45649", "#50A14F",
@@ -463,6 +463,20 @@ impl Theme {
         v.selection.bg_fill = self.selection.color();
         v.selection.stroke = Stroke::new(1.0, self.selection_text.color());
         v.window_stroke = Stroke::new(1.0, self.border.color());
+        v.window_corner_radius = egui::CornerRadius::same(5);
+        v.menu_corner_radius = egui::CornerRadius::same(3);
+        v.window_shadow = egui::epaint::Shadow {
+            offset: [0, 5],
+            blur: 16,
+            spread: 0,
+            color: Color32::from_black_alpha(if self.dark { 70 } else { 35 }),
+        };
+        v.popup_shadow = egui::epaint::Shadow {
+            offset: [0, 3],
+            blur: 10,
+            spread: 0,
+            color: Color32::from_black_alpha(if self.dark { 60 } else { 30 }),
+        };
         v.widgets.noninteractive.bg_fill = self.surface.color();
         v.widgets.noninteractive.weak_bg_fill = self.surface.color();
         v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, self.border.color());
@@ -487,8 +501,15 @@ impl Theme {
         v.widgets.active.fg_stroke = Stroke::new(1.0, self.selection_text.color());
         v.text_cursor.stroke = Stroke::new(1.5, self.accent.color());
         style.visuals = v;
-        style.spacing.item_spacing = egui::vec2(6.0, 4.0);
-        style.spacing.button_padding = egui::vec2(7.0, 4.0);
+        style
+            .text_styles
+            .insert(egui::TextStyle::Body, egui::FontId::proportional(13.0));
+        style
+            .text_styles
+            .insert(egui::TextStyle::Button, egui::FontId::proportional(13.0));
+        style.spacing.item_spacing = egui::vec2(6.0, 3.0);
+        style.spacing.button_padding = egui::vec2(8.0, 3.0);
+        style.spacing.interact_size.y = 22.0;
         style.spacing.scroll.bar_width = 7.0;
         // Pin egui's own light/dark choice so a system appearance change cannot
         // swap in its default style for the other mode.

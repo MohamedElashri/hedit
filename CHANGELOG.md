@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.1.11] - 2026-10-30
+
+### Changed
+
+- Refreshed the editor with compact tabs, a quieter folder
+  tree, a slim status bar, and more compact command and completion lists.
+- Hedit Ink and Hedit Paper use neutral palettes. Stored copies of the original
+  defaults refresh automatically; customized themes keep their colors.
+
+### Fixed
+
+- Unsaved tab dots turn into a larger close icon on hover.
+- Long snippet descriptions no longer push completion lists outside the window.
+  Descriptions are shortened in the list and available in full on hover.
+
 ## [0.1.10] - 2026-10-30
 
 ### Added

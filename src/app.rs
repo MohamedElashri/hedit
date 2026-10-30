@@ -48,6 +48,8 @@ mod quality_windows;
 #[cfg(test)]
 mod recovery_tests;
 #[cfg(test)]
+mod redesign_tests;
+#[cfg(test)]
 mod rtl_tests;
 #[cfg(test)]
 mod screenshot_tests;
@@ -310,7 +312,7 @@ impl HeditApp {
         let mut errors = errors;
         let theme = match storage.and_then(|s| s.get_string("theme")) {
             Some(json) => match Theme::from_json(&json) {
-                Ok(theme) => theme,
+                Ok(theme) => themes::refresh_saved_theme(theme),
                 Err(error) => {
                     errors.push(format!("Saved appearance could not be loaded: {error}"));
                     Theme::default()
@@ -1618,7 +1620,7 @@ impl HeditApp {
             .frame(
                 egui::Frame::new()
                     .fill(theme.background.color())
-                    .inner_margin(egui::Margin::symmetric(12, 10)),
+                    .inner_margin(egui::Margin::symmetric(4, 6)),
             )
             .show(ctx, |ui| {
                 self.error_banner(ui, &theme);

@@ -50,7 +50,17 @@ pub(super) fn primary_button(
 /// The close button for panels, bars and banners: an × drawn like the one in
 /// window title bars, highlighted on hover.
 pub(super) fn close_button(ui: &mut egui::Ui, hint: &str) -> egui::Response {
-    let side = ui.spacing().interact_size.y.min(20.0);
+    close_control(ui, hint, false)
+}
+
+/// Keep the dirty marker and close icon in the same hit target, without moving
+/// the title when hovering an unsaved tab.
+pub(super) fn tab_close_button(ui: &mut egui::Ui, dirty: bool) -> egui::Response {
+    close_control(ui, "Close tab", dirty)
+}
+
+fn close_control(ui: &mut egui::Ui, hint: &str, dirty: bool) -> egui::Response {
+    let side = 22.0;
     let (rect, response) = ui.allocate_exact_size(egui::vec2(side, side), egui::Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Close"));
     if ui.is_rect_visible(rect) {
@@ -58,20 +68,24 @@ pub(super) fn close_button(ui: &mut egui::Ui, hint: &str) -> egui::Response {
         if response.hovered() || response.has_focus() {
             ui.painter().rect_filled(rect, 3.0, visuals.weak_bg_fill);
         }
-        let cross = rect.shrink(side * 0.3);
+        let cross = rect.shrink(5.0);
         let color = if response.hovered() || response.has_focus() {
             visuals.fg_stroke.color
         } else {
             ui.visuals().weak_text_color()
         };
-        let stroke = egui::Stroke::new(1.4, color);
-        ui.painter()
-            .line_segment([cross.left_top(), cross.right_bottom()], stroke);
-        ui.painter()
-            .line_segment([cross.right_top(), cross.left_bottom()], stroke);
+        if dirty && !response.hovered() && !response.has_focus() {
+            ui.painter().circle_filled(rect.center(), 3.0, color);
+        } else {
+            let stroke = egui::Stroke::new(1.7, color);
+            ui.painter()
+                .line_segment([cross.left_top(), cross.right_bottom()], stroke);
+            ui.painter()
+                .line_segment([cross.right_top(), cross.left_bottom()], stroke);
+        }
     }
     response
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_cursor(egui::CursorIcon::Default)
         .on_hover_text(hint)
 }
 
@@ -134,7 +148,11 @@ pub(super) fn dialog_buttons(
 mod tests {
     use super::*;
 
-    fn run(ctx: &egui::Context, events: Vec<egui::Event>, mut add: impl FnMut(&mut egui::Ui)) {
+    fn run(
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        mut add: impl FnMut(&mut egui::Ui),
+    ) -> egui::FullOutput {
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
@@ -143,9 +161,9 @@ mod tests {
             events,
             ..Default::default()
         };
-        let _ = ctx.run(input, |ctx| {
+        ctx.run(input, |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| add(ui));
-        });
+        })
     }
 
     #[test]
@@ -154,7 +172,7 @@ mod tests {
         let mut rect = egui::Rect::NOTHING;
         run(&ctx, vec![], |ui| rect = close_button(ui, "Close").rect);
         assert_eq!(rect.width(), rect.height());
-        assert!(rect.width() <= 20.0);
+        assert_eq!(rect.width(), 22.0);
         let pos = rect.center();
         let button = |pressed| egui::Event::PointerButton {
             pos,
@@ -172,6 +190,38 @@ mod tests {
             });
         }
         assert!(clicked);
+    }
+
+    #[test]
+    fn dirty_tab_marker_becomes_a_large_cross_on_hover_without_resizing() {
+        let ctx = egui::Context::default();
+        let mut rect = egui::Rect::NOTHING;
+        let output = run(&ctx, vec![], |ui| {
+            rect = tab_close_button(ui, true).rect;
+        });
+        let original = rect;
+        assert!(
+            output.shapes.iter().any(|s| matches!(&s.shape,
+            egui::Shape::Circle(circle) if circle.center == rect.center() && circle.radius == 3.0))
+        );
+        let output = run(&ctx, vec![egui::Event::PointerMoved(rect.center())], |ui| {
+            let response = tab_close_button(ui, true);
+            assert_eq!(response.rect, original);
+            assert!(response.hovered());
+        });
+        assert!(!output.shapes.iter().any(|s| matches!(&s.shape,
+            egui::Shape::Circle(circle) if circle.center == rect.center())));
+        assert_eq!(
+            output
+                .shapes
+                .iter()
+                .filter(|s| matches!(&s.shape,
+            egui::Shape::LineSegment { points, stroke } if stroke.width == 1.7
+                && (points[1].x - points[0].x).abs() == 12.0
+                && (points[1].y - points[0].y).abs() == 12.0))
+                .count(),
+            2
+        );
     }
 
     #[test]
