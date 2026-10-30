@@ -193,11 +193,21 @@ fn projects_restore_unsaved_text_pin_cursor_and_split_and_preserve_other_work() 
     finish_app_job(&mut app, &ctx);
     drop(app);
     let (mut ws, _) = Workspace::restore(directory.path().join("second-session")).unwrap();
+    // Switching projects must also preserve a shelf already full of unsaved notes.
+    for n in 0..50 {
+        let active = ws.active;
+        ws.open[active].page.text = format!("older shelved note {n}");
+        ws.edit(active, "").unwrap();
+        ws.close(active).unwrap();
+    }
     ws.open[0].page.text = "unrelated scratch".into();
     ws.edit(0, "").unwrap();
     let mut app = HeditApp::from_context(&ctx, None, ws, vec![], vec![]);
     app.load_project(&ctx, Some(project));
     finish_app_job(&mut app, &ctx);
+    assert!(app.error.is_none(), "{:?}", app.error);
+    assert_eq!(app.workspace.closed.len(), 51);
+    app.workspace.checkpoint().unwrap();
     assert!(app.active().page.text.contains("unsaved λ"));
     assert!(app.active().view.pinned);
     assert_eq!(app.active().view.head, 8);

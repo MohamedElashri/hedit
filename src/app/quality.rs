@@ -349,35 +349,6 @@ impl HeditApp {
                 self.notice = "Project and workspace saved.".into();
             }
             Event::ProjectLoaded(path, project, state, tabs) => {
-                let preserve = self
-                    .workspace
-                    .open
-                    .iter()
-                    .filter(|b| {
-                        b.page.info.dirty || b.page.info.path.is_none() && !b.page.text.is_empty()
-                    })
-                    .count()
-                    + self
-                        .workspace
-                        .closed
-                        .iter()
-                        .filter(|v| {
-                            self.workspace
-                                .editor
-                                .get(v.id)
-                                .ok()
-                                .and_then(|d| {
-                                    d.lock()
-                                        .ok()
-                                        .map(|d| d.info().dirty || d.info().path.is_none())
-                                })
-                                .unwrap_or(true)
-                        })
-                        .count();
-                if preserve > 50 {
-                    self.error=Some("The closed-file shelf cannot preserve all current unsaved tabs. Save some files before switching projects.".into());
-                    return;
-                }
                 if let Err(e) = self.workspace.checkpoint() {
                     self.error = Some(e);
                     return;

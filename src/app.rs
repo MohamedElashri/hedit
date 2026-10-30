@@ -3158,7 +3158,7 @@ impl HeditApp {
                     ui.separator();
                     ui.label(
                         RichText::new(format!(
-                            "{} of 50 shelf slots used. Unsaved text is never silently evicted.",
+                            "{} closed files. Unsaved notes are kept beyond the 50-file history limit.",
                             self.workspace.closed.len()
                         ))
                         .small()

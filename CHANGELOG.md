@@ -13,6 +13,9 @@
 
 ### Fixed
 
+- Closing an unsaved tab with Don't Save no longer fails when Closed Files has
+  50 unsaved notes. Unsaved notes remain recoverable beyond the recent-file limit,
+  including after restarting or switching projects.
 - Unsaved tab dots turn into a larger close icon on hover.
 - Long snippet descriptions no longer push completion lists outside the window.
   Descriptions are shortened in the list and available in full on hover.

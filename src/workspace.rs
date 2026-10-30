@@ -228,7 +228,8 @@ impl Workspace {
         if !self.can_close(index) {
             return Ok(());
         }
-        // Never silently evict an unsaved buffer from the 50-item history.
+        // Fifty entries is a soft history limit: evict only saved, unchanged
+        // files. Unsaved notes must neither be lost nor prevent another tab closing.
         if self.closed.len() >= 50 {
             let clean = self.closed.iter().position(|view| {
                 self.editor
@@ -241,15 +242,15 @@ impl Workspace {
                     })
                     .unwrap_or(false)
             });
-            let Some(clean) = clean else {
+            if let Some(clean) = clean {
+                let removed = self.closed.remove(clean);
+                self.editor.remove(removed.id)?;
+            } else {
                 let buffer = &self.open[index];
                 if !buffer.page.info.dirty && buffer.page.info.path.is_some() {
                     return self.forget(index);
                 }
-                return Err("The closed-files shelf is full of unsaved text. Reopen and save a file before closing more.".into());
-            };
-            let removed = self.closed.remove(clean);
-            self.editor.remove(removed.id)?;
+            }
         }
         let buffer = self.open.remove(index);
         self.closed.push(buffer.view);

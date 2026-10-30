@@ -595,3 +595,56 @@ fn save_as_formatting_failure_cancels_tab_close_and_keeps_the_note() {
     assert_eq!(app.active().page.text, "keep this λ");
     assert!(!path.exists());
 }
+
+#[test]
+fn dont_save_closes_untitled_tabs_when_the_shelf_is_full_without_losing_notes() {
+    let directory = tempfile::tempdir().unwrap();
+    let session = directory.path().join("session");
+    let (workspace, _) = Workspace::restore(session.clone()).unwrap();
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    for n in 0..50 {
+        edit(&mut app, &format!("shelved note {n}"));
+        app.workspace.close(app.workspace.active).unwrap();
+    }
+    let original: Vec<_> = app.workspace.closed.iter().map(|v| v.id).collect();
+    edit(&mut app, "first newly closed note λ");
+    let first = app.active().view.id;
+    app.execute(&ctx, Command::New);
+    edit(&mut app, "second newly closed note λ");
+    let second = app.active().view.id;
+    app.execute(&ctx, Command::CloseAll);
+    for _ in 0..2 {
+        for _ in 0..3 {
+            frame(&ctx, &mut app, vec![]);
+        }
+        click_label(&ctx, &mut app, "Don't Save");
+        assert!(app.error.is_none(), "{:?}", app.error);
+    }
+    assert!(!app.closing);
+    assert!(app.close_flow.is_none());
+    assert_eq!(app.workspace.open.len(), 1);
+    assert!(app.active().page.text.is_empty());
+    assert_eq!(app.workspace.closed.len(), 52);
+    for id in &original {
+        assert!(app.workspace.closed.iter().any(|v| v.id == *id));
+    }
+    for id in [first, second] {
+        assert!(app.workspace.closed.iter().any(|v| v.id == id));
+        assert!(!app.workspace.open.iter().any(|b| b.view.id == id));
+    }
+    app.workspace.checkpoint().unwrap();
+    drop(app);
+    let (mut workspace, errors) = Workspace::restore(session).unwrap();
+    assert!(errors.is_empty(), "{errors:?}");
+    assert_eq!(workspace.closed.len(), 52);
+    for text in ["first newly closed note λ", "second newly closed note λ"] {
+        let index = workspace
+            .closed
+            .iter()
+            .position(|v| v.name == text)
+            .unwrap();
+        workspace.reopen_at(index).unwrap();
+        assert_eq!(workspace.open[workspace.active].page.text, text);
+    }
+}

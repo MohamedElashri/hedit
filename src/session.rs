@@ -412,9 +412,6 @@ impl SessionStore {
             view,
             documents: pinned,
         } = snapshot;
-        if view.closed.len() > 50 {
-            return Err("Closed-file history exceeds 50 entries.".into());
-        }
         let mut ids = std::collections::HashSet::new();
         if !view
             .open

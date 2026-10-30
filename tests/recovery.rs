@@ -261,18 +261,29 @@ fn damaged_undo_history_does_not_hide_intact_open_or_closed_notes() {
 }
 
 #[test]
-fn closed_history_never_evicts_unsaved_snippets() {
+fn closed_history_never_evicts_unsaved_snippets_or_blocks_closing() {
     let directory = tempfile::tempdir().unwrap();
     let (mut ws, _) = Workspace::restore(directory.path().into()).unwrap();
-    for n in 0..50 {
-        edit(&mut ws, &format!("snippet {n}"));
+    let mut ids = Vec::new();
+    for n in 0..75 {
+        edit(&mut ws, &format!("snippet {n} λ"));
+        ids.push(ws.open[ws.active].view.id);
         ws.close(ws.active).unwrap();
     }
-    edit(&mut ws, "still open");
-    assert!(ws.close(ws.active).is_err());
-    assert_eq!(ws.closed.len(), 50);
-    assert_eq!(ws.open[ws.active].page.text, "still open");
+    assert_eq!(ws.closed.len(), 75);
+    assert_eq!(ws.open.len(), 1);
+    assert!(ws.open[ws.active].page.text.is_empty());
+    assert_eq!(ws.closed.iter().map(|v| v.id).collect::<Vec<_>>(), ids);
     ws.checkpoint().unwrap();
+    drop(ws);
+    let (mut ws, errors) = Workspace::restore(directory.path().into()).unwrap();
+    assert!(errors.is_empty(), "{errors:?}");
+    assert_eq!(ws.closed.len(), 75);
+    for n in 0..75 {
+        ws.reopen_at(0).unwrap();
+        assert_eq!(ws.open[ws.active].page.text, format!("snippet {n} λ"));
+    }
+    assert!(ws.closed.is_empty());
 }
 
 #[test]

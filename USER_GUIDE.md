@@ -182,8 +182,9 @@ Closed tabs go on the *shelf* with their selection and bookmarks. After Don't
 Save on a file on disk, reopening shows the disk copy; untitled notes reopen with
 their text intact. **Ctrl+Shift+T** reopens the last tab, and **File →
 Browse closed files…** lists them all. **File → Close all tabs** (**Ctrl+K,
-Ctrl+W**) and **Close unmodified tabs** close many at once. The shelf holds 50
-files; only saved, unchanged ones are dropped to make room.
+Ctrl+W**) and **Close unmodified tabs** close many at once. The shelf normally keeps
+50 files; only saved, unchanged ones are dropped to make room. Unsaved notes are
+kept beyond that limit, so a full shelf never prevents closing a tab.
 
 ### Folders
 

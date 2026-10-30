@@ -500,7 +500,7 @@ impl HeditApp {
             self.checkpoint(ctx);
         }
         ui.add_space(12.0);
-        ui.label("Closed files stay on the shelf. Unsaved entries are never silently evicted; the shelf holds up to 50 files.");
+        ui.label("Closed files stay on the shelf. The 50-file history limit expands to keep unsaved notes, so closing a tab is never blocked by a full shelf.");
         if ui.button("Browse closed files…").clicked() {
             self.shelf_open = true;
         }

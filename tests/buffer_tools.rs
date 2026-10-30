@@ -257,3 +257,31 @@ fn cpp_and_cuda_extensions_share_the_native_lexer() {
     assert_eq!(hedit::syntax::Language::detect("main.cpp").label(), "C++");
     assert_eq!(hedit::syntax::Language::detect("kernel.cu").label(), "CUDA");
 }
+
+#[test]
+fn saved_file_history_still_keeps_only_the_50_most_recent_files() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut ws, _) = Workspace::restore(directory.path().join("session")).unwrap();
+    let mut ids = Vec::new();
+    for n in 0..55 {
+        let path = directory.path().join(format!("saved-{n:02}.txt"));
+        fs::write(&path, "saved text").unwrap();
+        let mut doc = Document::open(ws.editor.id(), &path).unwrap();
+        ids.push(doc.id);
+        let page = doc.page(0).unwrap();
+        ws.add(doc, page).unwrap();
+        ws.close(ws.active).unwrap();
+    }
+    assert_eq!(ws.closed.len(), 50);
+    assert_eq!(ws.closed.iter().map(|v| v.id).collect::<Vec<_>>(), ids[5..]);
+    for id in &ids[..5] {
+        assert!(ws.editor.get(*id).is_err());
+    }
+    for n in 0..55 {
+        assert_eq!(
+            fs::read_to_string(directory.path().join(format!("saved-{n:02}.txt"))).unwrap(),
+            "saved text"
+        );
+    }
+    ws.checkpoint().unwrap();
+}
