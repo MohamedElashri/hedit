@@ -39,6 +39,8 @@ jobs:
         run: cargo clippy --locked --all-targets -- -D warnings
       - name: Rust tests
         run: cargo test --locked --no-fail-fast
+      - name: Release metadata tests
+        run: python scripts/test-release.py
       - name: Package tests
         run: python scripts/test-windows-package.py
       - name: Build portable release

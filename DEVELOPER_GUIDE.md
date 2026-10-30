@@ -215,7 +215,9 @@ To release:
 
 1. Set the version in `Cargo.toml`, run `cargo check` to update `Cargo.lock`, and
    date the version's section in `CHANGELOG.md`.
-2. Run `make ci` and `make release-check RELEASE_TAG=vX.Y.Z`.
+2. Run `make ci` and `make release-check RELEASE_TAG=vX.Y.Z`. The release check
+   also requires a dated, nonempty changelog entry. Preview the GitHub release
+   description with `RELEASE_TAG=vX.Y.Z python3 scripts/check-release.py --notes-file /tmp/hedit-release-notes.md`.
 3. Commit, push, then tag:
 
    ```sh
@@ -223,6 +225,8 @@ To release:
    git push origin vX.Y.Z
    ```
 
+The publishing workflow uses the matching changelog entry as the GitHub release
+body, including when retrying an existing draft. Keep that entry ready for readers.
 The changelog lists only changes users of the previous release will notice: a
 bug fixed during development of a feature that has not shipped is not a fix.
 

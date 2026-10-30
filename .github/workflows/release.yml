@@ -83,6 +83,10 @@ jobs:
           pattern: hedit-*
           merge-multiple: true
           path: dist
+      - name: Prepare release notes from the changelog
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: python3 scripts/check-release.py --notes-file release-notes.md
       - name: Upload complete release before publishing
         env:
           GH_TOKEN: ${{ github.token }}
@@ -97,9 +101,10 @@ jobs:
               exit 1
             fi
             gh release upload "$RELEASE_TAG" dist/*.tar.gz dist/*.zip dist/*.sha256 --clobber
+            gh release edit "$RELEASE_TAG" --notes-file release-notes.md --title "hedit $RELEASE_TAG"
           else
             gh release create "$RELEASE_TAG" dist/*.tar.gz dist/*.zip dist/*.sha256 \
-              --verify-tag --draft --generate-notes --title "hedit $RELEASE_TAG"
+              --verify-tag --draft --notes-file release-notes.md --title "hedit $RELEASE_TAG"
           fi
           if [[ "$RELEASE_TAG" == *-* ]]; then
             gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false

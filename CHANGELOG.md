@@ -10,27 +10,29 @@
 
 ### Changed
 
-- Markdown Split synchronizes vertical scrolling between the source and preview
-  in both directions, including when the panes are stacked in narrow windows.
-- Simplified Software Update to a short status message and contextual actions.
-  Release notes open in the browser; diagnostics appear only after a failure.
-- Refreshed the editor with compact tabs, a quieter folder
-  tree, a slim status bar, and more compact command and completion lists.
+- Refreshed the editor with compact tabs, a quieter folder tree,
+  a slim status bar, and more compact command and completion lists.
 - Hedit Ink and Hedit Paper use neutral palettes. Stored copies of the original
   defaults refresh automatically; customized themes keep their colors.
+- Simplified Software Update to a short status message and contextual actions.
+  Release notes open in the browser; diagnostics appear only after a failure.
+- Markdown Split synchronizes vertical scrolling between the source and preview
+  in both directions, including when the panes are stacked in narrow windows.
+- GitHub release descriptions now use the version's changelog entry, so published
+  release notes include the actual changes.
 
 ### Fixed
 
+- Unsaved tab dots turn into a larger close icon on hover.
+- Empty untitled tabs are omitted from Closed Files, including session recovery.
 - Markdown Preview fills the available editor area instead of stopping at a fixed
   reading width. Short documents also fill the preview background.
 - Quoted numbered lists no longer introduce large blank vertical gaps later in
   long Markdown documents. Nested quotes, lists, and other blocks now complete
   their normal rendering lifecycle.
-- Empty untitled tabs are omitted from Closed Files, including session recovery.
 - Closing an unsaved tab with Don't Save no longer fails when Closed Files has
   50 unsaved notes. Unsaved notes remain recoverable beyond the recent-file limit,
   including after restarting or switching projects.
-- Unsaved tab dots turn into a larger close icon on hover.
 - Long snippet descriptions no longer push completion lists outside the window.
   Descriptions are shortened in the list and available in full on hover.
 
