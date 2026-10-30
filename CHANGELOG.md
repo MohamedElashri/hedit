@@ -4,85 +4,22 @@
 
 ### Added
 
-- A native Source Control workspace with a dedicated sidebar, repository selection,
-  clone/init, separate staged, working, untracked, and conflict groups, unified
-  and side-by-side diffs, whole-file and hunk staging, and copyable patches.
-  Open it from Tools, the sidebar switch, or Ctrl/Cmd+Shift+G. Source Control
-  uses installed Git 2.30 or newer and your existing Git configuration,
-  credentials, signing settings, and hooks.
-- Git commits use staged changes only, with optional amend and commit-message
-  drafts preserved across repository changes and restarts. Commit history has a
-  parent graph, reference labels, first-parent file comparisons, copyable commit
-  IDs, cherry-pick, and revert actions.
-- Git branch and remote management includes local and tracking branch creation,
-  switching, merging, safe branch deletion, adding/removing remotes, fetch,
-  fast-forward pull, push, and publishing a branch with an upstream. Stashes can
-  save tracked and untracked work, restore the index, and be applied or dropped.
-- Native Git conflict review shows Current, Incoming, and the common ancestor.
-  Resolve manually in the editor or choose a side, then stage the result. Merge,
-  cherry-pick, revert, and rebase operations offer Continue and Abort controls.
-  Unsaved-buffer guards, reviewed-change validation, and backups protect working
-  text during discard and conflict replacement. Git work runs in the background
-  with refresh, cancellation, timeouts, and a recent operation log.
-- An offline User Guide opens from Help, About, the command palette, or F1.
-  Contents and section links navigate the bundled documentation; related developer
-  notes and license notices are readable without a browser or network access.
-- Twenty new palettes bring the built-in catalog to 38 themes. The ten dark
-  palettes are Ayu Dark, Night Owl, Cobalt2, Everforest Dark, Kanagawa Wave,
-  Tomorrow Night, Horizon, Iceberg Dark, PaperColor Dark, and SynthWave ’84.
-  The ten light palettes are Ayu Light, Light Owl, Quiet Light, Everforest Light,
-  Flexoki Light, Tomorrow, Horizon Bright, Iceberg Light, PaperColor Light, and
-  Alabaster. All are available in the theme picker and gallery, with palette
-  credits and license notices bundled.
+- Native Git sidebar with staging, diffs, commits, branches, history, conflict
+  resolution, stashes, and remote operations. Requires Git 2.30+.
+- Offline User Guide, available from Help or F1.
+- 20 new themes: 10 dark and 10 light.
 
 ### Changed
 
-- Files and Source Control share a segmented sidebar switch with native vector
-  icons, a clear active state, larger click targets, keyboard focus, and compact
-  labels. Switching views preserves editor tabs and commit-message drafts.
-- Markdown previews and offline documentation share clearer typography with real
-  semibold headings, bundled reader fonts, readable spacing, underlined links,
-  wrapping tables, and selectable native code blocks with syntax colors,
-  horizontal scrolling, and a Copy button. Document colors follow the active theme.
-- Refreshed the editor with compact tabs, a quieter folder tree,
-  a slim status bar, and more compact command and completion lists.
-- Hedit Ink and Hedit Paper use neutral palettes. Stored copies of the original
-  defaults refresh automatically; customized themes keep their colors.
-- Simplified Software Update to a short status message and contextual actions.
-  Release notes open in the browser; diagnostics appear only after a failure.
-- Markdown Split synchronizes vertical scrolling between the source and preview
-  in both directions, including when the panes are stacked in narrow windows.
-  Scrolling keeps the caret, selections, and horizontal positions intact and
-  stays independent between editor groups and documents.
-- Refreshed the README, user guide, and developer guide to match current editing,
-  recovery, Markdown, theme, Git, platform, packaging, and release behavior.
-- GitHub release descriptions now use the version's changelog entry, so published
-  release notes include the actual changes.
+- Refreshed editor design, Files/Source Control switch, and update dialog.
+- Improved Markdown typography, code blocks, full-width preview, and synchronized
+  scrolling in split mode.
 
 ### Fixed
 
-- Git actions no longer fall back to an enclosing repository if a selected
-  nested repository disappears. Refreshes discard unavailable repository state.
-- Git file comparisons follow staging/unstaging and clear when the file becomes
-  clean. Delayed diffs cannot restore a selection from an older view.
-- Hunk unstaging works with unsaved editor text, while staging still requires
-  saving the affected buffer.
-- Conflict replacement detects changes to the reviewed index sides as well as
-  the working file. Failed Git operations retain conflict details from stdout.
-- Cancelling the repository picker preserves the selection and commit draft
-  without showing an error. Remote HEAD aliases are excluded from branch actions.
-- Unsaved tab dots turn into a larger close icon on hover.
-- Empty untitled tabs are omitted from Closed Files, including session recovery.
-- Markdown Preview fills the available editor area instead of stopping at a fixed
-  reading width. Short documents also fill the preview background.
-- Quoted numbered lists no longer introduce large blank vertical gaps later in
-  long Markdown documents. Nested quotes, lists, and other blocks now complete
-  their normal rendering lifecycle.
-- Closing an unsaved tab with Don't Save no longer fails when Closed Files has
-  50 unsaved notes. Unsaved notes remain recoverable beyond the recent-file limit,
-  including after restarting or switching projects.
-- Long snippet descriptions no longer push completion lists outside the window.
-  Descriptions are shortened in the list and available in full on hover.
+- Fixed closing unsaved tabs; empty untitled tabs stay out of Closed Files.
+- Fixed Markdown layout gaps and clipped completion lists.
+- Fixed Git repository targeting, stale diffs, conflict handling, and cancellation.
 
 ## [0.1.10] - 2026-10-30
 
