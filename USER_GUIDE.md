@@ -178,7 +178,8 @@ the note and warns that its undo history is unavailable.
 The sole empty untitled tab stays open as the editor's blank state and has no
 close button. Add another tab or type text to make it closable.
 
-Closed tabs go on the *shelf* with their selection and bookmarks. After Don't
+Empty untitled tabs are discarded when closed and do not appear in Closed Files.
+Other closed tabs go on the *shelf* with their selection and bookmarks. After Don't
 Save on a file on disk, reopening shows the disk copy; untitled notes reopen with
 their text intact. **Ctrl+Shift+T** reopens the last tab, and **File →
 Browse closed files…** lists them all. **File → Close all tabs** (**Ctrl+K,

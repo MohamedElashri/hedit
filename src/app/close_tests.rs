@@ -83,7 +83,7 @@ fn last_blank_tab_has_no_close_button_and_ignores_close_actions() {
     app.execute(&ctx, Command::CloseAll);
     assert_eq!(app.workspace.open.len(), 1);
     assert_eq!(app.active().view.id, id);
-    assert_eq!(app.workspace.closed.len(), 1);
+    assert!(app.workspace.closed.is_empty());
     app.execute(&ctx, Command::Quit);
     assert!(app.closing, "the empty tab must not prevent quitting");
 }

@@ -13,6 +13,7 @@
 
 ### Fixed
 
+- Empty untitled tabs are omitted from Closed Files, including session recovery.
 - Closing an unsaved tab with Don't Save no longer fails when Closed Files has
   50 unsaved notes. Unsaved notes remain recoverable beyond the recent-file limit,
   including after restarting or switching projects.

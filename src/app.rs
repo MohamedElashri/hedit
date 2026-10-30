@@ -3826,7 +3826,7 @@ mod tests {
     }
 
     #[test]
-    fn native_shortcuts_create_and_reopen_buffers() {
+    fn native_shortcuts_discard_blank_tabs_and_reopen_nonempty_notes() {
         let directory = tempfile::tempdir().unwrap();
         let (workspace, _) = Workspace::restore(directory.path().into()).unwrap();
         let ctx = egui::Context::default();
@@ -3835,6 +3835,21 @@ mod tests {
         frame(&ctx, &mut app, vec![key(Key::N, Modifiers::COMMAND)]);
         assert_eq!(app.workspace.open.len(), 2);
         frame(&ctx, &mut app, vec![key(Key::W, Modifiers::COMMAND)]);
+        assert!(app.workspace.closed.is_empty());
+        frame(
+            &ctx,
+            &mut app,
+            vec![key(Key::T, Modifiers::COMMAND | Modifiers::SHIFT)],
+        );
+        assert_eq!(app.workspace.open.len(), 1);
+        frame(&ctx, &mut app, vec![key(Key::N, Modifiers::COMMAND)]);
+        frame(
+            &ctx,
+            &mut app,
+            vec![egui::Event::Text("keep this note".into())],
+        );
+        frame(&ctx, &mut app, vec![key(Key::W, Modifiers::COMMAND)]);
+        app.choose_close(&ctx, close::Choice::Discard);
         assert_eq!(app.workspace.closed.len(), 1);
         frame(
             &ctx,

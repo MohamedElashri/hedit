@@ -52,7 +52,8 @@ fn other_empty_tabs_disk_files_and_named_scratchpads_can_close() {
     ws.name_scratchpad(0, "Planned notes").unwrap();
     assert!(ws.can_close(0));
     ws.close(0).unwrap();
-    assert!(ws.closed.iter().any(|view| view.id == first));
+    assert!(!ws.closed.iter().any(|view| view.id == first));
+    assert!(ws.editor.get(first).is_err());
     let path = directory.path().join("empty.txt");
     fs::write(&path, "").unwrap();
     let mut doc = Document::open(ws.editor.id(), &path).unwrap();

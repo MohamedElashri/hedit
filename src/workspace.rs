@@ -172,6 +172,23 @@ impl Workspace {
         }
         let mut closed: Vec<_> = restored.closed.into_iter().map(|t| t.view).collect();
         closed.extend(failed);
+        // Older sessions may have shelved blank scratchpads. Keep disk files
+        // and anything whose contents cannot safely be checked.
+        closed.retain(|view| {
+            let blank = editor
+                .get(view.id)
+                .ok()
+                .and_then(|doc| {
+                    doc.lock()
+                        .ok()
+                        .map(|d| d.info().path.is_none() && d.info().size == 0)
+                })
+                .unwrap_or(false);
+            if blank {
+                let _ = editor.remove(view.id);
+            }
+            !blank
+        });
         let mut workspace = Self {
             editor,
             store,
@@ -227,6 +244,14 @@ impl Workspace {
     pub fn close(&mut self, index: usize) -> Result<(), String> {
         if !self.can_close(index) {
             return Ok(());
+        }
+        let buffer = &self.open[index];
+        if buffer.page.info.path.is_none()
+            && !buffer.page.info.paged
+            && buffer.page.info.size == 0
+            && buffer.page.text.is_empty()
+        {
+            return self.forget(index);
         }
         // Fifty entries is a soft history limit: evict only saved, unchanged
         // files. Unsaved notes must neither be lost nor prevent another tab closing.

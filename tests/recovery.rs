@@ -578,3 +578,53 @@ fn stdin_is_preserved_when_native_window_startup_fails() {
         "stdin must survive a display error\n"
     );
 }
+
+#[test]
+fn closing_blank_untitled_tabs_skips_the_shelf_but_preserves_whitespace_and_disk_files() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut ws, _) = Workspace::restore(directory.path().join("session")).unwrap();
+    for _ in 0..60 {
+        ws.new_buffer().unwrap();
+        let id = ws.open[ws.active].view.id;
+        edit(&mut ws, "temporary text");
+        edit(&mut ws, "");
+        ws.close(ws.active).unwrap();
+        assert!(ws.closed.is_empty());
+        assert!(ws.editor.get(id).is_err());
+    }
+    edit(&mut ws, " \n\t");
+    ws.close(ws.active).unwrap();
+    let path = directory.path().join("empty.txt");
+    fs::write(&path, "").unwrap();
+    let mut doc = Document::open(ws.editor.id(), &path).unwrap();
+    let page = doc.page(0).unwrap();
+    ws.add(doc, page).unwrap();
+    ws.close(ws.active).unwrap();
+    assert_eq!(ws.closed.len(), 2);
+    ws.checkpoint().unwrap();
+    drop(ws);
+    let (mut ws, errors) = Workspace::restore(directory.path().join("session")).unwrap();
+    assert!(errors.is_empty(), "{errors:?}");
+    assert_eq!(ws.closed.len(), 2);
+    ws.reopen().unwrap();
+    assert_eq!(ws.open[ws.active].page.info.path.as_deref(), path.to_str());
+    ws.reopen().unwrap();
+    assert_eq!(ws.open[ws.active].page.text, " \n\t");
+}
+
+#[test]
+fn older_sessions_drop_shelved_blank_untitled_tabs_without_touching_open_notes() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut ws, _) = Workspace::restore(directory.path().into()).unwrap();
+    ws.new_buffer().unwrap();
+    edit(&mut ws, "keep this unsaved note");
+    let mut view = ws.view();
+    view.closed.push(view.open.remove(0));
+    ws.store.save(&ws.editor, view).unwrap();
+    drop(ws);
+    let (ws, errors) = Workspace::restore(directory.path().into()).unwrap();
+    assert!(errors.is_empty(), "{errors:?}");
+    assert!(ws.closed.is_empty());
+    assert_eq!(ws.open[ws.active].page.text, "keep this unsaved note");
+    ws.checkpoint().unwrap();
+}
