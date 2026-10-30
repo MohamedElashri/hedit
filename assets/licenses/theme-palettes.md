@@ -14,5 +14,11 @@ gallery, and exported JSON files all use the same built-in catalog.
 | Kanagawa Wave | [Kanagawa](https://github.com/rebelot/kanagawa.nvim/blob/master/lua/kanagawa/colors.lua) | [MIT](kanagawa-MIT.txt) |
 | Quiet Light | [VS Code Quiet Light](https://github.com/microsoft/vscode/blob/main/extensions/theme-quietlight/themes/quietlight-color-theme.json) | [MIT](vscode-MIT.txt) |
 | Flexoki Light | [Flexoki palette](https://github.com/kepano/flexoki#color-palette) | [MIT](flexoki-MIT.txt) |
+| Tomorrow Night, Tomorrow | [Tomorrow Vim palettes](https://github.com/chriskempson/tomorrow-theme/tree/master/vim/colors) | [MIT](tomorrow-theme-MIT.txt) |
+| Horizon, Horizon Bright | [Horizon themes](https://github.com/alexandernanberg/horizon-theme-vscode/tree/master/themes) | [MIT](horizon-MIT.txt) |
+| Iceberg Dark, Iceberg Light | [Iceberg compiled palette](https://github.com/cocopon/iceberg.vim/blob/master/colors/iceberg.vim) | [MIT](iceberg-MIT.txt) |
+| PaperColor Dark, PaperColor Light | [PaperColor palette](https://github.com/NLKNguyen/papercolor-theme/blob/master/colors/PaperColor.vim) | [MIT](papercolor-MIT.txt) |
+| SynthWave ’84 | [SynthWave ’84 palette](https://github.com/robb0wen/synthwave-vscode/blob/master/themes/synthwave-color-theme.json) | [MIT](synthwave-84-MIT.txt) |
+| Alabaster | [Alabaster theme](https://github.com/tonsky/vscode-theme-alabaster/blob/master/theme/alabaster-color-theme.json) | [MIT](alabaster-MIT.txt) |
 
 Bundled packages include these license notices under `assets/licenses/`.

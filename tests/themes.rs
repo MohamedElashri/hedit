@@ -362,6 +362,26 @@ fn additional_dark_and_light_palettes_are_available_by_name() {
                 "Flexoki Light",
             ],
         ),
+        (
+            true,
+            [
+                "Tomorrow Night",
+                "Horizon",
+                "Iceberg Dark",
+                "PaperColor Dark",
+                "SynthWave '84",
+            ],
+        ),
+        (
+            false,
+            [
+                "Tomorrow",
+                "Horizon Bright",
+                "Iceberg Light",
+                "PaperColor Light",
+                "Alabaster",
+            ],
+        ),
     ] {
         for name in names {
             let theme = catalog::builtin(name).unwrap_or_else(|| panic!("missing {name}"));

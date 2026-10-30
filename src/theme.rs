@@ -348,6 +348,46 @@ const BUILTINS: &[Builtin] = &[
         "#FFFCF0", "#F2F0E5", "#F2F0E5", "#E6E4D9", "#DAD8CE", "#100F0F", "#6F6E69", "#205EA6", "#CECDC3", "#100F0F",
         "#AD8301", "#AF3029", "#66800B",
         "#878580", "#66800B", "#24837B", "#A02F6F", "#BC5215", "#205EA6", "#AD8301", "#5E409D", "#6F6E69", "#205EA6", "#BC5215"] },
+    Builtin { name: "Tomorrow Night", dark: true, colors: [
+        "#1D1F21", "#282A2E", "#17191B", "#373B41", "#4D5057", "#C5C8C6", "#969896", "#81A2BE", "#373B41", "#C5C8C6",
+        "#F0C674", "#CC6666", "#B5BD68",
+        "#969896", "#B294BB", "#B5BD68", "#DE935F", "#8ABEB7", "#81A2BE", "#F0C674", "#DE935F", "#8ABEB7", "#CC6666", "#B294BB"] },
+    Builtin { name: "Horizon", dark: true, colors: [
+        "#1C1E26", "#232530", "#1A1C23", "#2E303E", "#3D4054", "#D5D8DA", "#6C6F93", "#E95378", "#2E303E", "#D5D8DA",
+        "#FAB795", "#F43E5C", "#09F7A0",
+        "#6C6F93", "#B877DB", "#FAB795", "#F09483", "#25B0BC", "#25B0BC", "#FAC29A", "#F09483", "#BBBBBB", "#E95678", "#B877DB"] },
+    Builtin { name: "Iceberg Dark", dark: true, colors: [
+        "#161821", "#1E2132", "#12131B", "#2A3158", "#3E445E", "#C6C8D1", "#818596", "#84A0C6", "#272C42", "#C6C8D1",
+        "#E2A478", "#E27878", "#B4BE82",
+        "#6B7089", "#84A0C6", "#89B8C2", "#A093C7", "#B4BE82", "#84A0C6", "#84A0C6", "#A093C7", "#84A0C6", "#89B8C2", "#B4BE82"] },
+    Builtin { name: "PaperColor Dark", dark: true, colors: [
+        "#1C1C1C", "#303030", "#262626", "#3A3A3A", "#585858", "#D0D0D0", "#808080", "#FFAF00", "#8787AF", "#000000",
+        "#D7AF5F", "#FF5FAF", "#5FAF00",
+        "#808080", "#AF87D7", "#D7AF5F", "#FF5FAF", "#D7875F", "#5FAFD7", "#AFD700", "#FF5FAF", "#D7875F", "#5FAFD7", "#5FAF5F"] },
+    Builtin { name: "SynthWave '84", dark: true, colors: [
+        "#262335", "#2A2139", "#241B2F", "#34294F", "#495495", "#FFFFFF", "#9D8BCA", "#F97E72", "#413E4E", "#FFFFFF",
+        "#FEDE5D", "#FE4450", "#72F1B8",
+        "#848BBD", "#FEDE5D", "#FF8B39", "#F97E72", "#36F9F6", "#36F9F6", "#FE4450", "#F97E72", "#67CDCC", "#FF7EDB", "#72F1B8"] },
+    Builtin { name: "Tomorrow", dark: false, colors: [
+        "#FFFFFF", "#EFEFEF", "#EFEFEF", "#E0E0E0", "#D6D6D6", "#4D4D4C", "#70716D", "#4271AE", "#D6D6D6", "#4D4D4C",
+        "#EAB700", "#C82829", "#718C00",
+        "#8E908C", "#8959A8", "#718C00", "#F5871F", "#3E999F", "#4271AE", "#EAB700", "#F5871F", "#3E999F", "#C82829", "#8959A8"] },
+    Builtin { name: "Horizon Bright", dark: false, colors: [
+        "#FDF0ED", "#FADAD1", "#FDF0ED", "#F9CBBE", "#EDC5BB", "#06060C", "#84645F", "#E84A72", "#F9CBBE", "#06060C",
+        "#F77D26", "#F43E5C", "#1EB980",
+        "#977F7A", "#8A31B9", "#F6661E", "#DC3318", "#1D8991", "#1D8991", "#F77D26", "#DC3318", "#333333", "#DA103F", "#8A31B9"] },
+    Builtin { name: "Iceberg Light", dark: false, colors: [
+        "#E8E9EC", "#F3F4F7", "#DCDFE7", "#CAD0DE", "#A7B2CD", "#33374C", "#667194", "#2D539E", "#C9CDD7", "#33374C",
+        "#C57339", "#CC517A", "#668E3D",
+        "#8389A3", "#2D539E", "#3F83A6", "#7759B4", "#668E3D", "#2D539E", "#2D539E", "#7759B4", "#2D539E", "#3F83A6", "#668E3D"] },
+    Builtin { name: "PaperColor Light", dark: false, colors: [
+        "#EEEEEE", "#E4E4E4", "#E4E4E4", "#D0D0D0", "#BCBCBC", "#444444", "#6C6C6C", "#005F87", "#D0D0D0", "#444444",
+        "#D75F00", "#AF0000", "#008700",
+        "#878787", "#8700AF", "#5F8700", "#D75F00", "#005F87", "#0087AF", "#D70087", "#D75F00", "#005F87", "#0087AF", "#D70000"] },
+    Builtin { name: "Alabaster", dark: false, colors: [
+        "#F7F7F7", "#F0F0F0", "#F0F0F0", "#E6E6E6", "#DDDDDD", "#000000", "#777777", "#007ACC", "#BFDBFE", "#000000",
+        "#CB9000", "#AA3731", "#448C27",
+        "#AA3731", "#000000", "#448C27", "#7A3E9D", "#000000", "#325CC0", "#325CC0", "#7A3E9D", "#777777", "#000000", "#000000"] },
 
 ];
 

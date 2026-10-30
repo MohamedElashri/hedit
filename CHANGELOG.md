@@ -7,6 +7,9 @@
 - Five dark palettes: Ayu Dark, Night Owl, Cobalt2, Everforest Dark, and Kanagawa
   Wave. Five light palettes: Ayu Light, Light Owl, Quiet Light, Everforest Light,
   and Flexoki Light. All are available in the theme picker and gallery.
+- Five more dark palettes: Tomorrow Night, Horizon, Iceberg Dark, PaperColor
+  Dark, and SynthWave ’84. Five more light palettes: Tomorrow, Horizon Bright,
+  Iceberg Light, PaperColor Light, and Alabaster.
 
 ### Changed
 
