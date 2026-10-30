@@ -26,6 +26,22 @@ struct Output {
     stdout: Vec<u8>,
     stderr: String,
 }
+impl Output {
+    fn error(self) -> String {
+        let message = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&self.stdout).trim(),
+            self.stderr
+        )
+        .trim()
+        .to_owned();
+        if message.is_empty() {
+            "Git could not complete the operation.".into()
+        } else {
+            message
+        }
+    }
+}
 
 fn read_bounded(mut stream: impl Read) -> std::io::Result<Vec<u8>> {
     let mut result = Vec::new();
@@ -185,11 +201,7 @@ impl Git {
         if out.success {
             Ok(out.stdout)
         } else {
-            Err(if out.stderr.is_empty() {
-                "Git could not complete the operation.".into()
-            } else {
-                out.stderr
-            })
+            Err(out.error())
         }
     }
     pub fn discover(&self, directory: &Path) -> Result<PathBuf> {
@@ -206,6 +218,7 @@ impl Git {
             .map_err(|e| e.to_string())
     }
     pub fn snapshot(&self, root: &Path, limit: usize) -> Result<Snapshot> {
+        self.require_root(root)?;
         let raw = self.checked(
             root,
             &args(&[
@@ -220,10 +233,10 @@ impl Git {
         )?;
         let mut snapshot = parse_status(&raw)?;
         snapshot.root = root.to_owned();
-        snapshot.branches = self.command(root, &["for-each-ref", "--sort=refname", "--format=%(refname:short)%00%(refname)%00%(objectname)%00%(upstream:short)%00%(HEAD)", "refs/heads", "refs/remotes"])?
+        snapshot.branches = self.command(root, &["for-each-ref", "--sort=refname", "--format=%(refname:short)%00%(refname)%00%(objectname)%00%(upstream:short)%00%(HEAD)%00%(symref)", "refs/heads", "refs/remotes"])?
             .lines().filter_map(|s| {
                 let v: Vec<_> = s.split('\0').collect();
-                (v.len() == 5).then(|| Branch { name: v[0].into(), reference: v[1].into(), oid: v[2].into(), upstream: v[3].into(), current: v[4] == "*", remote: v[1].starts_with("refs/remotes/") })
+                (v.len() == 6 && v[5].is_empty()).then(|| Branch { name: v[0].into(), reference: v[1].into(), oid: v[2].into(), upstream: v[3].into(), current: v[4] == "*", remote: v[1].starts_with("refs/remotes/") })
             }).collect();
         snapshot.remotes = self
             .command(root, &["remote"])?
@@ -337,12 +350,25 @@ impl Git {
                     Some(String::from_utf8(output.stdout).map_err(|_| "This conflict is not UTF-8 text. Resolve it in the editor or a terminal.")?)
                 } else { None });
             }
+            let mut fingerprint = Sha256::new();
+            fingerprint.update((working.len() as u64).to_le_bytes());
+            fingerprint.update(&working);
+            for side in &sides {
+                if let Some(text) = side {
+                    fingerprint.update([1]);
+                    fingerprint.update((text.len() as u64).to_le_bytes());
+                    fingerprint.update(text.as_bytes());
+                } else {
+                    fingerprint.update([0]);
+                }
+            }
             let result = Diff {
                 conflict: Some(Conflict {
                     base: sides.remove(0),
                     ours: sides.remove(0),
                     theirs: sides.remove(0),
-                    expected: Sha256::digest(&working)
+                    expected: fingerprint
+                        .finalize()
                         .iter()
                         .map(|b| format!("{b:02x}"))
                         .collect(),
@@ -466,6 +492,13 @@ impl Git {
         self.command(root, &["show", "-s", "--format=%B", oid])
     }
     pub fn execute(&self, root: &Path, operation: &Operation) -> Result<String> {
+        if matches!(operation, Operation::Init) {
+            if self.discover(root).is_ok() {
+                return Err("This folder already belongs to a Git repository. Refresh or open another folder.".into());
+            }
+        } else {
+            self.require_root(root)?;
+        }
         let mut input = None;
         let mut remote = false;
         let arguments = match operation {
@@ -659,7 +692,10 @@ impl Git {
                     .as_ref()
                     .is_none_or(|c| &c.expected != expected)
                 {
-                    return Err("The conflict file changed. Refresh and review it again.".into());
+                    return Err(
+                        "The conflict file or index changed. Refresh and review both sides again."
+                            .into(),
+                    );
                 }
                 let path = safe_path(root, &selection.path)?;
                 let saved = backup_file(&path, backup)?;
@@ -687,11 +723,7 @@ impl Git {
     ) -> Result<String> {
         let output = self.run(root, arguments, input, remote)?;
         if !output.success {
-            return Err(if output.stderr.is_empty() {
-                "Git could not complete the operation.".into()
-            } else {
-                output.stderr
-            });
+            return Err(output.error());
         }
         let text = format!(
             "{}\n{}",
@@ -748,6 +780,20 @@ impl Git {
             true,
         )?;
         self.discover(destination)
+    }
+    /// A selected repository is an exact working-tree root, never a directory
+    /// from which Git may silently discover a different enclosing repository.
+    fn require_root(&self, root: &Path) -> Result<()> {
+        let expected = root
+            .canonicalize()
+            .map_err(|e| format!("Cannot access the selected repository: {e}"))?;
+        let actual = self
+            .discover(root)
+            .map_err(|e| format!("Cannot access the selected repository: {e}"))?;
+        if actual != expected {
+            return Err(format!("The selected repository at {} is no longer available. Open the repository again before running Git actions.",root.display()));
+        }
+        Ok(())
     }
 }
 

@@ -269,6 +269,160 @@ fn workspace_switcher_preserves_drafts_and_files_across_themes_and_small_sidebar
 }
 
 #[test]
+fn staging_unstaging_and_committing_keep_the_selected_comparison_accurate() {
+    let (_directory, ctx, mut app, _git) = fixture();
+    let root = app.source_control.root.clone().unwrap();
+    std::fs::write(root.join("note.txt"), "new note\n").unwrap();
+    app.source_control.select(
+        &ctx,
+        Selection {
+            path: "note.txt".into(),
+            kind: DiffKind::Untracked,
+        },
+    );
+    finish_git(&ctx, &mut app);
+    for (operation, kind) in [
+        (Operation::Stage(vec!["note.txt".into()]), DiffKind::Staged),
+        (
+            Operation::Unstage(vec!["note.txt".into()]),
+            DiffKind::Untracked,
+        ),
+        (Operation::Stage(vec!["note.txt".into()]), DiffKind::Staged),
+    ] {
+        app.git_action(&ctx, operation);
+        finish_git(&ctx, &mut app);
+        assert_eq!(app.source_control.selection.as_ref().unwrap().kind, kind);
+        assert!(
+            app.source_control.error.is_none(),
+            "{:?}",
+            app.source_control.error
+        );
+    }
+    app.git_action(
+        &ctx,
+        Operation::Commit {
+            message: "Add note".into(),
+            amend: false,
+        },
+    );
+    finish_git(&ctx, &mut app);
+    assert!(app.source_control.selection.is_none());
+    assert!(app.source_control.diff.is_none());
+    assert!(app.source_control.error.is_none());
+}
+
+#[test]
+fn index_only_hunk_unstage_keeps_unsaved_editor_text() {
+    let (_directory, ctx, mut app, git) = fixture();
+    let root = app.source_control.root.clone().unwrap();
+    git.execute(&root, &Operation::Stage(vec!["main.rs".into()]))
+        .unwrap();
+    app.open(&ctx, Some(root.join("main.rs")));
+    finish_app_job(&mut app, &ctx);
+    let index = app.workspace.active;
+    let old = app.active().page.text.clone();
+    app.workspace.open[index]
+        .page
+        .text
+        .push_str("\n// keep this unsaved comment\n");
+    app.workspace.edit(index, &old).unwrap();
+    let kept = app.active().page.text.clone();
+    let selection = Selection {
+        path: "main.rs".into(),
+        kind: DiffKind::Staged,
+    };
+    let diff = git.diff(&root, &selection).unwrap();
+    app.git_action(
+        &ctx,
+        Operation::Hunk {
+            selection,
+            expected: diff.patch,
+            hunk: 0,
+        },
+    );
+    assert!(
+        app.source_control.pending,
+        "Unstaging the index must not require saving editor text"
+    );
+    finish_git(&ctx, &mut app);
+    assert!(git
+        .command(&root, &["diff", "--cached"])
+        .unwrap()
+        .is_empty());
+    assert_eq!(app.active().page.text, kept);
+    assert!(app.active().page.info.dirty);
+}
+
+#[test]
+fn a_disappearing_nested_repository_cannot_stage_a_parent_file() {
+    let (directory, ctx, mut app, git) = fixture();
+    let nested = app.source_control.root.clone().unwrap();
+    git.command(directory.path(), &["init", "-b", "parent"])
+        .unwrap();
+    std::fs::write(
+        directory.path().join("main.rs"),
+        "parent file must stay unstaged\n",
+    )
+    .unwrap();
+    std::fs::rename(
+        nested.join(".git"),
+        directory.path().join("nested-git-backup"),
+    )
+    .unwrap();
+    app.git_action(&ctx, Operation::Stage(vec!["main.rs".into()]));
+    finish_git(&ctx, &mut app);
+    assert!(git
+        .command(directory.path(), &["diff", "--cached", "--name-only"])
+        .unwrap()
+        .is_empty());
+    assert!(app
+        .source_control
+        .error
+        .as_ref()
+        .is_some_and(|e| e.contains("repository")));
+}
+
+#[test]
+fn cancelled_repository_picker_preserves_selection_and_draft_without_an_error() {
+    let (_directory, ctx, mut app, _git) = fixture();
+    let selection = Selection {
+        path: "main.rs".into(),
+        kind: DiffKind::Working,
+    };
+    app.source_control.select(&ctx, selection.clone());
+    finish_git(&ctx, &mut app);
+    let root = app.source_control.root.clone();
+    app.source_control.draft = "Retain this draft".into();
+    app.source_control.pending = true;
+    app.source_control.tx.send(None).unwrap();
+    app.poll_source_control(&ctx);
+    assert!(!app.source_control.pending);
+    assert!(app.source_control.error.is_none());
+    assert_eq!(app.source_control.root, root);
+    assert_eq!(app.source_control.selection, Some(selection));
+    assert!(app.source_control.diff.is_some());
+    assert_eq!(app.source_control.draft, "Retain this draft");
+}
+
+#[test]
+fn a_pending_diff_cannot_restore_a_selection_after_changing_views() {
+    let (_directory, ctx, mut app, _git) = fixture();
+    app.source_control.select(
+        &ctx,
+        Selection {
+            path: "main.rs".into(),
+            kind: DiffKind::Working,
+        },
+    );
+    app.source_control.view = View::History;
+    app.source_control.selection = None;
+    app.source_control.diff = None;
+    finish_git(&ctx, &mut app);
+    assert!(app.source_control.selection.is_none());
+    assert!(app.source_control.diff.is_none());
+}
+
+#[test]
 #[ignore = "writes native source control preview images"]
 fn source_control_visual_preview() {
     let (directory, ctx, mut app, git) = fixture();

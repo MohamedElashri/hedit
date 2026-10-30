@@ -475,8 +475,10 @@ show quick colors first and full colors a moment later.
 
 ## Source Control
 
-Open **Tools → Source Control**, the **Source Control** button in the folder
-sidebar, or **Ctrl+Shift+G** (**Cmd+Shift+G** on macOS). This native workspace uses
+Use the **Files / Source Control** switch at the top of the sidebar, **Tools →
+Source Control**, or **Ctrl+Shift+G** (**Cmd+Shift+G** on macOS). The active segment
+is highlighted; narrow sidebars shorten Source Control to **Git**. Switching views
+keeps your editor tabs and commit message. This native workspace uses
 Git installed on your `PATH` (Git 2.30 or newer). Your existing Git identity,
 credential helpers, SSH agent, signing settings, hooks, and remotes apply.
 It does not require a browser or a hosting-service account.
@@ -502,6 +504,9 @@ complete patch, including headers hidden from the visual review.
   files. New/deleted files, mode changes, binary files, and some unusual path
   encodings use whole-file staging. Changed diffs must be refreshed before a hunk
   can be applied.
+- The review follows a file into its new group after staging or unstaging, and
+  clears after the file has no remaining changes. Unstaging only changes the
+  index and can be done while the editor has unsaved text.
 - Enter a message and choose **Commit staged**. Only the index is committed.
   Unsaved editor edits are not included. **Amend** replaces the latest commit and
   asks for confirmation because it changes the commit ID.
@@ -548,6 +553,8 @@ terminal, then stage the result. Binary, non-UTF-8, link, submodule, and large
 conflicts may need a terminal. During rebase, Current is the branch being rebased
 onto and Incoming is the commit being replayed. An operation banner offers
 **Continue** and **Abort…** for merges, cherry-picks, reverts, and rebases.
+Replacing a conflict checks both the working file and the reviewed index sides;
+if another Git client changes either, refresh and review before trying again.
 
 **Fetch** updates remote references. **Pull** only fast-forwards the upstream;
 divergent histories require an explicit merge or a terminal rebase. **Push** uses
@@ -563,6 +570,10 @@ the current operation; refresh afterward to inspect its outcome. Git commands
 time out after 30 seconds locally or 120 seconds for network operations and have
 a 24 MiB output limit. **Git output** keeps recent action results. The normal
 editor and offline guide work without Git installed.
+Actions stay bound to the selected repository root. If a nested repository is
+removed or moved, hedit asks you to reopen it and refuses to run its actions
+against an enclosing repository. Cancelling the repository picker keeps your
+current selection and draft.
 
 ## Markdown preview
 

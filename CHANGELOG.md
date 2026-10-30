@@ -22,6 +22,8 @@
 
 ### Changed
 
+- Files and Source Control share a segmented sidebar switch with native vector
+  icons, a clear active state, larger click targets, and compact labels.
 - Markdown previews and offline documentation share clearer typography with real
   semibold headings, readable spacing, accented links, wrapping tables, and native
   code blocks with syntax colors, horizontal scrolling, and a Copy button.
@@ -39,6 +41,16 @@
 
 ### Fixed
 
+- Git actions no longer fall back to an enclosing repository if a selected
+  nested repository disappears. Refreshes discard unavailable repository state.
+- Git file comparisons follow staging/unstaging and clear when the file becomes
+  clean. Delayed diffs cannot restore a selection from an older view.
+- Hunk unstaging works with unsaved editor text, while staging still requires
+  saving the affected buffer.
+- Conflict replacement detects changes to the reviewed index sides as well as
+  the working file. Failed Git operations retain conflict details from stdout.
+- Cancelling the repository picker preserves the selection and commit draft
+  without showing an error. Remote HEAD aliases are excluded from branch actions.
 - Unsaved tab dots turn into a larger close icon on hover.
 - Empty untitled tabs are omitted from Closed Files, including session recovery.
 - Markdown Preview fills the available editor area instead of stopping at a fixed

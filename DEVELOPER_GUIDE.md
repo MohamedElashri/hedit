@@ -203,9 +203,16 @@ on Unix. Pass literal pathspecs only to path-taking commands: applying
 graph follows object parents, not display order alone.
 
 Block stage actions for unsaved selected files and worktree mutations for unsaved
-repository buffers. Never replace dirty buffers with Git output. Partial staging
-and discard validate the reviewed diff; conflict replacement validates working
-text. Back up regular files before discard/conflict replacement, then report the
+repository buffers; allow index-only unstaging. Never replace dirty buffers with
+Git output. Bind snapshots and operations to an exact canonical repository root,
+so losing a nested repository cannot redirect an operation to its parent.
+Reconcile file comparisons against refreshed status, and guard worker replies
+with the requested selection. A cancelled picker is a separate result that
+preserves the previous view. Partial staging and discard validate the reviewed
+diff; conflict replacement validates working text and all reviewed index sides.
+Include stdout and stderr in failed Git operation messages, since merge conflict
+details may be printed to stdout. Skip symbolic branch aliases such as remote HEAD.
+Back up regular files before discard/conflict replacement, then report the
 backup path. Keep existing Git gutter comparison independent of index operations.
 Tests in `tests/git.rs` use disposable repositories and local bare remotes;
 `app/source_control_tests.rs` exercises the native UI and unsaved-buffer guards.

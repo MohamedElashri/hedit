@@ -335,9 +335,10 @@ fn merge_conflicts_are_reported_and_can_be_resolved_or_aborted() {
     write(root, "file.txt", "main\n");
     stage(&git, root, "file.txt");
     commit(&git, root, "Main");
-    assert!(git
+    let error = git
         .execute(root, &Operation::Merge("feature".into()))
-        .is_err());
+        .unwrap_err();
+    assert!(error.contains("CONFLICT"), "{error}");
     let snapshot = git.snapshot(root, 200).unwrap();
     assert!(snapshot.files[0].conflict);
     assert_eq!(snapshot.operation.as_deref(), Some("Merge in progress"));
@@ -527,6 +528,51 @@ fn conflict_sides_are_reviewable_and_replacement_is_guarded_and_backed_up() {
 }
 
 #[test]
+fn replacing_a_conflict_checks_the_reviewed_index_sides_as_well_as_working_text() {
+    let (directory, git) = repo();
+    let root = directory.path();
+    write(root, "file.txt", "base\n");
+    stage(&git, root, "file.txt");
+    commit(&git, root, "Base");
+    git.execute(root, &Operation::CreateBranch("feature".into()))
+        .unwrap();
+    write(root, "file.txt", "feature\n");
+    stage(&git, root, "file.txt");
+    commit(&git, root, "Feature");
+    git.execute(root, &Operation::Switch("main".into()))
+        .unwrap();
+    write(root, "file.txt", "main\n");
+    stage(&git, root, "file.txt");
+    commit(&git, root, "Main");
+    assert!(git
+        .execute(root, &Operation::Merge("feature".into()))
+        .is_err());
+    let selection = select("file.txt", DiffKind::Conflict);
+    let conflict = git.diff(root, &selection).unwrap().conflict.unwrap();
+    let working = std::fs::read(root.join("file.txt")).unwrap();
+    // Another Git client replaces the unmerged index entries but leaves the
+    // working file untouched. Previously its old hash still authorized restore.
+    git.command(root, &["read-tree", "--empty"]).unwrap();
+    git.command(root, &["read-tree", "-m", "HEAD^", "feature", "HEAD"])
+        .unwrap();
+    assert_eq!(std::fs::read(root.join("file.txt")).unwrap(), working);
+    let backups = tempfile::tempdir().unwrap();
+    let error = git
+        .execute(
+            root,
+            &Operation::Resolve {
+                selection,
+                ours: true,
+                expected: conflict.expected,
+                backup: backups.path().into(),
+            },
+        )
+        .unwrap_err();
+    assert!(error.contains("changed"));
+    assert_eq!(std::fs::read(root.join("file.txt")).unwrap(), working);
+}
+
+#[test]
 fn clone_and_remote_management_use_new_destinations_and_keep_history_graph() {
     let (directory, git) = repo();
     let root = directory.path();
@@ -561,9 +607,75 @@ fn clone_and_remote_management_use_new_destinations_and_keep_history_graph() {
     git.execute(&destination, &Operation::RemoveRemote("upstream".into()))
         .unwrap();
     let snapshot = git.snapshot(&destination, 200).unwrap();
+    assert!(
+        !snapshot
+            .branches
+            .iter()
+            .any(|b| b.reference.ends_with("/origin/HEAD")),
+        "A remote HEAD alias is not a branch to check out"
+    );
     assert_eq!(snapshot.graph.len(), snapshot.commits.len());
     assert_eq!(snapshot.graph[0].width, 1);
     assert!(snapshot.graph[0].edges.is_empty());
+}
+
+#[test]
+fn repository_actions_refuse_to_fall_back_to_a_parent_repository() {
+    let (directory, git) = repo();
+    let parent = directory.path();
+    write(parent, "file.txt", "parent base\n");
+    stage(&git, parent, "file.txt");
+    commit(&git, parent, "Parent");
+    let nested = parent.join("nested");
+    std::fs::create_dir(&nested).unwrap();
+    git.command(&nested, &["init", "-b", "main"]).unwrap();
+    write(&nested, "file.txt", "nested note\n");
+    std::fs::rename(
+        nested.join(".git"),
+        directory.path().join("nested-git-backup"),
+    )
+    .unwrap();
+    let error = git
+        .execute(&nested, &Operation::Stage(vec!["file.txt".into()]))
+        .unwrap_err();
+    assert!(error.contains("repository"));
+    assert!(git
+        .command(parent, &["diff", "--cached", "--name-only"])
+        .unwrap()
+        .is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn failed_hooks_report_stdout_without_committing_or_losing_staged_text() {
+    use std::os::unix::fs::PermissionsExt;
+    let (directory, git) = repo();
+    let root = directory.path();
+    let hooks = root.join("test-hooks");
+    std::fs::create_dir(&hooks).unwrap();
+    git.command(root, &["config", "core.hooksPath", hooks.to_str().unwrap()])
+        .unwrap();
+    let hook = hooks.join("pre-commit");
+    std::fs::write(
+        &hook,
+        "#!/bin/sh\nprintf 'formatter refused this commit\\n'\nexit 1\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    write(root, "file.txt", "kept\n");
+    stage(&git, root, "file.txt");
+    let error = git
+        .execute(
+            root,
+            &Operation::Commit {
+                message: "Rejected".into(),
+                amend: false,
+            },
+        )
+        .unwrap_err();
+    assert!(error.contains("formatter refused this commit"), "{error}");
+    assert_eq!(git.command(root, &["show", ":file.txt"]).unwrap(), "kept\n");
+    assert!(git.snapshot(root, 200).unwrap().unborn);
 }
 
 #[test]

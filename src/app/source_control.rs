@@ -36,6 +36,7 @@ struct Reply {
     root: Option<PathBuf>,
     snapshot: Result<Snapshot, String>,
     selection: Option<Selection>,
+    requested_selection: Option<Selection>,
     diff: Option<Result<Diff, String>>,
     commit: Option<String>,
     files: Vec<FileStatus>,
@@ -68,8 +69,9 @@ pub(super) struct SourceControl {
     last_refresh: Instant,
     refresh: bool,
     cancel: Arc<AtomicBool>,
-    tx: Sender<Reply>,
-    rx: Receiver<Reply>,
+    // None is a cancelled native directory picker, not a Git failure.
+    tx: Sender<Option<Reply>>,
+    rx: Receiver<Option<Reply>>,
 }
 impl Default for SourceControl {
     fn default() -> Self {
@@ -168,41 +170,43 @@ impl SourceControl {
         let commit = self.commit.clone();
         let limit = self.limit;
         thread::spawn(move || {
-            let root = git.discover(&directory);
-            let target = root.as_deref().unwrap_or(&directory).to_owned();
             let committed = match &operation {
                 Some(Operation::Commit { message, .. }) => Some(message.clone()),
                 _ => None,
             };
-            let outcome = operation.map(|op| git.execute(&target, &op));
-            let root = git.discover(&directory);
+            let outcome = operation.map(|op| git.execute(&directory, &op));
             // Cancellation may have happened after a successful mutation. A later
             // explicit refresh reads the actual repository instead of guessing.
-            let snapshot = root
-                .as_ref()
-                .map_err(Clone::clone)
-                .and_then(|root| git.snapshot(root, limit));
+            let snapshot = git.snapshot(&directory, limit);
+            let root = snapshot.as_ref().ok().map(|s| s.root.clone());
+            let requested_selection = selection;
+            let selection = snapshot.as_ref().ok().and_then(|s| {
+                requested_selection
+                    .as_ref()
+                    .and_then(|selected| current_selection(s, selected))
+            });
             let files = commit
                 .as_ref()
-                .and_then(|id| git.commit_files(&target, id).ok())
+                .and_then(|id| git.commit_files(&directory, id).ok())
                 .unwrap_or_default();
             let body = commit
                 .as_ref()
-                .and_then(|id| git.commit_message(&target, id).ok())
+                .and_then(|id| git.commit_message(&directory, id).ok())
                 .unwrap_or_default();
-            let diff = selection.as_ref().map(|s| git.diff(&target, s));
-            let _ = tx.send(Reply {
+            let diff = selection.as_ref().map(|s| git.diff(&directory, s));
+            let _ = tx.send(Some(Reply {
                 repositories: vec![],
-                root: root.ok(),
+                root,
                 snapshot,
                 selection,
+                requested_selection,
                 diff,
                 commit,
                 files,
                 body,
                 outcome,
                 committed,
-            });
+            }));
             ctx.request_repaint();
         });
     }
@@ -306,18 +310,19 @@ impl HeditApp {
                 .and_then(|r| git.snapshot(r, 200));
             let body = String::new();
             let snapshot = snapshot.map_err(|e| error.unwrap_or(e));
-            let _ = tx.send(Reply {
+            let _ = tx.send(Some(Reply {
                 repositories: roots,
                 root,
                 snapshot,
                 selection: None,
+                requested_selection: None,
                 diff: None,
                 commit: None,
                 files: vec![],
                 body,
                 outcome: None,
                 committed: None,
-            });
+            }));
             ctx.request_repaint();
         });
     }
@@ -326,33 +331,40 @@ impl HeditApp {
             return;
         }
         self.source_control.pending = true;
+        self.source_control.cancel = Arc::new(AtomicBool::new(false));
+        let cancel = self.source_control.cancel.clone();
         let tx = self.source_control.tx.clone();
         let ctx = ctx.clone();
         thread::spawn(move || {
             let directory = rfd::FileDialog::new()
                 .set_title("Open Git repository")
                 .pick_folder();
-            let git = Git::default();
-            let root = directory
-                .as_ref()
-                .and_then(|d| git.discover(d).ok())
-                .or(directory);
-            let snapshot = root
-                .as_ref()
-                .ok_or_else(|| "Repository selection cancelled.".into())
-                .and_then(|r| git.snapshot(r, 200));
-            let _ = tx.send(Reply {
+            let Some(directory) = directory else {
+                let _ = tx.send(None);
+                ctx.request_repaint();
+                return;
+            };
+            if cancel.load(Ordering::Relaxed) {
+                let _ = tx.send(None);
+                ctx.request_repaint();
+                return;
+            }
+            let git = Git { cancel };
+            let root = git.discover(&directory).unwrap_or(directory);
+            let snapshot = git.snapshot(&root, 200);
+            let _ = tx.send(Some(Reply {
                 repositories: vec![],
-                root,
+                root: Some(root),
                 snapshot,
                 selection: None,
+                requested_selection: None,
                 diff: None,
                 commit: None,
                 files: vec![],
                 body: String::new(),
                 outcome: None,
                 committed: None,
-            });
+            }));
             ctx.request_repaint();
         });
     }
@@ -361,6 +373,9 @@ impl HeditApp {
             let state = &mut self.source_control;
             state.pending = false;
             state.last_refresh = Instant::now();
+            let Some(reply) = reply else {
+                continue;
+            };
             if let Some(root) = reply.root {
                 if state.root.as_ref() != Some(&root) {
                     if let Some(old) = &state.root {
@@ -404,7 +419,9 @@ impl HeditApp {
                             state.repos.push(root);
                         }
                     }
-                    if state.selection == reply.selection {
+                    if state.selection == reply.requested_selection {
+                        state.selection = reply.selection;
+                        state.diff = None;
                         if let Some(diff) = reply.diff {
                             match diff {
                                 Ok(diff) => state.diff = Some(Arc::new(diff)),
@@ -421,6 +438,9 @@ impl HeditApp {
                     }
                 }
                 Err(error) => {
+                    state.snapshot = None;
+                    state.selection = None;
+                    state.diff = None;
                     if state.error.is_none() {
                         state.error = Some(error);
                     }
@@ -458,7 +478,15 @@ impl HeditApp {
             self.git_unsaved(None)
         } else if let Operation::Stage(paths) = &operation {
             self.git_unsaved(Some(paths))
-        } else if let Operation::Hunk { selection, .. } = &operation {
+        } else if let Operation::Hunk {
+            selection:
+                selection @ Selection {
+                    kind: DiffKind::Working,
+                    ..
+                },
+            ..
+        } = &operation
+        {
             self.git_unsaved(Some(std::slice::from_ref(&selection.path)))
         } else {
             vec![]
@@ -1792,18 +1820,19 @@ impl HeditApp {
                     .map_err(Clone::clone),
             );
             let snapshot = cloned.and_then(|root| git.snapshot(&root, 200));
-            let _ = tx.send(Reply {
+            let _ = tx.send(Some(Reply {
                 repositories: vec![],
                 root,
                 snapshot,
                 selection: None,
+                requested_selection: None,
                 diff: None,
                 commit: None,
                 files: vec![],
                 body: String::new(),
                 outcome,
                 committed: None,
-            });
+            }));
             ctx.request_repaint();
         });
     }
@@ -1813,6 +1842,31 @@ fn repo_name(path: &Path) -> String {
         .unwrap_or(path.as_os_str())
         .to_string_lossy()
         .into_owned()
+}
+/// Follow a file between groups after Git changes the index. Commit comparisons
+/// are immutable; files with no remaining changes leave the review pane.
+fn current_selection(snapshot: &Snapshot, selected: &Selection) -> Option<Selection> {
+    if matches!(selected.kind, DiffKind::Commit(_)) {
+        return Some(selected.clone());
+    }
+    let file = snapshot.files.iter().find(|f| f.path == selected.path)?;
+    let kind = if file.conflict {
+        DiffKind::Conflict
+    } else if selected.kind == DiffKind::Staged && file.staged() {
+        DiffKind::Staged
+    } else if file.untracked() {
+        DiffKind::Untracked
+    } else if file.working() {
+        DiffKind::Working
+    } else if file.staged() {
+        DiffKind::Staged
+    } else {
+        return None;
+    };
+    Some(Selection {
+        path: selected.path.clone(),
+        kind,
+    })
 }
 fn conflict_text(ui: &mut egui::Ui, id: &str, text: &str, height: f32) {
     let lines: Vec<_> = text.lines().collect();
