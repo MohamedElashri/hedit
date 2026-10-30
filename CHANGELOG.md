@@ -2,6 +2,12 @@
 
 ## [0.1.11] - 2026-10-30
 
+### Added
+
+- Five dark palettes: Ayu Dark, Night Owl, Cobalt2, Everforest Dark, and Kanagawa
+  Wave. Five light palettes: Ayu Light, Light Owl, Quiet Light, Everforest Light,
+  and Flexoki Light. All are available in the theme picker and gallery.
+
 ### Changed
 
 - Markdown Split synchronizes vertical scrolling between the source and preview

@@ -338,3 +338,35 @@ fn bundled_themes_match_the_builtin_catalog() {
     let example = Theme::load(&directory.join("custom-example.json")).unwrap();
     assert_ne!(catalog::builtin(&example.name), Some(example));
 }
+
+#[test]
+fn additional_dark_and_light_palettes_are_available_by_name() {
+    for (dark, names) in [
+        (
+            true,
+            [
+                "Ayu Dark",
+                "Night Owl",
+                "Cobalt2",
+                "Everforest Dark",
+                "Kanagawa Wave",
+            ],
+        ),
+        (
+            false,
+            [
+                "Ayu Light",
+                "Light Owl",
+                "Quiet Light",
+                "Everforest Light",
+                "Flexoki Light",
+            ],
+        ),
+    ] {
+        for name in names {
+            let theme = catalog::builtin(name).unwrap_or_else(|| panic!("missing {name}"));
+            assert_eq!(theme.dark, dark, "{name}");
+            assert_eq!(Theme::from_json(&theme.to_json().unwrap()).unwrap(), theme);
+        }
+    }
+}

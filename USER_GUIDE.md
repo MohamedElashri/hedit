@@ -608,7 +608,10 @@ each.
 
 | Dark | Light |
 | --- | --- |
-| Hedit Ink (default), One Dark, Dracula, Monokai, Nord, Gruvbox Dark, Solarized Dark, Tokyo Night, Catppuccin Mocha, GitHub Dark, Rosé Pine | Hedit Paper, One Light, GitHub Light, Solarized Light, Gruvbox Light, Catppuccin Latte, Rosé Pine Dawn |
+| Hedit Ink (default), One Dark, Dracula, Monokai, Nord, Gruvbox Dark, Solarized Dark, Tokyo Night, Catppuccin Mocha, GitHub Dark, Rosé Pine, Ayu Dark, Night Owl, Cobalt2, Everforest Dark, Kanagawa Wave | Hedit Paper, One Light, GitHub Light, Solarized Light, Gruvbox Light, Catppuccin Latte, Rosé Pine Dawn, Ayu Light, Light Owl, Quiet Light, Everforest Light, Flexoki Light |
+
+The [additional palette sources](assets/licenses/theme-palettes.md) list upstream projects
+and their licenses.
 
 **Customize colors** changes any interface, syntax, or status color with a live
 preview and shows text contrast. **Save as new theme…** keeps your version under

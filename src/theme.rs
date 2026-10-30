@@ -308,6 +308,47 @@ const BUILTINS: &[Builtin] = &[
         "#FAF4ED", "#FFFAF3", "#FFFAF3", "#F2E9E1", "#DFDAD9", "#575279", "#797593", "#D7827E", "#DFDAD9", "#464261",
         "#EA9D34", "#B4637A", "#56949F",
         "#9893A5", "#286983", "#EA9D34", "#D7827E", "#56949F", "#D7827E", "#56949F", "#D7827E", "#797593", "#907AA9", "#B4637A"] },
+    Builtin { name: "Ayu Dark", dark: true, colors: [
+        "#10141C", "#141821", "#0D1017", "#1B1F29", "#1B1F29", "#BFBDB6", "#828E9F", "#E6B450", "#193B5C", "#FFFFFF",
+        "#E6B450", "#D95757", "#AAD94C",
+        "#626A73", "#FF8F40", "#AAD94C", "#D2A6FF", "#95E6CB", "#FFB454", "#59C2FF", "#D2A6FF", "#F29668", "#59C2FF", "#E6C08A"] },
+    Builtin { name: "Night Owl", dark: true, colors: [
+        "#011627", "#0B253A", "#011627", "#122D42", "#1D3B53", "#D6DEEB", "#5F7E97", "#82AAFF", "#1D3B53", "#D6DEEB",
+        "#ECC48D", "#EF5350", "#ADDB67",
+        "#637777", "#C792EA", "#ECC48D", "#F78C6C", "#7FDBCA", "#82AAFF", "#FFEB95", "#F78C6C", "#7FDBCA", "#BAEBE2", "#C792EA"] },
+    Builtin { name: "Cobalt2", dark: true, colors: [
+        "#193549", "#1F4662", "#15232D", "#234E6D", "#0D3A58", "#FFFFFF", "#AAAAAA", "#FFC600", "#0050A4", "#FFFFFF",
+        "#FFC600", "#FF5630", "#3AD900",
+        "#0088FF", "#FF9D00", "#A5FF90", "#FF628C", "#80FFBB", "#FFC600", "#FF68B8", "#FF628C", "#FF9D00", "#9EFFFF", "#FF9D00"] },
+    Builtin { name: "Everforest Dark", dark: true, colors: [
+        "#2D353B", "#343F44", "#232A2E", "#3D484D", "#475258", "#D3C6AA", "#9DA9A0", "#A7C080", "#543A48", "#D3C6AA",
+        "#DBBC7F", "#E67E80", "#A7C080",
+        "#859289", "#E67E80", "#A7C080", "#D699B6", "#83C092", "#A7C080", "#DBBC7F", "#D699B6", "#E69875", "#7FBBB3", "#83C092"] },
+    Builtin { name: "Kanagawa Wave", dark: true, colors: [
+        "#1F1F28", "#2A2A37", "#16161D", "#363646", "#54546D", "#DCD7BA", "#938AA9", "#7E9CD8", "#2D4F67", "#DCD7BA",
+        "#DCA561", "#E82424", "#76946A",
+        "#727169", "#957FB8", "#98BB6C", "#D27E99", "#7AA89F", "#7E9CD8", "#7FB4CA", "#FFA066", "#C0A36E", "#DCD7BA", "#E46876"] },
+    Builtin { name: "Ayu Light", dark: false, colors: [
+        "#FCFCFC", "#FFFFFF", "#F8F9FA", "#EBEEF0", "#DDE1E5", "#5C6166", "#6B7D8F", "#B87910", "#D7E4F6", "#5C6166",
+        "#B87910", "#E65050", "#6CBF43",
+        "#ADAEB1", "#FA8532", "#86B300", "#A37ACC", "#4CBF99", "#EBA400", "#22A4E6", "#A37ACC", "#E59645", "#55B4D4", "#E59645"] },
+    Builtin { name: "Light Owl", dark: false, colors: [
+        "#FBFBFB", "#FFFFFF", "#F0F0F0", "#E0E0E0", "#D9D9D9", "#403F53", "#5F7E97", "#994CC3", "#E0E0E0", "#403F53",
+        "#B28500", "#E64D49", "#2AA298",
+        "#989FB1", "#994CC3", "#4876D6", "#AA0982", "#0C969B", "#4876D6", "#0C969B", "#AA0982", "#0C969B", "#0C969B", "#994CC3"] },
+    Builtin { name: "Quiet Light", dark: false, colors: [
+        "#F5F5F5", "#FFFFFF", "#F2F2F2", "#E8E8E8", "#D3D3D3", "#333333", "#705697", "#705697", "#C9D0D9", "#333333",
+        "#9C5D27", "#AA3731", "#448C27",
+        "#AAAAAA", "#4B69C6", "#448C27", "#9C5D27", "#7A3E9D", "#AA3731", "#7A3E9D", "#9C5D27", "#777777", "#7A3E9D", "#4B69C6"] },
+    Builtin { name: "Everforest Light", dark: false, colors: [
+        "#FDF6E3", "#F4F0D9", "#EFEBD4", "#E6E2CC", "#E0DCC7", "#5C6A72", "#74816E", "#8DA101", "#EAEDC8", "#5C6A72",
+        "#DFA000", "#F85552", "#8DA101",
+        "#939F91", "#F85552", "#8DA101", "#DF69BA", "#35A77C", "#8DA101", "#DFA000", "#DF69BA", "#F57D26", "#3A94C5", "#35A77C"] },
+    Builtin { name: "Flexoki Light", dark: false, colors: [
+        "#FFFCF0", "#F2F0E5", "#F2F0E5", "#E6E4D9", "#DAD8CE", "#100F0F", "#6F6E69", "#205EA6", "#CECDC3", "#100F0F",
+        "#AD8301", "#AF3029", "#66800B",
+        "#878580", "#66800B", "#24837B", "#A02F6F", "#BC5215", "#205EA6", "#AD8301", "#5E409D", "#6F6E69", "#205EA6", "#BC5215"] },
+
 ];
 
 /// The built-in themes, dark themes first, each group in catalog order.
