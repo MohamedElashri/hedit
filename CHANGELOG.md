@@ -4,6 +4,10 @@
 
 ### Added
 
+- An offline User Guide opens from Help, About, the command palette, or F1.
+  Contents and section links navigate the bundled documentation; related developer
+  notes and license notices are readable without a browser or network access.
+
 - Five dark palettes: Ayu Dark, Night Owl, Cobalt2, Everforest Dark, and Kanagawa
   Wave. Five light palettes: Ayu Light, Light Owl, Quiet Light, Everforest Light,
   and Flexoki Light. All are available in the theme picker and gallery.

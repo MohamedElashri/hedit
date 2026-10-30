@@ -67,6 +67,7 @@ mod themes;
 mod tree_row;
 mod trim_indent;
 mod updates;
+mod user_guide;
 mod view_commands;
 mod wait;
 
@@ -259,6 +260,7 @@ pub struct HeditApp {
     palette_focus: bool,
     palette_index: usize,
     about_open: bool,
+    guide: user_guide::Guide,
     window_title: String,
     find_open: bool,
     find_focus: bool,
@@ -419,6 +421,7 @@ impl HeditApp {
             palette_focus: false,
             palette_index: 0,
             about_open: false,
+            guide: user_guide::Guide::default(),
             window_title: String::new(),
             find_open: false,
             find_focus: false,
@@ -1263,6 +1266,10 @@ impl HeditApp {
         if self.close_flow.is_some() {
             return;
         }
+        if self.guide.open {
+            self.escape(ctx);
+            return;
+        }
         self.play_step(ctx);
         self.plain_ime_commits(ctx);
         self.record_input(ctx);
@@ -1432,6 +1439,7 @@ impl HeditApp {
             (shift, Key::O, Command::OpenFolder),
             (cmd, Key::O, Command::Open),
             (shift, Key::S, Command::SaveAs),
+            (Modifiers::NONE, Key::F1, Command::UserGuide),
             (cmd, Key::S, Command::Save),
             (shift, Key::T, Command::Reopen),
             (cmd, Key::W, Command::Close),
@@ -2061,6 +2069,7 @@ impl HeditApp {
                                     && !self.bookmarks_open
                                     && !self.goto_open
                                     && !self.about_open
+                                    && !self.guide.open
                                     && !self.updates.open
                                     && self.project.create.is_none()
                                     && self.quality.file_action.is_none(),

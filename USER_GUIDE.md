@@ -5,12 +5,20 @@ and Windows; on macOS use **Cmd** for **Ctrl** and **Option** for **Alt** (the e
 listed under [Keyboard shortcuts](#keyboard-shortcuts)). The menus always show
 your platform's keys.
 
+Open **Help → User guide** (**F1**) or **User guide** in About to read this guide
+offline. **Contents** jumps to a topic; section links stay in the modal, and
+**Back** returns to the previous location. The linked developer guide, palette
+credits, and license notices are bundled too. External websites open in your
+browser only when you click their links. Close with **Esc**, the X, or a click
+outside the modal.
+
 - [Installation](#installation)
 - [Updates](#updates)
 - [Files and folders](#files-and-folders)
 - [Editing](#editing)
 - [Finding and navigating](#finding-and-navigating)
 - [Writing code](#writing-code)
+- [Markdown preview](#markdown-preview)
 - [Views and layout](#views-and-layout)
 - [Large files and logs](#large-files-and-logs)
 - [Settings](#settings)
@@ -109,14 +117,16 @@ closing a real window still need hands-on validation.
 
 ### Uninstall
 
-Remove `~/.local/bin/hedit`, `~/.local/share/applications/hedit.desktop`,
-`~/.local/share/icons/hicolor/scalable/apps/hedit.svg`, `~/.local/share/hedit/themes/`,
-and `~/.local/share/doc/hedit/`. Your session (unsaved work) is in
-`~/.local/share/hedit/session/` on Linux and
-`~/Library/Application Support/hedit.hedit/session/` on macOS. On Windows, delete
-the extracted app folder; recovery is in `%LOCALAPPDATA%\hedit\hedit\data\session\`.
-See
-[Recovery](#recovery) before deleting it.
+On Linux, remove `~/.local/bin/hedit`,
+`~/.local/share/applications/hedit.desktop`,
+`~/.local/share/icons/hicolor/scalable/apps/hedit.svg`,
+`~/.local/share/hedit/themes/`, and `~/.local/share/doc/hedit/`.
+On macOS, remove **hedit.app** from the application folder and the
+`~/.local/bin/hedit` launcher installed by the script. On Windows, delete the
+extracted portable folder. Adjust these paths if you installed elsewhere.
+
+Uninstalling leaves settings and recovery data in your profile. See
+[Recovery](#recovery) for the platform's session path before deleting any of it.
 
 ## Updates
 
@@ -124,15 +134,16 @@ On Windows, [replace the portable package](#windows-installation). On macOS,
 run the installer again or replace the app.
 
 On Linux, **Help → Check for updates…** looks up the latest stable release,
-links to release notes, and installs it when you click **Install update**. hedit never
-checks, installs, or restarts on its own. Keep working while it installs; the new
+links to release notes, and installs it when you click **Install update**. hedit
+never checks, installs, or restarts on its own. Keep working while it installs; the new
 version runs the next time you start hedit.
 
 Updating needs `curl`, GNU `tar`, and a writable installation made by the
 installer, a portable package, or `make install`. The download is checked against
 its SHA-256 file and the new program is test-run before anything changes; if
-installing fails, the old version is restored. For other setups, such as source
-builds or system-owned locations, upgrade with the
+installing fails, the old version is restored. For executables run directly from
+a source checkout or installed in a system-owned location, rebuild from source
+or upgrade with the
 [installer](#install-from-github-releases).
 
 ## Files and folders
@@ -268,7 +279,9 @@ you copied in hedit to paste one again.
 
 The menus also have Title case, Swap case, Reverse lines, Remove duplicate lines,
 Trim trailing whitespace, and Reindent lines (for bracket-based languages). Line
-commands without a selection act on the whole file.
+commands such as Duplicate, Delete, and Move act on the current line when
+nothing is selected. Sort, Reverse, Remove duplicates, Trim trailing whitespace,
+and indentation conversion apply to the whole file when nothing is selected.
 
 ### Multiple cursors
 
@@ -450,7 +463,7 @@ another, by name, extension, or file name such as `Makefile`; choose
 **Automatic** to go back, or **Plain text** for no colors. A choice you make stays
 with the file.
 
-hedit knows 57 formats, including C, C++, CUDA, C#, Go, Java, JavaScript and
+hedit knows 58 formats, including C, C++, CUDA, C#, Go, Java, JavaScript and
 TypeScript, Kotlin, Python, Rust, Swift, Zig, shell, PowerShell, SQL, HTML, CSS and
 Sass, JSON, YAML, TOML, XML, Markdown, LaTeX, CMake, Makefiles, Dockerfiles,
 Fortran, Julia, MATLAB, R, Verilog, VHDL, diffs, CSV, and logs. Most are highlighted
@@ -463,8 +476,8 @@ show quick colors first and full colors a moment later.
 Markdown files (`.md`, `.markdown`, and `.mdown`) have a toolbar with **Source**,
 **Split**, and **Preview**. Split shows editable source alongside the rendered
 document and stacks the views in narrow windows. Preview fills the editor area
-with the rendered document; switch back to Source or Split to type. Unsaved changes appear live,
-and each tab's view mode is kept between launches. For an untitled note, choose
+with the rendered document; switch back to Source or Split to type. Unsaved
+changes appear live, and each tab's view mode is kept between launches. For an untitled note, choose
 **Markdown** from the language picker in the status bar.
 
 In Split, scrolling either pane also scrolls the other to the corresponding part
@@ -475,8 +488,8 @@ The preview renders headings, emphasis, links, lists, task lists, quotes, tables
 and code blocks. Section links scroll to their headings, including headings in
 quotes and lists. Markdown file links stay in Preview and honor `#section`
 fragments; other file links open in the editor. Local PNG and JPEG images resolve
-relative to the Markdown file's folder; Save As updates that folder. Images from web URLs are not fetched,
-and embedded HTML is displayed as text. Preview is available for fully loaded
+relative to the Markdown file's folder; Save As updates that folder. Images
+from web URLs are not fetched, and embedded HTML is displayed as text. Preview is available for fully loaded
 documents up to 2 MiB; larger or paged files remain editable in Source.
 
 Use `$E = mc^2$` for inline LaTeX math and `$$ … $$` for a displayed equation.
@@ -547,13 +560,15 @@ stays in Undo) or keep yours.
 ## Settings
 
 **Preferences → Settings…** (**Ctrl+,**) has pages for General, Editor, Formatting,
-Folders & Search, Appearance, Key Bindings, Snippets, CUDA Tools, and Recovery.
-Changes save as you make them, and each page has **Restore defaults**.
+Folders & Search, Appearance, Key Bindings, Snippets, and Recovery. Linux also
+has a CUDA Tools page.
+Changes save as you make them. General, Editor, Formatting, and Folders & Search
+have **Restore defaults**; Key Bindings has per-command **Reset** and **Reset all**.
 
 **Settings → Key Bindings** lists every command: click a shortcut and press new
 keys (two keys in a row make a two-key shortcut such as **Ctrl+K, Ctrl+G**). They
 are saved in `keybindings.json` as `{"command": "find_files", "shortcut":
-"Primary+Shift+F"}`, where `Primary` is Ctrl on Linux and Cmd on macOS.
+"Primary+Shift+F"}`, where `Primary` is Ctrl on Linux and Windows, and Cmd on macOS.
 
 ### The settings file
 
@@ -608,7 +623,27 @@ each.
 
 | Dark | Light |
 | --- | --- |
-| Hedit Ink (default), One Dark, Dracula, Monokai, Nord, Gruvbox Dark, Solarized Dark, Tokyo Night, Catppuccin Mocha, GitHub Dark, Rosé Pine, Ayu Dark, Night Owl, Cobalt2, Everforest Dark, Kanagawa Wave, Tomorrow Night, Horizon, Iceberg Dark, PaperColor Dark, SynthWave ’84 | Hedit Paper, One Light, GitHub Light, Solarized Light, Gruvbox Light, Catppuccin Latte, Rosé Pine Dawn, Ayu Light, Light Owl, Quiet Light, Everforest Light, Flexoki Light, Tomorrow, Horizon Bright, Iceberg Light, PaperColor Light, Alabaster |
+| Hedit Ink (default) | Hedit Paper |
+| One Dark | One Light |
+| Dracula | GitHub Light |
+| Monokai | Solarized Light |
+| Nord | Gruvbox Light |
+| Gruvbox Dark | Catppuccin Latte |
+| Solarized Dark | Rosé Pine Dawn |
+| Tokyo Night | Ayu Light |
+| Catppuccin Mocha | Light Owl |
+| GitHub Dark | Quiet Light |
+| Rosé Pine | Everforest Light |
+| Ayu Dark | Flexoki Light |
+| Night Owl | Tomorrow |
+| Cobalt2 | Horizon Bright |
+| Everforest Dark | Iceberg Light |
+| Kanagawa Wave | PaperColor Light |
+| Tomorrow Night | Alabaster |
+| Horizon | — |
+| Iceberg Dark | — |
+| PaperColor Dark | — |
+| SynthWave ’84 | — |
 
 The [additional palette sources](assets/licenses/theme-palettes.md) list upstream projects
 and their licenses.
@@ -727,17 +762,19 @@ Change any shortcut under **Settings → Key Bindings**. Two-key shortcuts such 
 | Wrap long lines | Ctrl+Shift+W | Cmd+Shift+W |
 | Bigger / smaller / reset font | Ctrl++ / Ctrl+- / Ctrl+0 | Cmd++ / Cmd+- / Cmd+0 |
 | Scroll a line | Ctrl+Up / Down | Control+Option+Up / Down |
+| Offline user guide | F1 | F1 |
 | Settings / quit | Ctrl+, / Ctrl+Q | Cmd+, / Cmd+Q |
 | Close the newest window or panel, then extra cursors | Esc | Esc |
 
 ## Recovery
 
 hedit saves recovery copies of your work every few seconds, separately from your
-files, so unsaved text survives a restart or crash. The status bar shows
-**Recovery pending**, **Checkpointing…**, **Recovery up to date**, or **Recovery
-checkpoint failed** (keep hedit open and fix the cause, such as a full disk).
-Closing waits for a final copy. Edits made in the last few seconds before a power
-loss can be lost, so save important work.
+files, so unsaved text survives a restart or crash. Hover over the small dot at
+the right of the status bar to read **Recovery pending**, **Checkpointing…**, or
+**Recovery up to date**; click it for Recovery settings. A failed checkpoint
+shows an error banner with **Retry checkpoint**. Keep hedit open and fix the
+cause, such as a full disk. Closing waits for a final copy. Edits made in the
+last few seconds before a power loss can be lost, so save important work.
 
 If work seems missing, check the open tabs, **Ctrl+P**, and **File → Browse closed
 files…**, and make sure you opened the same session (`--session-dir`). If the
@@ -756,12 +793,12 @@ data is not encrypted.
 
 | Problem | What to do |
 | --- | --- |
-| No window opens | Run in an X11 or Wayland session with OpenGL and read the error in the terminal. |
+| No window opens | Check graphics-driver support and read the startup error in the terminal. On Linux, use an X11 or Wayland desktop. Later errors are in `hedit.log` in the session folder. |
 | The session is locked | Switch to the running window, or use another `--session-dir`. |
 | Recovery fails | Check disk space and permissions, keep hedit open, and click **Retry checkpoint**. |
 | Save reports an outside change | Use **Save as…** to keep your version, or compare the changes. |
-| Open/Save dialogs do not appear | Install and run `xdg-desktop-portal` and your desktop's portal. |
+| Open/Save dialogs do not appear on Linux | Install and run `xdg-desktop-portal` and your desktop's portal. |
 | Text shows as boxes | Install fonts for that script, such as `fonts-noto`. |
 | A file is rejected | It is binary or in an unsupported encoding; try **File → File encoding…**. |
-| An update fails | Check your connection and read the error; source builds update by reinstalling. |
+| An update fails | Read the dialog error and check your connection. Rebuild executables run from a source checkout, or reinstall with the platform's installer or package. |
 | A CUDA tool will not start | Check that it is installed and on `PATH`, and read its output. |

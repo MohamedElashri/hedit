@@ -204,6 +204,7 @@ pub(super) enum Command {
     ChooseFont,
     ToolSettings,
     Checkpoint,
+    UserGuide,
     About,
     Updates,
 }
@@ -406,6 +407,7 @@ impl Command {
         Self::ChooseFont,
         Self::ToolSettings,
         Self::Checkpoint,
+        Self::UserGuide,
         Self::About,
         Self::Updates,
         Self::Quit,
@@ -427,6 +429,7 @@ impl Command {
                 | Self::ToolSettings
                 | Self::KeyBindings
                 | Self::ProjectSettings
+                | Self::UserGuide
                 | Self::About
                 | Self::Updates
                 | Self::FindFiles
@@ -646,6 +649,7 @@ impl Command {
             Self::ChooseFont => "Editor font…",
             Self::ToolSettings => "CUDA tool settings…",
             Self::Checkpoint => "Checkpoint now",
+            Self::UserGuide => "User guide",
             Self::About => "About hedit",
             Self::Updates => "Check for updates…",
         }
@@ -660,6 +664,7 @@ impl Command {
     }
     fn shortcut_label(self) -> &'static str {
         match self {
+            Self::UserGuide => "F1",
             Self::FindFiles => "Ctrl+Shift+F",
             Self::CloseAll => "Ctrl+K, Ctrl+W",
             Self::SelectBookmarks => "Alt+F2",
@@ -1606,6 +1611,15 @@ impl HeditApp {
             Command::ChooseFont => self.open_font_picker(ctx),
             Command::ToolSettings => self.open_preferences(PreferencesPage::Tools),
             Command::Checkpoint => self.checkpoint(ctx),
+            Command::UserGuide => {
+                self.guide.start();
+                self.focus_editor = false;
+                ctx.memory_mut(|m| {
+                    if let Some(id) = m.focused() {
+                        m.surrender_focus(id);
+                    }
+                });
+            }
             Command::About => self.about_open = true,
             Command::Updates => self.open_updates(ctx),
             other => {

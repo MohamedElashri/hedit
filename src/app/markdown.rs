@@ -37,10 +37,10 @@ struct PrepareJob {
     receiver: Receiver<Result<Prepared, String>>,
 }
 
-struct Prepared {
-    targets: Vec<String>,
-    rendered: String,
-    headings: HashMap<String, usize>,
+pub(super) struct Prepared {
+    pub(super) targets: Vec<String>,
+    pub(super) rendered: String,
+    pub(super) headings: HashMap<String, usize>,
     figures: Vec<Figure>,
     heading_chars: Vec<usize>,
     source_len: usize,
@@ -48,7 +48,7 @@ struct Prepared {
 
 /// Add invisible scroll targets while keeping the complete Markdown document
 /// together, so reference links and footnotes still resolve across sections.
-fn prepare(text: &str) -> Prepared {
+pub(super) fn prepare(text: &str) -> Prepared {
     let mut targets = vec![];
     let mut headings = HashMap::new();
     let mut counts = HashMap::<String, usize>::new();

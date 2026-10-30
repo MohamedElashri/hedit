@@ -175,6 +175,7 @@ impl HeditApp {
         if self.about_open {
             let mut open = true;
             let mut close = false;
+            let mut guide = false;
             egui::Window::new("About hedit")
                 .open(&mut open)
                 .collapsible(false)
@@ -200,10 +201,7 @@ impl HeditApp {
                     ui.separator();
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
-                        ui.hyperlink_to(
-                            "User guide",
-                            "https://github.com/MohamedElashri/hedit/blob/main/USER_GUIDE.md",
-                        );
+                        guide = ui.link("User guide").clicked();
                         ui.weak("·");
                         ui.hyperlink_to("GitHub", "https://github.com/MohamedElashri/hedit");
                         ui.weak("·");
@@ -222,7 +220,11 @@ impl HeditApp {
             if !self.about_open {
                 self.focus_editor = true;
             }
+            if guide {
+                self.execute(ctx, Command::UserGuide);
+            }
         }
+        self.user_guide(ctx);
     }
     fn general_preferences(&mut self, ui: &mut egui::Ui) {
         let s = &mut self.settings;

@@ -7,7 +7,9 @@ import sys
 from urllib.parse import unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
-files = [ROOT / name for name in ['README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md', 'CHANGELOG.md']]
+files = [ROOT / name for name in ['README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md', 'CHANGELOG.md',
+                                   'vendor/egui_commonmark/PATCH.md']]
+files += sorted((ROOT / 'assets/licenses').glob('*.md'))
 
 
 class HTMLLinks(HTMLParser):
@@ -25,11 +27,17 @@ def anchors(path):
     """Generate heading IDs for the guides' GitHub-style section links."""
     result = set()
     counts = {}
-    fenced = False
+    fence = None
     for line in path.read_text().splitlines():
-        if line.startswith(('```', '~~~')):
-            fenced = not fenced
-        if fenced or not re.match(r'^#{1,6} ', line):
+        marker = re.match(r'^ {0,3}(`{3,}|~{3,})(.*)$', line)
+        if marker:
+            run, tail = marker.groups()
+            if fence is None:
+                fence = (run[0], len(run))
+            elif run[0] == fence[0] and len(run) >= fence[1] and not tail.strip():
+                fence = None
+            continue
+        if fence or not re.match(r'^#{1,6} ', line):
             continue
         heading = re.sub(r'^#+ | +#+$', '', line).lower()
         slug = re.sub(r'[^\w\- ]', '', heading).replace(' ', '-')
@@ -61,7 +69,7 @@ for path in files:
                 errors.append(f'{path.relative_to(ROOT)}: missing section {target}')
 # Release versions go stale; only the changelog may name them. Toolchain pins are allowed.
 for path in files:
-    if path.name == 'CHANGELOG.md' or not path.is_file():
+    if path.name in {'CHANGELOG.md', 'PATCH.md'} or not path.is_file():
         continue
     for number, line in enumerate(path.read_text().splitlines(), 1):
         for match in re.finditer(r'(?<![\w.])v?\d+\.\d+\.\d+', line):

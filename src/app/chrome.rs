@@ -37,47 +37,185 @@ impl HeditApp {
         let theme = self.theme.clone();
         let mut action = None;
         let mut open_menu = None;
-        egui::TopBottomPanel::top("menu-bar").frame(egui::Frame::new().fill(theme.panel.color())
-            .inner_margin(egui::Margin::symmetric(8, 1))).show(ctx, |ui| {
-            egui::menu::bar(ui, |ui| {
-                for (title, groups) in [
-                    ("File", vec![vec![Command::New, Command::NewWindow, Command::Open, Command::OpenFolder], vec![Command::RefreshFolder, Command::CloseFolder], vec![Command::Save, Command::SaveAs, Command::Rename, Command::Encoding], vec![Command::OpenRecent], vec![Command::Close, Command::CloseAll, Command::CloseUnmodified, Command::Reopen, Command::Shelf], if cfg!(target_os = "macos") { vec![] } else { vec![Command::Quit] }]),
-                    ("Edit", vec![]),
-                    ("Find", vec![vec![Command::Find, Command::Replace, Command::FindPrevious, Command::FindFiles], vec![Command::SelectAllMatches, Command::UseSelectionForFind, Command::UseSelectionForReplace, Command::QuickFindNext, Command::QuickFindPrevious]]),
-                    ("View", vec![]),
-                    ("Goto", vec![vec![Command::Switcher, Command::Goto, Command::Symbols, Command::GotoDefinition, Command::GotoReferences], vec![Command::NextTab, Command::PreviousTab, Command::RecentTab], vec![Command::NextChange, Command::PreviousChange], vec![Command::NavBack, Command::NavForward], vec![Command::Bookmark, Command::NextBookmark, Command::PreviousBookmark, Command::SelectBookmarks, Command::ClearBookmarks, Command::Bookmarks]]),
-                    ("Project", vec![vec![Command::OpenProject,Command::SaveProject,Command::SaveProjectAs,Command::RecentProjects],vec![Command::ProjectSettings]]),
-                    ("Tools", vec![vec![Command::Palette, Command::Gpu, Command::GitDiff, Command::RevertChange, Command::CompareDisk, Command::Complete, Command::Snippets], vec![Command::RecordMacro, Command::PlayMacro, Command::SaveMacro, Command::RunMacro], vec![Command::Build, Command::BuildWith, Command::CancelBuild, Command::BuildResults, Command::NextResult, Command::PreviousResult], vec![Command::Checkpoint]]),
-                    ("Preferences", vec![vec![Command::Settings, Command::Appearance, Command::ChooseFont, Command::ToolSettings, Command::KeyBindings]]),
-                    // macOS's own app menu already has About and Quit.
-                    ("Help", vec![if cfg!(target_os = "macos") { vec![Command::Updates] } else { vec![Command::Updates, Command::About] }]),
-                ] {
-                    // egui does not mark the open menu's title, so keep it filled
-                    // like a hovered title while its menu is showing.
-                    let mut button = egui::Button::new(title);
-                    if self.open_menu == Some(title) {
-                        button = button.fill(theme.hover().color());
-                    }
-                    egui::menu::menu_custom_button(ui, button, |ui| {
-                        // Contents run only while this menu is open.
-                        open_menu = Some(title);
-                        ui.set_min_width(245.0);
-                        if title == "Edit" { self.edit_menu(ui, &mut action); return; }
-                        if title == "View" { self.view_menu(ui, &mut action); return; }
-                        for (index, group) in groups.iter().filter(|g| !g.is_empty()).enumerate() {
-                            if index > 0 { ui.separator(); }
-                            for &command in group {
-                                if menu_item(ui, self, command) { action = Some(command); ui.close_menu(); }
+        egui::TopBottomPanel::top("menu-bar")
+            .frame(
+                egui::Frame::new()
+                    .fill(theme.panel.color())
+                    .inner_margin(egui::Margin::symmetric(8, 1)),
+            )
+            .show(ctx, |ui| {
+                egui::menu::bar(ui, |ui| {
+                    for (title, groups) in [
+                        (
+                            "File",
+                            vec![
+                                vec![
+                                    Command::New,
+                                    Command::NewWindow,
+                                    Command::Open,
+                                    Command::OpenFolder,
+                                ],
+                                vec![Command::RefreshFolder, Command::CloseFolder],
+                                vec![
+                                    Command::Save,
+                                    Command::SaveAs,
+                                    Command::Rename,
+                                    Command::Encoding,
+                                ],
+                                vec![Command::OpenRecent],
+                                vec![
+                                    Command::Close,
+                                    Command::CloseAll,
+                                    Command::CloseUnmodified,
+                                    Command::Reopen,
+                                    Command::Shelf,
+                                ],
+                                if cfg!(target_os = "macos") {
+                                    vec![]
+                                } else {
+                                    vec![Command::Quit]
+                                },
+                            ],
+                        ),
+                        ("Edit", vec![]),
+                        (
+                            "Find",
+                            vec![
+                                vec![
+                                    Command::Find,
+                                    Command::Replace,
+                                    Command::FindPrevious,
+                                    Command::FindFiles,
+                                ],
+                                vec![
+                                    Command::SelectAllMatches,
+                                    Command::UseSelectionForFind,
+                                    Command::UseSelectionForReplace,
+                                    Command::QuickFindNext,
+                                    Command::QuickFindPrevious,
+                                ],
+                            ],
+                        ),
+                        ("View", vec![]),
+                        (
+                            "Goto",
+                            vec![
+                                vec![
+                                    Command::Switcher,
+                                    Command::Goto,
+                                    Command::Symbols,
+                                    Command::GotoDefinition,
+                                    Command::GotoReferences,
+                                ],
+                                vec![Command::NextTab, Command::PreviousTab, Command::RecentTab],
+                                vec![Command::NextChange, Command::PreviousChange],
+                                vec![Command::NavBack, Command::NavForward],
+                                vec![
+                                    Command::Bookmark,
+                                    Command::NextBookmark,
+                                    Command::PreviousBookmark,
+                                    Command::SelectBookmarks,
+                                    Command::ClearBookmarks,
+                                    Command::Bookmarks,
+                                ],
+                            ],
+                        ),
+                        (
+                            "Project",
+                            vec![
+                                vec![
+                                    Command::OpenProject,
+                                    Command::SaveProject,
+                                    Command::SaveProjectAs,
+                                    Command::RecentProjects,
+                                ],
+                                vec![Command::ProjectSettings],
+                            ],
+                        ),
+                        (
+                            "Tools",
+                            vec![
+                                vec![
+                                    Command::Palette,
+                                    Command::Gpu,
+                                    Command::GitDiff,
+                                    Command::RevertChange,
+                                    Command::CompareDisk,
+                                    Command::Complete,
+                                    Command::Snippets,
+                                ],
+                                vec![
+                                    Command::RecordMacro,
+                                    Command::PlayMacro,
+                                    Command::SaveMacro,
+                                    Command::RunMacro,
+                                ],
+                                vec![
+                                    Command::Build,
+                                    Command::BuildWith,
+                                    Command::CancelBuild,
+                                    Command::BuildResults,
+                                    Command::NextResult,
+                                    Command::PreviousResult,
+                                ],
+                                vec![Command::Checkpoint],
+                            ],
+                        ),
+                        (
+                            "Preferences",
+                            vec![vec![
+                                Command::Settings,
+                                Command::Appearance,
+                                Command::ChooseFont,
+                                Command::ToolSettings,
+                                Command::KeyBindings,
+                            ]],
+                        ),
+                        // macOS's own app menu already has About and Quit.
+                        (
+                            "Help",
+                            vec![if cfg!(target_os = "macos") {
+                                vec![Command::UserGuide, Command::Updates]
+                            } else {
+                                vec![Command::UserGuide, Command::Updates, Command::About]
+                            }],
+                        ),
+                    ] {
+                        // egui does not mark the open menu's title, so keep it filled
+                        // like a hovered title while its menu is showing.
+                        let mut button = egui::Button::new(title);
+                        if self.open_menu == Some(title) {
+                            button = button.fill(theme.hover().color());
+                        }
+                        egui::menu::menu_custom_button(ui, button, |ui| {
+                            // Contents run only while this menu is open.
+                            open_menu = Some(title);
+                            ui.set_min_width(245.0);
+                            if title == "Edit" {
+                                self.edit_menu(ui, &mut action);
+                                return;
                             }
-                        }
-                        if title == "Help" {
-                            ui.separator();
-                            ui.hyperlink_to("User guide ↗", "https://github.com/MohamedElashri/hedit/blob/main/USER_GUIDE.md");
-                        }
-                    });
-                }
+                            if title == "View" {
+                                self.view_menu(ui, &mut action);
+                                return;
+                            }
+                            for (index, group) in
+                                groups.iter().filter(|g| !g.is_empty()).enumerate()
+                            {
+                                if index > 0 {
+                                    ui.separator();
+                                }
+                                for &command in group {
+                                    if menu_item(ui, self, command) {
+                                        action = Some(command);
+                                        ui.close_menu();
+                                    }
+                                }
+                            }
+                        });
+                    }
+                });
             });
-        });
         if self.open_menu != open_menu {
             self.open_menu = open_menu;
             ctx.request_repaint();

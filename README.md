@@ -25,7 +25,8 @@ large-log viewing.
 
 - Recovery checkpoints, closed-file history, and undo/redo across sessions.
 - Multiple cursors, split panes, completions, and go-to-definition.
-- Markdown source, live split preview, and rendered reading modes, with math and Mermaid diagrams.
+- Markdown source, synchronized split preview, and reading modes, with math and Mermaid diagrams.
+- Dark and light themes, plus an offline User Guide built into the app.
 - Paged large files and read-only log following.
 - Right-to-left Arabic and Hebrew, UTF-8/UTF-16, and legacy encodings.
 - CUDA source editing everywhere; local CUDA tools on Linux.
@@ -45,7 +46,7 @@ The installer verifies checksums and installs under `~/.local` on Linux or
 [Releases](https://github.com/MohamedElashri/hedit/releases), verify it, extract it,
 and run **hedit.exe**. Requires Windows 10 or newer and an OpenGL-capable driver.
 
-macOS and Windows builds pass CI; hands-on GUI validation is pending. See the
+CI builds and tests macOS and Windows packages; hands-on GUI validation is pending. See the
 [installation guide](USER_GUIDE.md#installation) for platform requirements,
 signing notes, manual downloads, and upgrades. In-app updates support Linux only.
 
@@ -59,6 +60,7 @@ printf 'keep this snippet\n' | hedit -
 ```
 
 Use **Ctrl+P** to find files and **Ctrl+Shift+P** for commands (**Cmd** on macOS).
+Open **Help → User guide** (**F1**) to read the bundled guide without internet.
 Recovery checkpoints are periodic; save important work to disk.
 
 See the [user guide](USER_GUIDE.md) for editing, shortcuts, recovery, and CUDA

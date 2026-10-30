@@ -31,25 +31,25 @@ make install DESTDIR=/tmp/stage PREFIX=/usr   # staged, to inspect the layout
 
 Every launch, including `make run`, re-executes itself detached from the
 terminal and returns once the window is up; later errors go to `hedit.log` in the
-session directory. Linux is the validated platform; macOS builds and passes CI
-but still needs hands-on GUI review. Windows builds have native CI checks;
-hands-on GUI validation is pending there too.
+session directory. Linux is the validated platform. macOS and Windows have
+native CI build and test jobs; hands-on GUI validation is pending on both.
 
 ## Checks
 
 Run `make ci` before committing. It checks formatting, Clippy with warnings
 denied, the native-only policy, documentation links, script syntax, Rust tests,
-and the offline installer tests, then builds and smoke-tests a release package.
+and the offline release, installer, and package tests, then builds and
+smoke-tests a Linux release package.
 
 | Command | Purpose |
 | --- | --- |
 | `make static` | Formatting, policy, docs, and script checks; no compiling |
 | `make lint` | `make static`, then Clippy |
-| `make test` | Rust tests and offline installer tests |
+| `make test` | Rust tests plus release metadata, installer, macOS, and Windows package tests |
 | `make test-macos` | The tests that apply on macOS (the CI macOS job) |
 | `make check` | Lint and tests, without a release build |
 | `make package` / `make smoke` | Build a release package under `dist/` / install it in a temporary prefix and run it |
-| `make release-check RELEASE_TAG=vX.Y.Z` | Check a tag against `Cargo.toml` |
+| `make release-check RELEASE_TAG=vX.Y.Z` | Check the tag, package version, and dated changelog entry |
 | `make help` | Every target and variable (`CARGO`, `PYTHON`, `PREFIX`, `DESTDIR`, `ARGS`) |
 
 Tests run in temporary directories and never touch your session. Some are
@@ -68,6 +68,15 @@ done
 # CPU timings for the syntax menu and for typing with completions on
 cargo test --locked --release --bin hedit profile_ -- --ignored --nocapture
 ```
+
+The offline User Guide renders the repository's Markdown with the same native
+renderer as file previews. Edit the source documents directly; do not keep a
+second copy of their text in UI code. Rebuild the executable after documentation
+changes. Add linked local documents to the bundled allowlist in
+`app/user_guide.rs`; the reader never resolves links against the user's disk.
+Internal links and Contents stay in the modal, and only explicit external-link
+clicks open a browser. Keep Help, About, F1, the command palette, and key bindings
+routed through `Command::UserGuide`.
 
 ## macOS builds
 
@@ -100,6 +109,7 @@ scripts; GNU Make is optional. From PowerShell:
 rustup default stable-x86_64-pc-windows-msvc
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked --no-fail-fast
+python scripts/test-release.py
 python scripts/test-windows-package.py
 $env:RUSTFLAGS = '-C target-feature=+crt-static'
 cargo build --release --locked
@@ -139,12 +149,16 @@ without a window belongs in the library, with tests under `tests/`.
 | Window | `app.rs` (frame loop, shortcuts, editor drawing), `app/chrome.rs` (menus, tabs, sidebar, status bar), `app/commands.rs` (every command, the palette) |
 | App features | One file each in `src/app/`, named after the feature: `auto_complete.rs`, `definitions.rs`, `spell_check.rs`, `macros.rs`, `snippet_fields.rs`, `find_tools.rs`, `changes.rs`, `fold_gutter.rs`, `font_picker.rs`, and so on |
 | Markdown | `app/markdown.rs` (source/preview layout, background preparation, links, local images), `app/markdown_scroll.rs` (bidirectional split scrolling), `app/markdown_media.rs` (cached native math and Mermaid rendering), `app/markdown_tests.rs`; per-tab modes are stored in `session.rs` |
+| Offline help | `app/user_guide.rs` embeds `USER_GUIDE.md`, related documentation, and notices with `include_str!`; `app/user_guide/tests.rs` covers links, modal input, and layout |
 | Settings | `settings.rs` (the `settings.json` schema), `app/settings_store.rs`, `app/preferences.rs`, `app/settings_pages.rs` |
 
 Every menu item, shortcut, and palette entry goes through `Command` in
 `app/commands.rs`, so availability and behavior stay the same everywhere. A new
-command needs a variant, a label, a default shortcut (if any), an `execute` arm,
-and, when it can be unavailable, a `command_enabled` arm.
+command needs a variant in `Command::ALL`, a label, an `execute` arm, and a
+`command_enabled` arm when availability depends on state. Add default shortcuts
+to both the displayed binding and input dispatch. New dialogs also need
+`opens_window` and `Overlay` entries so focus, Escape, and transient-window
+replacement behave consistently.
 
 ## Rules to keep
 
@@ -164,15 +178,19 @@ need tests for the failure paths.
 **Keep the UI thread fast.** Reading files, folder walks, Git, spell checking,
 word indexing, font listing, and highlighting more than 64 KiB of text run on
 worker threads; their results carry a view and revision, and stale ones are
-dropped. An idle window must not redraw on its own; repaint only when there is
-input or a worker result.
+dropped. Schedule repaints for input, worker results, or pending timed work such
+as cursor blinking, recovery, and log following. An idle window with no such
+work must wait for input instead of continually redrawing.
 
 **Positions are characters.** Editing code uses Unicode scalar (character)
 indices; convert to bytes with `advanced::byte` only at slicing. Test with CRLF
 text, text without a final newline, and non-Latin text.
 
-**No shell.** Pass subprocess arguments with `Command::arg`. Debugger, Git, build,
-and NVIDIA tool output is bounded.
+**Pass arguments explicitly.** Use `Command::arg` for files and tool arguments.
+Build systems deliberately run `shell_cmd` through the platform shell; expand
+file variables with the build runner's quoting rules. Other operations must not
+construct shell commands from file names. Debugger, Git, build, and NVIDIA tool
+output is bounded.
 
 **Large files are paged.** Files over 2 MiB load in about 256 KiB pages;
 commands that need the whole text must check `page.info.paged`.
@@ -189,7 +207,8 @@ HEDIT_WRITE_THEMES=1 cargo test --locked --test themes
 ```
 
 The theme tests require readable contrast and a `themes/` folder that matches
-the catalog.
+the catalog. The [palette credits](assets/licenses/theme-palettes.md) record
+upstream sources and licenses; bundle their notices with any new adaptations.
 
 The name is lowercase **hedit** and the tagline is **Keep your train of thought.**
 Brand SVGs in `assets/` are generated by `python3 scripts/generate-brand.py`; keep
@@ -204,7 +223,7 @@ and an installer script. `Makefile`, `scripts/package-linux.py`, and
 `packaging/linux/install.sh` must install the same paths; update
 `scripts/smoke-package.py` when the layout changes.
 
-The CI workflow runs Linux, macOS, and Windows checks on every push. Linux and
+The CI workflow runs Linux, macOS, and Windows checks on pushes and pull requests. Linux and
 macOS use Makefile targets; Windows uses Cargo and Python directly, without
 requiring GNU Make. Pushing a version tag runs the release workflow, which builds
 Linux x86-64 and ARM64 tarballs, the universal macOS app, and a Windows x86-64 ZIP, tests them, and
