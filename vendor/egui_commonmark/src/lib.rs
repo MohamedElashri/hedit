@@ -81,6 +81,9 @@ pub use egui_commonmark_backend::alerts::{Alert, AlertBundle};
 pub use egui_commonmark_backend::misc::CommonMarkCache;
 pub use egui_commonmark_backend::RenderMathFn;
 
+/// Application-provided native code block, with an optional language identifier.
+pub type RenderCodeBlockFn = dyn Fn(&mut egui::Ui, &str, Option<&str>);
+
 #[cfg(feature = "macros")]
 pub use egui_commonmark_macros::*;
 
@@ -91,9 +94,10 @@ pub use egui_commonmark_backend;
 
 use egui_commonmark_backend::*;
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct CommonMarkViewer<'f> {
     options: CommonMarkOptions<'f>,
+    code_block_fn: Option<&'f RenderCodeBlockFn>,
 }
 
 impl<'f> CommonMarkViewer<'f> {
@@ -222,6 +226,12 @@ impl<'f> CommonMarkViewer<'f> {
         self
     }
 
+    /// Use the application's own selectable code block and syntax colors.
+    pub fn render_code_block_fn(mut self, func: Option<&'f RenderCodeBlockFn>) -> Self {
+        self.code_block_fn = func;
+        self
+    }
+
     /// Shows rendered markdown
     pub fn show(
         self,
@@ -231,13 +241,8 @@ impl<'f> CommonMarkViewer<'f> {
     ) -> egui::InnerResponse<()> {
         egui_commonmark_backend::prepare_show(cache, ui.ctx());
 
-        let (response, _) = parsers::pulldown::CommonMarkViewerInternal::new().show(
-            ui,
-            cache,
-            &self.options,
-            text,
-            None,
-        );
+        let (response, _) = parsers::pulldown::CommonMarkViewerInternal::new(self.code_block_fn)
+            .show(ui, cache, &self.options, text, None);
 
         response
     }
@@ -254,13 +259,10 @@ impl<'f> CommonMarkViewer<'f> {
         self.options.mutable = true;
         egui_commonmark_backend::prepare_show(cache, ui.ctx());
 
-        let (response, checkmark_events) = parsers::pulldown::CommonMarkViewerInternal::new().show(
-            ui,
-            cache,
-            &self.options,
-            text,
-            None,
-        );
+        let (response, checkmark_events) = parsers::pulldown::CommonMarkViewerInternal::new(
+            self.code_block_fn,
+        )
+        .show(ui, cache, &self.options, text, None);
 
         // Update source text for checkmarks that were clicked
         for ev in checkmark_events {
@@ -297,7 +299,7 @@ impl<'f> CommonMarkViewer<'f> {
         text: &str,
     ) {
         egui_commonmark_backend::prepare_show(cache, ui.ctx());
-        parsers::pulldown::CommonMarkViewerInternal::new().show_scrollable(
+        parsers::pulldown::CommonMarkViewerInternal::new(self.code_block_fn).show_scrollable(
             Id::new(source_id),
             ui,
             cache,
@@ -337,7 +339,7 @@ impl List {
     pub fn start_item(&mut self, ui: &mut egui::Ui, options: &CommonMarkOptions) {
         // To ensure that newlines are only inserted within the list and not before it
         if self.has_list_begun {
-            newline(ui);
+            parsers::pulldown::newline(ui);
         } else {
             self.has_list_begun = true;
         }
@@ -365,7 +367,7 @@ impl List {
         self.items.pop();
 
         if self.items.is_empty() && insert_newline {
-            newline(ui);
+            parsers::pulldown::newline(ui);
         }
     }
 }

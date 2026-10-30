@@ -756,22 +756,17 @@ impl HeditApp {
                     .inner_margin(20.0)
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
-                        ui.style_mut()
-                            .text_styles
-                            .insert(egui::TextStyle::Body, FontId::proportional(font_size + 2.0));
-                        ui.style_mut().text_styles.insert(
-                            egui::TextStyle::Heading,
-                            FontId::proportional(font_size + 14.0),
-                        );
-                        ui.style_mut()
-                            .text_styles
-                            .insert(egui::TextStyle::Monospace, FontId::monospace(font_size));
-                        ui.style_mut().url_in_tooltip = true;
+                        markdown_style::apply(ui, &self.theme, font_size);
+                        let code_theme = self.theme.clone();
+                        let code = move |ui: &mut egui::Ui, text: &str, language: Option<&str>| {
+                            markdown_style::code_block(ui, &code_theme, text, language);
+                        };
                         CommonMarkViewer::new()
                             .default_implicit_uri_scheme(format!("{IMAGE_SCHEME}{id}/"))
                             .max_image_width(Some(ui.available_width().max(0.0) as usize))
                             .render_html_fn(Some(&html))
                             .render_math_fn(Some(&math))
+                            .render_code_block_fn(Some(&code))
                             .show(ui, cache, &prepared.rendered);
                     });
             })

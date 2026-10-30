@@ -484,8 +484,11 @@ In Split, scrolling either pane also scrolls the other to the corresponding part
 of the document. This works side by side and in the stacked layout. Horizontal
 scrolling stays independent.
 
-The preview renders headings, emphasis, links, lists, task lists, quotes, tables,
-and code blocks. Section links scroll to their headings, including headings in
+The preview and offline guide share readable text, distinct headings and emphasis,
+and underlined links in your theme's accent color. Tables wrap within their
+columns; code blocks use your syntax colors and have a **Copy** button. Long code
+lines scroll horizontally inside the block. The preview also renders lists,
+task lists, and quotes. Section links scroll to their headings, including headings in
 quotes and lists. Markdown file links stay in Preview and honor `#section`
 fragments; other file links open in the editor. Local PNG and JPEG images resolve
 relative to the Markdown file's folder; Save As updates that folder. Images

@@ -30,6 +30,7 @@ mod macros;
 mod markdown;
 mod markdown_media;
 mod markdown_scroll;
+mod markdown_style;
 #[cfg(test)]
 mod markdown_tests;
 #[cfg(test)]
@@ -456,7 +457,9 @@ impl HeditApp {
             bookmarks_open: false,
             updates: Default::default(),
         };
-        // Tests stay on egui's own fonts unless they load fallbacks themselves.
+        // Install the bundled document fonts before the first frame. Tests do
+        // not read system fonts unless they explicitly load fallbacks.
+        settings_store::set_editor_font(ctx, None);
         if !cfg!(test) {
             settings_store::load_fallback_fonts(app.tx.clone(), ctx);
         }

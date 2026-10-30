@@ -19,3 +19,11 @@ feature is disabled.
 Regression coverage is in `src/app/markdown_tests.rs` in the hedit repository.
 Keep this patch until an upstream version compatible with our egui version
 includes the fix. The original MIT and Apache-2.0 licenses are retained.
+
+The reader also uses real semibold text, explicit link colors and underlines,
+consistent line heights, wrapping table cells, and an opt-in code-block rendering
+callback. Paragraph boundaries finish the current wrapped row once and reset its
+height, instead of allocating blank two-line labels. List rows use the same break
+logic. Quote text retains normal contrast inside a padded panel with an accent
+rule. `app/markdown_style.rs` supplies hedit's shared typography and native code
+blocks, including its own theme-aware, frame-cached highlighter and Copy button.

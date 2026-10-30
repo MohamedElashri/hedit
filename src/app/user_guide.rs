@@ -22,7 +22,7 @@ documents! {
     "assets/licenses/vscode-MIT.txt", "assets/licenses/tomorrow-theme-MIT.txt",
     "assets/licenses/horizon-MIT.txt", "assets/licenses/iceberg-MIT.txt",
     "assets/licenses/papercolor-MIT.txt", "assets/licenses/synthwave-84-MIT.txt",
-    "assets/licenses/alabaster-MIT.txt",
+    "assets/licenses/alabaster-MIT.txt", "assets/licenses/Noto-Sans-OFL.txt",
 }
 
 struct Reader {
@@ -262,12 +262,15 @@ impl HeditApp {
                 }
                 let output = scroll.show(ui, |ui| {
                     ui.set_width(ui.available_width());
-                    ui.style_mut().url_in_tooltip = true;
-                    CommonMarkViewer::new().render_html_fn(Some(&html)).show(
-                        ui,
-                        &mut self.guide.cache,
-                        &reader.prepared.rendered,
-                    );
+                    markdown_style::apply(ui, &self.theme, self.settings.font_size);
+                    let theme = self.theme.clone();
+                    let code = move |ui: &mut egui::Ui, text: &str, language: Option<&str>| {
+                        markdown_style::code_block(ui, &theme, text, language);
+                    };
+                    CommonMarkViewer::new()
+                        .render_html_fn(Some(&html))
+                        .render_code_block_fn(Some(&code))
+                        .show(ui, &mut self.guide.cache, &reader.prepared.rendered);
                 });
                 self.guide.position = output.state.offset.y;
                 if found.get() {

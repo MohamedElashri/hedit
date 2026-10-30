@@ -17,6 +17,10 @@
 
 ### Changed
 
+- Markdown previews and offline documentation share clearer typography with real
+  semibold headings, readable spacing, accented links, wrapping tables, and native
+  code blocks with syntax colors, horizontal scrolling, and a Copy button.
+
 - Refreshed the editor with compact tabs, a quieter folder tree,
   a slim status bar, and more compact command and completion lists.
 - Hedit Ink and Hedit Paper use neutral palettes. Stored copies of the original

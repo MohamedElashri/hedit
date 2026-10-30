@@ -13,6 +13,65 @@ use egui_commonmark_backend::misc::*;
 use egui_commonmark_backend::pulldown::*;
 use pulldown_cmark::{CowStr, HeadingLevel};
 
+/// Finish the current wrapped row once, instead of inserting a two-line label.
+/// Reset its height so a large heading, table, or quote cannot enlarge later rows.
+pub(crate) fn newline(ui: &mut Ui) {
+    if ui.next_widget_position().x > ui.max_rect().left() + 0.5 {
+        ui.end_row();
+    }
+    ui.set_row_height(egui::TextStyle::Body.resolve(ui.style()).size * 1.45);
+}
+
+fn rich_text(style: &Style, ui: &Ui, text: &str) -> egui::RichText {
+    let mut inline = style.clone();
+    inline.heading = None;
+    inline.quote = false;
+    let mut text = inline.to_richtext(ui, text);
+    let body = egui::TextStyle::Body.resolve(ui.style()).size;
+    if (style.strong || style.heading.is_some()) && !style.code {
+        if let Some(font) = ui
+            .style()
+            .text_styles
+            .get(&TextStyle::Name("MarkdownStrong".into()))
+        {
+            text = text.family(font.family.clone());
+        }
+    }
+    let size = style.heading.map_or(body, |level| {
+        body * [1.8, 1.45, 1.2, 1.1, 1.0, 1.0][usize::from(level).min(5)]
+    });
+    if style.heading.is_some() {
+        text = text.size(size).strong();
+    }
+    text.line_height(Some(
+        size * if style.heading.is_some() { 1.25 } else { 1.45 },
+    ))
+}
+
+fn quote(ui: &mut Ui, contents: impl FnOnce(&mut Ui)) {
+    let mark = ui.painter().add(egui::Shape::Noop);
+    let color = ui.visuals().hyperlink_color;
+    let rect = egui::Frame::new()
+        .fill(ui.visuals().faint_bg_color)
+        .corner_radius(3)
+        .inner_margin(egui::Margin {
+            left: 14,
+            right: 12,
+            top: 8,
+            bottom: 8,
+        })
+        .show(ui, contents)
+        .response
+        .rect;
+    ui.painter().set(
+        mark,
+        egui::Shape::line_segment(
+            [rect.left_top(), rect.left_bottom()],
+            egui::Stroke::new(2.0, color),
+        ),
+    );
+}
+
 /// Newline logic is constructed by the following:
 /// All elements try to insert a newline before them (if they are allowed)
 /// and end their own line.
@@ -66,7 +125,8 @@ struct DefinitionList {
     is_def_list_def: bool,
 }
 
-pub struct CommonMarkViewerInternal {
+pub struct CommonMarkViewerInternal<'f> {
+    code_block_fn: Option<&'f crate::RenderCodeBlockFn>,
     curr_table: usize,
     text_style: Style,
     list: List,
@@ -89,9 +149,10 @@ pub(crate) struct CheckboxClickEvent {
     pub(crate) span: Range<usize>,
 }
 
-impl CommonMarkViewerInternal {
-    pub fn new() -> Self {
+impl<'f> CommonMarkViewerInternal<'f> {
+    pub fn new(code_block_fn: Option<&'f crate::RenderCodeBlockFn>) -> Self {
         Self {
+            code_block_fn,
             curr_table: 0,
             text_style: Style::default(),
             list: List::default(),
@@ -117,7 +178,7 @@ fn parser_options_math(is_math_enabled: bool) -> pulldown_cmark::Options {
     }
 }
 
-impl CommonMarkViewerInternal {
+impl<'f> CommonMarkViewerInternal<'f> {
     /// Be aware that this acquires egui::Context internally.
     /// If split Id is provided then split points will be populated
     pub(crate) fn show(
@@ -133,7 +194,7 @@ impl CommonMarkViewerInternal {
 
         let re = ui.allocate_ui_with_layout(egui::vec2(max_width, 0.0), layout, |ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
-            let height = ui.text_style_height(&TextStyle::Body);
+            let height = TextStyle::Body.resolve(ui.style()).size * 1.45;
             ui.set_row_height(height);
 
             let mut events = pulldown_cmark::Parser::new_ext(
@@ -442,7 +503,7 @@ impl CommonMarkViewerInternal {
                     }
                 })
             } else {
-                blockquote(ui, ui.visuals().weak_text_color(), |ui| {
+                quote(ui, |ui| {
                     let previous_quote = self.text_style.quote;
                     self.text_style.quote = true;
                     let mut events = collected_events.into_iter().enumerate().peekable();
@@ -487,26 +548,19 @@ impl CommonMarkViewerInternal {
             egui::Frame::group(ui.style()).show(ui, |ui| {
                 let Table { header, rows } = parse_table(events);
 
-                egui::Grid::new(id).striped(true).show(ui, |ui| {
-                    for col in header {
-                        ui.horizontal(|ui| {
-                            for (e, src_span) in col {
-                                let tmp_start =
-                                    std::mem::replace(&mut self.line.should_start_newline, false);
-                                let tmp_end =
-                                    std::mem::replace(&mut self.line.should_end_newline, false);
-                                self.event(ui, e, src_span, cache, options, max_width);
-                                self.line.should_start_newline = tmp_start;
-                                self.line.should_end_newline = tmp_end;
-                            }
-                        });
-                    }
-
-                    ui.end_row();
-
-                    for row in rows {
-                        for col in row {
-                            ui.horizontal(|ui| {
+                let columns = header.len().max(1);
+                let cell_width =
+                    ((max_width - 24.0 - 16.0 * (columns - 1) as f32) / columns as f32).max(80.0);
+                egui::Grid::new(id)
+                    .striped(true)
+                    .spacing(egui::vec2(16.0, 10.0))
+                    .max_col_width(cell_width)
+                    .show(ui, |ui| {
+                        for col in header {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.set_width(cell_width);
+                                let strong = self.text_style.strong;
+                                self.text_style.strong = true;
                                 for (e, src_span) in col {
                                     let tmp_start = std::mem::replace(
                                         &mut self.line.should_start_newline,
@@ -518,12 +572,35 @@ impl CommonMarkViewerInternal {
                                     self.line.should_start_newline = tmp_start;
                                     self.line.should_end_newline = tmp_end;
                                 }
+                                self.text_style.strong = strong;
                             });
                         }
 
                         ui.end_row();
-                    }
-                });
+
+                        for row in rows {
+                            for col in row {
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.set_width(cell_width);
+                                    for (e, src_span) in col {
+                                        let tmp_start = std::mem::replace(
+                                            &mut self.line.should_start_newline,
+                                            false,
+                                        );
+                                        let tmp_end = std::mem::replace(
+                                            &mut self.line.should_end_newline,
+                                            false,
+                                        );
+                                        self.event(ui, e, src_span, cache, options, max_width);
+                                        self.line.should_start_newline = tmp_start;
+                                        self.line.should_end_newline = tmp_end;
+                                    }
+                                });
+                            }
+
+                            ui.end_row();
+                        }
+                    });
             });
 
             self.is_table = false;
@@ -572,7 +649,10 @@ impl CommonMarkViewerInternal {
             pulldown_cmark::Event::SoftBreak => {
                 soft_break(ui);
             }
-            pulldown_cmark::Event::HardBreak => newline(ui),
+            pulldown_cmark::Event::HardBreak => {
+                ui.end_row();
+                newline(ui);
+            }
             pulldown_cmark::Event::Rule => {
                 self.line.try_insert_start(ui);
                 rule(ui, self.line.can_insert_end());
@@ -606,7 +686,7 @@ impl CommonMarkViewerInternal {
     }
 
     fn event_text(&mut self, text: CowStr, ui: &mut Ui) {
-        let rich_text = self.text_style.to_richtext(ui, &text);
+        let rich_text = rich_text(&self.text_style, ui, &text);
         if let Some(image) = &mut self.image {
             image.alt_text.push(rich_text);
         } else if let Some(block) = &mut self.code_block {
@@ -790,7 +870,25 @@ impl CommonMarkViewerInternal {
             }
             pulldown_cmark::TagEnd::Link { .. } => {
                 if let Some(link) = self.link.take() {
-                    link.end(ui, cache);
+                    let mut job = egui::text::LayoutJob::default();
+                    for text in link.text {
+                        text.color(ui.visuals().hyperlink_color)
+                            .underline()
+                            .append_to(
+                                &mut job,
+                                ui.style(),
+                                egui::FontSelection::Default,
+                                egui::Align::LEFT,
+                            );
+                    }
+                    if cache.link_hooks().contains_key(&link.destination) {
+                        let response = ui.link(job).on_hover_text(&link.destination);
+                        if response.clicked() || response.middle_clicked() {
+                            cache.link_hooks_mut().insert(link.destination, true);
+                        }
+                    } else {
+                        ui.hyperlink_to(job, link.destination);
+                    }
                 }
             }
             pulldown_cmark::TagEnd::Image { .. } => {
@@ -821,7 +919,11 @@ impl CommonMarkViewerInternal {
         max_width: f32,
     ) {
         if let Some(block) = self.code_block.take() {
-            block.end(ui, cache, options, max_width);
+            if let Some(render) = self.code_block_fn {
+                render(ui, &block.content, block.lang.as_deref());
+            } else {
+                block.end(ui, cache, options, max_width);
+            }
             self.line.try_insert_end(ui);
         }
     }

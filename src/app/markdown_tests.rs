@@ -1090,3 +1090,126 @@ fn markdown_split_sync_keeps_editor_groups_and_horizontal_scroll_independent() {
     assert!((app.active().view.scroll_left - 120.0).abs() < 1.0);
     assert_eq!(app.active().page.text, source);
 }
+
+#[test]
+fn markdown_native_reader_has_clear_links_real_emphasis_and_theme_colored_copyable_code() {
+    let code = "let café = \"λ\";";
+    let source = format!("# A readable heading\n\nOrdinary text with **important text** and [a clear link](https://example.com).\n\n```rust\n{code}\n```\n");
+    let (_directory, ctx, mut app) = fixture(&source);
+    app.execute(&ctx, Command::MarkdownPreview);
+    for theme in [Theme::default(), Theme::paper()] {
+        app.set_theme(&ctx, theme.clone());
+        for _ in 0..3 {
+            frame(&ctx, &mut app, vec![]);
+        }
+        let output = frame(&ctx, &mut app, vec![]);
+        let galley = |text: &str| {
+            output
+                .shapes
+                .iter()
+                .find_map(|s| match &s.shape {
+                    egui::Shape::Text(t) if t.galley.text() == text => Some(&t.galley),
+                    _ => None,
+                })
+                .unwrap()
+        };
+        assert!(
+            ctx.fonts(|fonts| fonts.has_glyph(
+                &FontId::new(15.0, egui::FontFamily::Name("hedit-reader".into())),
+                '→'
+            )),
+            "the reader must render menu arrows without system font installation"
+        );
+        let heading = galley("A readable heading");
+        let emphasis = galley("important text");
+        assert_eq!(
+            heading.job.sections[0].format.font_id.family,
+            egui::FontFamily::Name("hedit-reader-strong".into())
+        );
+        assert_eq!(
+            emphasis.job.sections[0].format.font_id.family,
+            egui::FontFamily::Name("hedit-reader-strong".into())
+        );
+        assert!(
+            heading.job.sections[0].format.font_id.size
+                > emphasis.job.sections[0].format.font_id.size
+        );
+        let link = &galley("a clear link").job.sections[0].format;
+        assert!(link.underline.width > 0.0);
+        assert_ne!(link.color, theme.text.color());
+        assert!(
+            Theme::contrast(
+                hedit::theme::Rgb([link.color.r(), link.color.g(), link.color.b()]),
+                theme.surface
+            ) >= 4.5
+        );
+        let code = galley(code);
+        assert!(code
+            .job
+            .sections
+            .iter()
+            .any(|s| s.format.color == theme.keyword.color()));
+        let copy = output
+            .shapes
+            .iter()
+            .find_map(|s| text_rect(&s.shape, "Copy"))
+            .unwrap()
+            .center();
+        let button = |pressed| egui::Event::PointerButton {
+            pos: copy,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        };
+        frame(
+            &ctx,
+            &mut app,
+            vec![egui::Event::PointerMoved(copy), button(true)],
+        );
+        let copied = frame(&ctx, &mut app, vec![button(false)]);
+        assert!(copied.platform_output.commands.iter().any(
+            |c| matches!(c, egui::OutputCommand::CopyText(text) if text == "let café = \"λ\";")
+        ));
+        frame(
+            &ctx,
+            &mut app,
+            vec![
+                egui::Event::PointerMoved(egui::Pos2::ZERO),
+                egui::Event::Text("must not edit".into()),
+            ],
+        );
+        assert_eq!(app.active().page.text, source);
+        assert!(!app.active().page.info.dirty);
+    }
+}
+
+#[test]
+fn markdown_native_tables_and_long_code_do_not_push_the_reader_outside_its_pane() {
+    let code = format!("let line = \"{}\";", "long code ".repeat(100));
+    let source = format!("# Narrow reader\n\n| Option | Meaning |\n| --- | --- |\n| Example | {} |\n\n```rust\n{code}\n```\n\nA paragraph after the code.\n", "Words that must wrap inside a cell. ".repeat(8));
+    let (_directory, ctx, mut app) = fixture(&source);
+    app.execute(&ctx, Command::MarkdownPreview);
+    let size = egui::vec2(720.0, 900.0);
+    for _ in 0..4 {
+        frame_size(&ctx, &mut app, vec![], size);
+    }
+    let output = frame_size(&ctx, &mut app, vec![], size);
+    let copy = output
+        .shapes
+        .iter()
+        .find_map(|s| text_rect(&s.shape, "Copy"))
+        .unwrap();
+    let after = output
+        .shapes
+        .iter()
+        .find_map(|s| text_rect(&s.shape, "A paragraph after the code."))
+        .unwrap();
+    assert!(copy.right() < size.x);
+    assert!(after.right() < size.x && after.top() > copy.bottom());
+    assert!(
+        after.top() - copy.bottom() < 150.0,
+        "long code expanded the vertical layout: {copy:?} -> {after:?}"
+    );
+    assert!(output.shapes.iter().all(|s| s.clip_rect.is_finite()));
+    assert_eq!(app.active().page.text, source);
+}

@@ -148,7 +148,7 @@ without a window belongs in the library, with tests under `tests/`.
 | Process and updates | `cli.rs`, `launcher.rs`, `ipc.rs`, `windows.rs`, `update.rs`, `update/`, `build.rs`, `debugger.rs` |
 | Window | `app.rs` (frame loop, shortcuts, editor drawing), `app/chrome.rs` (menus, tabs, sidebar, status bar), `app/commands.rs` (every command, the palette) |
 | App features | One file each in `src/app/`, named after the feature: `auto_complete.rs`, `definitions.rs`, `spell_check.rs`, `macros.rs`, `snippet_fields.rs`, `find_tools.rs`, `changes.rs`, `fold_gutter.rs`, `font_picker.rs`, and so on |
-| Markdown | `app/markdown.rs` (source/preview layout, background preparation, links, local images), `app/markdown_scroll.rs` (bidirectional split scrolling), `app/markdown_media.rs` (cached native math and Mermaid rendering), `app/markdown_tests.rs`; per-tab modes are stored in `session.rs` |
+| Markdown | `app/markdown.rs` (source/preview layout, background preparation, links, local images), `app/markdown_scroll.rs` (bidirectional split scrolling), `app/markdown_style.rs` (shared reader fonts, contrast, and cached native code blocks), `app/markdown_media.rs` (cached native math and Mermaid rendering), `app/markdown_tests.rs`; per-tab modes are stored in `session.rs` |
 | Offline help | `app/user_guide.rs` embeds `USER_GUIDE.md`, related documentation, and notices with `include_str!`; `app/user_guide/tests.rs` covers links, modal input, and layout |
 | Settings | `settings.rs` (the `settings.json` schema), `app/settings_store.rs`, `app/preferences.rs`, `app/settings_pages.rs` |
 
@@ -283,3 +283,9 @@ on worker threads without a browser or network fetches. Keep the
 The native Markdown renderer includes a local dependency patch for nested block
 layout; see [the patch notes](vendor/egui_commonmark/PATCH.md). Keep its
 [MIT notice](assets/licenses/egui_commonmark-MIT.txt) with distributed packages.
+
+Document views use bundled Noto Sans regular and semibold fonts, plus Noto Sans
+Symbols for symbols. Editor and application fonts keep their existing settings.
+Keep the [Noto font license](assets/licenses/Noto-Sans-OFL.txt) and font files
+under `assets/fonts/` with distributed packages. The source fonts come from
+[the Noto project](https://github.com/notofonts/noto-fonts).

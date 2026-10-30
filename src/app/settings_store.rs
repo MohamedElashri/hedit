@@ -435,6 +435,35 @@ pub(super) fn set_editor_font(ctx: &egui::Context, font: Option<(Vec<u8>, u32)>)
             fonts.families.entry(family).or_default().push(name.clone());
         }
     }
+    fonts.font_data.insert(
+        "reader-symbols".into(),
+        std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
+            "../../assets/fonts/NotoSansSymbols-Regular.ttf"
+        ))),
+    );
+    for (family, name, bytes) in [
+        (
+            "hedit-reader",
+            "reader-regular",
+            include_bytes!("../../assets/fonts/NotoSans-Regular.ttf").as_slice(),
+        ),
+        (
+            "hedit-reader-strong",
+            "reader-semibold",
+            include_bytes!("../../assets/fonts/NotoSans-SemiBold.ttf").as_slice(),
+        ),
+    ] {
+        fonts.font_data.insert(
+            name.into(),
+            std::sync::Arc::new(egui::FontData::from_static(bytes)),
+        );
+        let mut fallback = fonts.families[&egui::FontFamily::Proportional].clone();
+        fallback.insert(0, "reader-symbols".into());
+        fallback.insert(0, name.into());
+        fonts
+            .families
+            .insert(egui::FontFamily::Name(family.into()), fallback);
+    }
     ctx.set_fonts(fonts);
 }
 
