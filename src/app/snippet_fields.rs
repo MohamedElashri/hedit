@@ -8,6 +8,20 @@ use similar::DiffOp;
 /// Changes larger than this end field navigation rather than being diffed.
 const MAX_DIFF: usize = 20_000;
 
+/// End can place the editor cursor between CR and LF. Snippets insert
+/// before the complete separator and match triggers against content only.
+pub(super) fn insertion_byte(text: &str, character: usize) -> usize {
+    let at = hedit::advanced::byte(text, character);
+    if at > 0
+        && text.as_bytes().get(at - 1) == Some(&b'\r')
+        && text.as_bytes().get(at) == Some(&b'\n')
+    {
+        at - 1
+    } else {
+        at
+    }
+}
+
 pub(super) struct SnippetSession {
     view: u64,
     /// The text that `fields` refers to.
@@ -239,5 +253,75 @@ impl HeditApp {
         }
         self.select_field();
         true
+    }
+}
+
+#[cfg(test)]
+mod newline_tests {
+    use super::*;
+
+    #[test]
+    fn crlf_snippet_triggers_expand_at_the_end_key_position() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut workspace, _) = Workspace::restore(dir.path().to_owned()).unwrap();
+        workspace.open[0].page.text = "audit_snip\r\n".into();
+        workspace.edit(0, "").unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        app.edit_command(hedit::editing::Operation::ToCrlf);
+        app.quality.config.snippets = vec![hedit::intelligence::Snippet {
+            trigger: "audit_snip".into(),
+            description: String::new(),
+            body: "${1:one}\n${2:two}$0".into(),
+            language: None,
+        }];
+        app.set_selections(vec![Selection::caret("audit_snip\r".chars().count())]);
+        assert!(app.expand_trigger());
+        assert_eq!(app.active().page.text, "one\r\ntwo\r\n");
+        assert_eq!(app.selections(), [Selection { anchor: 0, head: 3 }]);
+    }
+
+    #[test]
+    fn multiline_snippets_keep_document_endings_and_field_positions() {
+        for crlf in [false, true] {
+            for body in ["${1:one}\n${2:two}$0", "${1:one}\r\n${2:two}$0"] {
+                let dir = tempfile::tempdir().unwrap();
+                let (mut workspace, _) = Workspace::restore(dir.path().to_owned()).unwrap();
+                workspace.open[0].page.text = "  \n".into();
+                workspace.edit(0, "").unwrap();
+                let ctx = egui::Context::default();
+                let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+                if crlf {
+                    app.edit_command(hedit::editing::Operation::ToCrlf);
+                }
+                let original = app.active().page.text.clone();
+                app.set_selections(vec![Selection::caret(2)]);
+                app.insert_snippet(
+                    hedit::intelligence::Snippet {
+                        trigger: String::new(),
+                        description: String::new(),
+                        body: body.into(),
+                        language: None,
+                    },
+                    0,
+                );
+                let eol = if crlf { "\r\n" } else { "\n" };
+                assert_eq!(app.active().page.text, format!("  one{eol}  two{eol}"));
+                for field in ["one", "two"] {
+                    let range = app.selections()[0];
+                    let text = &app.active().page.text;
+                    assert_eq!(
+                        &text[hedit::advanced::byte(text, range.start())
+                            ..hedit::advanced::byte(text, range.end())],
+                        field
+                    );
+                    assert!(app.next_field(false));
+                }
+                assert!(app.snippet.is_none());
+                app.history(&ctx, false);
+                tests::finish_app_job(&mut app, &ctx);
+                assert_eq!(app.active().page.text, original);
+            }
+        }
     }
 }

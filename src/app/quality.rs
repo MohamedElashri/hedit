@@ -1254,8 +1254,8 @@ impl HeditApp {
         }
         let b = self.active();
         let old = &b.page.text;
-        let start = hedit::advanced::byte(old, b.view.anchor.min(b.view.head));
-        let end = hedit::advanced::byte(old, b.view.anchor.max(b.view.head));
+        let start = snippet_fields::insertion_byte(old, b.view.anchor.min(b.view.head));
+        let end = snippet_fields::insertion_byte(old, b.view.anchor.max(b.view.head));
         let start = start.saturating_sub(before);
         if !old.is_char_boundary(start) {
             return;
@@ -1270,7 +1270,14 @@ impl HeditApp {
         } else {
             " ".repeat(b.view.tab_size.unwrap_or(4) as usize)
         };
-        let body = snippet_fields::indent_body(&snippet.body, &indent, &unit);
+        let body = snippet_fields::indent_body(&snippet.body.replace("\r\n", "\n"), &indent, &unit);
+        // Convert before expanding fields so their character positions include
+        // every carriage return in the inserted text.
+        let body = if b.page.info.eol == "CRLF" {
+            body.replace('\n', "\r\n")
+        } else {
+            body
+        };
         let expansion = intelligence::expand_fields(&body, &old[start..end]);
         let base = old[..start].chars().count();
         let cursor = base + expansion.fields.last().map_or(0, |f| f[0].0);
@@ -1295,7 +1302,7 @@ impl HeditApp {
             return false;
         }
         let b = self.active();
-        let before = &b.page.text[..hedit::advanced::byte(&b.page.text, b.view.head)];
+        let before = &b.page.text[..snippet_fields::insertion_byte(&b.page.text, b.view.head)];
         let snippet = self
             .quality
             .config
