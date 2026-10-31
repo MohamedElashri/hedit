@@ -112,6 +112,9 @@ pub(super) enum Command {
     DetectIndent,
     Fold,
     FoldAll,
+    FoldLevel1,
+    FoldLevel2,
+    FoldLevel3,
     Unfold,
     UnfoldAll,
     IndentGuides,
@@ -327,6 +330,9 @@ impl Command {
         Self::DetectIndent,
         Self::Fold,
         Self::FoldAll,
+        Self::FoldLevel1,
+        Self::FoldLevel2,
+        Self::FoldLevel3,
         Self::Unfold,
         Self::UnfoldAll,
         Self::IndentGuides,
@@ -576,6 +582,9 @@ impl Command {
             Self::DetectIndent => "Detect indentation from file",
             Self::Fold => "Fold block or selection",
             Self::FoldAll => "Fold all blocks",
+            Self::FoldLevel1 => "Fold level 1",
+            Self::FoldLevel2 => "Fold level 2",
+            Self::FoldLevel3 => "Fold level 3",
             Self::Unfold => "Unfold block",
             Self::UnfoldAll => "Unfold all",
             Self::IndentGuides => "Show indentation guides",
@@ -770,7 +779,9 @@ impl Command {
             Self::SkipOccurrence => "Ctrl+K, Ctrl+D",
             Self::Uppercase => "Ctrl+K, Ctrl+U",
             Self::Lowercase => "Ctrl+K, Ctrl+L",
-            Self::FoldAll => "Ctrl+K, Ctrl+1",
+            Self::FoldLevel1 => "Ctrl+K, Ctrl+1",
+            Self::FoldLevel2 => "Ctrl+K, Ctrl+2",
+            Self::FoldLevel3 => "Ctrl+K, Ctrl+3",
             Self::UnfoldAll => "Ctrl+K, Ctrl+J",
             // Sublime: Alt+F3 on Linux, Control+Cmd+G on macOS.
             Self::AllOccurrences if cfg!(target_os = "macos") => "Control+Ctrl+G",
@@ -1030,7 +1041,10 @@ impl HeditApp {
             | Command::AddCursorBelow
             | Command::Rectangle
             | Command::Fold
-            | Command::FoldAll => !self.active().page.info.paged,
+            | Command::FoldAll
+            | Command::FoldLevel1
+            | Command::FoldLevel2
+            | Command::FoldLevel3 => !self.active().page.info.paged,
             Command::NextTab
             | Command::PreviousTab
             | Command::RecentTab
@@ -1449,6 +1463,9 @@ impl HeditApp {
             Command::DetectIndent => self.detect_indent(),
             Command::Fold => self.fold(false),
             Command::FoldAll => self.fold(true),
+            Command::FoldLevel1 => self.fold_level(1),
+            Command::FoldLevel2 => self.fold_level(2),
+            Command::FoldLevel3 => self.fold_level(3),
             Command::UnfoldAll => {
                 let b = &mut self.workspace.open[self.workspace.active];
                 b.view.folds.clear();

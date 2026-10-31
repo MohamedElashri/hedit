@@ -107,6 +107,42 @@ fn folding_retains_hidden_text_and_document_line_numbers() {
     let edit = p.edited(source, &display, S::caret(display.chars().count()));
     assert_eq!(edit.text, source.replace("last", "LAST"));
 }
+
+#[test]
+fn fold_levels_keep_parents_and_count_irregular_indent_as_one_step() {
+    let text = "outer:\n   middle:\n        inner:\n            α()\n   tail()\nnext:\n   β()\n";
+    let levels: Vec<_> = (1..=4)
+        .map(|level| a::indentation_folds_at_level(text, 4, level))
+        .collect();
+    assert_eq!(
+        levels.iter().map(Vec::len).collect::<Vec<_>>(),
+        [2, 1, 1, 0]
+    );
+    assert_eq!(
+        Projection::new(text, 4, &levels[1]).text,
+        "outer:\n   middle:\n⋯\n   tail()\nnext:\n   β()\n"
+    );
+    assert_eq!(
+        Projection::new(text, 4, &levels[2]).text,
+        "outer:\n   middle:\n        inner:\n⋯\n   tail()\nnext:\n   β()\n"
+    );
+    assert!(a::indentation_folds_at_level(text, 4, 0).is_empty());
+}
+
+#[test]
+fn fold_levels_handle_tabs_crlf_blank_lines_and_no_final_newline() {
+    let text = "root:\r\n\tchild:\r\n\r\n\t\tλ()\r\n\tlast()\r\nend";
+    let outer = a::indentation_folds_at_level(text, 4, 1);
+    let inner = a::indentation_folds_at_level(text, 4, 2);
+    assert_eq!((outer.len(), inner.len()), (1, 1));
+    assert!(outer[0].start < inner[0].start && inner[0].end < outer[0].end);
+    for width in [0, 1, 2, 8] {
+        assert_eq!(a::indentation_folds_at_level(text, width, 2), inner);
+    }
+    for text in ["", "flat\ntext", "\r\n\t\r\n"] {
+        assert!(a::indentation_folds_at_level(text, 0, 1).is_empty());
+    }
+}
 #[test]
 fn invalid_fold_metadata_and_selections_are_bounded() {
     let p = Projection::new(

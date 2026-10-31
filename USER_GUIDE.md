@@ -726,8 +726,13 @@ from Preview. Cancelling a Go to Anything preview restores the original view mod
   group, and **Ctrl+Alt+Shift+Right** moves the file to the next group. Each group
   has its own cursor and scroll position on a shared file.
 - **Folding:** **Ctrl+Shift+[** and **Ctrl+Shift+]** fold and unfold an indented
-  block, and **Ctrl+K, Ctrl+1** / **Ctrl+K, Ctrl+J** fold or unfold everything. With
-  the pointer over the gutter, arrows appear beside foldable lines; click one.
+  block. **View → Code folding → Fold level 1 / 2 / 3** collapses blocks at that
+  nesting depth, leaving their parents visible. Use **Ctrl+K, Ctrl+1 / 2 / 3**
+  (**Cmd+K, Cmd+1 / 2 / 3** on macOS); **Ctrl+K, Ctrl+J** unfolds everything.
+  **Fold all blocks** remains in the menu and palette. Choosing a level replaces
+  existing folds and moves a hidden cursor to the fold boundary without changing
+  text. With the pointer over the gutter, arrows appear beside foldable lines;
+  click one. Tabs, spaces, and uneven indentation all count nesting steps.
 - **Wrap and rulers:** **Ctrl+Shift+W** toggles wrapping; **View** sets the wrap
   column and rulers (up to eight in settings).
 - **Full screen and focus:** **F11** toggles full screen, and **Shift+F11**
@@ -963,6 +968,8 @@ Change any shortcut under **Settings → Key Bindings**. Two-key shortcuts such 
 | Two / three rows | Alt+Shift+8 / 9 | Cmd+Option+Shift+2 / 3 |
 | Focus a group | Ctrl+1–4 | Control+1–4 |
 | Fold / unfold | Ctrl+Shift+[ / Ctrl+Shift+] | Cmd+Shift+[ / Cmd+Shift+] |
+| Fold level 1 / 2 / 3 | Ctrl+K, Ctrl+1 / 2 / 3 | Cmd+K, Cmd+1 / 2 / 3 |
+| Unfold all | Ctrl+K, Ctrl+J | Cmd+K, Cmd+J |
 | Full screen / distraction-free | F11 / Shift+F11 | Control+Cmd+F / Control+Shift+Cmd+F |
 | Wrap long lines | Ctrl+Shift+W | Cmd+Shift+W |
 | Bigger / smaller / reset font | Ctrl++ / Ctrl+- / Ctrl+0 | Cmd++ / Cmd+- / Cmd+0 |

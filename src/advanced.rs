@@ -450,6 +450,7 @@ pub fn newline(
     result
 }
 pub fn indentation_folds(text: &str, width: usize) -> Vec<Fold> {
+    let width = width.max(1);
     let mut lines = vec![];
     let mut offset = 0;
     for line in text.split_inclusive('\n') {
@@ -493,6 +494,26 @@ pub fn indentation_folds(text: &str, width: usize) -> Vec<Fold> {
     }
     folds.sort_by_key(|f| (f.start, f.end));
     folds
+}
+
+/// Collapse blocks at a 1-based nesting level, leaving their parents visible.
+/// Irregular space widths still count as one nesting step, as do tab indents.
+pub fn indentation_folds_at_level(text: &str, width: usize, level: usize) -> Vec<Fold> {
+    if level == 0 {
+        return vec![];
+    }
+    let mut parents = Vec::new();
+    let mut result = Vec::new();
+    for fold in indentation_folds(text, width) {
+        while parents.last().is_some_and(|end| *end <= fold.start) {
+            parents.pop();
+        }
+        if parents.len() + 1 == level {
+            result.push(fold);
+        }
+        parents.push(fold.end);
+    }
+    result
 }
 
 #[derive(Clone, Copy)]

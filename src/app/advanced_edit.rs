@@ -154,6 +154,29 @@ impl HeditApp {
         b.restore_cursor = true;
         self.changed();
     }
+    pub(super) fn fold_level(&mut self, level: usize) {
+        let b = &mut self.workspace.open[self.workspace.active];
+        b.view.folds = advanced::indentation_folds_at_level(
+            &b.page.text,
+            b.view.tab_size.unwrap_or(4) as usize,
+            level,
+        );
+        // A hidden cursor would otherwise immediately reopen its block.
+        if let Some(fold) = b
+            .view
+            .folds
+            .iter()
+            .find(|f| f.start < b.view.head && b.view.head < f.end)
+        {
+            b.view.head = fold.start;
+        }
+        b.view.anchor = b.view.head;
+        b.view.selections.clear();
+        b.restore_cursor = true;
+        b.reveal_cursor = true;
+        self.focus_editor = true;
+        self.changed();
+    }
     pub(super) fn advanced_input(&mut self, ctx: &egui::Context) {
         let multiple = !self.active().view.selections.is_empty();
         let readonly = self.active().follow || self.busy || self.closing;

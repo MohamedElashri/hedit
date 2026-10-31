@@ -4,6 +4,7 @@
 
 ### Added
 
+- Fold levels 1–3 from the menu, command palette, or Ctrl/Cmd+K, Ctrl/Cmd+1–3.
 - Header/implementation switching for C, C++, CUDA, and Objective-C with Alt+O
   (Option+O on macOS), sibling priority, and a picker for multiple matches.
 - Optional Ghostty-powered terminal, disabled by default, with onboarding and

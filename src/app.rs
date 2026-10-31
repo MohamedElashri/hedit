@@ -25,6 +25,8 @@ mod fold_gutter;
 mod folder_search;
 #[cfg(test)]
 mod folder_search_tests;
+#[cfg(test)]
+mod folding_tests;
 mod font_picker;
 mod goto_anything;
 #[cfg(test)]
