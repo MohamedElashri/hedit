@@ -616,3 +616,45 @@ fn zero_width_find_starts_at_the_cursor_and_navigation_replays_unicode_offsets()
     finish_app_job(&mut app, &ctx);
     assert_eq!(app.active().view.id, second);
 }
+
+#[test]
+fn modified_shortcuts_do_not_trigger_commands_with_fewer_modifiers() {
+    for (key, expected) in [(Key::R, "name"), (Key::W, "wrap")] {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+        workspace.open[0].page.text = "keep this unsaved note".into();
+        workspace.edit(0, "").unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        frame(&ctx, &mut app, vec![]);
+        let wrap = app.settings.word_wrap;
+        frame(
+            &ctx,
+            &mut app,
+            vec![super::tests::key(
+                key,
+                Modifiers::COMMAND | Modifiers::SHIFT,
+            )],
+        );
+        assert!(
+            !app.quality.symbols_open,
+            "{expected} must not open Symbols"
+        );
+        assert!(
+            app.close_flow.is_none(),
+            "{expected} must not close the tab"
+        );
+        if expected == "wrap" {
+            assert_ne!(
+                app.settings.word_wrap, wrap,
+                "Cmd/Ctrl+Shift+W toggles wrapping"
+            );
+        } else {
+            assert!(
+                app.rename_target.is_some(),
+                "Cmd/Ctrl+Shift+R names the unsaved file"
+            );
+        }
+        assert_eq!(app.active().page.text, "keep this unsaved note");
+    }
+}
