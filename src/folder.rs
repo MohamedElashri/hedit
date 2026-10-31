@@ -555,7 +555,15 @@ pub fn duplicate_path(from: &Path, target: &Path) -> Result<(), String> {
     if target.starts_with(&from) {
         return Err("A folder cannot be copied into itself.".into());
     }
-    copy(&from, &target, 0, &mut 0)
+    // Build a complete copy on the destination filesystem before publishing
+    // it. Errors leave neither a partial copy nor a name that blocks retries.
+    let staging = tempfile::Builder::new()
+        .prefix(".hedit-duplicate-")
+        .tempdir_in(&parent)
+        .map_err(|e| e.to_string())?;
+    let staged = staging.path().join("copy");
+    copy(&from, &staged, 0, &mut 0)?;
+    rename_no_replace(&staged, &target).map_err(|e| e.to_string())
 }
 pub fn duplicate_sibling(from: &Path, name: &str) -> Result<PathBuf, String> {
     let name = leaf_name(name)?;
