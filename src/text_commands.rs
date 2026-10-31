@@ -497,7 +497,8 @@ pub fn change_case(text: &str, selections: &[Selection], title: bool) -> Batch {
         };
         let mut previous_letter = range.start() > 0 && is_word(chars[range.start() - 1]);
         let mut changed = String::new();
-        for &c in &chars[range.start()..range.end()] {
+        let mut caret = 0;
+        for (index, &c) in chars[range.start()..range.end()].iter().enumerate() {
             if title {
                 if previous_letter {
                     changed.extend(c.to_lowercase());
@@ -509,11 +510,13 @@ pub fn change_case(text: &str, selections: &[Selection], title: bool) -> Batch {
             } else {
                 changed.extend(c.to_uppercase());
             }
+            if index + 1 == s.head - range.start() {
+                caret = changed.chars().count();
+            }
             previous_letter = is_word(c);
         }
         let length = changed.chars().count();
         let (anchor, head) = if s.start() == s.end() {
-            let caret = (s.head - range.start()).min(length);
             (caret, caret)
         } else if s.anchor <= s.head {
             (0, length)
