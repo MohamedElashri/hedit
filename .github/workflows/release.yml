@@ -19,8 +19,15 @@ env:
   CARGO_PROFILE_TEST_DEBUG: 0
 
 jobs:
+  validate:
+    name: Lint and test before release builds
+    uses: ./.github/workflows/ci.yml
+    with:
+      validation_only: true
+
   build:
     name: Linux ${{ matrix.arch }}
+    needs: [validate]
     strategy:
       fail-fast: false
       matrix:
@@ -65,10 +72,12 @@ jobs:
 
   macos:
     name: Build universal macOS app
+    needs: [validate]
     uses: ./.github/workflows/macos-probe.yml
 
   windows:
     name: Build Windows portable app
+    needs: [validate]
     uses: ./.github/workflows/windows.yml
 
   publish:

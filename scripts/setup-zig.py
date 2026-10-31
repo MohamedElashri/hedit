@@ -11,7 +11,14 @@ import tempfile
 # libghostty-vt-sys 0.2.2 pins Ghostty a887df42, whose build requires this version.
 ZIG_VERSION = '0.15.2'
 ROOT = Path(__file__).resolve().parents[1]
-CACHE = ROOT / 'target' / 'ghostty-toolchain'
+
+
+def default_cache():
+    # Rust's CI cache prunes non-Cargo executables from target/. Keep the Zig
+    # installation outside it so a restore cannot remove the prepared compiler.
+    if os.environ.get('GITHUB_ACTIONS') == 'true' and (temporary := os.environ.get('RUNNER_TEMP')):
+        return Path(temporary) / f'hedit-ghostty-zig-{ZIG_VERSION}'
+    return ROOT / 'target' / 'ghostty-toolchain'
 
 
 def matches_version(executable):
@@ -27,7 +34,7 @@ def compiler_in(directory):
     return directory / 'ziglang' / ('zig.exe' if os.name == 'nt' else 'zig')
 
 
-def ensure_zig(cache=CACHE):
+def ensure_zig(cache=None):
     if explicit := os.environ.get('ZIG'):
         executable = Path(shutil.which(explicit) or explicit).resolve()
         if not matches_version(executable):
@@ -36,6 +43,8 @@ def ensure_zig(cache=CACHE):
     installed = shutil.which('zig')
     if installed and matches_version(installed):
         return Path(installed).absolute()
+    if cache is None:
+        cache = default_cache()
     executable = compiler_in(cache)
     if matches_version(executable):
         return executable

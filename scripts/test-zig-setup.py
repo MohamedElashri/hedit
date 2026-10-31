@@ -88,6 +88,42 @@ class ZigSetupTests(unittest.TestCase):
             setup.main()
         self.assertEqual(output.getvalue(), str(executable) + '\n')
 
+    def test_local_default_stays_under_project_target(self):
+        with patch.object(setup, 'ROOT', Path(self.directory.name)):
+            self.assertEqual(setup.default_cache(), Path(self.directory.name) / 'target/ghostty-toolchain')
+            with patch.dict(os.environ, {'RUNNER_TEMP': self.directory.name}):
+                self.assertEqual(setup.default_cache(), Path(self.directory.name) / 'target/ghostty-toolchain')
+
+    def test_ci_compiler_survives_a_pruned_rust_cache_restore(self):
+        project = Path(self.directory.name) / 'checkout'
+        target = project / 'target' / 'ghostty-toolchain'
+        # Reproduce a Rust cache that has library files but has pruned zig/zig.exe.
+        (target / 'ziglang/lib').mkdir(parents=True)
+        temporary = Path(self.directory.name) / 'runner temp'
+
+        def install(arguments, **kwargs):
+            staged = Path(arguments[arguments.index('--target') + 1])
+            compiler = setup.compiler_in(staged)
+            compiler.parent.mkdir(parents=True)
+            compiler.write_text('test compiler')
+
+        with patch.dict(os.environ, {'GITHUB_ACTIONS': 'true', 'RUNNER_TEMP': str(temporary)}), patch.object(setup, 'ROOT', project), patch.object(setup.shutil, 'which', return_value=None), patch.object(setup, 'matches_version', side_effect=lambda p: Path(p).is_file()), patch.object(setup.subprocess, 'run', side_effect=install) as installer:
+            expected = setup.compiler_in(temporary / f'hedit-ghostty-zig-{setup.ZIG_VERSION}')
+            self.assertEqual(setup.ensure_zig(), expected)
+            # Restoring Cargo's target directory cannot affect the compiler.
+            (target / 'ziglang/lib/restored-cache-file').write_text('cached data')
+            self.assertEqual(setup.ensure_zig(), expected)
+            self.assertEqual(installer.call_count, 1)
+
+    def test_ci_setup_exports_a_compiler_path_outside_target(self):
+        temporary = Path(self.directory.name) / 'runner'
+        path_file = temporary / 'github-path'
+        temporary.mkdir()
+        executable = setup.compiler_in(temporary / f'hedit-ghostty-zig-{setup.ZIG_VERSION}')
+        with patch.dict(os.environ, {'GITHUB_ACTIONS': 'true', 'RUNNER_TEMP': str(temporary), 'GITHUB_PATH': str(path_file)}), patch.object(sys, 'argv', ['setup-zig.py']), patch.object(setup, 'ensure_zig', return_value=executable), contextlib.redirect_stdout(io.StringIO()):
+            setup.main()
+        self.assertEqual(path_file.read_text(encoding='utf-8'), str(executable.parent) + '\n')
+
 
 if __name__ == '__main__':
     unittest.main()

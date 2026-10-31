@@ -2,6 +2,11 @@ name: Windows build
 on:
   workflow_dispatch:
   workflow_call:
+    inputs:
+      checks_only:
+        description: Validate without building or uploading release packages
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -48,10 +53,13 @@ jobs:
       - name: Package tests
         run: python scripts/test-windows-package.py
       - name: Build portable release
+        if: ${{ !inputs.checks_only }}
         run: cargo build --release --locked
       - name: Package and verify extracted executable
+        if: ${{ !inputs.checks_only }}
         run: python scripts/package-windows.py --smoke
       - uses: actions/upload-artifact@v7.0.2
+        if: ${{ !inputs.checks_only }}
         with:
           name: hedit-windows-x86_64
           path: dist/hedit-*-windows-x86_64.zip*

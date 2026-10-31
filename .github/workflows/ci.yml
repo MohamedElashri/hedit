@@ -5,6 +5,12 @@ on:
       - '**'
   pull_request:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      validation_only:
+        description: Run checks without building Windows release packages
+        type: boolean
+        default: false
 permissions:
   contents: read
 # A newer push to the same branch or pull request replaces an older run.
@@ -21,6 +27,8 @@ jobs:
   windows:
     name: Windows
     uses: ./.github/workflows/windows.yml
+    with:
+      checks_only: ${{ inputs.validation_only || false }}
 
   check:
     name: Linux

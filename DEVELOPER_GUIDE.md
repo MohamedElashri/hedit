@@ -27,6 +27,8 @@ Cargo and Make builds select the matching compiler automatically. If it is
 absent or the system compiler has a different version, Python with pip installs
 an isolated copy under `target/ghostty-toolchain`; system packages stay unchanged.
 CI prepares the same toolchain with `python scripts/setup-zig.py`.
+On GitHub Actions the compiler lives under `RUNNER_TEMP`, outside Cargo's target
+cache, so restoring that cache cannot prune the Zig executable.
 Set `ZIG` to an existing compiler executable of the required version for offline
 builds, or `PYTHON` to select a Python interpreter for automatic setup. An
 explicit `ZIG` with the wrong version fails with an actionable error. Cargo builds
@@ -320,7 +322,9 @@ and an installer script. `Makefile`, `scripts/package-linux.py`, and
 
 The CI workflow runs Linux, macOS, and Windows checks on pushes and pull requests. Linux and
 macOS use Makefile targets; Windows uses Cargo and Python directly, without
-requiring GNU Make. Pushing a version tag runs the release workflow, which builds
+requiring GNU Make. The release workflow first runs the shared Linux, macOS,
+and Windows validation jobs; all package builds wait for that lint/test gate.
+Pushing a version tag runs the release workflow, which builds
 Linux x86-64 and ARM64 tarballs, the universal macOS app, and a Windows x86-64 ZIP, tests them, and
 publishes them with checksums. Tags with a hyphen (`vX.Y.Z-rc.1`) publish as
 prereleases.
