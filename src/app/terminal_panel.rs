@@ -171,7 +171,8 @@ impl HeditApp {
         self.workspace
             .folders
             .iter()
-            .find(|f| file.as_ref().is_some_and(|p| p.starts_with(&f.path)))
+            .filter(|f| file.as_ref().is_some_and(|p| p.starts_with(&f.path)))
+            .max_by_key(|f| PathBuf::from(&f.path).components().count())
             .or_else(|| self.workspace.folders.first())
             .map(|f| PathBuf::from(&f.path))
             .or_else(|| file.and_then(|p| p.parent().map(std::path::Path::to_path_buf)))
@@ -1053,6 +1054,33 @@ mod surface {
             &mut buffer,
         ) {
             ctx.copy_text(String::from_utf8_lossy(&buffer[..len]).into_owned());
+        }
+    }
+}
+
+#[cfg(all(test, feature = "terminal"))]
+mod directory_tests {
+    use super::*;
+
+    #[test]
+    fn terminals_use_the_innermost_project_folder_in_any_root_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let outer = dir.path().join("outer");
+        let inner = outer.join("inner");
+        std::fs::create_dir_all(&inner).unwrap();
+        let file = inner.join("file.txt");
+        std::fs::write(&file, "nested project\n").unwrap();
+        let ctx = egui::Context::default();
+        let (workspace, _) = Workspace::restore(dir.path().join("session")).unwrap();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        for root in [&outer, &inner] {
+            app.set_folder(hedit::folder::read_directory(root.clone()).unwrap());
+        }
+        app.open(&ctx, Some(file));
+        tests::finish_app_job(&mut app, &ctx);
+        for _ in 0..2 {
+            assert_eq!(app.terminal_directory(), inner.canonicalize().unwrap());
+            app.workspace.folders.reverse();
         }
     }
 }
