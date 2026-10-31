@@ -1873,3 +1873,49 @@ fn find_shortcuts_keep_text_literal_in_regex_mode() {
     app.execute(&ctx, Command::SelectAllMatches);
     assert_eq!(app.selections().len(), 1, "axb is not a match");
 }
+
+#[test]
+fn indented_and_history_pastes_preserve_the_target_line_endings_and_undo() {
+    for crlf in [false, true] {
+        for (history, inside_crlf) in [(false, false), (true, false), (false, true), (true, true)] {
+            let (_directory, ctx, mut app) = app_with("head\n    \ntail\n");
+            if crlf {
+                app.edit_command(hedit::editing::Operation::ToCrlf);
+            }
+            let original = app.active().page.text.clone();
+            let at = if crlf {
+                10 + usize::from(inside_crlf)
+            } else {
+                9
+            };
+            app.set_selections(vec![hedit::advanced::Selection::caret(at)]);
+            frame(&ctx, &mut app, vec![]);
+            let pasted = if crlf { "a\n  b\n" } else { "a\r\n  b\r\n" };
+            if history {
+                app.paste_entry(&ctx, pasted.into());
+            } else {
+                app.execute(&ctx, Command::PasteIndent);
+                frame(&ctx, &mut app, vec![egui::Event::Paste(pasted.into())]);
+            }
+            let text = &app.active().page.text;
+            if crlf {
+                assert!(
+                    text.as_bytes()
+                        .iter()
+                        .enumerate()
+                        .all(|(i, b)| *b != b'\n' || (i > 0 && text.as_bytes()[i - 1] == b'\r')),
+                    "CRLF paste produced mixed endings: {text:?}"
+                );
+            } else {
+                assert!(
+                    !text.contains("\r\n"),
+                    "LF paste produced mixed endings: {text:?}"
+                );
+            }
+            assert_eq!(app.active().page.info.eol, if crlf { "CRLF" } else { "LF" });
+            app.history(&ctx, false);
+            finish_app_job(&mut app, &ctx);
+            assert_eq!(app.active().page.text, original);
+        }
+    }
+}
