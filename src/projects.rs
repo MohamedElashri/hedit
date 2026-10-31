@@ -184,6 +184,7 @@ pub fn formatting(
             break;
         }
     }
+    let mut values = BTreeMap::new();
     for (parent, text) in configs.into_iter().rev() {
         let relative = path
             .strip_prefix(&parent)
@@ -191,7 +192,6 @@ pub fn formatting(
             .to_string_lossy()
             .replace('\\', "/");
         let mut applies = false;
-        let mut values = BTreeMap::new();
         for line in text.lines() {
             let line = line.trim();
             if line.starts_with(['#', ';']) || line.is_empty() {
@@ -213,45 +213,46 @@ pub fn formatting(
                 }
             }
         }
-        for (key, value) in values {
-            let unset = value == "unset";
-            match key.as_str() {
-                "indent_style" => {
-                    format.indent_style = (!unset).then(|| {
-                        if value == "tab" {
-                            "tabs".into()
-                        } else {
-                            value.trim_end_matches('e').to_owned() + "es"
-                        }
-                    })
-                }
-                "indent_size" => {
-                    format.indent_size = if value == "tab" {
-                        format.indent_size
-                    } else {
-                        value.parse().ok()
-                    }
-                }
-                "tab_width" if format.indent_size.is_none() => {
-                    format.indent_size = value.parse().ok()
-                }
-                "end_of_line" => format.end_of_line = (!unset).then_some(value),
-                "insert_final_newline" => {
-                    format.insert_final_newline = if unset { None } else { Some(value == "true") }
-                }
-                "trim_trailing_whitespace" => {
-                    format.trim_trailing_whitespace =
-                        if unset { None } else { Some(value == "true") }
-                }
-                "charset" => {
-                    format.charset = (!unset).then_some(if value == "latin1" {
-                        "ISO-8859-1".into()
-                    } else {
-                        value
-                    })
-                }
-                _ => (),
+    }
+    // Resolve dependent indentation values after the complete cascade. A child
+    // tab_width must also affect an inherited indent_size = tab.
+    let width = |value: &String| value.parse::<u8>().ok().filter(|n| (1..=8).contains(n));
+    match values.get("indent_size").map(String::as_str) {
+        Some("unset") => format.indent_size = None,
+        Some("tab") | None => {
+            if let Some(value) = values.get("tab_width").and_then(width) {
+                format.indent_size = Some(value);
             }
+        }
+        Some(_) => {
+            if let Some(value) = values.get("indent_size").and_then(width) {
+                format.indent_size = Some(value);
+            }
+        }
+    }
+    for (key, value) in values {
+        // EditorConfig plugins ignore unsupported values. Project JSON is
+        // validated separately and still reports configuration errors.
+        match (key.as_str(), value.as_str()) {
+            ("indent_style", "tab") => format.indent_style = Some("tabs".into()),
+            ("indent_style", "space") => format.indent_style = Some("spaces".into()),
+            ("indent_style", "unset") => format.indent_style = None,
+            ("end_of_line", "lf" | "crlf") => format.end_of_line = Some(value),
+            ("end_of_line", "unset") => format.end_of_line = None,
+            ("insert_final_newline", "true" | "false") => {
+                format.insert_final_newline = Some(value == "true");
+            }
+            ("insert_final_newline", "unset") => format.insert_final_newline = None,
+            ("trim_trailing_whitespace", "true" | "false") => {
+                format.trim_trailing_whitespace = Some(value == "true");
+            }
+            ("trim_trailing_whitespace", "unset") => format.trim_trailing_whitespace = None,
+            ("charset", "latin1") => format.charset = Some("ISO-8859-1".into()),
+            ("charset", "utf-8" | "utf-8-bom" | "utf-16be" | "utf-16le") => {
+                format.charset = Some(value);
+            }
+            ("charset", "unset") => format.charset = None,
+            _ => (),
         }
     }
     format.validate()?;
