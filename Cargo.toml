@@ -53,6 +53,9 @@ winit = { version = "0.30.13", default-features = false, features = ["wayland-cs
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_System_Threading"] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+eframe = { version = "0.31.1", default-features = false, features = ["accesskit"] }
+
 # Process nested Markdown blocks normally; see vendor/egui_commonmark/PATCH.md.
 [patch.crates-io]
 egui_commonmark = { path = "vendor/egui_commonmark" }
