@@ -87,7 +87,8 @@ ditto -x -k hedit-X.Y.Z-macos-universal.zip .
 
 and move **hedit.app** to Applications. The app is not notarized yet, so macOS may
 block it the first time; use **Open Anyway** in Privacy & Security only for a
-download you trust. On macOS, upgrade by running the installer again. See the
+download you trust. Use **Help → Check for updates…** to upgrade a writable app,
+or run the installer again. See the
 [macOS build notes](DEVELOPER_GUIDE.md#macos-builds) for what is still being
 tested.
 
@@ -132,18 +133,24 @@ Uninstalling leaves settings and recovery data in your profile. See
 
 ## Updates
 
-On Windows, [replace the portable package](#windows-installation). On macOS,
-run the installer again or replace the app.
+On Windows, [replace the portable package](#windows-installation).
 
-On Linux, **Help → Check for updates…** looks up the latest stable release,
+On Linux and macOS, **Help → Check for updates…** looks up the latest stable release,
 links to release notes, and installs it when you click **Install update**. hedit
 never checks, installs, or restarts on its own. Keep working while it installs; the new
 version runs the next time you start hedit.
 
-Updating needs `curl`, GNU `tar`, and a writable installation made by the
-installer, a portable package, or `make install`. The download is checked against
-its SHA-256 file and the new program is test-run before anything changes; if
-installing fails, the old version is restored. For executables run directly from
+On Linux, updating needs `curl`, GNU `tar`, and a writable installation made by the
+installer, a portable package, or `make install`. On macOS, updating uses the
+universal app ZIP and needs write access to the folder containing the release
+app; move the app to Applications and reopen it if macOS is running
+it from a temporary location. The app signature and bundle version are checked,
+and the whole bundle is replaced together. Keep custom themes in your user theme
+folder rather than inside the signed app.
+
+The download is checked against its SHA-256 file and the new program is test-run
+before anything changes; if installing fails, the old version is restored.
+For executables run directly from
 a source checkout or installed in a system-owned location, rebuild from source
 or upgrade with the
 [installer](#install-from-github-releases).

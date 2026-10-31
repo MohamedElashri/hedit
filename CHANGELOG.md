@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added
+
+- In-app updates on macOS, with checksum and app signature verification, whole-app
+  replacement, and rollback on installation failure.
+
+### Fixed
+
+- Ghostty terminal builds with newer macOS SDKs that omit ARM64 from the
+  top-level system-library definition.
+- Build and lint failures with newer Rust compilers.
+
 ## [0.1.12] - 2026-10-31
 
 ### Added

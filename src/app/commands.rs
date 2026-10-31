@@ -950,7 +950,7 @@ fn highlighted(ui: &egui::Ui, label: &str, filter: &str, color: egui::Color32) -
                 font_id: font.clone(),
                 color: if matched { color } else { normal },
                 underline: if matched {
-                    egui::Stroke::new(1.0, color)
+                    egui::Stroke::new(1.0_f32, color)
                 } else {
                     egui::Stroke::NONE
                 },

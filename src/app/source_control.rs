@@ -1419,7 +1419,7 @@ impl HeditApp {
                             egui::pos2(left + 98.0, rect.top()),
                             egui::pos2(left + 98.0, rect.bottom()),
                         ],
-                        egui::Stroke::new(1.0, theme.border.color()),
+                        egui::Stroke::new(1.0_f32, theme.border.color()),
                     );
                     // Bound one pathological line; Copy diff retains the complete patch.
                     let text: String = line.text.chars().take(16_384).collect();
@@ -1730,7 +1730,7 @@ impl HeditApp {
                             egui::pos2(ui.clip_rect().left() + half, rect.top()),
                             egui::pos2(ui.clip_rect().left() + half, rect.bottom()),
                         ],
-                        egui::Stroke::new(1.0, theme.border.color()),
+                        egui::Stroke::new(1.0_f32, theme.border.color()),
                     );
                 }
             });
@@ -1918,7 +1918,7 @@ fn branch_icon(ui: &mut egui::Ui, color: egui::Color32) {
     let b = egui::pos2(a.x, r.bottom() - 4.0);
     let c = egui::pos2(r.right() - 3.0, r.top() + 6.0);
     let p = ui.painter();
-    let stroke = egui::Stroke::new(1.5, color);
+    let stroke = egui::Stroke::new(1.5_f32, color);
     p.line_segment([a, b], stroke);
     p.line_segment([b, c], stroke);
     for point in [a, b, c] {
@@ -1936,7 +1936,7 @@ fn paint_graph(
     let y = graph.top() + 8.0;
     let stroke = |lane: usize| {
         egui::Stroke::new(
-            1.5,
+            1.5_f32,
             [
                 theme.accent.color(),
                 status_color('A', theme),

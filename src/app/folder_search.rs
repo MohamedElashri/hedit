@@ -176,7 +176,7 @@ impl HeditApp {
                 // The footer never scrolls out of view, even with long results.
                 let height = (ui.available_height() - 43.0).max(80.0);
                 egui::Frame::new().fill(self.theme.background.color())
-                    .stroke(egui::Stroke::new(1.0, self.theme.border.color()))
+                    .stroke(egui::Stroke::new(1.0_f32, self.theme.border.color()))
                     .corner_radius(4).inner_margin(6.0).show(ui, |ui| {
                         ui.set_min_height((height - 12.0).max(60.0));
                         let body_height = (height - 12.0).max(60.0);
@@ -498,7 +498,7 @@ impl HeditApp {
                 ui.allocate_exact_size(egui::vec2(1.0, height), egui::Sense::hover());
             ui.painter().line_segment(
                 [divider.center_top(), divider.center_bottom()],
-                egui::Stroke::new(1.0, self.theme.border.color()),
+                egui::Stroke::new(1.0_f32, self.theme.border.color()),
             );
             ui.vertical(|ui| {
                 ui.set_width((width - left - 20.0).max(100.0));

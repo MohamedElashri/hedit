@@ -550,7 +550,7 @@ impl HeditApp {
     fn customize_theme(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         egui::Frame::new()
             .fill(self.theme.background.color())
-            .stroke(egui::Stroke::new(1.0, self.theme.border.color()))
+            .stroke(egui::Stroke::new(1.0_f32, self.theme.border.color()))
             .corner_radius(4.0)
             .inner_margin(10.0)
             .show(ui, |ui| {
@@ -896,7 +896,7 @@ fn swatches(ui: &egui::Ui, rect: egui::Rect, theme: &Theme) {
         ui.painter().rect_stroke(
             swatch,
             2.0,
-            egui::Stroke::new(1.0, theme.border.color()),
+            egui::Stroke::new(1.0_f32, theme.border.color()),
             egui::StrokeKind::Inside,
         );
         x += size + 3.0;
@@ -994,16 +994,16 @@ fn theme_card(
             let x = x0 + indent + 0.62 * code;
             painter.line_segment(
                 [egui::pos2(x, y - line * 0.2), egui::pos2(x, y + line * 0.6)],
-                egui::Stroke::new(1.5, theme.accent.color()),
+                egui::Stroke::new(1.5_f32, theme.accent.color()),
             );
         }
     }
     let stroke = if selected {
-        egui::Stroke::new(2.0, ring)
+        egui::Stroke::new(2.0_f32, ring)
     } else if response.hovered() {
-        egui::Stroke::new(1.5, ring.gamma_multiply(0.6))
+        egui::Stroke::new(1.5_f32, ring.gamma_multiply(0.6))
     } else {
-        egui::Stroke::new(1.0, theme.border.color())
+        egui::Stroke::new(1.0_f32, theme.border.color())
     };
     painter.rect_stroke(preview, 6.0, stroke, egui::StrokeKind::Inside);
     let mut job = egui::text::LayoutJob::single_section(

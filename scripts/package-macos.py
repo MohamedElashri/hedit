@@ -58,7 +58,8 @@ def package(arm64, intel, output, identity='-'):
         resources.mkdir()
         subprocess.run(['lipo', '-create', str(arm64), str(intel), '-output', str(executable)], check=True)
         executable.chmod(0o755)
-        subprocess.run(['lipo', str(executable), '-verify_arch', 'arm64', 'x86_64'], check=True)
+        for architecture in ['arm64', 'x86_64']:
+            subprocess.run(['lipo', str(executable), '-verify_arch', architecture], check=True)
         with (contents / 'Info.plist').open('wb') as stream:
             plistlib.dump({'CFBundleName': 'hedit', 'CFBundleDisplayName': 'hedit',
                            'CFBundleIdentifier': 'hedit.hedit', 'CFBundleExecutable': 'hedit',

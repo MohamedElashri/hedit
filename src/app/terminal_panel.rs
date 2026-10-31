@@ -966,7 +966,7 @@ mod surface {
                             pos + egui::vec2(0.0, cell.y - 1.0),
                             pos + egui::vec2(width, cell.y - 1.0),
                         ],
-                        egui::Stroke::new(1.0, fg),
+                        egui::Stroke::new(1.0_f32, fg),
                     );
                 }
                 if c.style.strikethrough {
@@ -975,7 +975,7 @@ mod surface {
                             pos + egui::vec2(0.0, cell.y * 0.5),
                             pos + egui::vec2(width, cell.y * 0.5),
                         ],
-                        egui::Stroke::new(1.0, fg),
+                        egui::Stroke::new(1.0_f32, fg),
                     );
                 }
             }
@@ -1011,19 +1011,19 @@ mod surface {
                         painter.galley(origin, galley, theme.text.color());
                         painter.line_segment(
                             [bounds.left_bottom(), bounds.right_bottom()],
-                            egui::Stroke::new(1.0, theme.text.color()),
+                            egui::Stroke::new(1.0_f32, theme.text.color()),
                         );
                     }
                     if rtl {
                         painter.line_segment(
                             [pos, pos + egui::vec2(0.0, cell.y)],
-                            egui::Stroke::new(1.5, theme.text.color()),
+                            egui::Stroke::new(1.5_f32, theme.text.color()),
                         );
                     } else {
                         painter.rect_stroke(
                             egui::Rect::from_min_size(pos, cell),
                             0.0,
-                            egui::Stroke::new(1.0, theme.text.color()),
+                            egui::Stroke::new(1.0_f32, theme.text.color()),
                             egui::StrokeKind::Inside,
                         );
                     }

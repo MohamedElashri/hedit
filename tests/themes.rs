@@ -309,8 +309,10 @@ fn icon_has_transparent_corners_and_brand_colors() {
     let icon = hedit::brand::icon();
     assert_eq!((icon.width, icon.height), (128, 128));
     assert_eq!(icon.rgba[3], 0);
-    assert!(icon.rgba.chunks_exact(4).any(|p| p == [100, 216, 203, 255]));
-    assert!(icon.rgba.chunks_exact(4).any(|p| p == [16, 22, 31, 255]));
+    let (pixels, remainder) = icon.rgba.as_chunks::<4>();
+    assert!(remainder.is_empty());
+    assert!(pixels.contains(&[100, 216, 203, 255]));
+    assert!(pixels.contains(&[16, 22, 31, 255]));
 }
 
 #[test]
