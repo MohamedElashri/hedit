@@ -87,7 +87,8 @@ fn help_about_palette_and_f1_open_the_same_offline_modal_without_changing_notes(
     frame(&ctx, &mut app, vec![key(Key::F1, Modifiers::NONE)]);
     assert!(app.guide.open);
     frame(&ctx, &mut app, vec![key(Key::Escape, Modifiers::NONE)]);
-    app.execute(&ctx, Command::About);
+    click_label(&ctx, &mut app, "Help");
+    click_label(&ctx, &mut app, "About hedit");
     for _ in 0..3 {
         frame(&ctx, &mut app, vec![]);
     }

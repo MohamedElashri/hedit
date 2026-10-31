@@ -177,14 +177,9 @@ impl HeditApp {
                                 Command::KeyBindings,
                             ]],
                         ),
-                        // macOS's own app menu already has About and Quit.
                         (
                             "Help",
-                            vec![if cfg!(target_os = "macos") {
-                                vec![Command::UserGuide, Command::Updates]
-                            } else {
-                                vec![Command::UserGuide, Command::Updates, Command::About]
-                            }],
+                            vec![vec![Command::UserGuide, Command::Updates, Command::About]],
                         ),
                     ] {
                         // egui does not mark the open menu's title, so keep it filled
