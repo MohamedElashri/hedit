@@ -3,6 +3,10 @@ use super::*;
 use hedit::build::{self, Event, Location, Running};
 use std::path::Path;
 
+#[cfg(all(test, unix))]
+#[path = "literal_build_path_tests.rs"]
+mod literal_path_tests;
+
 /// Output beyond this is dropped, with a note, so a runaway build cannot
 /// exhaust memory.
 const OUTPUT_LIMIT: usize = 4 * 1024 * 1024;
@@ -96,7 +100,6 @@ impl HeditApp {
         } else {
             PathBuf::from(variables.expand(&system.working_dir))
         };
-        let command = variables.expand(&system.shell_cmd);
         if let Some(previous) = self.build.running.take() {
             previous.cancel();
         }
@@ -104,7 +107,7 @@ impl HeditApp {
             let ctx = ctx.clone();
             move || ctx.request_repaint()
         };
-        match Running::start(&command, &dir, wake) {
+        match Running::start_with_variables(&system.shell_cmd, &dir, &variables, wake) {
             Ok(running) => {
                 self.build = BuildState {
                     open: true,
