@@ -52,33 +52,6 @@ fn input_id() -> egui::Id {
     egui::Id::new("integrated-terminal-input")
 }
 
-#[cfg(all(test, feature = "terminal"))]
-mod directory_tests {
-    use super::*;
-
-    #[test]
-    fn terminals_use_the_innermost_project_folder_in_any_root_order() {
-        let dir = tempfile::tempdir().unwrap();
-        let outer = dir.path().join("outer");
-        let inner = outer.join("inner");
-        std::fs::create_dir_all(&inner).unwrap();
-        let file = inner.join("file.txt");
-        std::fs::write(&file, "nested project\n").unwrap();
-        let ctx = egui::Context::default();
-        let (workspace, _) = Workspace::restore(dir.path().join("session")).unwrap();
-        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
-        for root in [&outer, &inner] {
-            app.set_folder(hedit::folder::read_directory(root.clone()).unwrap());
-        }
-        app.open(&ctx, Some(file));
-        tests::finish_app_job(&mut app, &ctx);
-        for _ in 0..2 {
-            assert_eq!(app.terminal_directory(), inner.canonicalize().unwrap());
-            app.workspace.folders.reverse();
-        }
-    }
-}
-
 impl HeditApp {
     pub(super) fn terminal_preferences(&mut self, ui: &mut egui::Ui) {
         ui.label("Run your local shell inside hedit, starting in the current project folder.");
@@ -1081,6 +1054,33 @@ mod surface {
             &mut buffer,
         ) {
             ctx.copy_text(String::from_utf8_lossy(&buffer[..len]).into_owned());
+        }
+    }
+}
+
+#[cfg(all(test, feature = "terminal"))]
+mod directory_tests {
+    use super::*;
+
+    #[test]
+    fn terminals_use_the_innermost_project_folder_in_any_root_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let outer = dir.path().join("outer");
+        let inner = outer.join("inner");
+        std::fs::create_dir_all(&inner).unwrap();
+        let file = inner.join("file.txt");
+        std::fs::write(&file, "nested project\n").unwrap();
+        let ctx = egui::Context::default();
+        let (workspace, _) = Workspace::restore(dir.path().join("session")).unwrap();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        for root in [&outer, &inner] {
+            app.set_folder(hedit::folder::read_directory(root.clone()).unwrap());
+        }
+        app.open(&ctx, Some(file));
+        tests::finish_app_job(&mut app, &ctx);
+        for _ in 0..2 {
+            assert_eq!(app.terminal_directory(), inner.canonicalize().unwrap());
+            app.workspace.folders.reverse();
         }
     }
 }

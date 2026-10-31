@@ -51,51 +51,6 @@ impl BuildState {
     }
 }
 
-#[cfg(test)]
-mod nested_root_tests {
-    use super::*;
-
-    #[test]
-    fn builds_use_the_innermost_project_folder_in_any_root_order() {
-        let dir = tempfile::tempdir().unwrap();
-        let outer = dir.path().join("outer");
-        let inner = outer.join("inner");
-        std::fs::create_dir_all(&inner).unwrap();
-        let file = inner.join("file.txt");
-        std::fs::write(&file, "nested project\n").unwrap();
-        let ctx = egui::Context::default();
-        let (workspace, _) = Workspace::restore(dir.path().join("session")).unwrap();
-        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
-        for root in [&outer, &inner] {
-            app.set_folder(hedit::folder::read_directory(root.clone()).unwrap());
-        }
-        app.open(&ctx, Some(file));
-        tests::finish_app_job(&mut app, &ctx);
-        app.settings.build_system = "show directory".into();
-        app.settings.build_systems.push(build::BuildSystem {
-            name: "show directory".into(),
-            shell_cmd: if cfg!(windows) { "cd" } else { "pwd" }.into(),
-            working_dir: "$folder".into(),
-            ..Default::default()
-        });
-        for _ in 0..2 {
-            app.build(&ctx);
-            let started = Instant::now();
-            while app.build.running() {
-                assert!(started.elapsed() < Duration::from_secs(5));
-                app.poll_build();
-                thread::sleep(Duration::from_millis(5));
-            }
-            let reported = PathBuf::from(app.build.output.lines().next().unwrap());
-            assert_eq!(
-                reported.canonicalize().unwrap(),
-                inner.canonicalize().unwrap()
-            );
-            app.workspace.folders.reverse();
-        }
-    }
-}
-
 impl HeditApp {
     /// Build the active file with the chosen (or automatic) build system,
     /// saving it first.
@@ -355,6 +310,51 @@ impl HeditApp {
         }
         if let Some(index) = jump {
             self.go_to_location(index);
+        }
+    }
+}
+
+#[cfg(test)]
+mod nested_root_tests {
+    use super::*;
+
+    #[test]
+    fn builds_use_the_innermost_project_folder_in_any_root_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let outer = dir.path().join("outer");
+        let inner = outer.join("inner");
+        std::fs::create_dir_all(&inner).unwrap();
+        let file = inner.join("file.txt");
+        std::fs::write(&file, "nested project\n").unwrap();
+        let ctx = egui::Context::default();
+        let (workspace, _) = Workspace::restore(dir.path().join("session")).unwrap();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        for root in [&outer, &inner] {
+            app.set_folder(hedit::folder::read_directory(root.clone()).unwrap());
+        }
+        app.open(&ctx, Some(file));
+        tests::finish_app_job(&mut app, &ctx);
+        app.settings.build_system = "show directory".into();
+        app.settings.build_systems.push(build::BuildSystem {
+            name: "show directory".into(),
+            shell_cmd: if cfg!(windows) { "cd" } else { "pwd" }.into(),
+            working_dir: "$folder".into(),
+            ..Default::default()
+        });
+        for _ in 0..2 {
+            app.build(&ctx);
+            let started = Instant::now();
+            while app.build.running() {
+                assert!(started.elapsed() < Duration::from_secs(5));
+                app.poll_build();
+                thread::sleep(Duration::from_millis(5));
+            }
+            let reported = PathBuf::from(app.build.output.lines().next().unwrap());
+            assert_eq!(
+                reported.canonicalize().unwrap(),
+                inner.canonicalize().unwrap()
+            );
+            app.workspace.folders.reverse();
         }
     }
 }
