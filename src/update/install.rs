@@ -2,6 +2,7 @@ use super::*;
 use std::{fs::OpenOptions, time::SystemTime};
 
 #[derive(Clone, Copy, Debug)]
+#[cfg(not(target_os = "macos"))]
 enum Kind {
     Installed,
     Portable,
@@ -32,6 +33,7 @@ pub struct Installation {
     root: PathBuf,
     executable: PathBuf,
     identity: Identity,
+    #[cfg(not(target_os = "macos"))]
     kind: Kind,
 }
 impl Installation {
@@ -39,8 +41,8 @@ impl Installation {
         Self::for_executable(&std::env::current_exe().map_err(error)?)
     }
     pub fn for_executable(executable: &Path) -> Result<Self, String> {
-        if std::env::consts::OS != "linux" {
-            return Err("In-app installation currently supports Linux only.".into());
+        if !matches!(std::env::consts::OS, "linux" | "macos") {
+            return Err("In-app installation currently supports Linux and macOS.".into());
         }
         let executable = fs::canonicalize(executable).map_err(error)?;
         if executable.file_name().and_then(|s| s.to_str()) != Some("hedit") {
@@ -48,30 +50,37 @@ impl Installation {
                 "Unrecognized executable name. Use the release installer to upgrade.".into(),
             );
         }
-        let parent = executable
-            .parent()
-            .ok_or("Cannot locate the installation directory.")?;
-        let (root, kind) = if parent.file_name().and_then(|s| s.to_str()) == Some("bin") {
-            let prefix = parent.parent().ok_or("Cannot locate the install prefix.")?;
-            if !prefix.join("share/doc/hedit/LICENSE").is_file()
-                || !prefix.join("share/applications/hedit.desktop").is_file()
+        #[cfg(target_os = "macos")]
+        let root = super::macos::installation_root(&executable)?;
+        #[cfg(not(target_os = "macos"))]
+        let (root, kind) = {
+            let parent = executable
+                .parent()
+                .ok_or("Cannot locate the installation directory.")?;
+            let (root, kind) = if parent.file_name().and_then(|s| s.to_str()) == Some("bin") {
+                let prefix = parent.parent().ok_or("Cannot locate the install prefix.")?;
+                if !prefix.join("share/doc/hedit/LICENSE").is_file()
+                    || !prefix.join("share/applications/hedit.desktop").is_file()
+                {
+                    return Err("This installation is not recognized. Use the release installer or your package manager.".into());
+                }
+                (prefix.to_path_buf(), Kind::Installed)
+            } else if parent.join("install.sh").is_file()
+                && parent.join("README.md").is_file()
+                && parent.join("themes").is_dir()
+                && parent.join("assets").is_dir()
             {
-                return Err("This installation is not recognized. Use the release installer or your package manager.".into());
-            }
-            (prefix.to_path_buf(), Kind::Installed)
-        } else if parent.join("install.sh").is_file()
-            && parent.join("README.md").is_file()
-            && parent.join("themes").is_dir()
-            && parent.join("assets").is_dir()
-        {
-            (parent.to_path_buf(), Kind::Portable)
-        } else {
-            return Err("Source builds and unrecognized layouts cannot update in place. Install a release package first, or rebuild from source.".into());
+                (parent.to_path_buf(), Kind::Portable)
+            } else {
+                return Err("Source builds and unrecognized layouts cannot update in place. Install a release package first, or rebuild from source.".into());
+            };
+            (root, kind)
         };
         let result = Self {
             identity: identity(&executable)?,
             executable,
             root,
+            #[cfg(not(target_os = "macos"))]
             kind,
         };
         // All preparation uses this filesystem, so permissions fail before downloads.
@@ -109,6 +118,7 @@ impl Installation {
     pub(super) fn replace(&self, package: &Path) -> Result<(), String> {
         self.replace_with_hook(package, |_| Ok(()))
     }
+    #[cfg(not(target_os = "macos"))]
     pub(super) fn replace_with_hook(
         &self,
         package: &Path,
@@ -251,7 +261,60 @@ impl Installation {
         // inode and stays open; session storage is never part of this transaction.
         Ok(())
     }
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn replace_with_hook(
+        &self,
+        package: &Path,
+        mut before_commit: impl FnMut(usize) -> Result<(), String>,
+    ) -> Result<(), String> {
+        self.unchanged()?;
+        let bundle = self
+            .executable
+            .ancestors()
+            .nth(3)
+            .ok_or("Missing app bundle.")?;
+        let relative = bundle.strip_prefix(&self.root).map_err(error)?;
+        ensure_safe_target(&self.root, relative)?;
+        let staging = tempfile::Builder::new()
+            .prefix(".hedit-update-")
+            .tempdir_in(&self.root)
+            .map_err(error)?;
+        let staged = staging.path().join("hedit.app");
+        // Copy the complete signed bundle without merging old resources into it.
+        copy_tree(package, &staged)?;
+        super::macos::verify_signature(&staged)?;
+        before_commit(0)?;
+        self.unchanged()?;
+        let exchange = || {
+            rustix::fs::renameat_with(
+                rustix::fs::CWD,
+                &staged,
+                rustix::fs::CWD,
+                bundle,
+                rustix::fs::RenameFlags::EXCHANGE,
+            )
+            .map_err(error)
+        };
+        // RENAME_SWAP exchanges entire bundles atomically on the same filesystem.
+        // The running executable keeps its inode; the new bundle is for next launch.
+        exchange()?;
+        if let Err(cause) = before_commit(1).and_then(|()| sync_parent(bundle)) {
+            if let Err(rollback) = exchange().and_then(|()| sync_parent(bundle)) {
+                let kept = staging.keep();
+                return Err(format!(
+                    "Update failed: {cause}. Recovery files were kept at {}. Rollback error: {rollback}",
+                    kept.display()
+                ));
+            }
+            return Err(format!(
+                "Update failed; previous installation restored: {cause}"
+            ));
+        }
+        Ok(())
+    }
 }
+#[cfg(not(target_os = "macos"))]
 struct Target {
     path: PathBuf,
     staged: PathBuf,

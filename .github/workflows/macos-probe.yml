@@ -50,7 +50,8 @@ jobs:
           work=$(mktemp -d)
           ditto -x -k dist/hedit-*-macos-universal.zip "$work"
           binary="$work/hedit.app/Contents/MacOS/hedit"
-          lipo "$binary" -verify_arch arm64 x86_64
+          lipo "$binary" -verify_arch arm64
+          lipo "$binary" -verify_arch x86_64
           codesign --verify --deep --strict "$work/hedit.app"
           expected=$(python3 -c 'import tomllib; print("hedit " + tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
           test "$("$binary" --version)" = "$expected"

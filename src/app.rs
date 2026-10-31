@@ -2263,7 +2263,7 @@ impl HeditApp {
                                             (output.galley_pos.y + row.rect.top())
                                                 ..=(output.galley_pos.y + row.rect.bottom()),
                                             egui::Stroke::new(
-                                                1.0,
+                                                1.0_f32,
                                                 self.theme.muted.color().gamma_multiply(0.22),
                                             ),
                                         );
@@ -2288,7 +2288,7 @@ impl HeditApp {
                                 &find_matches,
                                 self.theme.warning.color().gamma_multiply(0.22),
                                 egui::Stroke::new(
-                                    1.0,
+                                    1.0_f32,
                                     self.theme.warning.color().gamma_multiply(0.7),
                                 ),
                             ),
@@ -2296,7 +2296,7 @@ impl HeditApp {
                                 &word_matches,
                                 egui::Color32::TRANSPARENT,
                                 egui::Stroke::new(
-                                    1.0,
+                                    1.0_f32,
                                     self.theme.muted.color().gamma_multiply(0.8),
                                 ),
                             ),
@@ -2334,7 +2334,7 @@ impl HeditApp {
                                     ui.painter().rect_stroke(
                                         glyph.translate(output.galley_pos.to_vec2()),
                                         2.0,
-                                        egui::Stroke::new(1.0, self.theme.accent.color()),
+                                        egui::Stroke::new(1.0_f32, self.theme.accent.color()),
                                         egui::StrokeKind::Inside,
                                     );
                                 }
@@ -2374,7 +2374,7 @@ impl HeditApp {
                                 x,
                                 ui.clip_rect().y_range(),
                                 egui::Stroke::new(
-                                    1.0,
+                                    1.0_f32,
                                     self.theme.muted.color().gamma_multiply(0.25),
                                 ),
                             );
@@ -2703,7 +2703,7 @@ impl HeditApp {
                                 .ccursor
                                 .index;
                             let painter = ui.painter();
-                            let stroke = egui::Stroke::new(1.2, self.theme.error.color());
+                            let stroke = egui::Stroke::new(1.2_f32, self.theme.error.color());
                             for range in &misspelled {
                                 let (a, b) = (
                                     projection.display(range.start),
@@ -2857,7 +2857,7 @@ impl HeditApp {
                 ui.painter().hline(
                     (map.left() + leading as f32 * 0.45)..=(map.left() + width as f32 * 0.45),
                     y,
-                    egui::Stroke::new(0.7, self.theme.muted.color().gamma_multiply(0.5)),
+                    egui::Stroke::new(0.7_f32, self.theme.muted.color().gamma_multiply(0.5)),
                 );
             }
             let content = scroll_output.content_size.y.max(map.height());

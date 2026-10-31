@@ -375,7 +375,9 @@ mod tests {
         Release::from_json(&serde_json::json!({
             "tag_name":"v9.4.0", "body":"Release notes.\n".repeat(200), "draft":false, "prerelease":false,
             "assets":[{"id":1,"name":format!("hedit-9.4.0-linux-{}.tar.gz",std::env::consts::ARCH),"size":200},
-                {"id":2,"name":format!("hedit-9.4.0-linux-{}.tar.gz.sha256",std::env::consts::ARCH),"size":100}]
+                {"id":2,"name":format!("hedit-9.4.0-linux-{}.tar.gz.sha256",std::env::consts::ARCH),"size":100},
+                {"id":3,"name":"hedit-9.4.0-macos-universal.zip","size":200},
+                {"id":4,"name":"hedit-9.4.0-macos-universal.zip.sha256","size":100}]
         }).to_string(), std::env::consts::ARCH).unwrap()
     }
     #[test]

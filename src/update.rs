@@ -1,6 +1,7 @@
-//! Manual GitHub release checks and verified Linux updates. Nothing runs on startup.
+//! Manual GitHub release checks and verified Linux/macOS updates. Nothing runs on startup.
 mod install;
-// Updates install Linux packages; macOS and Windows apps are replaced by hand.
+#[cfg(target_os = "macos")]
+mod macos;
 #[cfg(all(test, target_os = "linux"))]
 mod tests;
 
@@ -75,9 +76,13 @@ impl Release {
             return Err("Only published stable releases can be installed here.".into());
         }
         if !matches!(arch, "x86_64" | "aarch64") {
-            return Err("In-app updates support Linux x86-64 and ARM64.".into());
+            return Err("In-app updates support x86-64 and ARM64.".into());
         }
-        let package = format!("hedit-{version}-linux-{arch}");
+        let (package, extension) = if cfg!(target_os = "macos") {
+            (format!("hedit-{version}-macos-universal"), "zip")
+        } else {
+            (format!("hedit-{version}-linux-{arch}"), "tar.gz")
+        };
         let find = |name: &str, limit| -> Result<Asset, String> {
             let matches: Vec<_> = api
                 .assets
@@ -93,8 +98,8 @@ impl Release {
             }
             Ok(asset.clone())
         };
-        let archive = find(&format!("{package}.tar.gz"), ARCHIVE_LIMIT)?;
-        let checksum = find(&format!("{package}.tar.gz.sha256"), CHECKSUM_LIMIT)?;
+        let archive = find(&format!("{package}.{extension}"), ARCHIVE_LIMIT)?;
+        let checksum = find(&format!("{package}.{extension}.sha256"), CHECKSUM_LIMIT)?;
         Ok(Self {
             version,
             tag: api.tag_name,
@@ -109,12 +114,14 @@ impl Release {
 #[derive(Clone)]
 pub struct Client {
     curl: PathBuf,
+    #[cfg(not(target_os = "macos"))]
     tar: PathBuf,
 }
 impl Default for Client {
     fn default() -> Self {
         Self {
             curl: "curl".into(),
+            #[cfg(not(target_os = "macos"))]
             tar: "tar".into(),
         }
     }
@@ -150,8 +157,8 @@ impl Client {
         command
     }
     pub fn check(&self) -> Result<Release, String> {
-        if std::env::consts::OS != "linux" {
-            return Err("In-app updates currently support Linux only.".into());
+        if !matches!(std::env::consts::OS, "linux" | "macos") {
+            return Err("In-app updates currently support Linux and macOS.".into());
         }
         let output = tempfile::tempfile().map_err(error)?;
         let endpoint = format!("repos/{REPOSITORY}/releases/latest");
@@ -208,9 +215,24 @@ impl Client {
         progress("Validating and unpacking the release…");
         let unpacked = work.path().join("unpacked");
         fs::create_dir(&unpacked).map_err(error)?;
-        unpack(&self.tar, &archive, &unpacked, &release.package)?;
-        let package = unpacked.join(&release.package);
-        install::verify_binary(&package.join("hedit"), &release.version.to_string())?;
+        #[cfg(not(target_os = "macos"))]
+        let package = {
+            unpack(&self.tar, &archive, &unpacked, &release.package)?;
+            let package = unpacked.join(&release.package);
+            install::verify_binary(&package.join("hedit"), &release.version.to_string())?;
+            package
+        };
+        #[cfg(target_os = "macos")]
+        let package = {
+            macos::unpack(&archive, &unpacked)?;
+            let package = unpacked.join("hedit.app");
+            macos::verify_bundle(&package, &release.version.to_string())?;
+            install::verify_binary(
+                &package.join("Contents/MacOS/hedit"),
+                &release.version.to_string(),
+            )?;
+            package
+        };
         progress("Installing update… Keep hedit open until this finishes.");
         installation.replace(&package)
     }
@@ -313,6 +335,7 @@ pub fn verify_checksum(archive: &Path, checksum: &str, name: &str) -> Result<(),
 
 // GNU tar performs parsing/extraction. Preflight the fully resolved listing and
 // reject links, special files, duplicates, unsafe names, and oversized archives.
+#[cfg(not(target_os = "macos"))]
 fn unpack(tar: &Path, archive: &Path, destination: &Path, package: &str) -> Result<(), String> {
     let listing = tempfile::tempfile().map_err(error)?;
     let mut command = Command::new(tar);
@@ -355,6 +378,7 @@ fn unpack(tar: &Path, archive: &Path, destination: &Path, package: &str) -> Resu
         .env_remove("TAR_OPTIONS");
     run_tool(&mut command, &output, 64 * 1024, Duration::from_secs(120))
 }
+#[cfg(not(target_os = "macos"))]
 fn validate_listing(listing: &str, package: &str) -> Result<(), String> {
     use std::collections::HashSet;
     let mut paths = HashSet::new();

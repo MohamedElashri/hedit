@@ -94,6 +94,8 @@ fn main() {
     println!("cargo:rerun-if-env-changed=ZIG");
     println!("cargo:rerun-if-env-changed=PYTHON");
     println!("cargo:rerun-if-env-changed=PATH");
+    println!("cargo:rerun-if-env-changed=SDKROOT");
+    println!("cargo:rerun-if-env-changed=DEVELOPER_DIR");
     println!("cargo:rerun-if-env-changed=GITHUB_ACTIONS");
     println!("cargo:rerun-if-env-changed=RUNNER_TEMP");
 
@@ -149,7 +151,21 @@ fn build_vendored(link_mode: LinkMode, target: &str) {
         "LIBGHOSTTY_VT_SYS_CPU must not be empty when set"
     );
 
-    let mut build = Command::new(zig);
+    let mut build = if host.ends_with("-apple-darwin") {
+        let script = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../scripts/run-zig.py");
+        println!("cargo:rerun-if-changed={}", script.display());
+        let mut command = Command::new(env::var_os("PYTHON").unwrap_or_else(|| "python3".into()));
+        command
+            .arg(script)
+            .arg("--zig")
+            .arg(zig)
+            .arg("--sdk-cache")
+            .arg(out_dir.join("macos-sdk"))
+            .arg("--");
+        command
+    } else {
+        Command::new(zig)
+    };
     build
         .arg("build")
         .arg("-Demit-lib-vt=true")

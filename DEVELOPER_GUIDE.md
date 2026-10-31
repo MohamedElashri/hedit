@@ -29,6 +29,12 @@ an isolated copy under `target/ghostty-toolchain`; system packages stay unchange
 CI prepares the same toolchain with `python scripts/setup-zig.py`.
 On GitHub Actions the compiler lives under `RUNNER_TEMP`, outside Cargo's target
 cache, so restoring that cache cannot prune the Zig executable.
+On macOS, the build also handles SDKs that expose the system library through
+ARM64e entries that Zig 0.15.2 cannot resolve. `scripts/run-zig.py` creates an SDK
+view in Cargo's build directory with Zig's bundled system-library definitions;
+headers and frameworks still come from the selected Apple SDK. This applies only
+to the Zig subprocess and leaves the installed SDK unchanged. The same view
+supplies fallback math macros when the SDK expects a newer Clang header protocol.
 Set `ZIG` to an existing compiler executable of the required version for offline
 builds, or `PYTHON` to select a Python interpreter for automatic setup. An
 explicit `ZIG` with the wrong version fails with an actionable error. Cargo builds
@@ -114,8 +120,8 @@ and the icon, copies themes and guides, signs, verifies, and zips the app. The
 signature is ad hoc; pass `--identity 'Developer ID Application: …'` to sign
 with a Developer ID. Notarization is not automated.
 
-On macOS, run `make test-macos` instead of `make ci`: the updater tests expect
-Linux layouts and GNU tar. Updates are Linux-only; Mac users replace the app.
+On macOS, run `make test-macos` instead of `make ci`: Linux packaging checks need
+GNU tools. Native updater tests exercise signed app ZIPs, bundle swaps, and rollback.
 Local CUDA tools are hidden on macOS. Before calling Mac support stable, check
 Open/Save As, the clipboard, Retina rendering, Cmd+Q with recovery, Finder
 document events, external changes, and saves on APFS on a clean Mac.
@@ -148,7 +154,7 @@ Build systems use `cmd.exe /D /S /C` on Windows, with Cancel stopping the proces
 tree through `taskkill`; Unix platforms use `sh`. Write custom `shell_cmd` values
 using the platform's shell syntax. The Python build uses `python` on Windows.
 CUDA source editing works, while the local CUDA tool panel remains Linux-only.
-Windows upgrades replace the portable folder; in-app updates remain Linux-only.
+Windows upgrades replace the portable folder; in-app updates support Linux and macOS.
 
 Before calling Windows support stable, validate file dialogs, clipboard,
 high-DPI rendering, window close/recovery, non-ASCII paths, file replacement on
@@ -213,6 +219,7 @@ For terminal changes, run the focused checks as well as the usual project checks
 cargo test --locked terminal
 cargo test --locked --no-default-features
 python3 scripts/test-zig-setup.py
+python3 scripts/test-run-zig.py
 
 # Render onboarding, tabs, settings, narrow-window, and light-theme previews.
 cargo test --locked --bin hedit export_terminal_previews -- --ignored
@@ -351,7 +358,13 @@ bug fixed during development of a feature that has not shipped is not a fix.
 The in-app updater (`Help → Check for updates…`) never downloads or installs
 without the user asking. It checks the SHA-256 file from the same release, runs
 the new binary's `--version` before installing, rejects unsafe archive entries
-before extracting, and swaps the binary in last, rolling back on failure.
+before extracting, and swaps the Linux binary in last, rolling back on failure.
+On macOS it selects the universal ZIP, validates bundle metadata and the code
+signature, and atomically exchanges the complete app bundle with `RENAME_SWAP`.
+Staging happens beside the app; read-only and translocated apps use the manual
+download fallback. The current process stays open until the user quits. macOS
+release signatures are currently ad hoc, so this checks bundle integrity rather
+than a Developer ID identity or notarization.
 `install.sh` is served from `main`, not from a release, so keep it compatible with
 the asset names of published releases.
 

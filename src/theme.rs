@@ -542,8 +542,8 @@ impl Theme {
         v.warn_fg_color = self.warning.color();
         v.error_fg_color = self.error.color();
         v.selection.bg_fill = self.selection.color();
-        v.selection.stroke = Stroke::new(1.0, self.selection_text.color());
-        v.window_stroke = Stroke::new(1.0, self.border.color());
+        v.selection.stroke = Stroke::new(1.0_f32, self.selection_text.color());
+        v.window_stroke = Stroke::new(1.0_f32, self.border.color());
         v.window_corner_radius = egui::CornerRadius::same(5);
         v.menu_corner_radius = egui::CornerRadius::same(3);
         v.window_shadow = egui::epaint::Shadow {
@@ -560,8 +560,8 @@ impl Theme {
         };
         v.widgets.noninteractive.bg_fill = self.surface.color();
         v.widgets.noninteractive.weak_bg_fill = self.surface.color();
-        v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, self.border.color());
-        v.widgets.noninteractive.fg_stroke = Stroke::new(1.0, self.muted.color());
+        v.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, self.border.color());
+        v.widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, self.muted.color());
         for w in [
             &mut v.widgets.inactive,
             &mut v.widgets.hovered,
@@ -570,17 +570,17 @@ impl Theme {
         ] {
             w.bg_fill = self.elevated.color();
             w.weak_bg_fill = self.surface.color();
-            w.bg_stroke = Stroke::new(1.0, self.border.color());
-            w.fg_stroke = Stroke::new(1.0, self.text.color());
+            w.bg_stroke = Stroke::new(1.0_f32, self.border.color());
+            w.fg_stroke = Stroke::new(1.0_f32, self.text.color());
             w.corner_radius = egui::CornerRadius::same(2);
         }
-        v.widgets.hovered.bg_stroke = Stroke::new(1.0, self.accent.color());
+        v.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, self.accent.color());
         // Menus drop button strokes, so hover and open states need a visible fill.
         v.widgets.hovered.weak_bg_fill = self.hover().color();
         v.widgets.open.weak_bg_fill = self.hover().color();
         v.widgets.active.bg_fill = self.selection.color();
-        v.widgets.active.fg_stroke = Stroke::new(1.0, self.selection_text.color());
-        v.text_cursor.stroke = Stroke::new(1.5, self.accent.color());
+        v.widgets.active.fg_stroke = Stroke::new(1.0_f32, self.selection_text.color());
+        v.text_cursor.stroke = Stroke::new(1.5_f32, self.accent.color());
         style.visuals = v;
         style
             .text_styles

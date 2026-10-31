@@ -67,7 +67,7 @@ fn quote(ui: &mut Ui, contents: impl FnOnce(&mut Ui)) {
         mark,
         egui::Shape::line_segment(
             [rect.left_top(), rect.left_bottom()],
-            egui::Stroke::new(2.0, color),
+            egui::Stroke::new(2.0_f32, color),
         ),
     );
 }

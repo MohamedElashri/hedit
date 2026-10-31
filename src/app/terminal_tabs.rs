@@ -32,7 +32,7 @@ pub(super) fn bar(ui: &mut egui::Ui, state: &mut TerminalState, theme: &Theme) -
     ui.painter().hline(
         rect.x_range(),
         rect.bottom() - 0.5,
-        egui::Stroke::new(1.0, theme.border.color()),
+        egui::Stroke::new(1.0_f32, theme.border.color()),
     );
     let controls_width = CONTROL * 3.0 + 8.0;
     let tabs_rect = egui::Rect::from_min_max(
@@ -253,14 +253,14 @@ fn tab_button(
         ui.painter().vline(
             rect.right(),
             rect.top() + 9.0..=rect.bottom() - 8.0,
-            egui::Stroke::new(1.0, theme.border.color().gamma_multiply(0.7)),
+            egui::Stroke::new(1.0_f32, theme.border.color().gamma_multiply(0.7)),
         );
     }
     if response.has_focus() {
         ui.painter().rect_stroke(
             background.shrink(1.0),
             rounding,
-            egui::Stroke::new(1.0, theme.accent.color()),
+            egui::Stroke::new(1.0_f32, theme.accent.color()),
             egui::StrokeKind::Inside,
         );
     }
@@ -277,7 +277,7 @@ fn tab_button(
                 egui::vec2(5.0, 5.0),
             ),
             1.0,
-            egui::Stroke::new(1.0, theme.muted.color()),
+            egui::Stroke::new(1.0_f32, theme.muted.color()),
             egui::StrokeKind::Inside,
         );
     }
@@ -320,7 +320,7 @@ fn tab_button(
                 .rect_filled(close_rect, 3.0, theme.hover().color());
         }
         let stroke = egui::Stroke::new(
-            1.3,
+            1.3_f32,
             if close.hovered() {
                 theme.text.color()
             } else {
@@ -415,7 +415,7 @@ fn icon_button(
     } else {
         theme.muted.color()
     };
-    let stroke = egui::Stroke::new(1.4, color);
+    let stroke = egui::Stroke::new(1.4_f32, color);
     let center = rect.center();
     match icon {
         Icon::Plus => {

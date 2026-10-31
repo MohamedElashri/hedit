@@ -31,7 +31,7 @@ pub(super) fn show(ui: &mut egui::Ui, theme: &Theme, row: Row<'_>) -> egui::Resp
             let left = rect.left() + row.depth.min(32) as f32 * 12.0;
             let cy = rect.center().y;
             let color = theme.muted.color();
-            let stroke = egui::Stroke::new(1.2, color);
+            let stroke = egui::Stroke::new(1.2_f32, color);
             if row.directory {
                 let chevron = if row.expanded {
                     vec![
@@ -48,7 +48,7 @@ pub(super) fn show(ui: &mut egui::Ui, theme: &Theme, row: Row<'_>) -> egui::Resp
                 };
                 ui.painter().add(egui::Shape::line(
                     chevron,
-                    egui::Stroke::new(1.2, theme.muted.color()),
+                    egui::Stroke::new(1.2_f32, theme.muted.color()),
                 ));
                 let x = left + 14.0;
                 let y = cy - 6.0;

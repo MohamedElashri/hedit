@@ -126,7 +126,7 @@ pub(super) fn code_block(ui: &mut egui::Ui, theme: &Theme, source: &str, languag
         .max(80.0);
     egui::Frame::new()
         .fill(theme.background.color())
-        .stroke(egui::Stroke::new(1.0, theme.border.color()))
+        .stroke(egui::Stroke::new(1.0_f32, theme.border.color()))
         .corner_radius(4)
         .inner_margin(12.0)
         .show(ui, |ui| {

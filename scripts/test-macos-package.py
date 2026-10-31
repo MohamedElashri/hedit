@@ -69,7 +69,9 @@ class MacPackage(unittest.TestCase):
             self.assertEqual(archive.with_name(archive.name + '.sha256').read_text(), f'{digest}  {archive.name}\n')
             self.assertIn(['lipo', str(arm), '-verify_arch', 'arm64'], calls)
             self.assertIn(['lipo', str(intel), '-verify_arch', 'x86_64'], calls)
-            self.assertTrue(any(call[:1] == ['lipo'] and call[2:] == ['-verify_arch', 'arm64', 'x86_64'] for call in calls))
+            for architecture in ['arm64', 'x86_64']:
+                self.assertTrue(any(call[:1] == ['lipo'] and '/hedit.app/' in call[1] and
+                                    call[2:] == ['-verify_arch', architecture] for call in calls))
             self.assertTrue(any(call[:4] == ['codesign', '--force', '--sign', '-'] for call in calls))
             self.assertTrue(any(call[:4] == ['codesign', '--verify', '--deep', '--strict'] for call in calls))
 

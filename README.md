@@ -52,7 +52,7 @@ and run **hedit.exe**. Requires Windows 10 or newer and an OpenGL-capable driver
 
 CI builds and tests macOS and Windows packages; hands-on GUI validation is pending. See the
 [installation guide](USER_GUIDE.md#installation) for platform requirements,
-signing notes, manual downloads, and upgrades. In-app updates support Linux only.
+signing notes, manual downloads, and upgrades. In-app updates support Linux and macOS.
 
 ## Quick start
 

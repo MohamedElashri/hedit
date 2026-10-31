@@ -16,7 +16,7 @@ pub(super) fn workspace_switcher(
     ui.painter().rect_stroke(
         rect,
         5.0,
-        egui::Stroke::new(1.0, theme.border.color()),
+        egui::Stroke::new(1.0_f32, theme.border.color()),
         egui::StrokeKind::Inside,
     );
     let split = rect.left() + rect.width() * 0.37;
@@ -71,7 +71,7 @@ pub(super) fn workspace_switcher(
         let left = part.center().x - width / 2.0;
         if icon {
             let origin = egui::pos2(left, part.center().y - 8.0);
-            let stroke = egui::Stroke::new(1.4, color);
+            let stroke = egui::Stroke::new(1.4_f32, color);
             if source {
                 let a = origin + egui::vec2(3.0, 2.0);
                 let b = origin + egui::vec2(3.0, 14.0);
@@ -119,7 +119,7 @@ pub(super) fn workspace_switcher(
             ui.painter().rect_stroke(
                 part.shrink(2.0),
                 3.0,
-                egui::Stroke::new(1.0, theme.accent.color()),
+                egui::Stroke::new(1.0_f32, theme.accent.color()),
                 egui::StrokeKind::Inside,
             );
         }
@@ -215,7 +215,7 @@ fn close_control(ui: &mut egui::Ui, hint: &str, dirty: bool) -> egui::Response {
         if dirty && !response.hovered() && !response.has_focus() {
             ui.painter().circle_filled(rect.center(), 3.0, color);
         } else {
-            let stroke = egui::Stroke::new(1.7, color);
+            let stroke = egui::Stroke::new(1.7_f32, color);
             ui.painter()
                 .line_segment([cross.left_top(), cross.right_bottom()], stroke);
             ui.painter()
