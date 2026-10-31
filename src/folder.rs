@@ -455,9 +455,38 @@ pub fn rename_path(from: String, name: String) -> Result<String, String> {
         return path_string(&from);
     }
     let result = path_string(&target)?;
+    #[cfg(target_os = "macos")]
+    if same_entry_alias(&from, &target)? {
+        rename_no_replace(&from, &target).map_err(|e| e.to_string())?;
+        return Ok(result);
+    }
     require_absent(&target)?;
     rename_no_replace(&from, &target).map_err(|e| e.to_string())?;
     Ok(result)
+}
+
+#[cfg(target_os = "macos")]
+fn same_entry_alias(from: &Path, target: &Path) -> Result<bool, String> {
+    use std::os::unix::fs::MetadataExt;
+    let target_meta = match fs::symlink_metadata(target) {
+        Ok(meta) => meta,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.to_string()),
+    };
+    let source_meta = fs::symlink_metadata(from).map_err(|e| e.to_string())?;
+    if (source_meta.dev(), source_meta.ino()) != (target_meta.dev(), target_meta.ino()) {
+        return Ok(false);
+    }
+    // Equal inodes can also be distinct hard links. Only accept a spelling
+    // that the filesystem resolves without having a separate directory entry.
+    for entry in
+        fs::read_dir(target.parent().ok_or("Missing parent folder.")?).map_err(|e| e.to_string())?
+    {
+        if entry.map_err(|e| e.to_string())?.file_name() == target.file_name().unwrap_or_default() {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]

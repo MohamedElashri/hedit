@@ -297,3 +297,40 @@ fn fuzzy_matching_prefers_word_starts_and_reports_positions() {
     let (scattered, _) = fuzzy_match("Close tabs to the right", "sa").unwrap();
     assert!(exact > scattered);
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn case_only_rename_preserves_entries_and_never_replaces_distinct_names() {
+    let root = tempfile::tempdir().unwrap();
+    let original = root.path().join("Notes.txt");
+    fs::write(&original, "keep bytes").unwrap();
+    let lower = root.path().join("notes.txt");
+    let insensitive = lower.exists();
+    let renamed =
+        folder::rename_path(original.to_string_lossy().into_owned(), "notes.txt".into()).unwrap();
+    assert_eq!(fs::read_to_string(&renamed).unwrap(), "keep bytes");
+    assert!(fs::read_dir(root.path())
+        .unwrap()
+        .any(|e| e.unwrap().file_name() == "notes.txt"));
+    if !insensitive {
+        assert!(!original.exists());
+    }
+    let distinct = root.path().join("other.txt");
+    fs::hard_link(&lower, &distinct).unwrap();
+    assert!(folder::rename_path(lower.to_string_lossy().into_owned(), "other.txt".into()).is_err());
+    assert_eq!(fs::read_to_string(&distinct).unwrap(), "keep bytes");
+    let directory = root.path().join("Sources");
+    fs::create_dir(&directory).unwrap();
+    fs::write(directory.join("code.rs"), "keep directory").unwrap();
+    let renamed =
+        folder::rename_path(directory.to_string_lossy().into_owned(), "sources".into()).unwrap();
+    assert_eq!(
+        fs::read_to_string(Path::new(&renamed).join("code.rs")).unwrap(),
+        "keep directory"
+    );
+    let link = root.path().join("Alias");
+    std::os::unix::fs::symlink(&distinct, &link).unwrap();
+    let renamed = folder::rename_path(link.to_string_lossy().into_owned(), "alias".into()).unwrap();
+    assert!(fs::symlink_metadata(renamed).unwrap().is_symlink());
+    assert_eq!(fs::read_to_string(distinct).unwrap(), "keep bytes");
+}
