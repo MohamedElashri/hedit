@@ -32,7 +32,7 @@ struct Change {
 /// Apply changes from left to right; overlapping ones after the first are
 /// dropped. Selections that no change replaced move with the text.
 fn apply(chars: &[char], mut changes: Vec<Change>, selections: &[Selection]) -> Batch {
-    let originals = command_selections(&chars, selections);
+    let originals = command_selections(chars, selections);
     changes.sort_by_key(|c| (c.start, c.end));
     let mut text = String::with_capacity(chars.len());
     let mut count = 0;
