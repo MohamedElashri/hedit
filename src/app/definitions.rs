@@ -8,6 +8,46 @@ use std::path::Path;
 /// The most places listed.
 const LIMIT: usize = 2_000;
 
+#[cfg(test)]
+mod encoding_tests {
+    use super::*;
+
+    #[test]
+    fn definition_and_reference_lookup_decode_utf16_project_files() {
+        for encoding in ["UTF-16LE", "UTF-16BE"] {
+            let dir = tempfile::tempdir().unwrap();
+            let root = dir.path().join("project");
+            std::fs::create_dir(&root).unwrap();
+            std::fs::write(
+                root.join("defs.c"),
+                hedit::text_encoding::encode("int helper() { return 1; }\n", encoding, true)
+                    .unwrap(),
+            )
+            .unwrap();
+            std::fs::write(root.join("binary.bin"), b"helper\0helper").unwrap();
+            let (mut workspace, _) = Workspace::restore(dir.path().join("session")).unwrap();
+            workspace.open[0].page.text = "helper();\n".into();
+            workspace.edit(0, "").unwrap();
+            let ctx = egui::Context::default();
+            let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+            app.set_folder(hedit::folder::read_directory(root).unwrap());
+            app.look_up(&ctx, true);
+            tests::finish_app_job(&mut app, &ctx);
+            let list = app.pick_list.as_ref().expect("references are listed");
+            assert!(list.title.contains("(2)"), "{}: {}", encoding, list.title);
+            app.pick_list = None;
+            app.palette = false;
+            app.look_up(&ctx, false);
+            for _ in 0..4 {
+                tests::finish_app_job(&mut app, &ctx);
+                tests::frame(&ctx, &mut app, vec![]);
+            }
+            assert_eq!(app.active().view.name, "defs.c", "{encoding}");
+            assert_eq!(app.active().page.info.encoding, encoding);
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct Location {
     /// The open file it is in, for files without a path.
@@ -127,10 +167,8 @@ impl HeditApp {
                     let Ok(bytes) = std::fs::read(&file) else {
                         continue;
                     };
-                    // Skip binary files.
-                    if bytes.iter().take(8192).any(|&b| b == 0) {
-                        continue;
-                    }
+                    // The decoder rejects binary NULs after decoding; UTF-16
+                    // naturally contains zero bytes in otherwise valid text.
                     let Ok((text, _)) =
                         hedit::text_encoding::decode(&bytes, hedit::text_encoding::detect(&bytes))
                     else {
