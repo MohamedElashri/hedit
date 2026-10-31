@@ -149,13 +149,16 @@ pub struct QuickOpen {
 /// c of "Toggle line comment" rather than letters inside "Toggle".
 pub fn fuzzy_match(text: &str, query: &str) -> Option<(i64, Vec<usize>)> {
     let chars: Vec<char> = text.chars().collect();
-    let lower: Vec<char> = chars
+    // One source character can lowercase to several characters (İ → i + dot).
+    // Keep the original index for highlighting every matched character.
+    let lower: Vec<(char, usize)> = chars
         .iter()
-        .map(|c| c.to_lowercase().next().unwrap_or(*c))
+        .enumerate()
+        .flat_map(|(index, c)| c.to_lowercase().map(move |lower| (lower, index)))
         .collect();
     let wanted: Vec<char> = query
-        .to_lowercase()
         .chars()
+        .flat_map(char::to_lowercase)
         .filter(|c| !c.is_whitespace())
         .collect();
     let boundary = |i: usize| {
@@ -166,20 +169,23 @@ pub fn fuzzy_match(text: &str, query: &str) -> Option<(i64, Vec<usize>)> {
     // Whether wanted[w..] still appears in order from `from`.
     let rest_fits = |w: usize, from: usize| {
         let mut letters = lower[from.min(lower.len())..].iter();
-        wanted[w..].iter().all(|c| letters.any(|l| l == c))
+        wanted[w..].iter().all(|c| letters.any(|(l, _)| l == c))
     };
     let mut positions = Vec::with_capacity(wanted.len());
     let mut from = 0;
     for (w, &c) in wanted.iter().enumerate() {
-        let mut at = (from..lower.len()).find(|&i| lower[i] == c)?;
-        if !boundary(at) {
+        let mut at = (from..lower.len()).find(|&i| lower[i].0 == c)?;
+        if !boundary(lower[at].1) {
             if let Some(word) = (at + 1..lower.len())
-                .find(|&i| lower[i] == c && boundary(i) && rest_fits(w + 1, i + 1))
+                .find(|&i| lower[i].0 == c && boundary(lower[i].1) && rest_fits(w + 1, i + 1))
             {
                 at = word;
             }
         }
-        positions.push(at);
+        let original = lower[at].1;
+        if positions.last() != Some(&original) {
+            positions.push(original);
+        }
         from = at + 1;
     }
     let mut score = -(chars.len() as i64) / 4;
