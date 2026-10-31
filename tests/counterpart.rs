@@ -77,7 +77,17 @@ fn counterpart_handles_unsupported_missing_and_cancelled_searches() {
     assert!(find(&directory.path().join("notes.md"), &[]).is_empty());
     assert!(counterpart::find(&source, &[], &AtomicBool::new(true)).is_err());
     fs::remove_file(&source).unwrap();
-    assert!(counterpart::find(&source, &[], &AtomicBool::new(false)).is_err());
+    assert!(counterpart::find(&source, &[], &AtomicBool::new(false))
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn counterpart_finds_headers_for_a_source_that_has_not_been_saved_yet() {
+    let directory = tempfile::tempdir().unwrap();
+    let header = file(directory.path(), "new.hpp");
+    let source = directory.path().join("new.cpp");
+    assert_eq!(find(&source, &[]), [header]);
 }
 
 #[cfg(unix)]

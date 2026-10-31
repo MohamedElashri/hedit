@@ -103,3 +103,26 @@ fn file_reference_picker_selects_project_match_and_removed_targets_do_not_make_b
     assert_eq!(app.workspace.open.len(), count);
     assert!(!removed.exists());
 }
+
+#[test]
+fn file_reference_target_replaced_by_a_directory_does_not_add_a_folder() {
+    let directory = tempfile::tempdir().unwrap();
+    let (ctx, mut app) = fixture(directory.path());
+    let target = directory.path().join("target.txt");
+    std::fs::write(&target, "file").unwrap();
+    let found = hedit::file_reference::resolve(target.to_str().unwrap(), None, &[]);
+    std::fs::remove_file(&target).unwrap();
+    std::fs::create_dir(&target).unwrap();
+    app.open_existing(&ctx, found[0].clone());
+    let until = Instant::now() + Duration::from_secs(5);
+    while app.busy {
+        assert!(Instant::now() < until);
+        app.receive(&ctx);
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        app.workspace.folders.is_empty(),
+        "a changed target must not modify the workspace"
+    );
+    assert_eq!(app.workspace.open.len(), 1);
+}

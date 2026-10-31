@@ -143,6 +143,33 @@ fn fold_levels_handle_tabs_crlf_blank_lines_and_no_final_newline() {
         assert!(a::indentation_folds_at_level(text, 0, 1).is_empty());
     }
 }
+
+#[test]
+fn generated_fold_levels_partition_all_blocks_and_never_overlap_within_a_level() {
+    let mut seed = 31u64;
+    for _ in 0..200 {
+        let mut text = String::new();
+        for line in 0..60 {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            text.push_str(&" ".repeat((seed >> 32) as usize % 12));
+            text.push_str(&format!("α{line}\r\n"));
+        }
+        for width in [0, 2, 4, 8] {
+            let all = a::indentation_folds(&text, width);
+            let mut by_level = Vec::new();
+            for level in 1..=13 {
+                let found = a::indentation_folds_at_level(&text, width, level);
+                assert!(found.windows(2).all(|pair| pair[0].end <= pair[1].start));
+                assert!(found
+                    .iter()
+                    .all(|f| f.start < f.end && f.end <= text.chars().count()));
+                by_level.extend(found);
+            }
+            by_level.sort_by_key(|f| (f.start, f.end));
+            assert_eq!(by_level, all);
+        }
+    }
+}
 #[test]
 fn invalid_fold_metadata_and_selections_are_bounded() {
     let p = Projection::new(

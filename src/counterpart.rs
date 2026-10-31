@@ -33,7 +33,21 @@ pub fn find(source: &Path, roots: &[PathBuf], cancel: &AtomicBool) -> Result<Vec
     if cancel.load(Ordering::Relaxed) {
         return Err("Search cancelled.".into());
     }
-    let source = source.canonicalize().map_err(|e| e.to_string())?;
+    let source = match source.canonicalize() {
+        Ok(path) => path,
+        // Named buffers can exist before their first save, or after deletion.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let parent = source
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or_else(|| Path::new("."));
+            parent
+                .canonicalize()
+                .map_err(|e| e.to_string())?
+                .join(source.file_name().ok_or("The file has no name.")?)
+        }
+        Err(error) => return Err(error.to_string()),
+    };
     let parent = source.parent().ok_or("The file has no parent directory.")?;
     let matches = |path: &Path| {
         path.file_stem() == source.file_stem()

@@ -8,8 +8,7 @@ use std::{
 const LIMIT: usize = 4096;
 
 fn clean(value: &str) -> Option<String> {
-    let value = value.trim().trim_end_matches(':');
-    (!value.is_empty()
+    (!value.trim().is_empty()
         && value.len() <= LIMIT
         && !value.contains(['\n', '\r', '\0'])
         && !value.contains("://"))
@@ -67,11 +66,12 @@ pub fn at(text: &str, selection: Selection) -> Option<String> {
     let right = line[position..]
         .find(delimiter)
         .map_or(line.len(), |i| position + i);
-    clean(&line[left..right])
+    // A log's trailing colon is punctuation; quoted/selected names are literal.
+    clean(line[left..right].trim_end_matches(':'))
 }
 
 fn existing(candidate: PathBuf) -> Option<PathBuf> {
-    let (path, line, column) = crate::cli::location(&candidate);
+    let (path, _, _) = crate::cli::location(&candidate);
     if !path.is_file() {
         return None;
     }
@@ -79,10 +79,15 @@ fn existing(candidate: PathBuf) -> Option<PathBuf> {
     if path == candidate {
         Some(canonical)
     } else {
-        Some(PathBuf::from(format!(
-            "{}:{line}:{column}",
-            canonical.display()
-        )))
+        // Keep the original basename and suffix. Re-encoding a symlink's
+        // canonical target could collide with a different literal colon filename.
+        Some(
+            candidate
+                .parent()?
+                .canonicalize()
+                .ok()?
+                .join(candidate.file_name()?),
+        )
     }
 }
 

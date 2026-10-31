@@ -625,6 +625,9 @@ impl HeditApp {
                 },
             };
             if path.is_dir() {
+                if !allow_new {
+                    return Err("The referenced file is now a directory.".into());
+                }
                 return hedit::folder::read_directory(path).map(Action::Folder);
             }
             let (file, line, col) = hedit::cli::location(&path);

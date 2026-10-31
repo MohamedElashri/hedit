@@ -18,6 +18,22 @@ struct Element {
     inner: Option<(usize, usize)>,
 }
 
+// XML 1.0 (Fifth Edition), productions 4 and 4a:
+// https://www.w3.org/TR/xml/#NT-NameStartChar
+fn name_start(ch: char) -> bool {
+    matches!(ch, ':' | '_' | 'A'..='Z' | 'a'..='z'
+        | '\u{c0}'..='\u{d6}' | '\u{d8}'..='\u{f6}' | '\u{f8}'..='\u{2ff}'
+        | '\u{370}'..='\u{37d}' | '\u{37f}'..='\u{1fff}' | '\u{200c}'..='\u{200d}'
+        | '\u{2070}'..='\u{218f}' | '\u{2c00}'..='\u{2fef}' | '\u{3001}'..='\u{d7ff}'
+        | '\u{f900}'..='\u{fdcf}' | '\u{fdf0}'..='\u{fffd}' | '\u{10000}'..='\u{effff}')
+}
+
+fn name_char(ch: char) -> bool {
+    name_start(ch)
+        || matches!(ch, '-' | '.' | '0'..='9' | '\u{b7}'
+        | '\u{300}'..='\u{36f}' | '\u{203f}'..='\u{2040}')
+}
+
 fn prefix(chars: &[char], at: usize, value: &str) -> bool {
     chars[at..]
         .iter()
@@ -37,14 +53,11 @@ fn tag(chars: &[char], start: usize, html: bool) -> Option<Tag> {
     let close = chars.get(at) == Some(&'/');
     at += usize::from(close);
     let first = *chars.get(at)?;
-    if !first.is_alphabetic() && !matches!(first, '_' | ':') {
+    if !name_start(first) {
         return None;
     }
     let name_start = at;
-    while chars
-        .get(at)
-        .is_some_and(|c| c.is_alphanumeric() || "_:.-".contains(*c))
-    {
+    while chars.get(at).is_some_and(|c| name_char(*c)) {
         at += 1;
     }
     if !chars
@@ -71,12 +84,19 @@ fn tag(chars: &[char], start: usize, html: bool) -> Option<Tag> {
     }
     let tail = at;
     let mut quote = None;
+    let mut before_value = false;
+    let mut unquoted = false;
     while let Some(&ch) = chars.get(at) {
         match (quote, ch) {
             (Some(q), c) if q == c => quote = None,
-            (None, '\'' | '"') => quote = Some(ch),
+            (None, '\'' | '"') => {
+                quote = Some(ch);
+                before_value = false;
+                unquoted = false;
+            }
             (None, '>') => {
-                let empty = chars[tail..at].iter().rev().find(|c| !c.is_whitespace()) == Some(&'/');
+                let empty = !unquoted
+                    && chars[tail..at].iter().rev().find(|c| !c.is_whitespace()) == Some(&'/');
                 return Some(Tag {
                     start,
                     end: at + 1,
@@ -86,6 +106,12 @@ fn tag(chars: &[char], start: usize, html: bool) -> Option<Tag> {
                 });
             }
             (None, '<') => return None,
+            (None, '=') if !unquoted => before_value = true,
+            (None, c) if c.is_whitespace() => unquoted = false,
+            (None, _) if before_value => {
+                before_value = false;
+                unquoted = true;
+            }
             _ => {}
         }
         at += 1;
@@ -178,7 +204,7 @@ fn elements(chars: &[char], html: bool, cancel: &AtomicBool) -> Result<Vec<Eleme
             // An unfinished attribute or tag must not expose fake tags inside it.
             if chars
                 .get(at + 1)
-                .is_some_and(|c| c.is_alphabetic() || "_:/".contains(*c))
+                .is_some_and(|c| name_start(*c) || *c == '/')
             {
                 break;
             }

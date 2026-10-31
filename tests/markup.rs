@@ -204,3 +204,64 @@ fn markup_generated_malformed_inputs_always_return_bounded_containing_ranges() {
         }
     }
 }
+
+#[test]
+fn markup_xml_names_allow_combining_marks_middle_dots_and_supplementary_characters() {
+    for name in ["e\u{301}", "مَلَف", "a\u{b7}b", "a\u{203f}b", "\u{10000}"] {
+        let text = format!("<{name}>value</{name}>");
+        let selection = S::caret(span(&text, "value").anchor + 1);
+        assert_eq!(
+            selected(&text, expand(&text, selection, false)),
+            "value",
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn markup_html_trailing_slash_in_unquoted_value_does_not_end_the_element() {
+    let text = "<div data=assets/>value</div>";
+    let selection = S::caret(span(text, "value").anchor + 1);
+    assert_eq!(selected(text, expand(text, selection, true)), "value");
+}
+
+#[test]
+fn markup_attribute_state_distinguishes_values_from_self_closing_slashes() {
+    for attributes in [
+        "data=assets/",
+        "data= assets/",
+        "data = assets/",
+        "data=assets/ other=more/",
+        "data='assets/'",
+        "data=\"a>b/\"",
+    ] {
+        let text = format!("<node {attributes}>value</node>");
+        let at = S::caret(span(&text, "value").anchor + 2);
+        assert_eq!(selected(&text, expand(&text, at, true)), "value", "{text}");
+    }
+    for text in [
+        "<node />",
+        "<node data='assets/'/>",
+        "<node data=\"a>b/\" />",
+    ] {
+        let at = S::caret(2);
+        assert_eq!(selected(text, expand(text, at, false)), text);
+    }
+}
+
+#[test]
+fn markup_expands_one_thousand_separate_cursors_without_losing_any() {
+    let mut text = String::from("<root>");
+    let mut cursors = Vec::new();
+    for index in 0..advanced::MAX_SELECTIONS {
+        text.push_str("<item>");
+        cursors.push(S::caret(text.chars().count() + 1));
+        text.push_str(&format!("値{index}</item>"));
+    }
+    text.push_str("</root>");
+    let expanded = markup::expand(&text, &cursors, false, &AtomicBool::new(false)).unwrap();
+    assert_eq!(expanded.len(), advanced::MAX_SELECTIONS);
+    for (index, selection) in expanded.into_iter().enumerate() {
+        assert_eq!(selected(&text, selection), format!("値{index}"));
+    }
+}

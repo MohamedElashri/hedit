@@ -421,12 +421,17 @@ Headers use `.h`, `.hh`, `.hpp`, `.hxx`, `.h++`, or `.cuh`; implementations use
 `.c`, `.cc`, `.cpp`, `.cxx`, `.c++`, `.cu`, `.m`, or `.mm`. Untitled files and
 other file types leave this command disabled.
 
+A named source buffer can find its header before its first save. If a matching
+file disappears before it opens, hedit reports the error and keeps the source
+buffer active.
+
 ### Open a file path under the cursor
 
 **Goto → Open file under cursor** (**Alt+D**, or **Option+D** on macOS) opens a
 local path in the current line or selection. It is also in the editor's
 right-click menu and the command palette. Quote paths containing spaces, such
-as `"data/run results.csv"`. Includes such as `<lib/solver.h>` and locations
+as `"data/run results.csv"`; quoted filenames preserve literal punctuation.
+Includes such as `<lib/solver.h>` and locations
 such as `src/main.cpp:42:7` work too.
 
 Relative paths are checked beside the current document first, then under each

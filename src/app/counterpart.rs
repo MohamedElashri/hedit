@@ -43,7 +43,7 @@ impl HeditApp {
                 )
             }
             // Normal opening reuses existing buffers, including unsaved edits.
-            1 => self.open(ctx, Some(found.into_iter().next().unwrap())),
+            1 => self.open_existing(ctx, found.into_iter().next().unwrap()),
             _ => {
                 let items = found
                     .into_iter()
@@ -54,7 +54,7 @@ impl HeditApp {
                             .to_string_lossy()
                             .into_owned();
                         let detail = path.display().to_string();
-                        (name, detail, commands::Pick::File(path))
+                        (name, detail, commands::Pick::ExistingFile(path))
                     })
                     .collect();
                 self.open_pick_list(

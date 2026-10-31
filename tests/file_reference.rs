@@ -151,3 +151,31 @@ fn file_reference_honors_literal_colon_names_and_deduplicates_symlinks() {
         [target]
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn file_reference_preserves_a_literal_trailing_colon_in_a_quoted_path() {
+    let directory = tempfile::tempdir().unwrap();
+    let expected = file(directory.path(), "report:");
+    file(directory.path(), "report");
+    let reference = at("\"report:\"", Selection::caret(3)).unwrap();
+    assert_eq!(reference, "report:");
+    assert_eq!(
+        resolve(&reference, None, &[directory.path().into()]),
+        [expected]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn file_reference_symlink_location_does_not_open_a_different_literal_colon_file() {
+    use std::os::unix::fs::symlink;
+    let directory = tempfile::tempdir().unwrap();
+    let expected = file(directory.path(), "real.txt");
+    file(directory.path(), "real.txt:2:1");
+    symlink(&expected, directory.path().join("alias.txt")).unwrap();
+    let found = resolve("alias.txt:2", None, &[directory.path().into()]);
+    let (actual, line, column) = hedit::cli::location(&found[0]);
+    assert_eq!(actual.canonicalize().unwrap(), expected);
+    assert_eq!((line, column), (2, 1));
+}

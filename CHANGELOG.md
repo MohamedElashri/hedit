@@ -16,6 +16,13 @@
 - Automatic setup of Ghostty's required Zig compiler; terminal-free builds remain
   available with `--no-default-features`.
 
+### Fixed
+
+- Stale header and file references no longer create empty buffers or add folders.
+- Header switching works before a named source file's first save.
+- File references preserve literal punctuation and symlink line locations.
+- Tag selection handles Unicode XML names and trailing slashes in HTML attributes.
+
 ## [0.1.11] - 2026-10-30
 
 ### Added

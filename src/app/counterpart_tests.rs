@@ -102,3 +102,29 @@ fn counterpart_availability_no_match_and_stale_replies() {
     assert!(!app.palette);
     assert!(app.active().page.info.path.is_none());
 }
+
+#[test]
+fn counterpart_removed_after_lookup_does_not_create_an_empty_buffer() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("main.cpp");
+    let target = directory.path().join("main.h");
+    std::fs::write(&source, "source").unwrap();
+    std::fs::write(&target, "header").unwrap();
+    let (ctx, mut app) = fixture(directory.path());
+    app.open(&ctx, Some(source.clone()));
+    finish_app_job(&mut app, &ctx);
+    let found =
+        hedit::counterpart::find(&source, &[], &std::sync::atomic::AtomicBool::new(false)).unwrap();
+    std::fs::remove_file(target).unwrap();
+    let id = app.active().view.id;
+    let count = app.workspace.open.len();
+    app.show_counterparts(&ctx, id, source.canonicalize().unwrap(), found);
+    let until = Instant::now() + Duration::from_secs(5);
+    while app.busy {
+        assert!(Instant::now() < until);
+        app.receive(&ctx);
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(app.workspace.open.len(), count);
+    assert_eq!(app.active().view.id, id);
+}
