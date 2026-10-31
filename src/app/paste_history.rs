@@ -46,7 +46,8 @@ impl HeditApp {
         if self.active().follow || self.active().page.info.paged {
             return;
         }
-        let batch = hedit::advanced::replace(&self.active().page.text, &self.selections(), &text);
+        let pasted = clipboard_lines::line_endings(&text, self.active().page.info.eol == "CRLF");
+        let batch = hedit::advanced::replace(&self.active().page.text, &self.selections(), &pasted);
         self.batch(batch);
         ctx.copy_text(text);
     }

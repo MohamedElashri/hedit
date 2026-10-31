@@ -31,6 +31,17 @@ fn indentation(line: &str) -> &str {
     &line[..line.len() - line.trim_start_matches([' ', '\t']).len()]
 }
 
+/// Clipboard text may come from a document with different line endings.
+/// Normalize only line separators, preserving lone carriage returns as text.
+pub(super) fn line_endings(text: &str, crlf: bool) -> String {
+    let text = text.replace("\r\n", "\n");
+    if crlf {
+        text.replace('\n', "\r\n")
+    } else {
+        text
+    }
+}
+
 /// Pasted text re-indented for a line indented by `target`. With `whole`, the
 /// text goes at the start of a line: its common indentation becomes `target`
 /// on every line, the first included. Otherwise it goes after other text on
@@ -115,11 +126,7 @@ impl HeditApp {
         }
         let b = self.active();
         let crlf = b.page.info.eol == "CRLF";
-        let insert = if crlf {
-            text.replace('\n', "\r\n")
-        } else {
-            text.to_owned()
-        };
+        let insert = line_endings(text, crlf);
         let selections = self.selections();
         let lines = cursor_lines(&b.page.text, &selections);
         let length = insert.chars().count();
@@ -157,6 +164,7 @@ impl HeditApp {
         // Only indentation before a single cursor: the text replaces it.
         let whole = selections.len() == 1 && b.page.text[line..at].trim().is_empty();
         let pasted = reindent_paste(text, &target, whole);
+        let pasted = line_endings(&pasted, b.page.info.eol == "CRLF");
         let ranges = if whole {
             vec![Selection {
                 anchor: b.page.text[..line].chars().count(),
