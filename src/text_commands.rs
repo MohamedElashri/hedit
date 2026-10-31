@@ -299,8 +299,74 @@ fn bullet(text: &[char]) -> usize {
     }
 }
 
+/// Rewrap one paragraph while keeping its indentation, markers and newline style.
+fn wrap_paragraph(
+    chars: &[char],
+    first: usize,
+    last: usize,
+    width: usize,
+    tab_width: usize,
+    markers: &[&str],
+) -> String {
+    let end = line_end(chars, last);
+    let newline = chars[first..]
+        .iter()
+        .position(|&c| c == '\n')
+        .map(|n| first + n)
+        .or_else(|| chars.iter().position(|&c| c == '\n'));
+    let eol = if newline.is_some_and(|n| n > 0 && chars[n - 1] == '\r') {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    let first_line = &chars[first..line_end(chars, first)];
+    let prefix_length = wrap_prefix(first_line, markers);
+    let prefix: String = first_line[..prefix_length].iter().collect();
+    let continuation = format!(
+        "{prefix}{}",
+        " ".repeat(bullet(&first_line[prefix_length..]))
+    );
+    let mut words: Vec<String> = vec![];
+    let mut at = first;
+    while at <= end {
+        let line = &chars[at..line_end(chars, at)];
+        words.extend(
+            line[wrap_prefix(line, markers)..]
+                .iter()
+                .collect::<String>()
+                .split_whitespace()
+                .map(str::to_owned),
+        );
+        at = chars[at..]
+            .iter()
+            .position(|&c| c == '\n')
+            .map_or(usize::MAX, |n| at + n + 1);
+    }
+    let mut output = prefix.clone();
+    let mut column = columns(&prefix.chars().collect::<Vec<_>>(), tab_width);
+    let continuation_columns = columns(&continuation.chars().collect::<Vec<_>>(), tab_width);
+    let mut line_has_word = false;
+    for word in words {
+        let length = word.chars().count();
+        if line_has_word && column + 1 + length > width {
+            output.push_str(eol);
+            output.push_str(&continuation);
+            column = continuation_columns;
+            line_has_word = false;
+        }
+        if line_has_word {
+            output.push(' ');
+            column += 1;
+        }
+        output.push_str(&word);
+        column += length;
+        line_has_word = true;
+    }
+    output
+}
+
 /// Rewrap the selected lines, or the paragraph at the cursor, to `width`
-/// columns, keeping indentation, comment markers, and list bullets.
+/// columns, keeping paragraph breaks, indentation, comment markers, and list bullets.
 pub fn wrap_lines(
     text: &str,
     selections: &[Selection],
@@ -311,17 +377,25 @@ pub fn wrap_lines(
     let chars: Vec<char> = text.chars().collect();
     let tab_width = tab_width.max(1);
     let blank = |start: usize| {
-        let end = line_end(&chars, start);
-        let line = &chars[start..end];
+        let line = &chars[start..line_end(&chars, start)];
         wrap_prefix(line, markers) == line.len()
     };
-    // The comment marker or quote a line starts with, if any.
     let marker = |start: usize| -> String {
         let line = &chars[start..line_end(&chars, start)];
         line[..wrap_prefix(line, markers)]
             .iter()
             .filter(|c| !c.is_whitespace())
             .collect()
+    };
+    let item = |start: usize| {
+        let line = &chars[start..line_end(&chars, start)];
+        bullet(&line[wrap_prefix(line, markers)..]) > 0
+    };
+    let next_line = |at: usize| {
+        chars[at..]
+            .iter()
+            .position(|&c| c == '\n')
+            .map(|n| at + n + 1)
     };
     let mut changes = vec![];
     for s in normalize(selections, chars.len()) {
@@ -336,77 +410,47 @@ pub fn wrap_lines(
             if blank(first) {
                 continue;
             }
-            // A paragraph ends at a blank line or where the marker changes.
             let kind = marker(first);
             let same = |start: usize| !blank(start) && marker(start) == kind;
-            // A list item starts a paragraph of its own.
-            let item = |start: usize| {
-                let line = &chars[start..line_end(&chars, start)];
-                bullet(&line[wrap_prefix(line, markers)..]) > 0
-            };
             while first > 0 && !item(first) && same(line_start(&chars, first - 1)) {
                 first = line_start(&chars, first - 1);
             }
-            loop {
-                let next = chars[last..]
-                    .iter()
-                    .position(|&c| c == '\n')
-                    .map(|n| last + n + 1);
-                match next {
-                    Some(next) if next < chars.len() && same(next) && !item(next) => last = next,
-                    _ => break,
+            while let Some(next) = next_line(last) {
+                if next >= chars.len() || !same(next) || item(next) {
+                    break;
                 }
+                last = next;
             }
         }
         let end = line_end(&chars, last);
-        let crlf = chars[end..].starts_with(&['\r', '\n']);
-        let first_line = &chars[first..line_end(&chars, first)];
-        let prefix_length = wrap_prefix(first_line, markers);
-        let prefix: String = first_line[..prefix_length].iter().collect();
-        let hanging = bullet(&first_line[prefix_length..]);
-        let continuation = format!("{prefix}{}", " ".repeat(hanging));
-        let mut words: Vec<String> = vec![];
+        let mut output = String::new();
+        let mut copied = first;
         let mut at = first;
-        while at <= end {
-            let stop = line_end(&chars, at);
-            let line = &chars[at..stop];
-            let content = &line[wrap_prefix(line, markers)..];
-            words.extend(
-                content
-                    .iter()
-                    .collect::<String>()
-                    .split_whitespace()
-                    .map(str::to_owned),
-            );
-            at = chars[at..]
-                .iter()
-                .position(|&c| c == '\n')
-                .map_or(usize::MAX, |n| at + n + 1);
-        }
-        if words.is_empty() {
-            continue;
-        }
-        let eol = if crlf { "\r\n" } else { "\n" };
-        let mut output = prefix.clone();
-        let mut column = columns(&prefix.chars().collect::<Vec<_>>(), tab_width);
-        let continuation_columns = columns(&continuation.chars().collect::<Vec<_>>(), tab_width);
-        let mut line_has_word = false;
-        for word in words {
-            let length = word.chars().count();
-            if line_has_word && column + 1 + length > width {
-                output.push_str(eol);
-                output.push_str(&continuation);
-                column = continuation_columns;
-                line_has_word = false;
+        while at <= last {
+            if blank(at) {
+                let Some(next) = next_line(at) else {
+                    break;
+                };
+                at = next;
+                continue;
             }
-            if line_has_word {
-                output.push(' ');
-                column += 1;
+            let kind = marker(at);
+            let mut stop = at;
+            while let Some(next) = next_line(stop) {
+                if next > last || blank(next) || marker(next) != kind || item(next) {
+                    break;
+                }
+                stop = next;
             }
-            output.push_str(&word);
-            column += length;
-            line_has_word = true;
+            output.extend(&chars[copied..at]);
+            output.push_str(&wrap_paragraph(&chars, at, stop, width, tab_width, markers));
+            copied = line_end(&chars, stop);
+            let Some(next) = next_line(stop) else {
+                break;
+            };
+            at = next;
         }
+        output.extend(&chars[copied..end]);
         let length = output.chars().count();
         changes.push(Change {
             from: s,
