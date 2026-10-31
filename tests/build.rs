@@ -201,3 +201,33 @@ fn windows_builds_preserve_quoted_executable_paths_and_arguments() {
     );
     assert_eq!(code, Some(7));
 }
+
+#[test]
+fn path_variables_are_not_recursively_expanded() {
+    let vars = Variables {
+        file: PathBuf::from("/work/$folder.py"),
+        folder: PathBuf::from("/work"),
+    };
+    assert_eq!(vars.expand("$file"), "/work/$folder.py");
+    assert_eq!(vars.expand("$folder_suffix"), "$folder_suffix");
+}
+
+#[test]
+fn quoted_build_paths_reach_the_shell_without_reinterpreting_the_filename() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("literal$folder & %NAME% file.py");
+    std::fs::write(&file, "pass\n").unwrap();
+    let vars = Variables {
+        file,
+        folder: dir.path().to_owned(),
+    };
+    let command = if cfg!(windows) {
+        "if exist \"$file\" (echo FILE_OK) else (exit /b 7)"
+    } else {
+        "test -f \"$file\" && printf 'FILE_OK\\n'"
+    };
+    let running = Running::start_with_variables(command, dir.path(), &vars, || {}).unwrap();
+    let (output, code) = collect(&running);
+    assert_eq!(code, Some(0), "{output}");
+    assert_eq!(output.trim(), "FILE_OK");
+}

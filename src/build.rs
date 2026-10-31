@@ -129,31 +129,51 @@ pub struct Variables {
 impl Variables {
     /// Replace `$file`, `$file_path`, `$file_name`, `$file_base_name`,
     /// `$file_extension`, and `$folder`, longest names first.
-    pub fn expand(&self, text: &str) -> String {
+    fn values(&self) -> [(&'static str, String); 6] {
         let name = |p: &Path| p.to_string_lossy().into_owned();
         let file = &self.file;
-        let values = [
+        [
             (
-                "$file_base_name",
+                "file_base_name",
                 name(Path::new(file.file_stem().unwrap_or_default())),
             ),
             (
-                "$file_extension",
+                "file_extension",
                 name(Path::new(file.extension().unwrap_or_default())),
             ),
             (
-                "$file_name",
+                "file_name",
                 name(Path::new(file.file_name().unwrap_or_default())),
             ),
-            ("$file_path", name(file.parent().unwrap_or(Path::new(".")))),
-            ("$folder", name(&self.folder)),
-            ("$file", name(file)),
-        ];
-        let mut out = text.to_owned();
-        for (key, value) in values {
-            out = out.replace(key, &value);
+            ("file_path", name(file.parent().unwrap_or(Path::new(".")))),
+            ("folder", name(&self.folder)),
+            ("file", name(file)),
+        ]
+    }
+    fn substitute(&self, text: &str, value: impl Fn(&str, &str) -> String) -> String {
+        let values = self.values();
+        let mut out = String::with_capacity(text.len());
+        let mut rest = text;
+        while let Some(at) = rest.find('$') {
+            out.push_str(&rest[..at]);
+            rest = &rest[at + 1..];
+            if let Some((key, replacement)) = values.iter().find(|(key, _)| {
+                rest.strip_prefix(key).is_some_and(|tail| {
+                    !tail.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_')
+                })
+            }) {
+                out.push_str(&value(key, replacement));
+                rest = &rest[key.len()..];
+            } else {
+                out.push('$');
+            }
         }
+        out.push_str(rest);
         out
+    }
+    pub fn expand(&self, text: &str) -> String {
+        // Replacement values are literal paths, never another template.
+        self.substitute(text, |_, value| value.to_owned())
     }
 }
 
@@ -226,6 +246,29 @@ impl Running {
         dir: &Path,
         wake: impl Fn() + Send + Clone + 'static,
     ) -> Result<Self, String> {
+        Self::launch(command, dir, None, wake)
+    }
+    /// Pass build paths through the shell environment. Expanding a variable
+    /// inside quotes does not interpret quotes, dollars or backticks in its value.
+    pub fn start_with_variables(
+        command: &str,
+        dir: &Path,
+        variables: &Variables,
+        wake: impl Fn() + Send + Clone + 'static,
+    ) -> Result<Self, String> {
+        Self::launch(command, dir, Some(variables), wake)
+    }
+    fn launch(
+        command: &str,
+        dir: &Path,
+        variables: Option<&Variables>,
+        wake: impl Fn() + Send + Clone + 'static,
+    ) -> Result<Self, String> {
+        // cmd.exe uses %name% rather than $name for environment variables.
+        #[cfg(windows)]
+        let command = variables
+            .map(|vars| vars.substitute(command, |key, _| format!("%{key}%")))
+            .unwrap_or_else(|| command.to_owned());
         #[cfg(not(windows))]
         let mut shell = {
             let mut shell = Command::new("sh");
@@ -245,6 +288,9 @@ impl Running {
                 .creation_flags(CREATE_NO_WINDOW);
             shell
         };
+        if let Some(variables) = variables {
+            shell.envs(variables.values());
+        }
         shell
             .current_dir(dir)
             .stdin(Stdio::null())
