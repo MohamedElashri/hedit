@@ -127,8 +127,6 @@ pub struct Variables {
 }
 
 impl Variables {
-    /// Replace `$file`, `$file_path`, `$file_name`, `$file_base_name`,
-    /// `$file_extension`, and `$folder`, longest names first.
     fn values(&self) -> [(&'static str, String); 6] {
         let name = |p: &Path| p.to_string_lossy().into_owned();
         let file = &self.file;
@@ -171,6 +169,8 @@ impl Variables {
         out.push_str(rest);
         out
     }
+    /// Replace `$file`, `$file_path`, `$file_name`, `$file_base_name`,
+    /// `$file_extension`, and `$folder`, without expanding replacement values again.
     pub fn expand(&self, text: &str) -> String {
         // Replacement values are literal paths, never another template.
         self.substitute(text, |_, value| value.to_owned())
