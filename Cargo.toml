@@ -50,6 +50,11 @@ rustix = { version = "1", features = ["fs", "process"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 winit = { version = "0.30.13", default-features = false, features = ["wayland-csd-adwaita"] }
 
+[target.'cfg(target_os = "macos")'.dependencies.eframe]
+version = "0.31.1"
+default-features = false
+features = ["accesskit"]
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_System_Threading"] }
 

@@ -1,3 +1,5 @@
+#[cfg(all(test, target_os = "macos"))]
+mod accessibility_tests;
 mod advanced_edit;
 mod auto_complete;
 mod bidi_view;
