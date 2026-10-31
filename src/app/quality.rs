@@ -1270,7 +1270,14 @@ impl HeditApp {
         } else {
             " ".repeat(b.view.tab_size.unwrap_or(4) as usize)
         };
-        let body = snippet_fields::indent_body(&snippet.body, &indent, &unit);
+        let body = snippet_fields::indent_body(&snippet.body.replace("\r\n", "\n"), &indent, &unit);
+        // Convert before expanding fields so their character positions include
+        // every carriage return in the inserted text.
+        let body = if b.page.info.eol == "CRLF" {
+            body.replace('\n', "\r\n")
+        } else {
+            body
+        };
         let expansion = intelligence::expand_fields(&body, &old[start..end]);
         let base = old[..start].chars().count();
         let cursor = base + expansion.fields.last().map_or(0, |f| f[0].0);
