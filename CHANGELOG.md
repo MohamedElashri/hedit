@@ -2,26 +2,24 @@
 
 ## Unreleased
 
+## [0.1.12] - 2026-10-31
+
 ### Added
 
-- Expand HTML/XML selections from element contents to tags and parents with
-  Ctrl/Cmd+Shift+A, including multiple cursors.
-- Open local file paths under the cursor with Alt+D (Option+D on macOS), including
-  quoted paths, C-family includes, and line/column locations.
-- Fold levels 1–3 from the menu, command palette, or Ctrl/Cmd+K, Ctrl/Cmd+1–3.
+- Optional Ghostty-powered terminal, disabled by default, with onboarding,
+  compact draggable tabs, keyboard shortcuts, and Arabic/RTL support.
 - Header/implementation switching for C, C++, CUDA, and Objective-C with Alt+O
-  (Option+O on macOS), sibling priority, and a picker for multiple matches.
-- Optional Ghostty-powered terminal, disabled by default, with onboarding and
-  settings, compact draggable tabs, keyboard shortcuts, and Arabic/RTL support.
-- Automatic setup of Ghostty's required Zig compiler; terminal-free builds remain
-  available with `--no-default-features`.
+  (Option+O on macOS).
+- Open local file paths under the cursor with Alt+D (Option+D on macOS), including
+  quoted paths, includes, and line/column locations.
+- Fold levels 1–3 from the menu, command palette, or Ctrl/Cmd+K, Ctrl/Cmd+1–3.
+- Expand HTML/XML selections through element contents, tags, and parents with
+  Ctrl/Cmd+Shift+A, including multiple cursors.
 
-### Fixed
+### Changed
 
-- Stale header and file references no longer create empty buffers or add folders.
-- Header switching works before a named source file's first save.
-- File references preserve literal punctuation and symlink line locations.
-- Tag selection handles Unicode XML names and trailing slashes in HTML attributes.
+- Source builds automatically prepare Ghostty's required Zig compiler.
+  `--no-default-features` builds omit the terminal and Zig dependency.
 
 ## [0.1.11] - 2026-10-30
 
@@ -591,6 +589,7 @@ Initial release of hedit.
 - User and developer guides, plus Makefile commands for formatting, linting,
   tests, packaging, and CI validation.
 
+[0.1.12]: https://github.com/MohamedElashri/hedit/compare/v0.1.11...v0.1.12
 [0.1.11]: https://github.com/MohamedElashri/hedit/compare/v0.1.10...v0.1.11
 [0.1.10]: https://github.com/MohamedElashri/hedit/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/MohamedElashri/hedit/compare/v0.1.8...v0.1.9
