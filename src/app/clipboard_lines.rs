@@ -42,6 +42,20 @@ pub(super) fn line_endings(text: &str, crlf: bool) -> String {
     }
 }
 
+/// egui's End key can leave a cursor between CR and LF. Treat that as
+/// the end of the line's content, so inserting text cannot split the pair.
+pub(super) fn paste_selections(text: &str, mut selections: Vec<Selection>) -> Vec<Selection> {
+    let chars: Vec<char> = text.chars().collect();
+    for selection in &mut selections {
+        for at in [&mut selection.anchor, &mut selection.head] {
+            if *at > 0 && chars.get(*at - 1) == Some(&'\r') && chars.get(*at) == Some(&'\n') {
+                *at -= 1;
+            }
+        }
+    }
+    selections
+}
+
 /// Pasted text re-indented for a line indented by `target`. With `whole`, the
 /// text goes at the start of a line: its common indentation becomes `target`
 /// on every line, the first included. Otherwise it goes after other text on
@@ -156,7 +170,7 @@ impl HeditApp {
     /// Paste `text` with its lines re-indented for the cursor's line.
     fn paste_indented(&mut self, text: &str) {
         let b = self.active();
-        let selections = self.selections();
+        let selections = paste_selections(&b.page.text, self.selections());
         let start = selections.iter().map(|s| s.start()).min().unwrap_or(0);
         let at = advanced::byte(&b.page.text, start);
         let line = b.page.text[..at].rfind('\n').map_or(0, |n| n + 1);

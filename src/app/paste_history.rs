@@ -47,7 +47,9 @@ impl HeditApp {
             return;
         }
         let pasted = clipboard_lines::line_endings(&text, self.active().page.info.eol == "CRLF");
-        let batch = hedit::advanced::replace(&self.active().page.text, &self.selections(), &pasted);
+        let selections =
+            clipboard_lines::paste_selections(&self.active().page.text, self.selections());
+        let batch = hedit::advanced::replace(&self.active().page.text, &selections, &pasted);
         self.batch(batch);
         ctx.copy_text(text);
     }

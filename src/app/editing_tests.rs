@@ -1877,13 +1877,17 @@ fn find_shortcuts_keep_text_literal_in_regex_mode() {
 #[test]
 fn indented_and_history_pastes_preserve_the_target_line_endings_and_undo() {
     for crlf in [false, true] {
-        for history in [false, true] {
+        for (history, inside_crlf) in [(false, false), (true, false), (false, true), (true, true)] {
             let (_directory, ctx, mut app) = app_with("head\n    \ntail\n");
             if crlf {
                 app.edit_command(hedit::editing::Operation::ToCrlf);
             }
             let original = app.active().page.text.clone();
-            let at = if crlf { 10 } else { 9 };
+            let at = if crlf {
+                10 + usize::from(inside_crlf)
+            } else {
+                9
+            };
             app.set_selections(vec![hedit::advanced::Selection::caret(at)]);
             frame(&ctx, &mut app, vec![]);
             let pasted = if crlf { "a\n  b\n" } else { "a\r\n  b\r\n" };
