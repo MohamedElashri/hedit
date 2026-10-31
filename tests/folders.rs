@@ -53,6 +53,43 @@ fn quick_open_and_directory_listing_report_limits() {
     assert_eq!(results.entries.len(), 80);
 }
 
+#[cfg(unix)]
+#[test]
+fn failed_folder_duplication_leaves_no_partial_destination_and_can_be_retried() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    fs::create_dir(&source).unwrap();
+    fs::write(source.join("keep.txt"), "complete original").unwrap();
+    let outside = root.path().join("outside.txt");
+    fs::write(&outside, "outside data").unwrap();
+    std::os::unix::fs::symlink(&outside, source.join("link")).unwrap();
+    let target = root.path().join("copy");
+    let error = folder::duplicate_path(&source, &target).unwrap_err();
+    assert!(error.contains("symlinks"), "{error}");
+    assert!(
+        !target.exists(),
+        "a failed copy must not occupy the requested destination"
+    );
+    assert_eq!(fs::read_to_string(&outside).unwrap(), "outside data");
+    fs::remove_file(source.join("link")).unwrap();
+    folder::duplicate_path(&source, &target).unwrap();
+    assert_eq!(
+        fs::read_to_string(target.join("keep.txt")).unwrap(),
+        "complete original"
+    );
+    fs::write(target.join("keep.txt"), "keep existing target").unwrap();
+    assert!(folder::duplicate_path(&source, &target).is_err());
+    assert_eq!(
+        fs::read_to_string(target.join("keep.txt")).unwrap(),
+        "keep existing target"
+    );
+    assert_eq!(
+        fs::read_dir(root.path()).unwrap().count(),
+        3,
+        "temporary staging must be cleaned up"
+    );
+}
+
 #[test]
 fn creation_refuses_overwrites_and_path_traversal() {
     let root = tempfile::tempdir().unwrap();
@@ -296,41 +333,4 @@ fn fuzzy_matching_prefers_word_starts_and_reports_positions() {
     let (exact, _) = fuzzy_match("Save", "sa").unwrap();
     let (scattered, _) = fuzzy_match("Close tabs to the right", "sa").unwrap();
     assert!(exact > scattered);
-}
-
-#[cfg(unix)]
-#[test]
-fn failed_folder_duplication_leaves_no_partial_destination_and_can_be_retried() {
-    let root = tempfile::tempdir().unwrap();
-    let source = root.path().join("source");
-    fs::create_dir(&source).unwrap();
-    fs::write(source.join("keep.txt"), "complete original").unwrap();
-    let outside = root.path().join("outside.txt");
-    fs::write(&outside, "outside data").unwrap();
-    std::os::unix::fs::symlink(&outside, source.join("link")).unwrap();
-    let target = root.path().join("copy");
-    let error = folder::duplicate_path(&source, &target).unwrap_err();
-    assert!(error.contains("symlinks"), "{error}");
-    assert!(
-        !target.exists(),
-        "a failed copy must not occupy the requested destination"
-    );
-    assert_eq!(fs::read_to_string(&outside).unwrap(), "outside data");
-    fs::remove_file(source.join("link")).unwrap();
-    folder::duplicate_path(&source, &target).unwrap();
-    assert_eq!(
-        fs::read_to_string(target.join("keep.txt")).unwrap(),
-        "complete original"
-    );
-    fs::write(target.join("keep.txt"), "keep existing target").unwrap();
-    assert!(folder::duplicate_path(&source, &target).is_err());
-    assert_eq!(
-        fs::read_to_string(target.join("keep.txt")).unwrap(),
-        "keep existing target"
-    );
-    assert_eq!(
-        fs::read_dir(root.path()).unwrap().count(),
-        3,
-        "temporary staging must be cleaned up"
-    );
 }
