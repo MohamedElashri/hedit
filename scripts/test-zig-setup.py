@@ -34,7 +34,7 @@ class ZigSetupTests(unittest.TestCase):
     def test_explicit_override_is_authoritative(self):
         executable = Path(self.directory.name) / 'custom-zig'
         with patch.dict(os.environ, {'ZIG': str(executable)}), patch.object(setup, 'matches_version', return_value=True), patch.object(setup.shutil, 'which', return_value=None):
-            self.assertEqual(setup.ensure_zig(self.cache), executable)
+            self.assertEqual(setup.ensure_zig(self.cache), executable.resolve())
         with patch.dict(os.environ, {'ZIG': str(executable)}), patch.object(setup, 'matches_version', return_value=False), patch.object(setup.shutil, 'which', return_value=None):
             with self.assertRaisesRegex(RuntimeError, 'ZIG must name'):
                 setup.ensure_zig(self.cache)

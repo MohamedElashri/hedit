@@ -136,7 +136,10 @@ fn multiple_roots_search_all_folders_and_distinguish_duplicate_names() {
         .entries
         .iter()
         .any(|e| Path::new(&e.name).ends_with("server/project/src/main.rs")));
-    let filtered = folder::quick_open_roots(&roots, "server").unwrap();
+    // Duplicate root names use absolute labels. A short fuzzy query can also
+    // match random letters in the temporary directory, so filter by the full path.
+    let query = roots[1].join("src/main.rs");
+    let filtered = folder::quick_open_roots(&roots, query.to_str().unwrap()).unwrap();
     assert_eq!(filtered.entries.len(), 1);
     let mut with_missing = roots.clone();
     with_missing.push(directory.path().join("missing"));

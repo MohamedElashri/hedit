@@ -88,6 +88,33 @@ fn terminal_hide_keeps_session_and_disabling_ends_it_without_editing_buffer() {
         app.terminal_panel(ctx);
         app.editor(ctx);
     });
+    // Wait for a real command response before sending control keys. On Windows
+    // those keys can affect cmd.exe startup before its input handler is ready.
+    app.terminal
+        .active_session_mut()
+        .unwrap()
+        .write(b"echo HEDIT_SHELL_READY\r".to_vec())
+        .unwrap();
+    let until = Instant::now() + Duration::from_secs(10);
+    loop {
+        let session = app.terminal.active_session_mut().unwrap();
+        session.poll();
+        let grid = session.grid().unwrap();
+        let lines: Vec<String> = grid
+            .rows
+            .iter()
+            .map(|row| row.iter().map(|c| c.text.as_str()).collect())
+            .collect();
+        if lines.iter().any(|line| line.trim() == "HEDIT_SHELL_READY") {
+            break;
+        }
+        assert!(
+            Instant::now() < until && session.running,
+            "shell did not become ready: {} ({lines:?})",
+            session.status
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
     let _ = ctx.run(
         egui::RawInput {
             focused: true,
@@ -102,31 +129,6 @@ fn terminal_hide_keeps_session_and_disabling_ends_it_without_editing_buffer() {
     assert_eq!(app.active().page.text, before);
     assert!(app.terminal.open, "Escape belongs to the terminal");
     assert!(!app.focus_editor);
-    // Wait for the interactive shell to execute a command before interrupting.
-    // An early Ctrl+C can terminate cmd.exe while it is still starting up.
-    app.terminal
-        .active_session_mut()
-        .unwrap()
-        .write(b"echo HEDIT_SHELL_READY\r".to_vec())
-        .unwrap();
-    let until = Instant::now() + Duration::from_secs(10);
-    loop {
-        let session = app.terminal.active_session_mut().unwrap();
-        session.poll();
-        let grid = session.grid().unwrap();
-        if grid.rows.iter().any(|row| {
-            let line: String = row.iter().map(|c| c.text.as_str()).collect();
-            line.trim() == "HEDIT_SHELL_READY"
-        }) {
-            break;
-        }
-        assert!(
-            Instant::now() < until && session.running,
-            "shell did not become ready: {}",
-            session.status
-        );
-        thread::sleep(Duration::from_millis(10));
-    }
     // winit turns Ctrl+C into Copy on Linux/Windows. That event must still
     // interrupt the shell; ordinary Text and Enter must reach the PTY.
     for (modifiers, events) in [
