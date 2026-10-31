@@ -85,6 +85,7 @@ pub(super) enum Command {
     ExpandSelection,
     ExpandToBrackets,
     ExpandToIndentation,
+    ExpandToTag,
     JumpToBracket,
     SplitLines,
     AddCursorAbove,
@@ -304,6 +305,7 @@ impl Command {
         Self::ExpandSelection,
         Self::ExpandToBrackets,
         Self::ExpandToIndentation,
+        Self::ExpandToTag,
         Self::JumpToBracket,
         Self::SplitLines,
         Self::AddCursorAbove,
@@ -557,6 +559,7 @@ impl Command {
             Self::ExpandSelection => "Expand selection",
             Self::ExpandToBrackets => "Expand selection to brackets",
             Self::ExpandToIndentation => "Expand selection to indentation",
+            Self::ExpandToTag => "Expand selection to HTML/XML tag",
             Self::JumpToBracket => "Jump to matching bracket",
             Self::SplitLines => "Split selection into lines",
             Self::AddCursorAbove => "Add cursor above",
@@ -798,6 +801,7 @@ impl Command {
             Self::ExpandSelection => "Ctrl+Shift+Space",
             Self::ExpandToBrackets => "Ctrl+Shift+M",
             Self::ExpandToIndentation => "Ctrl+Shift+J",
+            Self::ExpandToTag => "Ctrl+Shift+A",
             Self::JumpToBracket if cfg!(target_os = "macos") => "Control+M",
             Self::JumpToBracket => "Ctrl+M",
             Self::SoftUndo => "Ctrl+U",
@@ -1025,6 +1029,13 @@ impl HeditApp {
             return false;
         }
         match command {
+            Command::ExpandToTag => {
+                !self.active().page.info.paged
+                    && matches!(
+                        self.active().language(),
+                        syntax::Language::Html | syntax::Language::Xml
+                    )
+            }
             Command::MarkdownSource => self.active().language() == syntax::Language::Markdown,
             Command::MarkdownSplit | Command::MarkdownPreview => self.markdown_available(),
             Command::MarkdownRefresh => {
@@ -1406,6 +1417,7 @@ impl HeditApp {
                     .collect();
                 self.set_selections(ranges);
             }
+            Command::ExpandToTag => self.expand_markup_selection(ctx),
             Command::SplitLines => {
                 let ranges =
                     hedit::advanced::split_into_lines(&self.active().page.text, &self.selections());

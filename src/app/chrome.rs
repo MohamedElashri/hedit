@@ -999,6 +999,7 @@ impl HeditApp {
                 Command::ExpandSelection,
                 Command::ExpandToBrackets,
                 Command::ExpandToIndentation,
+                Command::ExpandToTag,
                 Command::JumpToBracket,
                 Command::SoftUndo,
                 Command::SoftRedo,

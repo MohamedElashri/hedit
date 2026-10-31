@@ -304,6 +304,15 @@ line, file. **Ctrl+Shift+M** selects inside brackets, **Ctrl+Shift+J** the lines
 the same indentation, and **Ctrl+M** jumps between matching brackets. **Ctrl+U**
 and **Ctrl+Shift+U** undo and redo selection changes.
 
+In HTML or XML files, **Edit → Selection → Expand selection to HTML/XML tag**
+(**Ctrl+Shift+A**, **Cmd+Shift+A** on macOS) selects an element's contents, then
+its complete tags, then the enclosing element on repeated use. It works with
+multiple cursors and preserves reversed selections. Comments, CDATA, quoted
+attributes, and HTML script/style content do not introduce false nested tags.
+HTML void elements and XML self-closing tags select as a whole. The command uses
+explicit balanced tags; it does not infer omitted HTML closing tags or parse JSX
+and template expressions. It is disabled for paged files and other syntaxes.
+
 ### Brackets and indentation
 
 Typing a bracket or quote adds its closer, wraps a selection, or steps over an
@@ -964,6 +973,7 @@ Change any shortcut under **Settings → Key Bindings**. Two-key shortcuts such 
 | Select all occurrences | Alt+F3 | Control+Cmd+G |
 | Add cursor above / below | Alt+Shift+Up / Down | Control+Shift+Up / Down |
 | Expand selection / to brackets | Ctrl+Shift+Space / Ctrl+Shift+M | Cmd+Shift+Space / Cmd+Shift+M |
+| Expand selection to HTML/XML tag | Ctrl+Shift+A | Cmd+Shift+A |
 | Jump to bracket | Ctrl+M | Control+M |
 | Copy / cut / paste | Ctrl+C / Ctrl+X / Ctrl+V | Cmd+C / Cmd+X / Cmd+V |
 | Paste and indent / paste from history | Ctrl+Shift+V / Ctrl+K, Ctrl+V | Cmd+Shift+V / Cmd+K, Cmd+V |

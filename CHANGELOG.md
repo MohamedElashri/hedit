@@ -4,6 +4,8 @@
 
 ### Added
 
+- Expand HTML/XML selections from element contents to tags and parents with
+  Ctrl/Cmd+Shift+A, including multiple cursors.
 - Open local file paths under the cursor with Alt+D (Option+D on macOS), including
   quoted paths, C-family includes, and line/column locations.
 - Fold levels 1–3 from the menu, command palette, or Ctrl/Cmd+K, Ctrl/Cmd+1–3.

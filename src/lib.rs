@@ -13,6 +13,7 @@ pub mod fonts;
 pub mod git;
 pub mod intelligence;
 pub mod ipc;
+pub mod markup;
 pub mod projects;
 pub mod search;
 pub mod session;

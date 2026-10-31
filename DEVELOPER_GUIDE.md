@@ -166,6 +166,7 @@ without a window belongs in the library, with tests under `tests/`.
 | Search and folders | `search.rs` (search, guarded replacement), `folder.rs` (listings, fuzzy matching), `projects.rs` (projects, EditorConfig) |
 | Header/implementation switching | `counterpart.rs` (same-stem matches, sibling priority, project search); `app/counterpart.rs` (background request, stale-reply guard, picker); `tests/counterpart.rs` and `app/counterpart_tests.rs` |
 | File references | `file_reference.rs` (quoted/bare paths and existing-file resolution); `app/file_reference.rs` (background resolution and picker); `tests/file_reference.rs` and `app/file_reference_tests.rs` |
+| HTML/XML selection | `markup.rs` (balanced elements and Unicode selection ranges); `app/markup_selection.rs` (worker request); `tests/markup.rs` and `app/markup_selection_tests.rs`; results require the same view, revision, and selections |
 | Syntax and look | `syntax.rs`, `syntax/` (grammars, lexer, keywords), `theme.rs`, `fonts.rs`, `brand.rs` |
 | Process and updates | `cli.rs`, `launcher.rs`, `ipc.rs`, `windows.rs`, `update.rs`, `update/`, `build.rs`, `debugger.rs` |
 | Window | `app.rs` (frame loop, shortcuts, editor drawing), `app/chrome.rs` (menus, tabs, sidebar, status bar), `app/commands.rs` (every command, the palette) |

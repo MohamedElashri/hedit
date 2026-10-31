@@ -147,6 +147,12 @@ pub(super) enum Event {
     Locations(bool, String, Vec<definitions::Location>),
     Counterparts(u64, PathBuf, Vec<PathBuf>),
     FileReferences(u64, Option<PathBuf>, String, Vec<PathBuf>),
+    TagSelections(
+        u64,
+        u64,
+        Vec<hedit::advanced::Selection>,
+        Vec<hedit::advanced::Selection>,
+    ),
     Diff(u64, u64, String, String, bool),
     FileChanged(PathBuf, Option<PathBuf>),
     ProjectLoaded(
@@ -179,6 +185,18 @@ impl HeditApp {
             }
             Event::FileReferences(view, document, reference, found) => {
                 self.show_file_references(ctx, view, document, reference, found);
+            }
+            Event::TagSelections(view, revision, before, after) => {
+                if self.active().view.id == view
+                    && self.active().page.info.revision == revision
+                    && self.selections() == before
+                {
+                    if after == before {
+                        self.notice = "No larger enclosing HTML/XML element found.".into();
+                    } else {
+                        self.set_selections(after);
+                    }
+                }
             }
             Event::GitMarkers(id, revision, diff, base) => {
                 self.quality.git_pending = false;

@@ -41,6 +41,9 @@ mod markdown_scroll;
 mod markdown_style;
 #[cfg(test)]
 mod markdown_tests;
+mod markup_selection;
+#[cfg(test)]
+mod markup_selection_tests;
 #[cfg(test)]
 mod overlay_tests;
 mod overlays;
@@ -1456,7 +1459,7 @@ impl HeditApp {
         self.quality_shortcuts(ctx);
         self.filter_overridden_clipboard(ctx);
         if self.overridden(Command::SelectAll) {
-            let _ = take(cmd, Key::A);
+            let _ = tab_switch::take_exact(ctx, cmd, Key::A);
         }
         for (modifiers, key, command) in [
             (shift, Key::P, Command::Palette),
@@ -1585,6 +1588,7 @@ impl HeditApp {
                 (Modifiers::NONE, Key::F12, Command::GotoDefinition),
                 (Modifiers::ALT, Key::O, Command::SwitchCounterpart),
                 (Modifiers::ALT, Key::D, Command::OpenFileReference),
+                (shifted, Key::A, Command::ExpandToTag),
                 (Modifiers::NONE, Key::F9, Command::SortLinesIgnoreCase),
             ];
             if mac {
