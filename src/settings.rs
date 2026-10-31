@@ -118,6 +118,13 @@ pub struct Settings {
     pub show_status_bar: bool,
     pub show_sidebar: bool,
     pub show_folders: bool,
+    /// Allow the integrated terminal. A shell starts only when its panel opens.
+    pub terminal_enabled: bool,
+    /// Reorder bidirectional terminal text and shape Arabic for display.
+    pub terminal_bidi: bool,
+    /// The first-launch terminal choice has been answered.
+    #[serde(default = "onboarding_complete_for_existing_settings")]
+    pub terminal_onboarding_complete: bool,
     // Formatting
     #[serde(flatten)]
     pub format: FormatSettings,
@@ -145,6 +152,12 @@ pub struct Settings {
     pub build_systems: Vec<crate::build::BuildSystem>,
     // Tools
     pub cuda_gdb_path: String,
+}
+
+// An existing settings file without the new key belongs to an established
+// installation. New installations write Settings::default(), which offers setup.
+fn onboarding_complete_for_existing_settings() -> bool {
+    true
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -183,6 +196,9 @@ impl Default for Settings {
             show_status_bar: true,
             show_sidebar: true,
             show_folders: true,
+            terminal_enabled: false,
+            terminal_bidi: true,
+            terminal_onboarding_complete: false,
             format: FormatSettings::default(),
             syntax_specific: BTreeMap::new(),
             folder_exclude_patterns: crate::folder::DEFAULT_FOLDER_EXCLUDES

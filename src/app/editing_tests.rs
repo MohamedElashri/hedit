@@ -1489,6 +1489,7 @@ fn macros_record_typing_and_keys_then_play_and_save() {
     let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
     let ctx = egui::Context::default();
     let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    app.choose_terminal(false);
     app.focus_editor = true;
     let index = app.workspace.active;
     app.workspace.open[index].page.text = "one\ntwo\n".into();

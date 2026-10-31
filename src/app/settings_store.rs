@@ -407,6 +407,19 @@ pub(super) fn load_fallback_fonts(tx: mpsc::Sender<Result<Action, String>>, ctx:
 /// and let both families fall back to system fonts for other scripts.
 pub(super) fn set_editor_font(ctx: &egui::Context, font: Option<(Vec<u8>, u32)>) {
     let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert(
+        "terminal-arabic".into(),
+        std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
+            "../../assets/fonts/NotoSansArabic.ttf"
+        ))),
+    );
+    for family in [egui::FontFamily::Monospace, egui::FontFamily::Proportional] {
+        fonts
+            .families
+            .entry(family)
+            .or_default()
+            .push("terminal-arabic".into());
+    }
     // Characters the chosen font lacks, such as Latin letters in an Arabic-only
     // font, fall through to the built-in font and then the system fallbacks.
     if let Some((bytes, index)) = font {

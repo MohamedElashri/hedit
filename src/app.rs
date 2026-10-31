@@ -65,6 +65,11 @@ mod spell_check;
 mod tab_switch;
 #[cfg(test)]
 mod tab_tests;
+mod terminal_panel;
+#[cfg(test)]
+mod terminal_tests;
+#[cfg(feature = "terminal")]
+mod terminal_text;
 mod themes;
 mod tree_row;
 mod trim_indent;
@@ -198,6 +203,7 @@ pub struct HeditApp {
     /// `hedit -w` requests waiting for their files to close.
     waits: Vec<wait::Wait>,
     build: build_panel::BuildState,
+    terminal: terminal_panel::TerminalState,
     /// The first key of a shortcut being recorded, and when it was pressed.
     capture_first: Option<(String, Instant)>,
     /// The first key of a two-key shortcut that is waiting for its second.
@@ -379,6 +385,7 @@ impl HeditApp {
             key_capture: None,
             waits: Vec::new(),
             build: Default::default(),
+            terminal: Default::default(),
             capture_first: None,
             chord: None,
             soft_history: Default::default(),
@@ -1282,6 +1289,9 @@ impl HeditApp {
         }
         if self.guide.open {
             self.escape(ctx);
+            return;
+        }
+        if self.terminal_shortcuts(ctx) {
             return;
         }
         self.play_step(ctx);
@@ -3383,11 +3393,13 @@ impl eframe::App for HeditApp {
             self.window_title = title;
         }
         self.poll_build();
+        self.poll_terminal(ctx);
         self.track_waits();
         self.chrome(ctx);
         self.gpu(ctx);
         self.search_panel(ctx);
         self.build_panel(ctx);
+        self.terminal_panel(ctx);
         self.editor(ctx);
         if !self.busy && !self.closing {
             self.command_palette(ctx);
@@ -3399,6 +3411,7 @@ impl eframe::App for HeditApp {
         self.quality_windows(ctx);
         self.record_copies(ctx);
         self.close_dialog(ctx);
+        self.terminal_onboarding(ctx);
         let paths: Vec<_> = ctx.input(|i| {
             i.raw
                 .dropped_files

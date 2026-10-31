@@ -23,6 +23,9 @@ documents! {
     "assets/licenses/horizon-MIT.txt", "assets/licenses/iceberg-MIT.txt",
     "assets/licenses/papercolor-MIT.txt", "assets/licenses/synthwave-84-MIT.txt",
     "assets/licenses/alabaster-MIT.txt", "assets/licenses/Noto-Sans-OFL.txt",
+    "assets/licenses/ghostty-MIT.txt",
+    "assets/licenses/libghostty-rs-MIT.txt",
+    "assets/licenses/Noto-Sans-Arabic-OFL.txt",
 }
 
 struct Reader {

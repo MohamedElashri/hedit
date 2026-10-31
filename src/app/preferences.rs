@@ -5,6 +5,7 @@ use hedit::settings::{Settings, MAX_COLUMN};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PreferencesPage {
     General,
+    Terminal,
     Editor,
     Formatting,
     Folders,
@@ -15,8 +16,9 @@ pub(super) enum PreferencesPage {
     Recovery,
 }
 impl PreferencesPage {
-    pub(super) const ALL: [Self; 9] = [
+    pub(super) const ALL: [Self; 10] = [
         Self::General,
+        Self::Terminal,
         Self::Editor,
         Self::Formatting,
         Self::Folders,
@@ -29,6 +31,7 @@ impl PreferencesPage {
     fn title(self) -> &'static str {
         match self {
             Self::General => "General",
+            Self::Terminal => "Terminal",
             Self::Editor => "Editor",
             Self::Formatting => "Formatting",
             Self::Folders => "Folders & Search",
@@ -134,6 +137,7 @@ impl HeditApp {
                                 .max_height(body_height - 40.0)
                                 .show(ui, |ui| match self.preferences_page {
                                     PreferencesPage::General => self.general_preferences(ui),
+                                    PreferencesPage::Terminal => self.terminal_preferences(ui),
                                     PreferencesPage::Editor => self.editor_preferences(ui),
                                     PreferencesPage::Formatting => self.formatting_preferences(ui),
                                     PreferencesPage::Folders => self.folder_preferences(ui),

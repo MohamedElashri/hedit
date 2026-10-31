@@ -73,7 +73,7 @@ for path in files:
         continue
     for number, line in enumerate(path.read_text().splitlines(), 1):
         for match in re.finditer(r'(?<![\w.])v?\d+\.\d+\.\d+', line):
-            if not re.search(r'(Rust|Python) $', line[:match.start()]):
+            if not re.search(r'(Rust|Python|Zig) $', line[:match.start()]):
                 errors.append(f'{path.name}:{number}: hard-coded version {match.group()}; '
                               'use X.Y.Z or link to CHANGELOG.md')
 if errors:

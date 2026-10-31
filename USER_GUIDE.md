@@ -18,6 +18,7 @@ outside the modal.
 - [Editing](#editing)
 - [Finding and navigating](#finding-and-navigating)
 - [Writing code](#writing-code)
+- [Integrated terminal](#integrated-terminal)
 - [Source Control](#source-control)
 - [Markdown preview](#markdown-preview)
 - [Views and layout](#views-and-layout)
@@ -473,6 +474,65 @@ with full syntax definitions that understand embedded languages and multi-line
 strings; plain text, logs, and CSV use a faster built-in highlighter. Large files
 show quick colors first and full colors a moment later.
 
+## Integrated terminal
+
+The integrated terminal is **disabled by default**. A new installation offers
+**Keep disabled** and **Enable terminal** on first launch. You can change the
+choice in **Preferences → Settings → Terminal** at any time. Enabling the feature
+does not launch a shell.
+
+Once enabled, use **Tools → Toggle terminal** or **Ctrl+`** (**Control+`** on macOS)
+to open a resizable bottom panel. It starts your local default shell in the
+active file's project folder, the first open folder, or the file's directory.
+With no file or folder open it uses hedit's launch directory. Windows uses the
+default command shell. The shell has the same permissions as hedit.
+
+Type commands directly into the panel. Escape, Tab, arrow keys, and Ctrl shortcuts
+go to the shell while it has focus; **Ctrl+C** interrupts a command. On macOS,
+use Control+C to interrupt and Cmd+C to copy. Drag across text to select it,
+then use **Copy selection**, **Ctrl+Shift+C**, or **Cmd+C** on macOS. Paste with
+**Ctrl+Shift+V** or **Cmd+V**; pastes use bracketed paste when the shell supports
+it and are limited to 256 KiB. Scroll to read up to 10,000 lines of history.
+
+Use **+** in the compact terminal tab bar for another shell (up to 16 tabs). Each tab keeps its own
+process, directory, selection, and scrollback. Output continues in inactive or
+hidden tabs; a dot marks new output. Tab names follow the shell's title unless
+you rename them from the tab's context menu. The context menu also restarts or
+closes a tab. Drag tabs to reorder them; middle-click a tab to close it. The
+close button appears on the selected tab and when you hover another tab.
+The **…** menu lists every tab, including tabs outside the visible strip, and
+holds copy, rename, stop, and restart controls. **Restart shell** replaces only
+the selected shell; **Stop shell** ends it and keeps its output available to read
+and copy. Full titles, directories, and shell status are available on hover.
+
+While the terminal has focus, **Ctrl+Shift+T** opens a tab, **Ctrl+Shift+W** closes
+it, and **Ctrl+Page Up / Page Down** switches tabs. On macOS, use **Cmd+Shift+T**,
+**Cmd+Shift+W**, and **Control+Page Up / Page Down**. These commands also appear
+in the command palette. Their default keys keep their editor behavior when the
+editor has focus.
+
+The down chevron or toggle shortcut hides all tabs and keeps their shells running.
+The X beside a tab closes that shell. Disabling the terminal or quitting hedit
+ends all sessions. Shells, tab names, running commands, and terminal scrollback
+are not restored after quitting.
+
+Arabic and other right-to-left text display in reading order alongside Latin
+text and numbers. Arabic uses OpenType shaping, including joining, ligatures,
+and diacritics, with a bundled font available on every platform. This changes
+display only: shell input, cursor commands, and copied text keep their original
+logical Unicode order. Pointer selection and the displayed cursor follow the
+visual cell mapping. Input-method composition is shown before it is committed.
+**Settings → Terminal → Bidirectional text and Arabic shaping** is enabled by
+default. Turn it off for applications that already send text in visual order.
+
+Ghostty supplies terminal emulation; hedit supplies the PTY and native rendering.
+The MIT license notices for [Ghostty](assets/licenses/ghostty-MIT.txt) and its
+[Rust bindings](assets/licenses/libghostty-rs-MIT.txt) are bundled.
+Noto Sans Arabic is bundled under its [SIL Open Font License](assets/licenses/Noto-Sans-Arabic-OFL.txt).
+This initial panel supports text and ANSI colors. It does not render terminal
+graphics or forward mouse events to terminal applications. Builds made without
+terminal support explain this on the Terminal settings page.
+
 ## Source Control
 
 Use the **Files / Source Control** switch at the top of the sidebar, **Tools →
@@ -666,7 +726,7 @@ stays in Undo) or keep yours.
 
 ## Settings
 
-**Preferences → Settings…** (**Ctrl+,**) has pages for General, Editor, Formatting,
+**Preferences → Settings…** (**Ctrl+,**) has pages for General, Terminal, Editor, Formatting,
 Folders & Search, Appearance, Key Bindings, Snippets, and Recovery. Linux also
 has a CUDA Tools page.
 Changes save as you make them. General, Editor, Formatting, and Folders & Search
@@ -717,6 +777,9 @@ keys are reported, and a file with errors is never overwritten.
 | `follow_system_appearance`, `dark_color_theme`, `light_color_theme` | `false`, `"Hedit Ink"`, `"Hedit Paper"` | Switch themes with the system's light or dark mode |
 | `build_system`, `build_systems` | `"automatic"`, `[]` | Build system for Ctrl+B, and your own |
 | `cuda_gdb_path` | `"cuda-gdb"` | CUDA-GDB program (Linux) |
+| `terminal_enabled` | `false` | Allow opening a local integrated terminal |
+| `terminal_bidi` | `true` | Display bidirectional terminal text and shape Arabic; keeps PTY input and copied Unicode unchanged |
+| `terminal_onboarding_complete` | `false` on new installs | Remember the first-launch terminal choice; existing settings files skip onboarding |
 
 Unset formatting keys leave each file's style alone. Project settings and
 `.editorconfig` rules take precedence.

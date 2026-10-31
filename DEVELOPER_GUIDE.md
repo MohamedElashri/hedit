@@ -20,6 +20,23 @@ Rust 1.92.0 and Python 3.12. X11, Wayland, and OpenGL libraries load at run time
 so their development packages are not needed. Keep the project free of Node.js,
 npm, and web frontends.
 
+Default builds include the integrated terminal, which remains disabled in user
+settings until enabled. Its pinned Ghostty VT source requires Zig 0.15.2 and Git.
+Cargo and Make builds select the matching compiler automatically. If it is
+absent or the system compiler has a different version, Python with pip installs
+an isolated copy under `target/ghostty-toolchain`; system packages stay unchanged.
+CI prepares the same toolchain with `python scripts/setup-zig.py`.
+Set `ZIG` to an existing compiler executable for offline builds, or `PYTHON` to
+select a Python interpreter for automatic setup. Cargo builds
+Ghostty's VT library as a static archive, so users do not need Ghostty or Zig
+installed. The first build downloads the pinned Ghostty source and Zig packages.
+For offline packaging, provide `GHOSTTY_SOURCE_DIR` and
+`GHOSTTY_ZIG_SYSTEM_DIR` as described in the
+[bindings build instructions](https://github.com/Uzaaft/libghostty-rs#building).
+Use `cargo build --locked --no-default-features` for a build without the
+terminal or the Zig dependency. Its settings page explains that terminal support
+is unavailable. Run `cargo test --locked --no-default-features` to check that build.
+
 ```sh
 sudo apt-get install build-essential   # Debian/Ubuntu
 make dev                               # debug build
@@ -149,6 +166,7 @@ without a window belongs in the library, with tests under `tests/`.
 | Process and updates | `cli.rs`, `launcher.rs`, `ipc.rs`, `windows.rs`, `update.rs`, `update/`, `build.rs`, `debugger.rs` |
 | Window | `app.rs` (frame loop, shortcuts, editor drawing), `app/chrome.rs` (menus, tabs, sidebar, status bar), `app/commands.rs` (every command, the palette) |
 | App features | One file each in `src/app/`, named after the feature: `auto_complete.rs`, `definitions.rs`, `spell_check.rs`, `macros.rs`, `snippet_fields.rs`, `find_tools.rs`, `changes.rs`, `fold_gutter.rs`, `font_picker.rs`, and so on |
+| Integrated terminal | `src/terminal.rs` owns Ghostty VT and bounded PTY IO; `src/app/terminal_panel.rs` handles tab lifecycle, onboarding, and input focus; `src/app/terminal_text.rs` maps bidirectional cells and caches Rustybuzz/ab_glyph output |
 | Markdown | `app/markdown.rs` (source/preview layout, background preparation, links, local images), `app/markdown_scroll.rs` (bidirectional split scrolling), `app/markdown_style.rs` (shared reader fonts, contrast, and cached native code blocks), `app/markdown_media.rs` (cached native math and Mermaid rendering), `app/markdown_tests.rs`; per-tab modes are stored in `session.rs` |
 | Offline help | `app/user_guide.rs` embeds `USER_GUIDE.md`, related documentation, and notices with `include_str!`; `app/user_guide/tests.rs` covers links, modal input, and layout |
 | Settings | `settings.rs` (the `settings.json` schema), `app/settings_store.rs`, `app/preferences.rs`, `app/settings_pages.rs` |
@@ -314,3 +332,10 @@ Symbols for symbols. Editor and application fonts keep their existing settings.
 Keep the [Noto font license](assets/licenses/Noto-Sans-OFL.txt) and font files
 under `assets/fonts/` with distributed packages. The source fonts come from
 [the Noto project](https://github.com/notofonts/noto-fonts).
+
+Terminal RTL runs use Rustybuzz for OpenType shaping, with each glyph cluster
+fitted to its original Ghostty cells. Unicode bidi layout supplies reversible
+cell maps for the cursor and selection. The original text and VT stream are
+unchanged. Keep the bundled Noto Sans Arabic font and its
+[OFL notice](assets/licenses/Noto-Sans-Arabic-OFL.txt) in distributed packages;
+the source is [Google Fonts](https://github.com/google/fonts/tree/main/ofl/notosansarabic).

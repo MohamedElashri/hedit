@@ -34,6 +34,8 @@ jobs:
       - uses: actions/setup-python@v7.1.0
         with:
           python-version: '3.12'
+      - name: Install pinned Zig for Ghostty VT
+        run: python scripts/setup-zig.py
       # Seconds, no compiling: fail here before spending minutes on builds.
       - name: Format, documentation, policy, and script checks
         run: make static
@@ -45,6 +47,8 @@ jobs:
         run: make clippy
       - name: Tests
         run: make test
+      - name: Tests without terminal support
+        run: cargo test --locked --no-default-features
 
   # macOS runs alongside Linux, so platform differences show up before a release.
   macos:
@@ -59,6 +63,8 @@ jobs:
       - uses: actions/setup-python@v7.1.0
         with:
           python-version: '3.12'
+      - name: Install pinned Zig for Ghostty VT
+        run: python scripts/setup-zig.py
       - uses: Swatinem/rust-cache@v2.9.3
         with:
           key: macos

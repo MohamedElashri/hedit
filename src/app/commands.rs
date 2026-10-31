@@ -70,6 +70,13 @@ pub(super) enum Command {
     BuildWith,
     CancelBuild,
     BuildResults,
+    Terminal,
+    TerminalSettings,
+    NewTerminal,
+    CloseTerminal,
+    NextTerminal,
+    PreviousTerminal,
+    RestartTerminal,
     NextResult,
     PreviousResult,
     SkipOccurrence,
@@ -277,6 +284,13 @@ impl Command {
         Self::BuildWith,
         Self::CancelBuild,
         Self::BuildResults,
+        Self::Terminal,
+        Self::TerminalSettings,
+        Self::NewTerminal,
+        Self::CloseTerminal,
+        Self::NextTerminal,
+        Self::PreviousTerminal,
+        Self::RestartTerminal,
         Self::NextResult,
         Self::PreviousResult,
         Self::SkipOccurrence,
@@ -429,6 +443,7 @@ impl Command {
                 | Self::Rename
                 | Self::Settings
                 | Self::ToolSettings
+                | Self::TerminalSettings
                 | Self::KeyBindings
                 | Self::ProjectSettings
                 | Self::UserGuide
@@ -517,6 +532,13 @@ impl Command {
             Self::BuildWith => "Build with…",
             Self::CancelBuild => "Cancel build",
             Self::BuildResults => "Show build results",
+            Self::Terminal => "Toggle terminal",
+            Self::TerminalSettings => "Terminal settings…",
+            Self::NewTerminal => "Terminal: new tab",
+            Self::CloseTerminal => "Terminal: close tab",
+            Self::NextTerminal => "Terminal: next tab",
+            Self::PreviousTerminal => "Terminal: previous tab",
+            Self::RestartTerminal => "Terminal: restart shell",
             Self::NextResult => "Next result",
             Self::PreviousResult => "Previous result",
             Self::SkipOccurrence => "Skip occurrence",
@@ -667,6 +689,14 @@ impl Command {
     }
     fn shortcut_label(self) -> &'static str {
         match self {
+            Self::Terminal if cfg!(target_os = "macos") => "Control+`",
+            Self::Terminal => "Ctrl+`",
+            Self::NewTerminal => "Ctrl+Shift+T",
+            Self::CloseTerminal => "Ctrl+Shift+W",
+            Self::NextTerminal if cfg!(target_os = "macos") => "Control+Page Down",
+            Self::PreviousTerminal if cfg!(target_os = "macos") => "Control+Page Up",
+            Self::NextTerminal => "Ctrl+Page Down",
+            Self::PreviousTerminal => "Ctrl+Page Up",
             Self::SourceControl => "Ctrl+Shift+G",
             Self::UserGuide => "F1",
             Self::FindFiles => "Ctrl+Shift+F",
@@ -1007,6 +1037,21 @@ impl HeditApp {
             Command::FocusGroup3 => self.panes.groups() > 2,
             Command::FocusGroup4 => self.panes.groups() > 3,
             Command::CancelBuild => self.build.running(),
+            Command::Terminal => cfg!(feature = "terminal") && self.settings.terminal_enabled,
+            Command::NewTerminal => cfg!(feature = "terminal") && self.settings.terminal_enabled,
+            Command::CloseTerminal
+            | Command::RestartTerminal
+            | Command::NextTerminal
+            | Command::PreviousTerminal => {
+                #[cfg(feature = "terminal")]
+                {
+                    self.settings.terminal_enabled && !self.terminal.tabs.is_empty()
+                }
+                #[cfg(not(feature = "terminal"))]
+                {
+                    false
+                }
+            }
             Command::NextResult | Command::PreviousResult => {
                 !self.build.locations.is_empty()
                     || (self.quality.results_newer && !self.quality.results.hits.is_empty())
@@ -1129,6 +1174,7 @@ impl HeditApp {
             Command::Follow => self.active().follow,
             Command::Gpu => self.gpu_open,
             Command::BuildResults => self.build.open,
+            Command::Terminal => self.terminal.open,
             _ => false,
         }
     }
@@ -1295,6 +1341,13 @@ impl HeditApp {
             }
             Command::CancelBuild => self.cancel_build(),
             Command::BuildResults => self.build.open = !self.build.open,
+            Command::Terminal => self.toggle_terminal(ctx),
+            Command::TerminalSettings => self.open_preferences(PreferencesPage::Terminal),
+            Command::NewTerminal => self.new_terminal(ctx),
+            Command::CloseTerminal => self.close_active_terminal(ctx),
+            Command::NextTerminal => self.cycle_terminal(true),
+            Command::PreviousTerminal => self.cycle_terminal(false),
+            Command::RestartTerminal => self.restart_terminal(ctx),
             Command::NextResult => self.next_result(true),
             Command::PreviousResult => self.next_result(false),
             Command::SkipOccurrence => {

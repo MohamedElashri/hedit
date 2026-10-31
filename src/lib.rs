@@ -17,6 +17,8 @@ pub mod session;
 pub mod settings;
 pub mod spelling;
 pub mod syntax;
+#[cfg(feature = "terminal")]
+pub mod terminal;
 pub mod text_commands;
 pub mod text_encoding;
 pub mod theme;

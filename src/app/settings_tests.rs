@@ -9,7 +9,10 @@ fn app_in(directory: &Path, storage: Option<&dyn eframe::Storage>) -> (egui::Con
     settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = Some(directory.join("config")));
     let (workspace, _) = Workspace::restore(directory.join("session")).unwrap();
     let ctx = egui::Context::default();
-    let app = HeditApp::from_context(&ctx, storage, workspace, vec![], vec![]);
+    let mut app = HeditApp::from_context(&ctx, storage, workspace, vec![], vec![]);
+    if app.terminal_onboarding_due() {
+        app.choose_terminal(false);
+    }
     (ctx, app)
 }
 

@@ -29,6 +29,7 @@ large-log viewing.
   conflict review, stashes, and remote operations using your installed Git.
 - Markdown source, synchronized split preview, and reading modes, with math and Mermaid diagrams.
 - Dark and light themes, plus an offline User Guide built into the app.
+- Optional Ghostty-powered integrated terminal, disabled until you enable it.
 - Paged large files and read-only log following.
 - Right-to-left Arabic and Hebrew, UTF-8/UTF-16, and legacy encodings.
 - CUDA source editing everywhere; local CUDA tools on Linux.
