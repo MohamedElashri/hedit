@@ -473,11 +473,11 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let mut session = shell(
             directory.path(),
-            "stty -echo -icanon; printf READY; dd bs=1 count=4 2>/dev/null | od -An -tx1",
+            "stty -echo -icanon; printf READY; dd bs=1 count=4 2>/dev/null | od -An -tx1 | tr -d '[:space:]'",
         );
         wait_for(&mut session, "READY");
         session.vt.vt_write(b"\x1b[5n");
-        wait_for(&mut session, "1b 5b 30 6e");
+        wait_for(&mut session, "1b5b306e");
     }
 
     #[cfg(unix)]
