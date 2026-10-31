@@ -25,6 +25,32 @@ pub(super) struct BuildState {
     pub status: String,
 }
 
+impl BuildState {
+    pub(super) fn running(&self) -> bool {
+        self.running.is_some()
+    }
+    /// Find locations in the complete lines received so far.
+    fn parse(&mut self, all: bool) {
+        let end = if all {
+            self.output.len()
+        } else {
+            self.output.rfind('\n').map_or(0, |n| n + 1)
+        };
+        if end <= self.parsed {
+            return;
+        }
+        let text = &self.output[self.parsed..end];
+        self.locations.extend(build::locations(
+            text,
+            &self.regex,
+            &self.dir,
+            self.parsed_lines,
+        ));
+        self.parsed_lines += text.lines().count();
+        self.parsed = end;
+    }
+}
+
 #[cfg(test)]
 mod nested_root_tests {
     use super::*;
@@ -67,32 +93,6 @@ mod nested_root_tests {
             );
             app.workspace.folders.reverse();
         }
-    }
-}
-
-impl BuildState {
-    pub(super) fn running(&self) -> bool {
-        self.running.is_some()
-    }
-    /// Find locations in the complete lines received so far.
-    fn parse(&mut self, all: bool) {
-        let end = if all {
-            self.output.len()
-        } else {
-            self.output.rfind('\n').map_or(0, |n| n + 1)
-        };
-        if end <= self.parsed {
-            return;
-        }
-        let text = &self.output[self.parsed..end];
-        self.locations.extend(build::locations(
-            text,
-            &self.regex,
-            &self.dir,
-            self.parsed_lines,
-        ));
-        self.parsed_lines += text.lines().count();
-        self.parsed = end;
     }
 }
 
