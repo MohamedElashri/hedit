@@ -3,6 +3,20 @@
 //! Positions are Unicode scalar indices, as in `advanced`.
 use crate::advanced::{normalize, word, Batch, Selection};
 
+/// Treat the position between CR and LF as the end of the line's content.
+/// Native editor motion can produce it; commands must not split the separator.
+fn command_selections(chars: &[char], selections: &[Selection]) -> Vec<Selection> {
+    let mut selections = normalize(selections, chars.len());
+    for selection in &mut selections {
+        for at in [&mut selection.anchor, &mut selection.head] {
+            if *at > 0 && chars.get(*at - 1) == Some(&'\r') && chars.get(*at) == Some(&'\n') {
+                *at -= 1;
+            }
+        }
+    }
+    normalize(&selections, chars.len())
+}
+
 /// One replacement of `chars[start..end]`, and the selection to leave behind,
 /// relative to where the replacement starts in the new text.
 struct Change {
@@ -18,7 +32,7 @@ struct Change {
 /// Apply changes from left to right; overlapping ones after the first are
 /// dropped. Selections that no change replaced move with the text.
 fn apply(chars: &[char], mut changes: Vec<Change>, selections: &[Selection]) -> Batch {
-    let originals = normalize(selections, chars.len());
+    let originals = command_selections(&chars, selections);
     changes.sort_by_key(|c| (c.start, c.end));
     let mut text = String::with_capacity(chars.len());
     let mut count = 0;
@@ -138,7 +152,7 @@ pub fn toggle_block_comment(
     let open: Vec<char> = open.chars().collect();
     let close: Vec<char> = close.chars().collect();
     let mut changes = vec![];
-    for s in normalize(selections, chars.len()) {
+    for s in command_selections(&chars, selections) {
         let empty = s.start() == s.end();
         let (mut a, mut b) = if empty {
             (line_start(&chars, s.head), line_end(&chars, s.head))
@@ -324,7 +338,7 @@ pub fn wrap_lines(
             .collect()
     };
     let mut changes = vec![];
-    for s in normalize(selections, chars.len()) {
+    for s in command_selections(&chars, selections) {
         let mut first = line_start(&chars, s.start());
         let last_at = if s.end() > s.start() && s.end() == line_start(&chars, s.end()) {
             s.end() - 1
@@ -424,7 +438,7 @@ pub fn wrap_lines(
 /// selections.
 pub fn transpose(text: &str, selections: &[Selection]) -> Batch {
     let chars: Vec<char> = text.chars().collect();
-    let ranges = normalize(selections, chars.len());
+    let ranges = command_selections(&chars, selections);
     let mut changes = vec![];
     if ranges.len() > 1 && ranges.iter().all(|s| s.start() != s.end()) {
         let pieces: Vec<String> = ranges
@@ -475,7 +489,7 @@ pub fn transpose(text: &str, selections: &[Selection]) -> Batch {
 pub fn change_case(text: &str, selections: &[Selection], title: bool) -> Batch {
     let chars: Vec<char> = text.chars().collect();
     let mut changes = vec![];
-    for s in normalize(selections, chars.len()) {
+    for s in command_selections(&chars, selections) {
         let range = if s.start() == s.end() {
             word(text, s.head)
         } else {
@@ -527,7 +541,7 @@ fn is_word(c: char) -> bool {
 pub fn delete_to_line_edge(text: &str, selections: &[Selection], end: bool) -> Batch {
     let chars: Vec<char> = text.chars().collect();
     let mut changes = vec![];
-    for s in normalize(selections, chars.len()) {
+    for s in command_selections(&chars, selections) {
         let h = s.head;
         let (start, stop) = if s.start() != s.end() {
             (s.start(), s.end())
@@ -725,7 +739,7 @@ pub fn reindent(text: &str, selections: &[Selection], tab_width: usize, tabs: bo
     // Merge selections into runs of whole lines. A run made by one cursor
     // keeps the cursor's place in the text.
     let mut runs: Vec<(usize, usize, Option<usize>)> = vec![];
-    for s in normalize(selections, chars.len()) {
+    for s in command_selections(&chars, selections) {
         let first = line_of(s.start());
         let mut last = line_of(s.end());
         if s.end() > s.start() && s.end() == starts[last] && last > first {
