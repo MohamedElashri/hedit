@@ -186,7 +186,7 @@ impl HeditApp {
                 continue;
             }
             if let Ok(Some(shortcut)) = shortcut(&binding.shortcut) {
-                if ctx.input_mut(|i| i.consume_shortcut(&shortcut)) {
+                if tab_switch::take_exact(ctx, shortcut.modifiers, shortcut.logical_key) {
                     self.execute(ctx, binding.command);
                 }
             }
@@ -206,16 +206,7 @@ impl HeditApp {
             (NAV_FORWARD.0, NAV_FORWARD.1, Command::NavForward),
             (COMPLETE.0, COMPLETE.1, Command::Complete),
         ] {
-            // Ctrl+Shift+Space is Expand selection, not Complete word.
-            let shifted_space = ctx.input(|i| {
-                i.events.iter().any(|e| {
-                    matches!(e, egui::Event::Key { key: Key::Space, pressed: true, modifiers, .. } if modifiers.shift)
-                })
-            });
-            if command == Command::Complete && shifted_space {
-                continue;
-            }
-            if !self.overridden(command) && ctx.input_mut(|i| i.consume_key(modifiers, key)) {
+            if !self.overridden(command) && tab_switch::take_exact(ctx, modifiers, key) {
                 self.execute(ctx, command);
             }
         }

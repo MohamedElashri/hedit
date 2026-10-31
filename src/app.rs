@@ -1342,7 +1342,7 @@ impl HeditApp {
         }
         let cmd = Modifiers::COMMAND;
         let shift = Modifiers { shift: true, ..cmd };
-        let take = |m, k| ctx.input_mut(|i| i.consume_key(m, k));
+        let take = |m, k| tab_switch::take_exact(ctx, m, k);
         if !self.overridden(Command::SourceControl) && take(shift, Key::G) {
             self.execute(ctx, Command::SourceControl);
         }
