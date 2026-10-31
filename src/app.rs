@@ -19,6 +19,9 @@ mod edit_actions;
 #[cfg(test)]
 mod editing_tests;
 mod editor_layout;
+mod file_reference;
+#[cfg(test)]
+mod file_reference_tests;
 mod find_live;
 mod find_tools;
 mod fold_gutter;
@@ -575,9 +578,16 @@ impl HeditApp {
         }));
     }
     fn open(&mut self, ctx: &egui::Context, path: Option<PathBuf>) {
-        if path
-            .as_ref()
-            .is_some_and(|p| p.extension().is_some_and(|e| e == "hedit-project"))
+        self.open_path(ctx, path, true);
+    }
+    fn open_existing(&mut self, ctx: &egui::Context, path: PathBuf) {
+        self.open_path(ctx, Some(path), false);
+    }
+    fn open_path(&mut self, ctx: &egui::Context, path: Option<PathBuf>, allow_new: bool) {
+        if allow_new
+            && path
+                .as_ref()
+                .is_some_and(|p| p.extension().is_some_and(|e| e == "hedit-project"))
         {
             self.load_project(ctx, path);
             return;
@@ -658,7 +668,11 @@ impl HeditApp {
                 };
                 return Ok(Action::Reopen(*id, location));
             }
-            let mut doc = Document::open_or_new(editor.id(), &path)?;
+            let mut doc = if allow_new {
+                Document::open_or_new(editor.id(), &path)?
+            } else {
+                Document::open(editor.id(), &path)?
+            };
             let offset = doc.location_offset(line, col)?;
             let page = doc.page(offset.saturating_sub(4096))?;
             let cursor = page.text[..(offset - page.start) as usize].chars().count();
@@ -1570,6 +1584,7 @@ impl HeditApp {
                 (Modifiers::SHIFT, Key::F12, Command::GotoReferences),
                 (Modifiers::NONE, Key::F12, Command::GotoDefinition),
                 (Modifiers::ALT, Key::O, Command::SwitchCounterpart),
+                (Modifiers::ALT, Key::D, Command::OpenFileReference),
                 (Modifiers::NONE, Key::F9, Command::SortLinesIgnoreCase),
             ];
             if mac {
@@ -1813,7 +1828,11 @@ impl HeditApp {
                 Command::PasteHistory,
             ][..],
             &[Command::SelectAll, Command::ExpandSelection][..],
-            &[Command::GotoDefinition, Command::GotoReferences][..],
+            &[
+                Command::GotoDefinition,
+                Command::GotoReferences,
+                Command::OpenFileReference,
+            ][..],
             &[Command::ToggleComment, Command::ToggleBlockComment][..],
             &[Command::CopyPath, Command::RevealInSidebar][..],
         ]

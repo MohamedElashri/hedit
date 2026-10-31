@@ -24,6 +24,7 @@ pub(super) enum Command {
     GotoDefinition,
     GotoReferences,
     SwitchCounterpart,
+    OpenFileReference,
     NavBack,
     NavForward,
     CompareDisk,
@@ -243,6 +244,7 @@ impl Command {
         Self::GotoDefinition,
         Self::GotoReferences,
         Self::SwitchCounterpart,
+        Self::OpenFileReference,
         Self::NavBack,
         Self::NavForward,
         Self::CompareDisk,
@@ -494,6 +496,7 @@ impl Command {
             Self::GotoDefinition => "Go to definition",
             Self::GotoReferences => "Go to references…",
             Self::SwitchCounterpart => "Switch header/implementation",
+            Self::OpenFileReference => "Open file under cursor",
             Self::NavBack => "Navigate back",
             Self::NavForward => "Navigate forward",
             Self::CompareDisk => "Compare with disk…",
@@ -763,6 +766,7 @@ impl Command {
             Self::GotoDefinition => "F12",
             Self::GotoReferences => "Shift+F12",
             Self::SwitchCounterpart => "Alt+O",
+            Self::OpenFileReference => "Alt+D",
             // Option+arrows move by word on macOS, so use Sublime's Control+-.
             Self::NavBack if cfg!(target_os = "macos") => "Control+-",
             Self::NavForward if cfg!(target_os = "macos") => "Control+Shift+-",
@@ -972,6 +976,7 @@ pub(super) enum Pick {
     Paste(String),
     /// A file to open.
     File(PathBuf),
+    ExistingFile(PathBuf),
     /// An editor font family; empty for the built-in font.
     Font(String),
     /// A saved macro, by name.
@@ -1284,6 +1289,7 @@ impl HeditApp {
             Command::GotoDefinition => self.look_up(ctx, false),
             Command::GotoReferences => self.look_up(ctx, true),
             Command::SwitchCounterpart => self.switch_counterpart(ctx),
+            Command::OpenFileReference => self.open_file_reference(ctx),
             Command::NavBack => self.navigate(ctx, false),
             Command::NavForward => self.navigate(ctx, true),
             Command::CompareDisk => self.compare_disk(ctx, false),
@@ -2020,6 +2026,7 @@ impl HeditApp {
                 Item::Command(command) => self.execute(ctx, command),
                 Item::Pick(Pick::Paste(text)) => self.paste_entry(ctx, text),
                 Item::Pick(Pick::File(path)) => self.open(ctx, Some(path)),
+                Item::Pick(Pick::ExistingFile(path)) => self.open_existing(ctx, path),
                 Item::Pick(Pick::Font(name)) => {
                     self.notice = if name.is_empty() {
                         "Using the built-in font.".into()

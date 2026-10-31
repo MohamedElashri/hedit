@@ -4,6 +4,8 @@
 
 ### Added
 
+- Open local file paths under the cursor with Alt+D (Option+D on macOS), including
+  quoted paths, C-family includes, and line/column locations.
 - Fold levels 1–3 from the menu, command palette, or Ctrl/Cmd+K, Ctrl/Cmd+1–3.
 - Header/implementation switching for C, C++, CUDA, and Objective-C with Alt+O
   (Option+O on macOS), sibling priority, and a picker for multiple matches.

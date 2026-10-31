@@ -412,6 +412,21 @@ Headers use `.h`, `.hh`, `.hpp`, `.hxx`, `.h++`, or `.cuh`; implementations use
 `.c`, `.cc`, `.cpp`, `.cxx`, `.c++`, `.cu`, `.m`, or `.mm`. Untitled files and
 other file types leave this command disabled.
 
+### Open a file path under the cursor
+
+**Goto → Open file under cursor** (**Alt+D**, or **Option+D** on macOS) opens a
+local path in the current line or selection. It is also in the editor's
+right-click menu and the command palette. Quote paths containing spaces, such
+as `"data/run results.csv"`. Includes such as `<lib/solver.h>` and locations
+such as `src/main.cpp:42:7` work too.
+
+Relative paths are checked beside the current document first, then under each
+open folder and its `include` directory. Absolute paths work without an open
+folder. Multiple matches appear in a filterable picker. Existing buffers keep
+unsaved edits; a location suffix moves their cursor to that line and column.
+Only existing files open: missing paths, folders, and web URLs leave the current
+document unchanged. References are limited to one line and 4 KiB.
+
 ### Bookmarks
 
 **Ctrl+F2** sets or removes a bookmark, **F2** and **Shift+F2** go to the next and
@@ -943,6 +958,7 @@ Change any shortcut under **Settings → Key Bindings**. Two-key shortcuts such 
 | Select all matches / use selection for Find / quick find | Alt+Enter / Ctrl+E / Ctrl+F3 | Option+Enter / Cmd+E / Cmd+F3 |
 | Go to definition / references | F12 / Shift+F12 | F12 / Shift+F12 |
 | Switch header/implementation | Alt+O | Option+O |
+| Open file under cursor | Alt+D | Option+D |
 | Back / forward | Alt+Left / Alt+Right | Control+- / Control+Shift+- |
 | Next occurrence / split into lines | Ctrl+D / Ctrl+Shift+L | Cmd+D / Cmd+Shift+L |
 | Select all occurrences | Alt+F3 | Control+Cmd+G |

@@ -146,6 +146,7 @@ pub(super) enum Event {
     /// Definitions (false) or references (true) of a name.
     Locations(bool, String, Vec<definitions::Location>),
     Counterparts(u64, PathBuf, Vec<PathBuf>),
+    FileReferences(u64, Option<PathBuf>, String, Vec<PathBuf>),
     Diff(u64, u64, String, String, bool),
     FileChanged(PathBuf, Option<PathBuf>),
     ProjectLoaded(
@@ -175,6 +176,9 @@ impl HeditApp {
         match event {
             Event::Counterparts(view, source, found) => {
                 self.show_counterparts(ctx, view, source, found);
+            }
+            Event::FileReferences(view, document, reference, found) => {
+                self.show_file_references(ctx, view, document, reference, found);
             }
             Event::GitMarkers(id, revision, diff, base) => {
                 self.quality.git_pending = false;
