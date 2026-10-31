@@ -106,6 +106,7 @@ impl HeditApp {
                                     Command::Symbols,
                                     Command::GotoDefinition,
                                     Command::GotoReferences,
+                                    Command::SwitchCounterpart,
                                 ],
                                 vec![Command::NextTab, Command::PreviousTab, Command::RecentTab],
                                 vec![Command::NextChange, Command::PreviousChange],

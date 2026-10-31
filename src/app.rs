@@ -11,6 +11,9 @@ mod close;
 mod close_tests;
 mod commands;
 mod controls;
+mod counterpart;
+#[cfg(test)]
+mod counterpart_tests;
 mod definitions;
 mod edit_actions;
 #[cfg(test)]
@@ -1564,6 +1567,7 @@ impl HeditApp {
                 (Modifiers::COMMAND, Key::E, Command::UseSelectionForFind),
                 (Modifiers::SHIFT, Key::F12, Command::GotoReferences),
                 (Modifiers::NONE, Key::F12, Command::GotoDefinition),
+                (Modifiers::ALT, Key::O, Command::SwitchCounterpart),
                 (Modifiers::NONE, Key::F9, Command::SortLinesIgnoreCase),
             ];
             if mac {

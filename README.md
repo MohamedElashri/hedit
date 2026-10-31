@@ -29,7 +29,8 @@ large-log viewing.
   conflict review, stashes, and remote operations using your installed Git.
 - Markdown source, synchronized split preview, and reading modes, with math and Mermaid diagrams.
 - Dark and light themes, plus an offline User Guide built into the app.
-- Optional Ghostty-powered integrated terminal, disabled until you enable it.
+- Optional Ghostty-powered terminal with compact draggable tabs, Arabic shaping,
+  and bidirectional text; disabled by default.
 - Paged large files and read-only log following.
 - Right-to-left Arabic and Hebrew, UTF-8/UTF-16, and legacy encodings.
 - CUDA source editing everywhere; local CUDA tools on Linux.
@@ -66,9 +67,15 @@ Use **Ctrl+P** to find files and **Ctrl+Shift+P** for commands (**Cmd** on macOS
 Open **Help → User guide** (**F1**) to read the bundled guide without internet.
 Recovery checkpoints are periodic; save important work to disk.
 
-See the [user guide](USER_GUIDE.md) for editing, shortcuts, recovery, and CUDA
-tools; the [developer guide](DEVELOPER_GUIDE.md) for building and contributing;
-and the [changelog](CHANGELOG.md) for release notes.
+To use the [integrated terminal](USER_GUIDE.md#integrated-terminal), enable it in
+**Preferences → Settings → Terminal**, then choose **Tools → Toggle terminal**
+or press **Ctrl+`** (**Control+`** on macOS). Use **+** for another shell, drag tabs
+to reorder them, and open **…** for tab actions. Hiding the panel keeps shells
+running; terminal sessions end when you quit.
+
+See the [user guide](USER_GUIDE.md) for editing, shortcuts, recovery, Git, and CUDA
+tools; the [developer guide](DEVELOPER_GUIDE.md) for building, terminal toolchain
+setup, and contributing; and the [changelog](CHANGELOG.md) for release notes.
 
 ## Licence
 

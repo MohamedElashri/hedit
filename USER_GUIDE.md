@@ -394,6 +394,24 @@ the open files. These work by reading source lines, without a language server, s
 they cover common definitions (functions, types, macros, declarations) rather
 than every language rule.
 
+### Switch header and implementation
+
+**Goto → Switch header/implementation** (**Alt+O**, or **Option+O** on macOS)
+jumps between files with the same stem, such as `solver.cpp` and `solver.hpp`,
+or `kernel.cu` and `kernel.cuh`. The command also appears in the command palette
+and can be rebound in **Settings → Key Bindings**.
+
+hedit checks the current file's directory first. If no match is beside it, it
+searches the nearest containing open project folder, respecting Git ignores and
+folder exclusions. Without an open folder, it checks siblings only. A single
+match opens directly; several matches appear in a filterable picker. **Esc**
+cancels the picker. Existing tabs keep their unsaved edits and cursor positions,
+and **Navigate back** returns to your starting location.
+
+Headers use `.h`, `.hh`, `.hpp`, `.hxx`, `.h++`, or `.cuh`; implementations use
+`.c`, `.cc`, `.cpp`, `.cxx`, `.c++`, `.cu`, `.m`, or `.mm`. Untitled files and
+other file types leave this command disabled.
+
 ### Bookmarks
 
 **Ctrl+F2** sets or removes a bookmark, **F2** and **Shift+F2** go to the next and
@@ -478,14 +496,18 @@ show quick colors first and full colors a moment later.
 
 The integrated terminal is **disabled by default**. A new installation offers
 **Keep disabled** and **Enable terminal** on first launch. You can change the
-choice in **Preferences → Settings → Terminal** at any time. Enabling the feature
-does not launch a shell.
+choice in **Preferences → Settings → Terminal** or **Tools → Terminal settings…**
+at any time. Existing installations skip the first-launch prompt and keep the
+terminal disabled until you enable it. Enabling the feature does not launch a
+shell; **Open terminal** on the settings page opens it when you are ready.
 
 Once enabled, use **Tools → Toggle terminal** or **Ctrl+`** (**Control+`** on macOS)
 to open a resizable bottom panel. It starts your local default shell in the
 active file's project folder, the first open folder, or the file's directory.
-With no file or folder open it uses hedit's launch directory. Windows uses the
-default command shell. The shell has the same permissions as hedit.
+With no file or folder open it uses hedit's launch directory. Each new tab chooses
+its starting folder from the editor's current file and folders. Windows uses the
+default command shell. The shell has the same permissions as hedit. Drag the
+panel's top edge to resize it; click the editor to return to editing.
 
 Type commands directly into the panel. Escape, Tab, arrow keys, and Ctrl shortcuts
 go to the shell while it has focus; **Ctrl+C** interrupts a command. On macOS,
@@ -494,22 +516,32 @@ then use **Copy selection**, **Ctrl+Shift+C**, or **Cmd+C** on macOS. Paste with
 **Ctrl+Shift+V** or **Cmd+V**; pastes use bracketed paste when the shell supports
 it and are limited to 256 KiB. Scroll to read up to 10,000 lines of history.
 
-Use **+** in the compact terminal tab bar for another shell (up to 16 tabs). Each tab keeps its own
-process, directory, selection, and scrollback. Output continues in inactive or
-hidden tabs; a dot marks new output. Tab names follow the shell's title unless
-you rename them from the tab's context menu. The context menu also restarts or
-closes a tab. Drag tabs to reorder them; middle-click a tab to close it. The
-close button appears on the selected tab and when you hover another tab.
-The **…** menu lists every tab, including tabs outside the visible strip, and
-holds copy, rename, stop, and restart controls. **Restart shell** replaces only
-the selected shell; **Stop shell** ends it and keeps its output available to read
-and copy. Full titles, directories, and shell status are available on hover.
+Each of the terminal's tabs keeps its own process, directory, selection, and
+scrollback. Output continues in inactive or hidden tabs; a dot marks new output.
+Hover a tab for its full title, starting directory, and shell status.
+
+| Control | Action |
+| --- | --- |
+| **+** | Open another shell, up to 16 tabs |
+| Tab | Select it; drag to reorder, or middle-click to close |
+| Tab's **X** | Close that shell; shown on the selected tab and on hover |
+| **…** | List all tabs, including those outside the visible strip; access the selected tab's actions and **Copy selection** |
+| Right-click a tab | Rename it, restore its shell title, restart or stop its shell, or close it |
+| Down chevron | Hide the panel and keep all shells running |
+
+Tab names follow the shell's title until you set **Tab name** in either menu.
+Choose **Use shell title** to restore automatic naming. **Restart shell** replaces
+only that tab's shell and clears its output, keeping its name and starting
+directory. **Stop shell** ends it and keeps its output available to read and copy.
+A small outlined square marks a stopped or exited shell.
 
 While the terminal has focus, **Ctrl+Shift+T** opens a tab, **Ctrl+Shift+W** closes
 it, and **Ctrl+Page Up / Page Down** switches tabs. On macOS, use **Cmd+Shift+T**,
 **Cmd+Shift+W**, and **Control+Page Up / Page Down**. These commands also appear
-in the command palette. Their default keys keep their editor behavior when the
-editor has focus.
+in the command palette, along with **Terminal: restart shell**. Their default
+keys keep their editor behavior when the editor has focus. **Ctrl+Shift+P**
+(**Cmd+Shift+P** on macOS) still opens the command palette from the terminal.
+Escape is sent to the shell; use the down chevron or toggle shortcut to hide it.
 
 The down chevron or toggle shortcut hides all tabs and keeps their shells running.
 The X beside a tab closes that shell. Disabling the terminal or quitting hedit
@@ -905,6 +937,7 @@ Change any shortcut under **Settings → Key Bindings**. Two-key shortcuts such 
 | Replace | Ctrl+H | Cmd+Option+F |
 | Select all matches / use selection for Find / quick find | Alt+Enter / Ctrl+E / Ctrl+F3 | Option+Enter / Cmd+E / Cmd+F3 |
 | Go to definition / references | F12 / Shift+F12 | F12 / Shift+F12 |
+| Switch header/implementation | Alt+O | Option+O |
 | Back / forward | Alt+Left / Alt+Right | Control+- / Control+Shift+- |
 | Next occurrence / split into lines | Ctrl+D / Ctrl+Shift+L | Cmd+D / Cmd+Shift+L |
 | Select all occurrences | Alt+F3 | Control+Cmd+G |
@@ -923,6 +956,7 @@ Change any shortcut under **Settings → Key Bindings**. Two-key shortcuts such 
 | Spell check / next misspelling | F6 / Ctrl+F6 | F6 / Cmd+F6 |
 | Next change / revert change | Ctrl+K, Ctrl+. / Ctrl+K, Ctrl+Z | Cmd+K, Cmd+. / Cmd+K, Cmd+Z |
 | Source Control | Ctrl+Shift+G | Cmd+Shift+G |
+| Toggle integrated terminal (once enabled) | Ctrl+` | Control+` |
 | Bookmark / next bookmark / select all bookmarks | Ctrl+F2 / F2 / Alt+F2 | Cmd+F2 / F2 / Option+F2 |
 | Build / build with / next error or match | Ctrl+B / Ctrl+Shift+B / F4 | Cmd+B / Cmd+Shift+B / F4 |
 | Column layouts and grid | Alt+Shift+1–5 | Cmd+Option+1–5 |
@@ -936,6 +970,16 @@ Change any shortcut under **Settings → Key Bindings**. Two-key shortcuts such 
 | Offline user guide | F1 | F1 |
 | Settings / quit | Ctrl+, / Ctrl+Q | Cmd+, / Cmd+Q |
 | Close the newest window or panel, then extra cursors | Esc | Esc |
+
+With the terminal focused, some keys have different actions:
+
+| Terminal action | Linux / Windows | macOS |
+| --- | --- | --- |
+| New / close terminal tab | Ctrl+Shift+T / Ctrl+Shift+W | Cmd+Shift+T / Cmd+Shift+W |
+| Previous / next terminal tab | Ctrl+PageUp / Ctrl+PageDown | Control+PageUp / Control+PageDown |
+| Copy selection / paste | Ctrl+Shift+C / Ctrl+Shift+V | Cmd+C / Cmd+V |
+| Interrupt the running command | Ctrl+C | Control+C |
+| Send Escape to the shell | Esc | Esc |
 
 ## Recovery
 
@@ -972,4 +1016,7 @@ data is not encrypted.
 | Text shows as boxes | Install fonts for that script, such as `fonts-noto`. |
 | A file is rejected | It is binary or in an unsupported encoding; try **File → File encoding…**. |
 | An update fails | Read the dialog error and check your connection. Rebuild executables run from a source checkout, or reinstall with the platform's installer or package. |
+| Terminal commands are disabled | Enable **Settings → Terminal → Enable integrated terminal**. If the page says support is unavailable, use a build with the terminal feature. |
+| A terminal shell exits or will not start | Read the error or hover its tab for status. Check that its starting directory still exists, then use **Restart shell** in the tab menu. |
+| A terminal application rearranges Arabic or Hebrew incorrectly | Turn off **Settings → Terminal → Bidirectional text and Arabic shaping** if the application already arranges the text itself. |
 | A CUDA tool will not start | Check that it is installed and on `PATH`, and read its output. |

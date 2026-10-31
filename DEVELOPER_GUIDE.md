@@ -7,6 +7,7 @@ Build, test, and release hedit. For using it, see the [user guide](USER_GUIDE.md
 - [macOS builds](#macos-builds)
 - [Windows builds](#windows-builds)
 - [Code map](#code-map)
+- [Terminal development](#terminal-development)
 - [Rules to keep](#rules-to-keep)
 - [Themes and branding](#themes-and-branding)
 - [Packaging and releases](#packaging-and-releases)
@@ -26,8 +27,9 @@ Cargo and Make builds select the matching compiler automatically. If it is
 absent or the system compiler has a different version, Python with pip installs
 an isolated copy under `target/ghostty-toolchain`; system packages stay unchanged.
 CI prepares the same toolchain with `python scripts/setup-zig.py`.
-Set `ZIG` to an existing compiler executable for offline builds, or `PYTHON` to
-select a Python interpreter for automatic setup. Cargo builds
+Set `ZIG` to an existing compiler executable of the required version for offline
+builds, or `PYTHON` to select a Python interpreter for automatic setup. An
+explicit `ZIG` with the wrong version fails with an actionable error. Cargo builds
 Ghostty's VT library as a static archive, so users do not need Ghostty or Zig
 installed. The first build downloads the pinned Ghostty source and Zig packages.
 For offline packaging, provide `GHOSTTY_SOURCE_DIR` and
@@ -62,7 +64,7 @@ smoke-tests a Linux release package.
 | --- | --- |
 | `make static` | Formatting, policy, docs, and script checks; no compiling |
 | `make lint` | `make static`, then Clippy |
-| `make test` | Rust tests plus release metadata, installer, macOS, and Windows package tests |
+| `make test` | Rust tests plus Zig setup, release metadata, installer, macOS, and Windows package tests |
 | `make test-macos` | The tests that apply on macOS (the CI macOS job) |
 | `make check` | Lint and tests, without a release build |
 | `make package` / `make smoke` | Build a release package under `dist/` / install it in a temporary prefix and run it |
@@ -162,11 +164,12 @@ without a window belongs in the library, with tests under `tests/`.
 | Editing | `advanced.rs` (selections, folding, display projection), `editing.rs`, `text_commands.rs`, `completion.rs`, `intelligence.rs` (symbols, snippets, definitions, Git), `spelling.rs`, `bidi.rs` |
 | Source Control | `git.rs` (bounded Git processes, status/diff/history parsing, index/worktree operations); `app/source_control.rs` (native sidebar, review workspace, background state) |
 | Search and folders | `search.rs` (search, guarded replacement), `folder.rs` (listings, fuzzy matching), `projects.rs` (projects, EditorConfig) |
+| Header/implementation switching | `counterpart.rs` (same-stem matches, sibling priority, project search); `app/counterpart.rs` (background request, stale-reply guard, picker); `tests/counterpart.rs` and `app/counterpart_tests.rs` |
 | Syntax and look | `syntax.rs`, `syntax/` (grammars, lexer, keywords), `theme.rs`, `fonts.rs`, `brand.rs` |
 | Process and updates | `cli.rs`, `launcher.rs`, `ipc.rs`, `windows.rs`, `update.rs`, `update/`, `build.rs`, `debugger.rs` |
 | Window | `app.rs` (frame loop, shortcuts, editor drawing), `app/chrome.rs` (menus, tabs, sidebar, status bar), `app/commands.rs` (every command, the palette) |
 | App features | One file each in `src/app/`, named after the feature: `auto_complete.rs`, `definitions.rs`, `spell_check.rs`, `macros.rs`, `snippet_fields.rs`, `find_tools.rs`, `changes.rs`, `fold_gutter.rs`, `font_picker.rs`, and so on |
-| Integrated terminal | `src/terminal.rs` owns Ghostty VT and bounded PTY IO; `src/app/terminal_panel.rs` handles tab lifecycle, onboarding, and input focus; `src/app/terminal_text.rs` maps bidirectional cells and caches Rustybuzz/ab_glyph output |
+| Integrated terminal | `terminal.rs` (Ghostty VT and bounded PTY IO); `app/terminal_panel.rs` (tab lifecycle, onboarding, input focus); `app/terminal_tabs.rs` (compact tab strip, reordering, menus); `app/terminal_text.rs` (bidirectional cells and cached Rustybuzz/ab_glyph output); `app/terminal_tests.rs` (UI regression tests) |
 | Markdown | `app/markdown.rs` (source/preview layout, background preparation, links, local images), `app/markdown_scroll.rs` (bidirectional split scrolling), `app/markdown_style.rs` (shared reader fonts, contrast, and cached native code blocks), `app/markdown_media.rs` (cached native math and Mermaid rendering), `app/markdown_tests.rs`; per-tab modes are stored in `session.rs` |
 | Offline help | `app/user_guide.rs` embeds `USER_GUIDE.md`, related documentation, and notices with `include_str!`; `app/user_guide/tests.rs` covers links, modal input, and layout |
 | Settings | `settings.rs` (the `settings.json` schema), `app/settings_store.rs`, `app/preferences.rs`, `app/settings_pages.rs` |
@@ -178,6 +181,53 @@ command needs a variant in `Command::ALL`, a label, an `execute` arm, and a
 to both the displayed binding and input dispatch. New dialogs also need
 `opens_window` and `Overlay` entries so focus, Escape, and transient-window
 replacement behave consistently.
+
+## Terminal development
+
+The Cargo `terminal` feature is enabled in default builds; the user setting
+`terminal_enabled` defaults to `false`. Onboarding and settings only record the
+choice. Spawn a shell only when the user opens the panel or creates a tab.
+Older settings files skip onboarding and remain opted out. Disabling the feature
+or quitting drops every session; hiding the panel keeps sessions alive. Terminal
+tabs and scrollback are not part of editor session recovery.
+
+Each tab owns a Ghostty VT instance on the UI thread and a `portable-pty` shell.
+Reader and writer workers use bounded queues; poll inactive and hidden tabs too,
+so output cannot stall their shells. Keep process termination and reaping off the
+UI thread. Stable tab IDs preserve the active shell when tabs are reordered.
+
+Route focused terminal input before editor shortcuts. Escape, Tab, arrows, and
+interrupt keys belong to the shell; terminal tab shortcuts apply only while it
+has focus. Keep command-palette and settings shortcuts available. IME preedit is
+displayed locally and reaches the PTY only on commit. RTL cell maps and Arabic
+shaping change display, cursor placement, and pointer selection; PTY bytes and
+copied Unicode stay in logical order. Respect the `terminal_bidi` opt-out.
+
+For terminal changes, run the focused checks as well as the usual project checks:
+
+```sh
+cargo test --locked terminal
+cargo test --locked --no-default-features
+python3 scripts/test-zig-setup.py
+
+# Render onboarding, tabs, settings, narrow-window, and light-theme previews.
+cargo test --locked --bin hedit export_terminal_previews -- --ignored
+python3 scripts/ppm-to-png.py /tmp/hedit-terminal-panel.ppm /tmp/hedit-terminal-panel.png
+```
+
+The preview exporter writes `/tmp/hedit-terminal-{onboarding,panel,settings,compact,light}.ppm`.
+Review Arabic joining and diacritics, mixed-script selection, the active tab's
+close control in narrow windows, and both themes. The UI tests cover tab
+isolation, focus, drag reordering, middle-click closing, IME, and logical Unicode
+copying; backend tests cover PTY IO, VT replies, resizing, and process cleanup.
+
+The local `vendor/libghostty-vt-sys` patch selects the pinned compiler for raw
+Cargo builds as well as Make; its `PATCH.md` records the scope. Keep it aligned
+with `scripts/setup-zig.py` when upgrading Ghostty. Run
+`python3 scripts/setup-zig.py --print-path` to check compiler selection. If setup
+reports an incomplete cache, remove only `target/ghostty-toolchain` and retry,
+or set `ZIG` to a matching compiler. Automatic installation requires Python with
+pip and network access on the first build.
 
 ## Rules to keep
 

@@ -4,6 +4,8 @@
 
 ### Added
 
+- Header/implementation switching for C, C++, CUDA, and Objective-C with Alt+O
+  (Option+O on macOS), sibling priority, and a picker for multiple matches.
 - Optional Ghostty-powered terminal, disabled by default, with onboarding and
   settings, compact draggable tabs, keyboard shortcuts, and Arabic/RTL support.
 - Automatic setup of Ghostty's required Zig compiler; terminal-free builds remain

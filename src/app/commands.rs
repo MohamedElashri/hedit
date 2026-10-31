@@ -23,6 +23,7 @@ pub(super) enum Command {
     Symbols,
     GotoDefinition,
     GotoReferences,
+    SwitchCounterpart,
     NavBack,
     NavForward,
     CompareDisk,
@@ -238,6 +239,7 @@ impl Command {
         Self::Symbols,
         Self::GotoDefinition,
         Self::GotoReferences,
+        Self::SwitchCounterpart,
         Self::NavBack,
         Self::NavForward,
         Self::CompareDisk,
@@ -485,6 +487,7 @@ impl Command {
             Self::Symbols => "Go to symbol…",
             Self::GotoDefinition => "Go to definition",
             Self::GotoReferences => "Go to references…",
+            Self::SwitchCounterpart => "Switch header/implementation",
             Self::NavBack => "Navigate back",
             Self::NavForward => "Navigate forward",
             Self::CompareDisk => "Compare with disk…",
@@ -750,6 +753,7 @@ impl Command {
             Self::Symbols => "Ctrl+R",
             Self::GotoDefinition => "F12",
             Self::GotoReferences => "Shift+F12",
+            Self::SwitchCounterpart => "Alt+O",
             // Option+arrows move by word on macOS, so use Sublime's Control+-.
             Self::NavBack if cfg!(target_os = "macos") => "Control+-",
             Self::NavForward if cfg!(target_os = "macos") => "Control+Shift+-",
@@ -1084,6 +1088,13 @@ impl HeditApp {
             Command::CloseFolder | Command::RefreshFolder => !self.workspace.folders.is_empty(),
             Command::Rename => self.active().page.info.path.is_none(),
             Command::CopyPath | Command::RevealInSidebar => self.active().page.info.path.is_some(),
+            Command::SwitchCounterpart => self
+                .active()
+                .page
+                .info
+                .path
+                .as_ref()
+                .is_some_and(|p| hedit::counterpart::supported(std::path::Path::new(p))),
             Command::OpenRecent => !self.recent_files.is_empty(),
             Command::SelectBookmarks => {
                 !self.active().view.bookmarks.is_empty() && !self.active().page.info.paged
@@ -1258,6 +1269,7 @@ impl HeditApp {
             Command::Symbols => self.list_symbols(ctx),
             Command::GotoDefinition => self.look_up(ctx, false),
             Command::GotoReferences => self.look_up(ctx, true),
+            Command::SwitchCounterpart => self.switch_counterpart(ctx),
             Command::NavBack => self.navigate(ctx, false),
             Command::NavForward => self.navigate(ctx, true),
             Command::CompareDisk => self.compare_disk(ctx, false),

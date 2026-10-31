@@ -145,6 +145,7 @@ pub(super) enum Event {
     Symbols(Vec<intelligence::Symbol>),
     /// Definitions (false) or references (true) of a name.
     Locations(bool, String, Vec<definitions::Location>),
+    Counterparts(u64, PathBuf, Vec<PathBuf>),
     Diff(u64, u64, String, String, bool),
     FileChanged(PathBuf, Option<PathBuf>),
     ProjectLoaded(
@@ -172,6 +173,9 @@ impl HeditApp {
     }
     pub(super) fn quality_event(&mut self, ctx: &egui::Context, event: Event) {
         match event {
+            Event::Counterparts(view, source, found) => {
+                self.show_counterparts(ctx, view, source, found);
+            }
             Event::GitMarkers(id, revision, diff, base) => {
                 self.quality.git_pending = false;
                 if self
