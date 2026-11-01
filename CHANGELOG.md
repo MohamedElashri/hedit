@@ -2,16 +2,19 @@
 
 ## Unreleased
 
+## [0.1.13] - 2026-11-01
+
 ### Added
 
-- In-app updates on macOS, with checksum and app signature verification, whole-app
-  replacement, and rollback on installation failure.
+- macOS in-app updates with checksum and signature verification and rollback.
+- About hedit in the macOS Help menu.
 
 ### Fixed
 
-- Ghostty terminal builds with newer macOS SDKs that omit ARM64 from the
-  top-level system-library definition.
-- Build and lint failures with newer Rust compilers.
+- Shortcut conflicts, accessibility, and case-only renames on macOS.
+- Partial duplicates and line endings in paste, snippets, and text commands.
+- Paragraph wrapping, EditorConfig rules, Unicode matching, and UTF-16 navigation.
+- Build paths, nested project directories, and macOS SDK/Rust compatibility.
 
 ## [0.1.12] - 2026-10-31
 
