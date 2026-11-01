@@ -60,7 +60,7 @@ windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32
 
 [target.'cfg(target_os = "macos")'.dependencies]
 plist = "1"
-zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 # Process nested Markdown blocks normally; see vendor/egui_commonmark/PATCH.md.
 [patch.crates-io]
