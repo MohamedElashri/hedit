@@ -622,9 +622,26 @@ editor; open tabs, cursor positions, and unsaved text remain available.
 **Changes** separates conflicts, staged files, and working changes. Select a file
 to compare the **working tree with the index**, or the **index with HEAD** for
 staged files. New files have a text preview; binary files show a summary. **Unified**
-and **Side by side** share colored additions/deletions, line numbers, and horizontal
-scrolling. Narrow windows use Unified automatically. **Copy diff** copies the
+and **Side by side** share syntax coloring, character-change highlights, line
+numbers, and horizontal scrolling. Narrow windows use Unified automatically. **Copy diff** copies the
 complete patch, including headers hidden from the visual review.
+
+Both layouts offer **Copy line** and **Copy diff** from the right-click menu;
+**Copy line** copies the saved source without the diff marker. Line numbers stay
+fixed while code scrolls horizontally. In compact windows, Unified is shown as
+the active layout; widening the review area restores your side-by-side preference.
+
+Diffs and conflict previews use the active editor theme, font, font size, line
+spacing, and tab display settings. Added and removed lines use the theme's success
+and error colors; selected lines use its selection colors. Gutter typography and
+line-number visibility follow the editor settings too.
+
+**Tree** groups files into collapsible folders and compacts single-child folder
+chains. Folder counts include all changed descendants. Filtering reveals matching
+files inside collapsed folders without losing your expansion state. **Expand all**
+opens every folder; **List** shows full paths instead. Both layouts draw only
+visible rows. Your Tree/List preference is remembered. Commit review uses the same
+tree, with a separate **Filter files…** field.
 
 - **+** stages a file; **−** unstages it. Section actions stage/unstage all files
   in that section, including files hidden by the filter.
@@ -632,6 +649,13 @@ complete patch, including headers hidden from the visual review.
   files. New/deleted files, mode changes, binary files, and some unusual path
   encodings use whole-file staging. Changed diffs must be refreshed before a hunk
   can be applied.
+- Click added or removed lines to select them in either diff layout; click again
+  to deselect. Shift-click extends the selection over changed lines. **Stage
+  selected** or **Unstage selected** applies only those additions and deletions
+  to the index. Select both sides of a replacement to include the entire edit.
+  **Clear selection** resets the selection. It also resets when the reviewed diff
+  changes, or when you switch files or views. The same whole-file restrictions
+  and stale-diff checks as hunk staging apply.
 - The review follows a file into its new group after staging or unstaging, and
   clears after the file has no remaining changes. Unstaging only changes the
   index and can be done while the editor has unsaved text.

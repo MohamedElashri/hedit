@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Added
+
+- Stage and unstage individual changed lines in unified and side-by-side diffs.
+- Browse changed files and commit files in collapsible folder trees, with
+  filtering and a remembered Tree/List view.
+- Review syntax-colored diffs with individual character changes highlighted.
+
+### Fixed
+
+- Git diffs and conflict previews match the editor's font, size, theme, line
+  spacing, and tab settings, including unhighlighted text.
+- Changing fonts, zoom, line numbers, the sidebar, or the status bar keeps Git
+  review open.
+- Line numbers stay fixed during horizontal scrolling. Narrow windows show the
+  active diff layout correctly and restore side-by-side mode when widened.
+- Selected lines stay highlighted and hunk buttons stay visible while Git refreshes.
+- Both diff layouts offer the same copy actions; copied source lines omit diff markers.
+- Arabic text joins and reads in the correct direction in both diff layouts.
+- File-status badges appear when reviewing commits.
+
 ## [0.1.13] - 2026-11-01
 
 ### Added

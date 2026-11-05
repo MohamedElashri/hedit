@@ -131,6 +131,301 @@ fn hunks_can_be_staged_and_unstaged_without_changing_other_text() {
 }
 
 #[test]
+fn selected_lines_stage_and_unstage_independently_with_offsets_and_unicode() {
+    let (directory, git) = repo();
+    let root = directory.path();
+    let base = (1..=40).map(|i| format!("line {i}\n")).collect::<String>();
+    write(root, "lines.txt", &base);
+    stage(&git, root, "lines.txt");
+    commit(&git, root, "Base");
+    let changed = base
+        .replace("line 2\n", "العربية\nextra\n")
+        .replace("line 25\n", "日本語\n")
+        .replace("line 39\n", "last edit\n");
+    write(root, "lines.txt", &changed);
+    let selection = select("lines.txt", DiffKind::Working);
+    let diff = git.diff(root, &selection).unwrap();
+    let lines = diff
+        .lines
+        .iter()
+        .enumerate()
+        .filter_map(|(i, l)| {
+            (l.text == "+extra" || l.text == "-line 25" || l.text == "+日本語").then_some(i)
+        })
+        .collect();
+    git.execute(
+        root,
+        &Operation::Lines {
+            selection,
+            expected: diff.patch,
+            lines,
+        },
+    )
+    .unwrap();
+    let indexed = base
+        .replace("line 2\n", "line 2\nextra\n")
+        .replace("line 25\n", "日本語\n");
+    assert_eq!(git.command(root, &["show", ":lines.txt"]).unwrap(), indexed);
+    let selection = select("lines.txt", DiffKind::Staged);
+    let diff = git.diff(root, &selection).unwrap();
+    let lines = diff
+        .lines
+        .iter()
+        .enumerate()
+        .filter_map(|(i, l)| matches!(l.kind, '+' | '-').then_some(i))
+        .collect();
+    git.execute(
+        root,
+        &Operation::Lines {
+            selection,
+            expected: diff.patch,
+            lines,
+        },
+    )
+    .unwrap();
+    assert_eq!(git.command(root, &["show", ":lines.txt"]).unwrap(), base);
+    assert_eq!(
+        std::fs::read_to_string(root.join("lines.txt")).unwrap(),
+        changed
+    );
+}
+
+#[test]
+fn selected_lines_preserve_crlf_and_missing_final_newline() {
+    for (base, changed) in [
+        ("one\r\ntwo\r\nthree\r\n", "ONE\r\nTWO\r\nthree\r\n"),
+        ("one\ntwo", "ONE\nTWO"),
+        ("one\n", "one\nextra\n"),
+        ("one\ntwo\n", "one\n"),
+    ] {
+        let (directory, git) = repo();
+        let root = directory.path();
+        write(root, "file.txt", base);
+        stage(&git, root, "file.txt");
+        commit(&git, root, "Base");
+        write(root, "file.txt", changed);
+        for kind in [DiffKind::Working, DiffKind::Staged] {
+            let selection = select("file.txt", kind);
+            let diff = git.diff(root, &selection).unwrap();
+            let lines = diff
+                .lines
+                .iter()
+                .enumerate()
+                .filter_map(|(i, l)| matches!(l.kind, '+' | '-').then_some(i))
+                .collect();
+            git.execute(
+                root,
+                &Operation::Lines {
+                    selection,
+                    expected: diff.patch,
+                    lines,
+                },
+            )
+            .unwrap();
+        }
+        assert_eq!(git.command(root, &["show", ":file.txt"]).unwrap(), base);
+        assert_eq!(
+            std::fs::read_to_string(root.join("file.txt")).unwrap(),
+            changed
+        );
+    }
+}
+
+#[test]
+fn selected_lines_reject_stale_invalid_and_whole_file_changes() {
+    let (directory, git) = repo();
+    let root = directory.path();
+    write(root, "file.txt", "base\n");
+    stage(&git, root, "file.txt");
+    commit(&git, root, "Base");
+    write(root, "file.txt", "reviewed\n");
+    let selection = select("file.txt", DiffKind::Working);
+    let diff = git.diff(root, &selection).unwrap();
+    assert!(diff.lines_patch(&[], false).is_none());
+    assert!(diff.lines_patch(&[usize::MAX], false).is_none());
+    assert!(diff.lines_patch(&[0], false).is_none());
+    let lines = diff
+        .lines
+        .iter()
+        .enumerate()
+        .filter_map(|(i, l)| (l.kind == '+').then_some(i))
+        .collect();
+    write(root, "file.txt", "newer\n");
+    assert!(git
+        .execute(
+            root,
+            &Operation::Lines {
+                selection,
+                expected: diff.patch,
+                lines
+            }
+        )
+        .unwrap_err()
+        .contains("changed"));
+    assert_eq!(git.command(root, &["show", ":file.txt"]).unwrap(), "base\n");
+    write(root, "new.txt", "new\n");
+    let diff = git
+        .diff(root, &select("new.txt", DiffKind::Untracked))
+        .unwrap();
+    assert!(diff.lines_patch(&[1], false).is_none());
+}
+
+#[test]
+fn every_subset_of_a_replacement_changes_only_selected_index_lines() {
+    let (directory, git) = repo();
+    let root = directory.path();
+    let base = "one\ntwo\nunchanged\n";
+    let changed = "ONE\nTWO\nunchanged\n";
+    write(root, "subset.txt", base);
+    stage(&git, root, "subset.txt");
+    commit(&git, root, "Base");
+    write(root, "subset.txt", changed);
+    for reverse in [false, true] {
+        for mask in 1..16 {
+            git.execute(root, &Operation::Unstage(vec!["subset.txt".into()]))
+                .unwrap();
+            if reverse {
+                stage(&git, root, "subset.txt");
+            }
+            let selection = select(
+                "subset.txt",
+                if reverse {
+                    DiffKind::Staged
+                } else {
+                    DiffKind::Working
+                },
+            );
+            let diff = git.diff(root, &selection).unwrap();
+            let changed_lines: Vec<_> = diff
+                .lines
+                .iter()
+                .enumerate()
+                .filter_map(|(i, l)| matches!(l.kind, '+' | '-').then_some(i))
+                .collect();
+            assert_eq!(changed_lines.len(), 4);
+            let lines = changed_lines
+                .iter()
+                .enumerate()
+                .filter_map(|(bit, &i)| (mask & (1 << bit) != 0).then_some(i))
+                .collect();
+            git.execute(
+                root,
+                &Operation::Lines {
+                    selection,
+                    expected: diff.patch,
+                    lines,
+                },
+            )
+            .unwrap();
+            let mut expected = String::new();
+            let order = if reverse {
+                [(2, "ONE\n"), (0, "one\n"), (3, "TWO\n"), (1, "two\n")]
+            } else {
+                [(0, "one\n"), (2, "ONE\n"), (1, "two\n"), (3, "TWO\n")]
+            };
+            for (bit, text) in order {
+                let selected = mask & (1 << bit) != 0;
+                if if reverse {
+                    if bit < 2 {
+                        selected
+                    } else {
+                        !selected
+                    }
+                } else if bit < 2 {
+                    !selected
+                } else {
+                    selected
+                } {
+                    expected.push_str(text);
+                }
+            }
+            expected.push_str("unchanged\n");
+            assert_eq!(
+                git.command(root, &["show", ":subset.txt"]).unwrap(),
+                expected,
+                "reverse={reverse}, mask={mask}"
+            );
+            assert_eq!(
+                std::fs::read_to_string(root.join("subset.txt")).unwrap(),
+                changed
+            );
+        }
+    }
+}
+
+#[test]
+fn character_emphasis_uses_utf8_byte_boundaries_and_ignores_context() {
+    let diff = hedit::git::Diff::parse("--- a/file\n+++ b/file\n@@ -1,2 +1,2 @@\n-hello العربية world\n+hello 日本語 world\n context\n".into(), true);
+    for line in &diff.lines {
+        if matches!(line.kind, '+' | '-') {
+            let text = &line.text[1..];
+            let changed = line
+                .emphasis
+                .iter()
+                .map(|r| &text[r.clone()])
+                .collect::<String>();
+            assert_eq!(
+                changed,
+                if line.kind == '+' {
+                    "日本語"
+                } else {
+                    "العربية"
+                }
+            );
+        } else {
+            assert!(line.emphasis.is_empty());
+        }
+    }
+}
+
+#[test]
+fn selected_replacement_preserves_an_adjacent_unselected_eof_line() {
+    let (directory, git) = repo();
+    let root = directory.path();
+    write(root, "file.txt", "one\ntwo");
+    stage(&git, root, "file.txt");
+    commit(&git, root, "Base");
+    write(root, "file.txt", "ONE\nTWO");
+    for reverse in [false, true] {
+        if reverse {
+            stage(&git, root, "file.txt");
+        }
+        let selection = select(
+            "file.txt",
+            if reverse {
+                DiffKind::Staged
+            } else {
+                DiffKind::Working
+            },
+        );
+        let diff = git.diff(root, &selection).unwrap();
+        let lines = diff
+            .lines
+            .iter()
+            .enumerate()
+            .filter_map(|(i, l)| matches!(l.text.as_str(), "-one" | "+ONE").then_some(i))
+            .collect();
+        git.execute(
+            root,
+            &Operation::Lines {
+                selection,
+                expected: diff.patch,
+                lines,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            git.command(root, &["show", ":file.txt"]).unwrap(),
+            if reverse { "one\nTWO" } else { "ONE\ntwo" }
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(root.join("file.txt")).unwrap(),
+        "ONE\nTWO"
+    );
+}
+
+#[test]
 fn stale_hunk_and_discard_are_rejected_and_discard_keeps_a_backup() {
     let (directory, git) = repo();
     let root = directory.path();

@@ -1238,6 +1238,13 @@ impl HeditApp {
                     | Command::Settings
                     | Command::KeyBindings
                     | Command::Appearance
+                    | Command::ChooseFont
+                    | Command::ZoomIn
+                    | Command::ZoomOut
+                    | Command::ResetZoom
+                    | Command::LineNumbers
+                    | Command::Sidebar
+                    | Command::StatusBar
                     | Command::Fullscreen
                     | Command::DistractionFree
                     | Command::Quit

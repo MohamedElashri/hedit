@@ -1683,12 +1683,12 @@ impl HeditApp {
         }
     }
     fn editor(&mut self, ctx: &egui::Context) {
+        self.apply_editor_style(ctx);
         if self.source_control.open {
             self.source_control_editor(ctx);
             return;
         }
         self.markdown.retain_documents(ctx, &self.workspace.open);
-        self.apply_editor_style(ctx);
         let theme = self.theme.clone();
         egui::CentralPanel::default()
             .frame(
@@ -1950,7 +1950,8 @@ impl HeditApp {
             self.rectangle_start = Some((pane_id, original_selection.head));
         }
         let language = buffer.language();
-        let font_size = self.settings.font_size;
+        let typography = editor_layout::Font::from_settings(ui, &self.settings);
+        let font_size = typography.size;
         let wrap = self.settings.word_wrap || self.distraction_free;
         let column_width = ui.fonts(|fonts| fonts.glyph_width(&FontId::monospace(font_size), ' '));
         let wrap_limit = if self.settings.wrap_width == 0 {
@@ -1968,9 +1969,8 @@ impl HeditApp {
         } else {
             &mut self.extra_layouts[pane_id - 1]
         };
-        let row_height = ui.fonts(|f| f.row_height(&FontId::monospace(font_size)));
-        let line_height =
-            (self.settings.line_padding > 0.0).then_some(row_height + self.settings.line_padding);
+        let row_height = ui.fonts(|f| f.row_height(&typography.id()));
+        let line_height = typography.line_height;
         // Like Sublime, the last line can scroll up to the top: the editor is a
         // window's height taller than its text, so clicks there place the cursor.
         let rows = if self.settings.scroll_past_end && !buffer.follow {
@@ -1987,10 +1987,7 @@ impl HeditApp {
                 ui,
                 text,
                 language,
-                editor_layout::Font {
-                    size: font_size,
-                    line_height,
-                },
+                typography,
                 if wrap {
                     wrap_width.min(wrap_limit)
                 } else {
@@ -2047,14 +2044,10 @@ impl HeditApp {
         }
         let mut markdown_layout = None;
         let restore = buffer.restore_cursor;
-        let gutter = if self.settings.line_numbers {
-            let digits = (memchr::memchr_iter(b'\n', buffer.page.text.as_bytes()).count() + 1)
-                .to_string()
-                .len();
-            (digits.max(3) as f32 * font_size * 0.65 + 16.0).max(42.0)
-        } else {
-            0.0
-        };
+        let gutter = typography.gutter_width(
+            memchr::memchr_iter(b'\n', buffer.page.text.as_bytes()).count() + 1,
+            self.settings.line_numbers,
+        );
         let gutter_color = self.theme.muted.color();
         let gutter_background = self.theme.background.color();
         let gutter_text = self.theme.text.color();
@@ -2537,7 +2530,7 @@ impl HeditApp {
                                                 .get(display_line)
                                                 .unwrap_or(&1)
                                                 .to_string(),
-                                            FontId::monospace(font_size - 1.0),
+                                            typography.gutter_font(),
                                             if projection.source_lines.get(display_line)
                                                 == Some(&current_line)
                                             {

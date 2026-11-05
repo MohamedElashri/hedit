@@ -539,6 +539,29 @@ impl Git {
                 }
                 a
             }
+            Operation::Lines {
+                selection,
+                expected,
+                lines,
+            } => {
+                if !matches!(selection.kind, DiffKind::Working | DiffKind::Staged) {
+                    return Err("Select lines in a working or staged text diff.".into());
+                }
+                let current = self.diff(root, selection)?;
+                if current.patch != *expected {
+                    return Err(
+                        "The file changed since this diff was opened. Refresh and review it again."
+                            .into(),
+                    );
+                }
+                input = Some(
+                    current
+                        .lines_patch(lines, selection.kind == DiffKind::Staged)
+                        .ok_or("These lines cannot be staged separately; use the file action.")?
+                        .into_bytes(),
+                );
+                args(&["apply", "--cached", "--whitespace=nowarn"])
+            }
             Operation::Commit { message, amend } => {
                 if message.trim().is_empty() {
                     return Err("Enter a commit message first.".into());
@@ -1026,6 +1049,12 @@ pub enum Operation {
         expected: String,
         hunk: usize,
     },
+    Lines {
+        selection: Selection,
+        expected: String,
+        /// Indices into the reviewed Diff::lines, including only additions/deletions.
+        lines: Vec<usize>,
+    },
     Commit {
         message: String,
         amend: bool,
@@ -1171,6 +1200,8 @@ pub struct DiffLine {
     pub new: Option<usize>,
     pub kind: char,
     pub hunk: Option<usize>,
+    /// Changed byte ranges in the source text (excluding the diff prefix).
+    pub emphasis: Vec<std::ops::Range<usize>>,
 }
 #[derive(Clone, Debug, Default)]
 pub struct Diff {
@@ -1180,6 +1211,7 @@ pub struct Diff {
     pub applicable: bool,
     pub additions: usize,
     pub deletions: usize,
+    pub max_line_chars: usize,
     pub conflict: Option<Conflict>,
     pub split_rows: Vec<(Option<usize>, Option<usize>)>,
 }
@@ -1203,6 +1235,7 @@ impl Diff {
         let (mut old, mut new, mut offset, mut hunk) = (0, 0, 0, None::<usize>);
         for line in result.patch.split_inclusive('\n') {
             let text = line.trim_end_matches('\n').trim_end_matches('\r');
+            result.max_line_chars = result.max_line_chars.max(text.chars().take(16_384).count());
             let mut kind = 'i';
             let mut old_line = None;
             let mut new_line = None;
@@ -1256,53 +1289,231 @@ impl Diff {
                     new: new_line,
                     kind,
                     hunk,
+                    emphasis: vec![],
                 });
             }
             offset += line.len();
         }
         let mut i = 0;
         while i < result.lines.len() {
-            let start = i;
-            if result.lines[i].kind == '-' {
-                while i < result.lines.len() && result.lines[i].kind == '-' {
+            if matches!(result.lines[i].kind, '-' | '+') {
+                let (mut removed, mut added, mut markers) = (Vec::new(), Vec::new(), Vec::new());
+                while i < result.lines.len() && matches!(result.lines[i].kind, '-' | '+' | '\\') {
+                    match result.lines[i].kind {
+                        '-' => removed.push(i),
+                        '+' => added.push(i),
+                        _ => markers.push(i),
+                    }
                     i += 1;
                 }
-                let middle = i;
-                while i < result.lines.len() && result.lines[i].kind == '+' {
-                    i += 1;
+                for offset in 0..removed.len().max(added.len()) {
+                    result
+                        .split_rows
+                        .push((removed.get(offset).copied(), added.get(offset).copied()));
                 }
-                for offset in 0..(middle - start).max(i - middle) {
-                    result.split_rows.push((
-                        (start + offset < middle).then_some(start + offset),
-                        (middle + offset < i).then_some(middle + offset),
-                    ));
+                for marker in markers {
+                    result.split_rows.push((Some(marker), Some(marker)));
                 }
-            } else if result.lines[i].kind == '+' {
-                result.split_rows.push((None, Some(i)));
-                i += 1;
             } else {
                 result.split_rows.push((Some(i), Some(i)));
                 i += 1;
             }
         }
+        // Compute character changes on the worker that parsed the patch. Bound
+        // both input size and total time; row backgrounds remain the fallback.
+        let deadline = Instant::now() + Duration::from_millis(20);
+        for row in 0..result.split_rows.len() {
+            let (Some(old), Some(new)) = result.split_rows[row] else {
+                continue;
+            };
+            if old == new || Instant::now() >= deadline {
+                continue;
+            }
+            let before = result.lines[old].text.get(1..).unwrap_or("");
+            let after = result.lines[new].text.get(1..).unwrap_or("");
+            if before.len() + after.len() > 16_384 {
+                continue;
+            }
+            let changes = similar::TextDiff::configure()
+                .deadline(deadline)
+                .diff_chars(before, after);
+            let (mut old_offset, mut new_offset) = (0, 0);
+            let (mut removed, mut added): (
+                Vec<std::ops::Range<usize>>,
+                Vec<std::ops::Range<usize>>,
+            ) = (Vec::new(), Vec::new());
+            for change in changes.iter_all_changes() {
+                let len = change.value().len();
+                match change.tag() {
+                    similar::ChangeTag::Delete => {
+                        if let Some(last) = removed.last_mut().filter(|r| r.end == old_offset) {
+                            last.end += len;
+                        } else {
+                            removed.push(old_offset..old_offset + len);
+                        }
+                        old_offset += len;
+                    }
+                    similar::ChangeTag::Insert => {
+                        if let Some(last) = added.last_mut().filter(|r| r.end == new_offset) {
+                            last.end += len;
+                        } else {
+                            added.push(new_offset..new_offset + len);
+                        }
+                        new_offset += len;
+                    }
+                    similar::ChangeTag::Equal => {
+                        old_offset += len;
+                        new_offset += len;
+                    }
+                }
+            }
+            result.lines[old].emphasis = removed;
+            result.lines[new].emphasis = added;
+        }
         result
     }
     pub fn hunk_patch(&self, index: usize) -> Option<String> {
-        if !self.applicable {
+        if !self.supports_partial() {
             return None;
         }
         let (start, end) = *self.hunks.get(index)?;
         let header_end = self.hunks.first()?.0;
         let header = &self.patch[..header_end];
+        Some(format!("{}{}", header, &self.patch[start..end]))
+    }
+    pub fn supports_partial(&self) -> bool {
+        let Some(&(header_end, _)) = self.hunks.first() else {
+            return false;
+        };
+        let header = &self.patch[..header_end];
         // Creation/deletion and mode/rename changes must be staged as a whole.
-        if !header.contains("--- a/")
-            || !header.contains("+++ b/")
-            || header.contains("mode ")
-            || header.contains("rename ")
+        self.applicable
+            && header.contains("--- a/")
+            && header.contains("+++ b/")
+            && !header.contains("mode ")
+            && !header.contains("rename ")
+    }
+
+    /// Build an index-only patch for selected changes. Reverse operates against
+    /// the new side (the index for a staged diff), without touching working text.
+    pub fn lines_patch(&self, selected: &[usize], reverse: bool) -> Option<String> {
+        use std::collections::BTreeSet;
+        // Reuse the restrictions for modes, renames, binary and new/deleted files.
+        if !self.supports_partial() {
+            return None;
+        }
+        let selected: BTreeSet<_> = selected.iter().copied().collect();
+        if selected.is_empty()
+            || selected.iter().any(|i| {
+                self.lines
+                    .get(*i)
+                    .is_none_or(|line| !matches!(line.kind, '+' | '-'))
+            })
         {
             return None;
         }
-        Some(format!("{}{}", header, &self.patch[start..end]))
+        let header = &self.patch[..self.hunks.first()?.0];
+        let mut patch = String::new();
+        // Only file names are needed. Omit the original index object IDs: the
+        // selected result intentionally differs from both original blobs.
+        let old = header.lines().find_map(|s| s.strip_prefix("--- "))?;
+        let new = header.lines().find_map(|s| s.strip_prefix("+++ "))?;
+        patch.push_str(&format!("--- {old}\n+++ {new}\n"));
+        let mut delta: i64 = 0;
+        for (hunk, &(start, end)) in self.hunks.iter().enumerate() {
+            let first = self.lines.partition_point(|l| l.hunk < Some(hunk));
+            let last = self.lines.partition_point(|l| l.hunk <= Some(hunk));
+            let indices = first..last;
+            if selected.range(indices.clone()).next().is_none() {
+                continue;
+            }
+            let raw: Vec<_> = self.patch[start..end].split_inclusive('\n').collect();
+            if raw.len() != indices.len() {
+                return None;
+            }
+            let mut fields = raw.first()?.split_whitespace();
+            fields.next()?;
+            let old_range = fields.next()?;
+            let new_range = fields.next()?;
+            let range = if reverse { new_range } else { old_range };
+            let (source_start, source_count) = range
+                .get(1..)?
+                .split_once(',')
+                .unwrap_or((range.get(1..)?, "1"));
+            let source_count: usize = source_count.parse().ok()?;
+            let source_start: i64 = source_start.parse().ok()?;
+            let logical_start = source_start + i64::from(source_count == 0);
+            let mut body = String::new();
+            let (mut old_count, mut new_count) = (0usize, 0usize);
+            // Keep EOF markers attached to their source line, then pair
+            // adjacent removals/additions as in the side-by-side review. This
+            // keeps unselected neighboring replacements in their original order.
+            let mut records: Vec<(usize, &str, &str)> = Vec::new();
+            for (index, text) in indices.zip(raw).skip(1) {
+                if self.lines[index].kind == '\\' {
+                    records.last_mut()?.2 = text;
+                } else {
+                    records.push((index, text, ""));
+                }
+            }
+            let mut ordered = Vec::with_capacity(records.len());
+            let mut at = 0;
+            while at < records.len() {
+                let start = at;
+                if self.lines[records[at].0].kind == '-' {
+                    while at < records.len() && self.lines[records[at].0].kind == '-' {
+                        at += 1;
+                    }
+                    let middle = at;
+                    while at < records.len() && self.lines[records[at].0].kind == '+' {
+                        at += 1;
+                    }
+                    for offset in 0..(middle - start).max(at - middle) {
+                        let old = (start + offset < middle).then_some(start + offset);
+                        let new = (middle + offset < at).then_some(middle + offset);
+                        ordered.extend(
+                            if reverse { [new, old] } else { [old, new] }
+                                .into_iter()
+                                .flatten(),
+                        );
+                    }
+                } else {
+                    ordered.push(at);
+                    at += 1;
+                }
+            }
+            for at in ordered {
+                let (index, text, marker) = records[at];
+                let kind = self.lines[index].kind;
+                let (remove, add) = if reverse { ('+', '-') } else { ('-', '+') };
+                let output = if kind == ' ' {
+                    Some(' ')
+                } else if kind == remove {
+                    Some(if selected.contains(&index) { '-' } else { ' ' })
+                } else if kind == add && selected.contains(&index) {
+                    Some('+')
+                } else {
+                    None
+                };
+                if let Some(output) = output {
+                    body.push(output);
+                    body.push_str(text.get(1..)?);
+                    body.push_str(marker);
+                    old_count += usize::from(output != '+');
+                    new_count += usize::from(output != '-');
+                }
+            }
+            if old_count != source_count {
+                return None;
+            }
+            let target_start = logical_start + delta - i64::from(new_count == 0);
+            patch.push_str(&format!(
+                "@@ -{source_start},{old_count} +{target_start},{new_count} @@\n"
+            ));
+            patch.push_str(&body);
+            delta += new_count as i64 - old_count as i64;
+        }
+        Some(patch)
     }
 }
 

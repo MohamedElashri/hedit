@@ -296,6 +296,24 @@ backup path. Keep existing Git gutter comparison independent of index operations
 Tests in `tests/git.rs` use disposable repositories and local bare remotes;
 `app/source_control_tests.rs` exercises the native UI and unsaved-buffer guards.
 
+The Git review components stay native: `app/source_control/file_tree.rs` caches
+path-based trees and virtualizes visible rows, and `diff_view.rs` caches bounded
+per-line syntax layouts. Character-change ranges are computed while parsing diffs
+on background workers with a size limit and a shared time budget. Selected-line
+patches are built against the index side, with recomputed hunk ranges and preserved
+line endings; they never write working files. Selection indices refer to the
+reviewed diff and must be cleared when that diff or file selection changes.
+Pierre Diffs/Trees inform the interaction design; their DOM-based packages are
+not dependencies of the native application.
+
+Editor and Git code views share `editor_layout::Font` and `code_job` for font
+metrics, spacing, gutters, and syntax layout. Git statuses use the active theme's
+success/error/warning roles, and review selections use its selection roles.
+Keep these surfaces tied to editor settings when adding display preferences.
+Syntax highlighting supplies colors only: `code_job` enforces the editor font
+on every section, including unhighlighted fallback text. Typography tests must
+compare resolved glyph metrics after font-family changes, not only FontIds.
+
 **Large files are paged.** Files over 2 MiB load in about 256 KiB pages;
 commands that need the whole text must check `page.info.paged`.
 
