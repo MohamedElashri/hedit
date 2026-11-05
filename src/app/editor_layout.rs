@@ -21,6 +21,56 @@ pub(super) struct Font {
     pub line_height: Option<f32>,
 }
 
+impl Font {
+    pub(super) fn from_settings(ui: &egui::Ui, settings: &hedit::settings::Settings) -> Self {
+        let row = ui.fonts(|f| f.row_height(&egui::FontId::monospace(settings.font_size)));
+        Self {
+            size: settings.font_size,
+            line_height: (settings.line_padding > 0.0).then_some(row + settings.line_padding),
+        }
+    }
+    pub(super) fn id(self) -> egui::FontId {
+        egui::FontId::monospace(self.size)
+    }
+    pub(super) fn row_height(self, ui: &egui::Ui) -> f32 {
+        self.line_height
+            .unwrap_or_else(|| ui.fonts(|f| f.row_height(&self.id())))
+    }
+    pub(super) fn gutter_font(self) -> egui::FontId {
+        egui::FontId::monospace(self.size - 1.0)
+    }
+    pub(super) fn gutter_width(self, last_line: usize, enabled: bool) -> f32 {
+        if enabled {
+            (last_line.to_string().len().max(3) as f32 * self.size * 0.65 + 16.0).max(42.0)
+        } else {
+            0.0
+        }
+    }
+}
+
+/// Code typography shared by editable buffers and Git review surfaces.
+pub(super) fn code_job(
+    text: &str,
+    language: Language,
+    font: Font,
+    wrap_width: f32,
+    theme: &Theme,
+    runs: Option<&[(usize, egui::Color32)]>,
+) -> egui::text::LayoutJob {
+    let mut job = match runs {
+        Some(runs) => syntax::layout_runs(text, runs, font.size, wrap_width),
+        None => syntax::highlight_language(text, font.size, wrap_width, language, theme),
+    };
+    for section in &mut job.sections {
+        // Syntax runs supply colors, never typography. In particular, the
+        // highlighter's uncovered tail otherwise carries egui's default
+        // proportional font rather than the chosen editor face and size.
+        section.format.font_id = font.id();
+        section.format.line_height = font.line_height;
+    }
+    job
+}
+
 #[derive(Default)]
 pub(super) struct LayoutCache {
     entry: Option<Entry>,
@@ -64,10 +114,6 @@ impl LayoutCache {
         wrap_width: f32,
         theme: &Theme,
     ) -> Arc<Galley> {
-        let Font {
-            size: font_size,
-            line_height,
-        } = font;
         let runs = self.grammar_runs(ui.ctx(), text, language, theme);
         let pixels_per_point = ui.ctx().pixels_per_point();
         // egui can recreate the font atlas when fonts change or it fills up.
@@ -90,15 +136,14 @@ impl LayoutCache {
                 return Arc::clone(&entry.galley);
             }
         }
-        let mut job = match &runs {
-            Some(runs) => syntax::layout_runs(text, runs, font_size, wrap_width),
-            None => syntax::highlight_language(text, font_size, wrap_width, language, theme),
-        };
-        if line_height.is_some() {
-            for section in &mut job.sections {
-                section.format.line_height = line_height;
-            }
-        }
+        let job = code_job(
+            text,
+            language,
+            font,
+            wrap_width,
+            theme,
+            runs.as_deref().map(Vec::as_slice),
+        );
         let (galley, bidi) = ui.fonts(|fonts| {
             let galley = fonts.layout_job(job);
             super::bidi_view::apply(
@@ -176,6 +221,29 @@ impl LayoutCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unhighlighted_code_keeps_the_editor_font_instead_of_the_ui_default() {
+        let font = Font {
+            size: 23.0,
+            line_height: Some(32.0),
+        };
+        let theme = Theme::default();
+        for runs in [vec![], vec![(3, theme.keyword.color())]] {
+            let job = code_job(
+                "let title = \"hello\";",
+                Language::Rust,
+                font,
+                f32::INFINITY,
+                &theme,
+                Some(&runs),
+            );
+            assert!(job.sections.iter().all(|section| {
+                section.format.font_id == font.id()
+                    && section.format.line_height == font.line_height
+            }));
+        }
+    }
 
     #[test]
     fn large_pages_are_highlighted_in_the_background_then_incrementally() {

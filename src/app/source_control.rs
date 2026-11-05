@@ -1,7 +1,12 @@
 //! The native Git workspace. Git and directory dialogs never block painting.
 use super::*;
 use hedit::git::{self, Diff, DiffKind, FileStatus, Git, Operation, Selection, Snapshot};
-use std::{collections::BTreeMap, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
+mod diff_view;
+mod file_tree;
 #[cfg(test)]
 #[path = "source_control_tests.rs"]
 mod tests;
@@ -66,6 +71,11 @@ pub(super) struct SourceControl {
     output: VecDeque<String>,
     output_open: bool,
     split_diff: bool,
+    tree_view: bool,
+    commit_file_filter: String,
+    trees: BTreeMap<String, file_tree::FileTree>,
+    selected_lines: BTreeSet<usize>,
+    line_anchor: Option<usize>,
     last_refresh: Instant,
     refresh: bool,
     cancel: Arc<AtomicBool>,
@@ -98,6 +108,11 @@ impl Default for SourceControl {
             output: VecDeque::new(),
             output_open: false,
             split_diff: true,
+            tree_view: true,
+            commit_file_filter: String::new(),
+            trees: BTreeMap::new(),
+            selected_lines: BTreeSet::new(),
+            line_anchor: None,
             last_refresh: Instant::now(),
             refresh: false,
             cancel: Arc::new(AtomicBool::new(false)),
@@ -117,6 +132,9 @@ impl SourceControl {
             .and_then(|s| eframe::get_value(s, "git-commit-drafts"))
             .unwrap_or_default();
         let mut state = Self::default();
+        state.tree_view = storage
+            .and_then(|s| eframe::get_value(s, "git-tree-view"))
+            .unwrap_or(true);
         state.drafts.extend(
             drafts
                 .into_iter()
@@ -135,6 +153,7 @@ impl SourceControl {
             .filter_map(|(root, message)| root.to_str().map(|root| (root.to_owned(), message)))
             .collect();
         eframe::set_value(storage, "git-commit-drafts", &drafts);
+        eframe::set_value(storage, "git-tree-view", &self.tree_view);
     }
     pub(super) fn due(&self) -> Option<Duration> {
         if self.open && !self.pending && self.root.is_some() && self.prompt.is_none() {
@@ -226,12 +245,15 @@ impl SourceControl {
         self.files.clear();
         self.body.clear();
         self.amend = false;
+        self.trees.clear();
+        self.clear_line_selection();
         self.request(ctx, None);
     }
     fn select(&mut self, ctx: &egui::Context, selection: Selection) {
         if self.selection.as_ref() != Some(&selection) {
             self.selection = Some(selection);
             self.diff = None;
+            self.clear_line_selection();
             self.request(ctx, None);
         }
     }
@@ -240,6 +262,10 @@ impl SourceControl {
             self.output.pop_front();
         }
         self.output.push_back(message);
+    }
+    fn clear_line_selection(&mut self) {
+        self.selected_lines.clear();
+        self.line_anchor = None;
     }
 }
 
@@ -391,6 +417,8 @@ impl HeditApp {
                     state.body.clear();
                     state.error = None;
                     state.amend = false;
+                    state.trees.clear();
+                    state.clear_line_selection();
                 }
                 if !state.repos.contains(&root) {
                     state.repos.push(root);
@@ -420,6 +448,16 @@ impl HeditApp {
                         }
                     }
                     if state.selection == reply.requested_selection {
+                        let same_diff = state.selection == reply.selection
+                            && state.diff.as_ref().map(|d| &d.patch)
+                                == reply
+                                    .diff
+                                    .as_ref()
+                                    .and_then(|d| d.as_ref().ok())
+                                    .map(|d| &d.patch);
+                        if !same_diff {
+                            state.clear_line_selection();
+                        }
                         state.selection = reply.selection;
                         state.diff = None;
                         if let Some(diff) = reply.diff {
@@ -441,6 +479,7 @@ impl HeditApp {
                     state.snapshot = None;
                     state.selection = None;
                     state.diff = None;
+                    state.clear_line_selection();
                     if state.error.is_none() {
                         state.error = Some(error);
                     }
@@ -479,6 +518,14 @@ impl HeditApp {
         } else if let Operation::Stage(paths) = &operation {
             self.git_unsaved(Some(paths))
         } else if let Operation::Hunk {
+            selection:
+                selection @ Selection {
+                    kind: DiffKind::Working,
+                    ..
+                },
+            ..
+        }
+        | Operation::Lines {
             selection:
                 selection @ Selection {
                     kind: DiffKind::Working,
@@ -711,6 +758,7 @@ impl HeditApp {
                     self.source_control.filter.clear();
                     self.source_control.selection = None;
                     self.source_control.diff = None;
+                    self.source_control.clear_line_selection();
                     if view != View::History {
                         self.source_control.commit = None;
                     }
@@ -789,6 +837,7 @@ impl HeditApp {
         ui.add_space(10.0);
     }
     fn git_changes(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, snapshot: &Snapshot) {
+        self.git_tree_controls(ui);
         for (title, category) in [("Conflicts", 0), ("Staged Changes", 1), ("Changes", 2)] {
             let files: Vec<_> = snapshot
                 .files
@@ -798,6 +847,7 @@ impl HeditApp {
                     1 => f.staged(),
                     _ => f.working(),
                 })
+                .cloned()
                 .collect();
             if files.is_empty() {
                 continue;
@@ -828,21 +878,12 @@ impl HeditApp {
                     );
                 }
             });
-            for file in files {
-                if !matches_filter(&file.path.to_string_lossy(), &self.source_control.filter) {
-                    continue;
-                }
-                let kind = if category == 0 {
-                    DiffKind::Conflict
-                } else if category == 1 {
-                    DiffKind::Staged
-                } else if file.untracked() {
-                    DiffKind::Untracked
-                } else {
-                    DiffKind::Working
-                };
-                self.git_file_row(ui, ctx, file, kind, category == 0);
-            }
+            let kind = match category {
+                0 => DiffKind::Conflict,
+                1 => DiffKind::Staged,
+                _ => DiffKind::Working,
+            };
+            self.git_file_tree(ui, ctx, title, &files, kind);
             ui.add_space(12.0);
         }
         if snapshot.files.is_empty() {
@@ -855,22 +896,24 @@ impl HeditApp {
             );
         }
     }
-    fn git_file_row(
+    fn git_file_row_at(
         &mut self,
         ui: &mut egui::Ui,
         ctx: &egui::Context,
         file: &FileStatus,
         kind: DiffKind,
-        conflict: bool,
+        depth: usize,
+        list: bool,
     ) {
         let selection = Selection {
             path: file.path.clone(),
             kind: kind.clone(),
         };
         let selected = self.source_control.selection.as_ref() == Some(&selection);
+        let conflict = kind == DiffKind::Conflict;
         let code = if conflict {
             '!'
-        } else if kind == DiffKind::Staged {
+        } else if matches!(kind, DiffKind::Staged | DiffKind::Commit(_)) {
             file.index
         } else {
             file.worktree
@@ -878,13 +921,15 @@ impl HeditApp {
         let color = status_color(code, &self.theme);
         ui.push_id((&file.path, format!("{kind:?}")), |ui| {
             ui.horizontal(|ui| {
+                ui.add_space(depth.min(32) as f32 * 12.0);
                 ui.label(RichText::new(code.to_string()).monospace().color(color));
                 let width = (ui.available_width() - 38.0).max(60.0);
-                let label = file
-                    .path
-                    .file_name()
-                    .unwrap_or(file.path.as_os_str())
-                    .to_string_lossy();
+                let label = if list {
+                    file.path.as_os_str()
+                } else {
+                    file.path.file_name().unwrap_or(file.path.as_os_str())
+                }
+                .to_string_lossy();
                 let (rect, row) =
                     ui.allocate_exact_size(egui::vec2(width, 23.0), egui::Sense::click());
                 if selected || row.hovered() {
@@ -899,7 +944,7 @@ impl HeditApp {
                     );
                 }
                 let galley = ui.painter().layout(
-                    label.into_owned(),
+                    label.to_string(),
                     FontId::proportional(13.0),
                     ui.visuals().text_color(),
                     f32::INFINITY,
@@ -911,6 +956,14 @@ impl HeditApp {
                         galley,
                         ui.visuals().text_color(),
                     );
+                row.widget_info(|| {
+                    egui::WidgetInfo::selected(
+                        egui::WidgetType::SelectableLabel,
+                        ui.is_enabled(),
+                        selected,
+                        &*label,
+                    )
+                });
                 let row = row.on_hover_text(file.original.as_ref().map_or_else(
                     || file.path.display().to_string(),
                     |old| format!("{} → {}", old.display(), file.path.display()),
@@ -949,16 +1002,6 @@ impl HeditApp {
                     );
                 }
             });
-            if let Some(parent) = file.path.parent().filter(|p| !p.as_os_str().is_empty()) {
-                ui.add(
-                    egui::Label::new(
-                        RichText::new(format!("     {}", parent.display()))
-                            .size(10.0)
-                            .color(self.theme.muted.color()),
-                    )
-                    .truncate(),
-                );
-            }
         });
     }
     fn git_open_file(&mut self, ctx: &egui::Context, path: &Path) {
@@ -1035,6 +1078,7 @@ impl HeditApp {
                     self.source_control.commit = Some(commit.oid.clone());
                     self.source_control.selection = None;
                     self.source_control.diff = None;
+                    self.source_control.clear_line_selection();
                     self.source_control.files.clear();
                     self.source_control.body.clear();
                     self.source_control.request(ctx, None);
@@ -1260,18 +1304,22 @@ impl HeditApp {
                             .resizable(true)
                             .show_inside(ui, |ui| {
                                 ui.strong(format!("Files · {}", self.source_control.files.len()));
-                                egui::ScrollArea::vertical().show(ui, |ui| {
-                                    for file in self.source_control.files.clone() {
-                                        ui.add_enabled_ui(!self.source_control.pending, |ui| {
-                                            self.git_file_row(
-                                                ui,
-                                                ctx,
-                                                &file,
-                                                DiffKind::Commit(oid.clone()),
-                                                false,
-                                            );
-                                        });
-                                    }
+                                self.git_tree_controls(ui);
+                                ui.add(
+                                    egui::TextEdit::singleline(
+                                        &mut self.source_control.commit_file_filter,
+                                    )
+                                    .hint_text("Filter files…")
+                                    .desired_width(f32::INFINITY),
+                                );
+                                ui.add_enabled_ui(!self.source_control.pending, |ui| {
+                                    self.git_file_tree(
+                                        ui,
+                                        ctx,
+                                        "commit-files",
+                                        &self.source_control.files.clone(),
+                                        DiffKind::Commit(oid.clone()),
+                                    );
                                 });
                             });
                     }
@@ -1308,11 +1356,11 @@ impl HeditApp {
             ui.label(RichText::new(selection.path.display().to_string()).strong());
             ui.label(
                 RichText::new(match selection.kind {
-                    DiffKind::Staged => "INDEX ↔ HEAD",
-                    DiffKind::Commit(_) => "COMMIT ↔ PARENT",
-                    DiffKind::Untracked => "UNTRACKED",
-                    DiffKind::Working => "WORKING TREE ↔ INDEX",
-                    DiffKind::Conflict => "MERGE CONFLICT",
+                    DiffKind::Staged => "Index ↔ HEAD",
+                    DiffKind::Commit(_) => "Commit ↔ parent",
+                    DiffKind::Untracked => "Untracked",
+                    DiffKind::Working => "Working tree ↔ index",
+                    DiffKind::Conflict => "Merge conflict",
                 })
                 .size(10.0)
                 .color(theme.muted.color()),
@@ -1333,11 +1381,11 @@ impl HeditApp {
             || self.busy
             || self.closing
             || self.source_control.prompt.is_some();
+        let can_split = ui.available_width() >= 660.0;
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(format!("+{}", diff.additions)).color(status_color('A', &theme)));
             ui.label(RichText::new(format!("−{}", diff.deletions)).color(status_color('D', &theme)));
-            ui.selectable_value(&mut self.source_control.split_diff, false, "Unified");
-            ui.add_enabled_ui(ui.available_width()>360.0, |ui| { ui.selectable_value(&mut self.source_control.split_diff, true, "Side by side"); });
+            diff_view::layout_controls(ui, &mut self.source_control.split_diff, can_split);
             ui.add_enabled_ui(!pending, |ui| {
                 if !matches!(selection.kind, DiffKind::Commit(_)) {
                     let staged = selection.kind == DiffKind::Staged;
@@ -1349,129 +1397,137 @@ impl HeditApp {
                         self.git_confirm("Discard working changes", format!("Restore {} from the index? The current file is backed up in the session's git-backups folder before it is replaced.", selection.path.display()), Operation::Discard { selection: selection.clone(), expected: diff.patch.clone(), backup: self.workspace.store.directory().join("git-backups") });
                     }
                 }
-                if ui.small_button("Copy diff").clicked() { ui.ctx().copy_text(diff.patch.clone()); }
             });
+            if ui.small_button("Copy diff").clicked() { ui.ctx().copy_text(diff.patch.clone()); }
         });
+        self.git_line_actions(ui, ctx, &selection, &diff, pending);
         ui.separator();
         if diff.lines.is_empty() {
             ui.label("No changes in this comparison. Refresh or choose another file.");
             return;
         }
-        if self.source_control.split_diff && ui.available_width() >= 660.0 {
+        if self.source_control.split_diff && can_split {
             self.git_split_diff(ui, ctx, &selection, &diff, pending);
             return;
         }
-        let font = FontId::monospace(self.settings.font_size.clamp(11.0, 17.0));
-        let height = ui.fonts(|f| f.row_height(&font)).max(16.0) + 6.0;
-        let wide = diff
-            .lines
-            .iter()
-            .map(|l| l.text.chars().count())
-            .max()
-            .unwrap_or(0)
-            .min(16_384) as f32
-            * font.size
-            * 0.65
-            + 140.0;
-        egui::ScrollArea::both()
-            .id_salt((
-                "git-diff-canvas",
-                &selection.path,
-                format!("{:?}", selection.kind),
-            ))
-            .auto_shrink([false, false])
-            .show_rows(ui, height, diff.lines.len(), |ui, rows| {
-                ui.set_min_width(ui.available_width().max(wide));
-                for row in rows {
-                    let line = &diff.lines[row];
-                    let (rect, response) = ui.allocate_exact_size(
-                        egui::vec2(ui.available_width(), height),
-                        egui::Sense::click(),
-                    );
-                    let color = match line.kind {
-                        '+' => status_color('A', &theme),
-                        '-' => status_color('D', &theme),
-                        '@' => theme.accent.color(),
-                        _ => theme.text.color(),
-                    };
-                    if matches!(line.kind, '+' | '-' | '@') {
-                        ui.painter().rect_filled(
-                            rect,
-                            0.0,
-                            color.gamma_multiply(if line.kind == '@' { 0.08 } else { 0.10 }),
+        let text_style = self.git_text_style(ui, &selection.path);
+        let font = text_style.font.id();
+        let height = text_style.font.row_height(ui);
+        let gutter = text_style
+            .font
+            .gutter_width(diff_view::last_line(&diff), self.settings.line_numbers);
+        let text_left = gutter * 2.0 + 28.0;
+        let wide = diff.max_line_chars as f32 * font.size * 0.65 + text_left;
+        ui.scope(|ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            egui::ScrollArea::both()
+                .id_salt((
+                    "git-diff-canvas",
+                    &selection.path,
+                    format!("{:?}", selection.kind),
+                ))
+                .auto_shrink([false, false])
+                .show_rows(ui, height, diff.lines.len(), |ui, rows| {
+                    ui.set_min_width(ui.available_width().max(wide));
+                    for row in rows {
+                        let line = &diff.lines[row];
+                        let (rect, response) = ui.allocate_exact_size(
+                            egui::vec2(ui.available_width(), height),
+                            egui::Sense::click(),
                         );
-                    }
-                    let left = rect.left();
-                    let center = rect.center().y;
-                    for (offset, number) in [(43.0, line.old), (87.0, line.new)] {
-                        if let Some(number) = number {
-                            ui.painter().text(
-                                egui::pos2(left + offset, center),
-                                egui::Align2::RIGHT_CENTER,
-                                number.to_string(),
-                                FontId::monospace(11.0),
-                                theme.muted.color(),
-                            );
+                        let color = match line.kind {
+                            '+' => status_color('A', &theme),
+                            '-' => status_color('D', &theme),
+                            '@' => theme.accent.color(),
+                            _ => theme.text.color(),
+                        };
+                        if let Some(fill) = diff_view::line_background(line.kind, &theme) {
+                            ui.painter().rect_filled(rect, 0.0, fill);
                         }
-                    }
-                    ui.painter().line_segment(
-                        [
-                            egui::pos2(left + 98.0, rect.top()),
-                            egui::pos2(left + 98.0, rect.bottom()),
-                        ],
-                        egui::Stroke::new(1.0_f32, theme.border.color()),
-                    );
-                    // Bound one pathological line; Copy diff retains the complete patch.
-                    let text: String = line.text.chars().take(16_384).collect();
-                    ui.painter().text(
-                        egui::pos2(left + 108.0, center),
-                        egui::Align2::LEFT_CENTER,
-                        text.replace('\t', "    "),
-                        font.clone(),
-                        color,
-                    );
-                    if line.kind == '@'
-                        && line.hunk.and_then(|h| diff.hunk_patch(h)).is_some()
-                        && !pending
-                    {
-                        let button = egui::Rect::from_min_size(
-                            egui::pos2(ui.clip_rect().right() - 120.0, rect.top()),
-                            egui::vec2(112.0, height),
+                        ui.painter().rect_filled(
+                            egui::Rect::from_min_size(
+                                egui::pos2(ui.clip_rect().left(), rect.top()),
+                                egui::vec2(gutter * 2.0, height),
+                            ),
+                            0.0,
+                            theme.background.color(),
                         );
-                        if ui
-                            .put(
-                                button,
-                                egui::Button::new(if selection.kind == DiffKind::Staged {
-                                    "Unstage hunk"
-                                } else {
-                                    "Stage hunk"
-                                })
-                                .small(),
-                            )
-                            .clicked()
+                        let selected = self.git_diff_line_selection(
+                            ui,
+                            &response,
+                            &diff,
+                            row,
+                            pending,
+                            ui.clip_rect().left() + gutter * 2.0,
+                        );
+                        let left = ui.clip_rect().left();
+                        let code_left = rect.left() + text_left;
+                        let center = rect.center().y;
+                        for (offset, number) in
+                            [(gutter - 6.0, line.old), (gutter * 2.0 - 6.0, line.new)]
                         {
-                            self.git_action(
-                                ctx,
-                                Operation::Hunk {
-                                    selection: selection.clone(),
-                                    expected: diff.patch.clone(),
-                                    hunk: line.hunk.unwrap(),
+                            if let Some(number) = number.filter(|_| gutter > 0.0) {
+                                ui.painter().text(
+                                    egui::pos2(left + offset, center),
+                                    egui::Align2::RIGHT_CENTER,
+                                    number.to_string(),
+                                    text_style.font.gutter_font(),
+                                    theme.muted.color(),
+                                );
+                            }
+                        }
+                        ui.painter().line_segment(
+                            [
+                                egui::pos2(left + gutter * 2.0, rect.top()),
+                                egui::pos2(left + gutter * 2.0, rect.bottom()),
+                            ],
+                            egui::Stroke::new(1.0_f32, theme.border.color()),
+                        );
+                        if matches!(line.kind, '+' | '-') {
+                            ui.painter().text(
+                                egui::pos2(left + gutter * 2.0 + 6.0, center),
+                                egui::Align2::LEFT_CENTER,
+                                line.kind,
+                                font.clone(),
+                                if selected {
+                                    theme.selection_text.color()
+                                } else {
+                                    color
                                 },
                             );
                         }
+                        diff_view::paint_text(
+                            ui,
+                            &theme,
+                            line,
+                            diff_view::TextStyle {
+                                selected,
+                                ..text_style
+                            },
+                            egui::Rect::from_min_max(
+                                egui::pos2(left + text_left, rect.top()),
+                                rect.max,
+                            ),
+                            code_left,
+                        );
+                        if let Some(hunk) = line.hunk.filter(|_| line.kind == '@') {
+                            let button = egui::Rect::from_min_size(
+                                egui::pos2(ui.clip_rect().right() - 120.0, rect.top()),
+                                egui::vec2(112.0, height),
+                            );
+                            self.git_hunk_action(
+                                ui,
+                                ctx,
+                                &selection,
+                                &diff,
+                                (hunk, button),
+                                pending,
+                            );
+                        }
+                        diff_view::context_menu(&response, line, &diff);
                     }
-                    response.context_menu(|ui| {
-                        if ui.button("Copy line").clicked() {
-                            ui.ctx().copy_text(line.text.clone());
-                            ui.close_menu();
-                        }
-                        if ui.button("Copy diff").clicked() {
-                            ui.ctx().copy_text(diff.patch.clone());
-                            ui.close_menu();
-                        }
-                    });
-                }
-            });
+                });
+        });
     }
     fn git_prompt(&mut self, ctx: &egui::Context) {
         let Some(mut prompt) = self.source_control.prompt.take() else {
@@ -1609,131 +1665,124 @@ impl HeditApp {
         pending: bool,
     ) {
         let theme = self.theme.clone();
-        let font = FontId::monospace(self.settings.font_size.clamp(11.0, 17.0));
-        let height = ui.fonts(|f| f.row_height(&font)).max(16.0) + 6.0;
+        let text_style = self.git_text_style(ui, &selection.path);
+        let font = text_style.font.id();
+        let height = text_style.font.row_height(ui);
+        let gutter = text_style
+            .font
+            .gutter_width(diff_view::last_line(diff), self.settings.line_numbers);
         ui.columns(2, |columns| {
             columns[0].label(RichText::new("Before").small().color(theme.muted.color()));
             columns[1].label(RichText::new("After").small().color(theme.muted.color()));
         });
         let half = (ui.available_width() / 2.0).max(260.0);
-        let wide = diff
-            .lines
-            .iter()
-            .map(|l| l.text.chars().count())
-            .max()
-            .unwrap_or(0)
-            .min(16_384) as f32
-            * font.size
-            * 0.65
-            + 70.0;
-        egui::ScrollArea::both()
-            .id_salt((
-                "git-split-diff",
-                &selection.path,
-                format!("{:?}", selection.kind),
-            ))
-            .auto_shrink([false, false])
-            .show_rows(ui, height, diff.split_rows.len(), |ui, rows| {
-                ui.set_min_width((wide + half).max(half * 2.0));
-                for row in rows {
-                    let (old, new) = diff.split_rows[row];
-                    let (rect, _) = ui.allocate_exact_size(
-                        egui::vec2(ui.available_width(), height),
-                        egui::Sense::hover(),
-                    );
-                    for (column, index) in [(0, old), (1, new)] {
-                        let scroll = rect.left() - ui.clip_rect().left();
-                        let cell = egui::Rect::from_min_size(
-                            egui::pos2(ui.clip_rect().left() + column as f32 * half, rect.top()),
-                            egui::vec2(half, height),
+        let text_left = gutter + 12.0;
+        let wide = diff.max_line_chars as f32 * font.size * 0.65 + text_left;
+        ui.scope(|ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            egui::ScrollArea::both()
+                .id_salt((
+                    "git-split-diff",
+                    &selection.path,
+                    format!("{:?}", selection.kind),
+                ))
+                .auto_shrink([false, false])
+                .show_rows(ui, height, diff.split_rows.len(), |ui, rows| {
+                    ui.set_min_width((wide + half).max(half * 2.0));
+                    for row in rows {
+                        let (old, new) = diff.split_rows[row];
+                        let (rect, _) = ui.allocate_exact_size(
+                            egui::vec2(ui.available_width(), height),
+                            egui::Sense::hover(),
                         );
-                        let Some(index) = index else {
-                            ui.painter().rect_filled(cell, 0.0, theme.panel.color());
-                            continue;
-                        };
-                        let line = &diff.lines[index];
-                        let color = match line.kind {
-                            '+' => status_color('A', &theme),
-                            '-' => status_color('D', &theme),
-                            '@' => theme.accent.color(),
-                            _ => theme.text.color(),
-                        };
-                        if matches!(line.kind, '+' | '-' | '@') {
-                            ui.painter()
-                                .rect_filled(cell, 0.0, color.gamma_multiply(0.10));
-                        }
-                        let number = if column == 0 { line.old } else { line.new };
-                        if let Some(number) = number {
-                            ui.painter().text(
-                                egui::pos2(cell.left() + 40.0, cell.center().y),
-                                egui::Align2::RIGHT_CENTER,
-                                number.to_string(),
-                                FontId::monospace(11.0),
-                                theme.muted.color(),
+                        for (column, index) in [(0, old), (1, new)] {
+                            let scroll = rect.left() - ui.clip_rect().left();
+                            let cell = egui::Rect::from_min_size(
+                                egui::pos2(
+                                    ui.clip_rect().left() + column as f32 * half,
+                                    rect.top(),
+                                ),
+                                egui::vec2(half, height),
                             );
-                        }
-                        let text = if matches!(line.kind, '+' | '-' | ' ') {
-                            line.text.get(1..).unwrap_or("")
-                        } else {
-                            &line.text
-                        };
-                        let text: String = text.chars().take(16_384).collect();
-                        ui.painter()
-                            .with_clip_rect(
+                            let Some(index) = index else {
+                                ui.painter()
+                                    .rect_filled(cell, 0.0, theme.background.color());
+                                continue;
+                            };
+                            let line = &diff.lines[index];
+                            if let Some(fill) = diff_view::line_background(line.kind, &theme) {
+                                ui.painter().rect_filled(cell, 0.0, fill);
+                            }
+                            ui.painter().rect_filled(
+                                egui::Rect::from_min_size(cell.min, egui::vec2(gutter, height)),
+                                0.0,
+                                theme.background.color(),
+                            );
+                            let response = ui.interact(
+                                cell,
+                                ui.id().with(("diff-cell", row, column)),
+                                egui::Sense::click(),
+                            );
+                            let selected = self.git_diff_line_selection(
+                                ui,
+                                &response,
+                                diff,
+                                index,
+                                pending,
+                                cell.left() + gutter,
+                            );
+                            let number = if column == 0 { line.old } else { line.new };
+                            if let Some(number) = number.filter(|_| gutter > 0.0) {
+                                ui.painter().text(
+                                    egui::pos2(cell.left() + gutter - 6.0, cell.center().y),
+                                    egui::Align2::RIGHT_CENTER,
+                                    number.to_string(),
+                                    text_style.font.gutter_font(),
+                                    theme.muted.color(),
+                                );
+                            }
+                            diff_view::paint_text(
+                                ui,
+                                &theme,
+                                line,
+                                diff_view::TextStyle {
+                                    selected,
+                                    ..text_style
+                                },
                                 egui::Rect::from_min_max(
-                                    cell.min + egui::vec2(45.0, 0.0),
+                                    egui::pos2(cell.left() + text_left - 5.0, cell.top()),
                                     cell.max,
-                                )
-                                .intersect(ui.clip_rect()),
-                            )
-                            .text(
-                                egui::pos2(cell.left() + 50.0 + scroll, cell.center().y),
-                                egui::Align2::LEFT_CENTER,
-                                text.replace('\t', "    "),
-                                font.clone(),
-                                color,
+                                ),
+                                cell.left() + text_left + scroll,
                             );
-                        if column == 1
-                            && line.kind == '@'
-                            && line.hunk.and_then(|h| diff.hunk_patch(h)).is_some()
-                            && !pending
-                        {
-                            let button = egui::Rect::from_min_size(
-                                egui::pos2(ui.clip_rect().right() - 120.0, cell.top()),
-                                egui::vec2(112.0, height),
-                            );
-                            if ui
-                                .put(
-                                    button,
-                                    egui::Button::new(if selection.kind == DiffKind::Staged {
-                                        "Unstage hunk"
-                                    } else {
-                                        "Stage hunk"
-                                    })
-                                    .small(),
-                                )
-                                .clicked()
+                            diff_view::context_menu(&response, line, diff);
+                            if let Some(hunk) =
+                                line.hunk.filter(|_| column == 1 && line.kind == '@')
                             {
-                                self.git_action(
+                                let button = egui::Rect::from_min_size(
+                                    egui::pos2(ui.clip_rect().right() - 120.0, cell.top()),
+                                    egui::vec2(112.0, height),
+                                );
+                                self.git_hunk_action(
+                                    ui,
                                     ctx,
-                                    Operation::Hunk {
-                                        selection: selection.clone(),
-                                        expected: diff.patch.clone(),
-                                        hunk: line.hunk.unwrap(),
-                                    },
+                                    selection,
+                                    diff,
+                                    (hunk, button),
+                                    pending,
                                 );
                             }
                         }
+                        ui.painter().line_segment(
+                            [
+                                egui::pos2(ui.clip_rect().left() + half, rect.top()),
+                                egui::pos2(ui.clip_rect().left() + half, rect.bottom()),
+                            ],
+                            egui::Stroke::new(1.0_f32, theme.border.color()),
+                        );
                     }
-                    ui.painter().line_segment(
-                        [
-                            egui::pos2(ui.clip_rect().left() + half, rect.top()),
-                            egui::pos2(ui.clip_rect().left() + half, rect.bottom()),
-                        ],
-                        egui::Stroke::new(1.0_f32, theme.border.color()),
-                    );
-                }
-            });
+                });
+        });
     }
     fn git_conflict_canvas(
         &mut self,
@@ -1763,9 +1812,11 @@ impl HeditApp {
             if ui.button("Stage resolved file").clicked() { self.git_action(ctx, Operation::Stage(vec![selection.path.clone()])); }
         }); });
         ui.separator();
+        let text_style = self.git_text_style(ui, &selection.path);
+        let theme = self.theme.clone();
         if let Some(base) = &conflict.base {
             ui.collapsing("Common ancestor", |ui| {
-                conflict_text(ui, "base", base, 110.0);
+                conflict_text(ui, "base", base, 110.0, &theme, text_style);
             });
         }
         let height = ui.available_height();
@@ -1781,6 +1832,8 @@ impl HeditApp {
                         label,
                         text.as_deref().unwrap_or("File deleted on this side."),
                         height - 28.0,
+                        &theme,
+                        text_style,
                     );
                 }
             });
@@ -1795,6 +1848,8 @@ impl HeditApp {
                     label,
                     text.as_deref().unwrap_or("File deleted on this side."),
                     (height - 56.0) / 2.0,
+                    &theme,
+                    text_style,
                 );
             }
         }
@@ -1868,50 +1923,50 @@ fn current_selection(snapshot: &Snapshot, selected: &Selection) -> Option<Select
         kind,
     })
 }
-fn conflict_text(ui: &mut egui::Ui, id: &str, text: &str, height: f32) {
+fn conflict_text(
+    ui: &mut egui::Ui,
+    id: &str,
+    text: &str,
+    height: f32,
+    theme: &Theme,
+    style: diff_view::TextStyle,
+) {
     let lines: Vec<_> = text.lines().collect();
-    let font = FontId::monospace(12.0);
-    let row_height = ui.fonts(|f| f.row_height(&font)) + 4.0;
-    egui::ScrollArea::both()
-        .id_salt(("git-conflict", id))
-        .max_height(height.max(40.0))
-        .auto_shrink([false, false])
-        .show_rows(ui, row_height, lines.len(), |ui, rows| {
-            for index in rows {
-                ui.add(
-                    egui::Label::new(
-                        RichText::new(lines[index].chars().take(16_384).collect::<String>())
-                            .font(font.clone()),
-                    )
-                    .extend()
-                    .selectable(true),
-                );
-            }
-        });
+    let row_height = style.font.row_height(ui);
+    ui.scope(|ui| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        egui::ScrollArea::both()
+            .id_salt(("git-conflict", id))
+            .max_height(height.max(40.0))
+            .auto_shrink([false, false])
+            .show_rows(ui, row_height, lines.len(), |ui, rows| {
+                for index in rows {
+                    let line = git::DiffLine {
+                        text: format!(" {}", lines[index]),
+                        old: None,
+                        new: None,
+                        kind: ' ',
+                        hunk: None,
+                        emphasis: vec![],
+                    };
+                    let galley = diff_view::layout_line(ui, theme, &line, style);
+                    ui.add(egui::Label::new(galley).extend().selectable(true));
+                }
+            });
+    });
 }
 fn matches_filter(value: &str, filter: &str) -> bool {
     value.to_lowercase().contains(&filter.to_lowercase())
 }
 fn status_color(code: char, theme: &Theme) -> egui::Color32 {
-    let dark = theme.background.color().r() < 128;
     match code {
-        'A' | '?' => {
-            if dark {
-                egui::Color32::from_rgb(126, 201, 146)
-            } else {
-                egui::Color32::from_rgb(34, 116, 57)
-            }
-        }
-        'D' | '!' | 'U' => {
-            if dark {
-                egui::Color32::from_rgb(235, 132, 132)
-            } else {
-                egui::Color32::from_rgb(170, 53, 53)
-            }
-        }
+        'A' | '?' => theme.success.color(),
+        'D' | '!' | 'U' => theme.error.color(),
+        'M' | 'R' | 'C' => theme.warning.color(),
         _ => theme.accent.color(),
     }
 }
+
 fn branch_icon(ui: &mut egui::Ui, color: egui::Color32) {
     let (r, _) = ui.allocate_exact_size(egui::vec2(18.0, 22.0), egui::Sense::hover());
     let a = egui::pos2(r.left() + 4.0, r.top() + 4.0);
