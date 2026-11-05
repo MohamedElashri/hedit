@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [0.2.0] - 2026-11-05
+
 ### Added
 
 - Stage and unstage individual changed lines in unified and side-by-side diffs.
