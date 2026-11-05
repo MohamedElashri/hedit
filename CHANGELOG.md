@@ -11,6 +11,12 @@
   filtering and a remembered Tree/List view.
 - Review syntax-colored diffs with individual character changes highlighted.
 
+### Changed
+
+- Faster diff calculations with lower memory use.
+- Improved equation parsing and rendering in Markdown.
+- Building hedit from source now requires Rust 1.99 or newer.
+
 ### Fixed
 
 - Git diffs and conflict previews match the editor's font, size, theme, line

@@ -336,6 +336,37 @@ fn unsafe_zip_entries_are_refused_before_extraction() {
 }
 
 #[test]
+fn undecodable_zip_names_are_refused_before_extraction() {
+    let work = tempfile::tempdir().unwrap();
+    let archive = work.path().join("bad.zip");
+    let mut zip = zip::ZipWriter::new(File::create(&archive).unwrap());
+    let options = zip::write::SimpleFileOptions::default();
+    let name = "hedit.app/invalid-é";
+    for entry in ["hedit.app/valid", name] {
+        zip.start_file(entry, options).unwrap();
+        zip.write_all(b"fixture").unwrap();
+    }
+    zip.finish().unwrap();
+    // Non-ASCII names set the UTF-8 flag. Corrupt that name in both the
+    // local header and central directory, leaving a valid entry before it.
+    let mut bytes = fs::read(&archive).unwrap();
+    let positions: Vec<_> = bytes
+        .windows(name.len())
+        .enumerate()
+        .filter_map(|(at, part)| (part == name.as_bytes()).then_some(at))
+        .collect();
+    assert!(positions.len() >= 2);
+    for at in positions {
+        bytes[at + name.len() - 1] = 0xff;
+    }
+    fs::write(&archive, bytes).unwrap();
+    let destination = work.path().join("unpacked");
+    fs::create_dir(&destination).unwrap();
+    assert!(unpack(&archive, &destination).is_err());
+    assert!(fs::read_dir(destination).unwrap().next().is_none());
+}
+
+#[test]
 fn zip_case_aliases_and_size_bombs_are_refused() {
     let work = tempfile::tempdir().unwrap();
     let archive = work.path().join("bad.zip");

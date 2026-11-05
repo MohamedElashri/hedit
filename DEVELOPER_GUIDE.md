@@ -15,9 +15,9 @@ Build, test, and release hedit. For using it, see the [user guide](USER_GUIDE.md
 
 ## Build and install
 
-You need Rust 1.92 or newer, GNU Make, a C compiler (for the bundled Oniguruma
+You need Rust 1.99 or newer, GNU Make, a C compiler (for the bundled Oniguruma
 regex engine), and Python 3.11 or newer for the development scripts. CI uses
-Rust 1.92.0 and Python 3.12. X11, Wayland, and OpenGL libraries load at run time,
+Rust 1.99.1 and Python 3.12. X11, Wayland, and OpenGL libraries load at run time,
 so their development packages are not needed. Keep the project free of Node.js,
 npm, and web frontends.
 

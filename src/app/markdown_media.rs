@@ -260,6 +260,11 @@ mod tests {
     fn native_math_and_mermaid_produce_pixels_and_reject_bad_input() {
         for (source, kind) in [
             (r"\frac{1}{2} + x^2", Kind::DisplayMath),
+            (r"\text{energy} = \frac{1}{2}mv^2", Kind::InlineMath),
+            (
+                r"\begin{bmatrix} a & b \\ c & d \end{bmatrix}",
+                Kind::DisplayMath,
+            ),
             ("flowchart LR\n A[Edit] --> B[Preview]", Kind::Mermaid),
             ("sequenceDiagram\n Alice->>Bob: Hello", Kind::Mermaid),
         ] {
