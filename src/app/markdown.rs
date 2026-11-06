@@ -886,7 +886,11 @@ mod image_path_tests {
             "%5C%5C%3F%5CGLOBALROOT%5CDevice%5Cimage.png",
         ] {
             let uri = format!("{IMAGE_SCHEME}1/{target}");
-            let error = images.load(&ctx, &uri).unwrap_err().to_string();
+            let error = images
+                .load(&ctx, &uri)
+                .err()
+                .expect("network and device images must be rejected")
+                .to_string();
             assert!(error.contains("Network shares and device paths"), "{error}");
             assert_eq!(images.in_flight.load(Ordering::Relaxed), 0);
             assert!(images.files.lock().unwrap().is_empty());
