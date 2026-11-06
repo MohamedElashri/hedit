@@ -339,10 +339,9 @@ pub fn git_base(path: &Path) -> Result<String, String> {
     let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
     let root = std::fs::canonicalize(&root).unwrap_or(root);
     let relative = resolved.strip_prefix(&root).map_err(|e| e.to_string())?;
-    let relative = relative
-        .to_str()
-        .ok_or("Git paths must be UTF-8.")?
-        .replace('\\', "/");
+    let relative = relative.to_str().ok_or("Git paths must be UTF-8.")?;
+    #[cfg(windows)]
+    let relative = relative.replace('\\', "/");
     let base = git_output(&root, &["show", &format!("HEAD:{relative}")])?;
     Ok(base.strip_prefix('\u{feff}').unwrap_or(&base).to_owned())
 }

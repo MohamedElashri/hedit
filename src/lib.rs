@@ -7,6 +7,7 @@ pub mod counterpart;
 pub mod debugger;
 pub mod document;
 pub mod editing;
+mod file_io;
 pub mod file_reference;
 pub mod folder;
 pub mod fonts;

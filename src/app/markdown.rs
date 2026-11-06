@@ -235,7 +235,15 @@ struct ImageEntry {
 
 fn read_image(path: &std::path::Path) -> Result<Arc<[u8]>, String> {
     const LIMIT: u64 = 32 * 1024 * 1024;
-    let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        // A FIFO must not block open() before we can reject its file type.
+        options.custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32);
+    }
+    let file = options.open(path).map_err(|e| e.to_string())?;
     let info = file.metadata().map_err(|e| e.to_string())?;
     if !info.is_file() {
         return Err("Local images must be regular files.".into());
@@ -272,7 +280,7 @@ impl egui::load::BytesLoader for Images {
             .get(&id.parse::<u64>().unwrap_or(0))
             .cloned()
             .ok_or_else(|| LoadError::Loading("The Markdown file is no longer open".into()))?;
-        let path = local_path(&root, target).map_err(LoadError::Loading)?;
+        let path = local_image_path(&root, target).map_err(LoadError::Loading)?;
         let mut files = self.files.lock().unwrap();
         if let Some(entry) = files.get(uri) {
             return match &entry.state {
@@ -389,6 +397,26 @@ fn local_path(root: &std::path::Path, target: &str) -> Result<PathBuf, String> {
         .decode_utf8()
         .map_err(|e| e.to_string())?;
     Ok(root.join(decoded.as_ref()))
+}
+
+fn local_image_path(root: &std::path::Path, target: &str) -> Result<PathBuf, String> {
+    let path = local_path(root, target)?;
+    #[cfg(windows)]
+    {
+        use std::path::{Component, Prefix};
+        // Opening a UNC path can authenticate to an image author's SMB server.
+        // Check before any filesystem access, including metadata/canonicalize.
+        // Device namespaces are not image files either. Keep ordinary drive
+        // paths, including extended-length local paths, available.
+        if matches!(path.components().next(), Some(Component::Prefix(prefix))
+            if !matches!(prefix.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_)))
+        {
+            return Err(
+                "Network shares and device paths are not loaded as Markdown images.".into(),
+            );
+        }
+    }
+    Ok(path)
 }
 
 fn document_root(path: Option<&str>) -> PathBuf {
@@ -573,6 +601,7 @@ impl HeditApp {
             self.markdown.forget_images(ui.ctx(), id);
         }
         if !self.markdown.installed {
+            egui_extras::install_image_loaders(ui.ctx());
             ui.ctx().add_bytes_loader(self.markdown.images.clone());
             self.markdown.installed = true;
         }
@@ -832,5 +861,71 @@ impl HeditApp {
                 Err(error) => self.error = Some(error),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod image_path_tests {
+    use super::*;
+    #[cfg(windows)]
+    use egui::load::BytesLoader;
+    #[cfg(windows)]
+    use std::path::Path;
+
+    #[cfg(windows)]
+    #[test]
+    fn network_and_device_images_are_rejected_before_starting_io() {
+        let images = Images::default();
+        images.roots.lock().unwrap().insert(1, r"C:\notes".into());
+        let ctx = egui::Context::default();
+        for target in [
+            "%5C%5Cserver.invalid%5Cshare%5Cimage.png",
+            "//server.invalid/share/image.png",
+            "%5C%5C%3F%5CUNC%5Cserver.invalid%5Cshare%5Cimage.png",
+            "%5C%5C.%5Cpipe%5Cimage.png",
+            "%5C%5C%3F%5CGLOBALROOT%5CDevice%5Cimage.png",
+        ] {
+            let uri = format!("{IMAGE_SCHEME}1/{target}");
+            let error = images.load(&ctx, &uri).unwrap_err().to_string();
+            assert!(error.contains("Network shares and device paths"), "{error}");
+            assert_eq!(images.in_flight.load(Ordering::Relaxed), 0);
+            assert!(images.files.lock().unwrap().is_empty());
+        }
+        for target in [
+            "image.png",
+            "../image.png",
+            "C:/images/a.png",
+            r"\\?\C:\images\a.png",
+        ] {
+            assert!(local_image_path(Path::new(r"C:\notes"), target).is_ok());
+        }
+        assert!(local_image_path(Path::new(r"\\server.invalid\share"), "a.png").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fifo_images_are_rejected_without_waiting_for_a_writer() {
+        use std::{os::unix::fs::OpenOptionsExt, process::Command, sync::mpsc};
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("image.png");
+        assert!(Command::new("mkfifo")
+            .arg(&path)
+            .status()
+            .unwrap()
+            .success());
+        let input = path.clone();
+        let (tx, rx) = mpsc::channel();
+        let worker = thread::spawn(move || tx.send(read_image(&input)).unwrap());
+        let result = rx.recv_timeout(Duration::from_secs(2));
+        // Release an unfixed reader before asserting, so a failing regression
+        // test never leaves a blocked thread behind.
+        let _ = std::fs::OpenOptions::new()
+            .write(true)
+            .custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32)
+            .open(&path);
+        worker.join().unwrap();
+        assert!(result
+            .expect("opening a FIFO blocked the image worker")
+            .is_err());
     }
 }

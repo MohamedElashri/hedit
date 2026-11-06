@@ -14,6 +14,49 @@ fn edit(workspace: &mut Workspace, text: &str) {
 }
 
 #[test]
+fn an_encoding_save_failure_keeps_edits_and_history_through_recovery() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("legacy.txt");
+    let original = hedit::text_encoding::encode("café\r\n", "windows-1252", false).unwrap();
+    fs::write(&path, &original).unwrap();
+    let (mut workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+    let mut document =
+        Document::open_with_encoding(workspace.editor.id(), &path, "windows-1252").unwrap();
+    let page = document.page(0).unwrap();
+    workspace.add(document, page).unwrap();
+    edit(&mut workspace, "café λ\r\n");
+    let shared = workspace
+        .editor
+        .get(workspace.open[workspace.active].view.id)
+        .unwrap();
+    assert!(shared.lock().unwrap().save(None).is_err());
+    assert!(shared.lock().unwrap().info().dirty);
+    assert_eq!(fs::read(&path).unwrap(), original);
+    workspace.checkpoint().unwrap();
+    drop(shared);
+    drop(workspace);
+    let (workspace, errors) = Workspace::restore(directory.path().join("session")).unwrap();
+    assert!(errors.is_empty(), "{errors:?}");
+    let shared = workspace
+        .editor
+        .get(workspace.open[workspace.active].view.id)
+        .unwrap();
+    let mut document = shared.lock().unwrap();
+    assert_eq!(document.text(1024).unwrap(), "café λ\r\n");
+    assert!(document.info().dirty);
+    document.set_encoding("UTF-8").unwrap();
+    document.save(None).unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), "café λ\r\n");
+    let revision = document.info().revision;
+    document.history(false, 0, revision).unwrap(); // undo the encoding change
+    let revision = document.info().revision;
+    assert_eq!(
+        document.history(false, 0, revision).unwrap().text,
+        "café\r\n"
+    );
+}
+
+#[test]
 fn untitled_and_closed_buffers_survive_restarts_and_keep_selection() {
     let directory = tempfile::tempdir().unwrap();
     let (mut ws, _) = Workspace::restore(directory.path().into()).unwrap();

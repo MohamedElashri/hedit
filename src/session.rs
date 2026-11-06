@@ -172,7 +172,7 @@ pub(crate) fn sync_directory(path: &Path) -> Result<(), String> {
 }
 
 fn read_manifest(path: &Path) -> Result<SavedSession, String> {
-    let file = File::open(path).map_err(err)?;
+    let file = crate::file_io::open_regular(path).map_err(err)?;
     if file.metadata().map_err(err)?.len() > MANIFEST_LIMIT {
         return Err("The session manifest exceeds 16 MiB.".into());
     }

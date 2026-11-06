@@ -499,6 +499,42 @@ fn git_comparison_reads_head_without_changing_index_or_worktree() {
 
 #[cfg(unix)]
 #[test]
+fn git_comparison_keeps_literal_backslashes_in_unix_filenames() {
+    use hedit::git::{Git, Operation};
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let git = Git::default();
+    git.command(root, &["init", "-q"]).unwrap();
+    for (key, value) in [
+        ("user.name", "hedit test"),
+        ("user.email", "hedit@example.invalid"),
+        ("commit.gpgsign", "false"),
+        ("core.hooksPath", "/nonexistent/hedit-test-hooks"),
+    ] {
+        git.command(root, &["config", key, value]).unwrap();
+    }
+    std::fs::create_dir(root.join("a")).unwrap();
+    std::fs::write(root.join("a/b.txt"), "different file\n").unwrap();
+    let path = root.join(r"a\b.txt");
+    std::fs::write(&path, "literal filename\n").unwrap();
+    git.execute(
+        root,
+        &Operation::Stage(vec!["a/b.txt".into(), r"a\b.txt".into()]),
+    )
+    .unwrap();
+    git.execute(
+        root,
+        &Operation::Commit {
+            message: "fixture".into(),
+            amend: false,
+        },
+    )
+    .unwrap();
+    assert_eq!(intelligence::git_base(&path).unwrap(), "literal filename\n");
+}
+
+#[cfg(unix)]
+#[test]
 fn ipc_path_transport_preserves_non_utf8_bytes() {
     use std::os::unix::ffi::OsStringExt;
     let path =

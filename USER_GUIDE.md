@@ -750,8 +750,10 @@ task lists, and quotes. Section links scroll to their headings, including headin
 quotes and lists. Markdown file links stay in Preview and honor `#section`
 fragments; other file links open in the editor. Local PNG and JPEG images resolve
 relative to the Markdown file's folder; Save As updates that folder. Images
-from web URLs are not fetched, and embedded HTML is displayed as text. Preview is available for fully loaded
-documents up to 2 MiB; larger or paged files remain editable in Source.
+from web URLs or `file://` URLs are not fetched. On Windows, network-share and
+device image paths are also blocked. Embedded HTML is displayed as text. Preview
+is available for fully loaded documents up to 2 MiB; larger or paged files remain
+editable in Source.
 
 Use `$E = mc^2$` for inline LaTeX math and `$$ … $$` for a displayed equation.
 Fenced `math` blocks also render equations. Escape literal dollar signs as `\$`

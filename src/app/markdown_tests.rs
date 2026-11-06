@@ -298,6 +298,19 @@ fn markdown_section_links_scroll_the_preview_and_local_file_links_open_in_editor
 }
 
 #[test]
+fn markdown_file_urls_cannot_bypass_bounded_image_loading() {
+    let (directory, ctx, mut app) = fixture("# Images\n\n![Image](normal.png)\n");
+    let path = directory.path().join("outside-loader.png");
+    std::fs::write(&path, b"unbounded file loader probe").unwrap();
+    app.execute(&ctx, Command::MarkdownPreview);
+    frame(&ctx, &mut app, vec![]);
+    // CommonMark installs its loaders on the first preview frame. An explicit
+    // file URL must not select a second loader with no size/type/thread limits.
+    let uri = format!("file://{}", path.display());
+    assert!(ctx.try_load_bytes(&uri).is_err());
+}
+
+#[test]
 fn markdown_local_images_resolve_relative_and_absolute_paths_without_blocking() {
     let (directory, ctx, mut app) = fixture("# Images\n\n![Square](a%20square.png)\n");
     let path = directory.path().join("a square.png");
