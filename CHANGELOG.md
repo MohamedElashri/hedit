@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [0.2.1] - 2026-11-06
+
 ### Added
 
 - Restart hedit after installing an update, with open files and unsaved work
@@ -16,17 +18,17 @@
   their output.
 - Cancel continues to stop builds after they close their output streams.
 - Build output no longer drops a final incomplete character when a tool exits.
-- Project settings, workspace files, and EditorConfig enforce read limits and
-  reject special files instead of hanging or consuming unbounded memory.
+- Oversized project settings, workspace files, and EditorConfig files no longer
+  consume unbounded memory. Special files are rejected instead of hanging.
 - Opening documents and restoring recovery files no longer waits for named-pipe
   writers on Linux and macOS.
 - Git change markers and revert actions use the correct file when a Unix filename
   contains a literal backslash.
-- Saving files and applying folder replacements retains existing access-control
+- Saving files and applying folder replacements retain existing access-control
   rules and, on Linux and macOS, the file's owner and group.
-- Markdown images can no longer bypass file-size limits through `file://` URLs.
-- Markdown preview on Windows no longer opens network-share or device image paths,
-  preventing automatic authentication to image servers.
+- Markdown preview enforces image-size limits and blocks `file://` image URLs.
+  On Windows, network-share and device image paths are also blocked to prevent
+  automatic authentication to image servers.
 - Markdown images pointing to named pipes no longer stall image loading on
   Linux and macOS.
 
@@ -659,6 +661,7 @@ Initial release of hedit.
 - User and developer guides, plus Makefile commands for formatting, linting,
   tests, packaging, and CI validation.
 
+[0.2.1]: https://github.com/MohamedElashri/hedit/compare/v0.2.0...v0.2.1
 [0.1.12]: https://github.com/MohamedElashri/hedit/compare/v0.1.11...v0.1.12
 [0.1.11]: https://github.com/MohamedElashri/hedit/compare/v0.1.10...v0.1.11
 [0.1.10]: https://github.com/MohamedElashri/hedit/compare/v0.1.9...v0.1.10
