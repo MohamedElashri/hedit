@@ -9,6 +9,11 @@
 
 ### Fixed
 
+- Custom build systems no longer trigger an incorrect unknown-setting warning.
+- Noisy builds no longer grow memory without limit when the editor falls behind
+  their output.
+- Cancel continues to stop builds after they close their output streams.
+- Build output no longer drops a final incomplete character when a tool exits.
 - Project settings, workspace files, and EditorConfig enforce read limits and
   reject special files instead of hanging or consuming unbounded memory.
 - Opening documents and restoring recovery files no longer waits for named-pipe

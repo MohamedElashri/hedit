@@ -266,6 +266,7 @@ impl Settings {
         };
         Self {
             syntax_specific: BTreeMap::from([("python".into(), format.clone())]),
+            build_systems: vec![crate::build::BuildSystem::default()],
             format,
             ..Self::default()
         }
