@@ -196,9 +196,21 @@ impl HeditApp {
                 }
             }
             match event {
-                egui::Event::Text(text) | egui::Event::Paste(text) if multiple => {
-                    replacement = Some(text.clone())
+                egui::Event::Paste(text) if multiple => {
+                    if !text.is_empty() {
+                        let b = self.active();
+                        let selections = super::clipboard_lines::paste_selections(
+                            &b.page.text,
+                            self.selections(),
+                        );
+                        let pasted =
+                            super::clipboard_lines::line_endings(text, b.page.info.eol == "CRLF");
+                        self.batch(advanced::replace(&b.page.text, &selections, &pasted));
+                    }
+                    consumed.push(i);
+                    continue;
                 }
+                egui::Event::Text(text) if multiple => replacement = Some(text.clone()),
                 egui::Event::Ime(egui::ImeEvent::Commit(text)) if multiple => {
                     replacement = Some(text.clone())
                 }

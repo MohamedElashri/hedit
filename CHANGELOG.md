@@ -9,6 +9,8 @@
 
 ### Fixed
 
+- Pasting text preserves the current file's line endings, including with multiple
+  cursors.
 - Custom build systems no longer trigger an incorrect unknown-setting warning.
 - Noisy builds no longer grow memory without limit when the editor falls behind
   their output.

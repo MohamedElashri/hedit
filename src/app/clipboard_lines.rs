@@ -56,6 +56,75 @@ pub(super) fn paste_selections(text: &str, mut selections: Vec<Selection>) -> Ve
     selections
 }
 
+/// Keep ordinary edits in TextEdit's event order. Normalize inserted newlines
+/// at the buffer boundary rather than applying Paste ahead of earlier keys.
+pub(super) struct EditorText<'a> {
+    pub text: &'a mut String,
+    pub crlf: bool,
+}
+
+impl EditorText<'_> {
+    fn snap_cursor(&self, cursor: &mut egui::text::CCursor) {
+        let at = advanced::byte(self.text, cursor.index);
+        if at > 0
+            && self.text.as_bytes().get(at - 1) == Some(&b'\r')
+            && self.text.as_bytes().get(at) == Some(&b'\n')
+        {
+            cursor.index -= 1;
+        }
+    }
+}
+
+impl egui::TextBuffer for EditorText<'_> {
+    fn is_mutable(&self) -> bool {
+        true
+    }
+    fn as_str(&self) -> &str {
+        self.text.as_str()
+    }
+    fn insert_text(&mut self, text: &str, at: usize) -> usize {
+        self.text.insert_text(&line_endings(text, self.crlf), at)
+    }
+    fn delete_char_range(&mut self, range: std::ops::Range<usize>) {
+        self.text.delete_char_range(range);
+    }
+    fn delete_selected_ccursor_range(
+        &mut self,
+        [mut min, mut max]: [egui::text::CCursor; 2],
+    ) -> egui::text::CCursor {
+        self.snap_cursor(&mut min);
+        self.snap_cursor(&mut max);
+        self.text.delete_selected_ccursor_range([min, max])
+    }
+    fn delete_previous_char(&mut self, mut cursor: egui::text::CCursor) -> egui::text::CCursor {
+        self.snap_cursor(&mut cursor);
+        let at = advanced::byte(self.text, cursor.index);
+        if self.text[..at].ends_with("\r\n") {
+            self.text
+                .delete_selected_ccursor_range([cursor - 2, cursor])
+        } else {
+            self.text.delete_previous_char(cursor)
+        }
+    }
+    fn delete_next_char(&mut self, mut cursor: egui::text::CCursor) -> egui::text::CCursor {
+        self.snap_cursor(&mut cursor);
+        let at = advanced::byte(self.text, cursor.index);
+        if self.text[at..].starts_with("\r\n") {
+            self.text
+                .delete_selected_ccursor_range([cursor, cursor + 2])
+        } else {
+            self.text.delete_next_char(cursor)
+        }
+    }
+    fn insert_text_at(&mut self, cursor: &mut egui::text::CCursor, text: &str, limit: usize) {
+        // End can leave the cursor between CR and LF. Insert before the pair
+        // and let TextEdit track the actual inserted character count.
+        self.snap_cursor(cursor);
+        self.text
+            .insert_text_at(cursor, &line_endings(text, self.crlf), limit);
+    }
+}
+
 /// Pasted text re-indented for a line indented by `target`. With `whole`, the
 /// text goes at the start of a line: its common indentation becomes `target`
 /// on every line, the first included. Otherwise it goes after other text on
@@ -203,6 +272,7 @@ impl HeditApp {
             let done = match event {
                 egui::Event::Copy => self.copy_lines(ctx, false),
                 egui::Event::Cut => self.copy_lines(ctx, true),
+                egui::Event::Paste(_) if self.busy || self.closing => false,
                 egui::Event::Paste(text) if std::mem::take(&mut self.paste_indent) || shifted => {
                     if self.active().follow {
                         false

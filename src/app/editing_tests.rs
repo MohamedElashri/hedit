@@ -1875,6 +1875,152 @@ fn find_shortcuts_keep_text_literal_in_regex_mode() {
 }
 
 #[test]
+fn ordinary_paste_respects_earlier_events_in_the_same_frame() {
+    let (_directory, ctx, mut app) = app_with("old text");
+    frame(
+        &ctx,
+        &mut app,
+        vec![
+            key(Key::A, Modifiers::COMMAND),
+            egui::Event::Paste("replacement\nλ".into()),
+        ],
+    );
+    assert_eq!(app.active().page.text, "replacement\nλ");
+
+    let (_directory, ctx, mut app) = app_with("");
+    frame(
+        &ctx,
+        &mut app,
+        vec![
+            egui::Event::Text("typed first ".into()),
+            egui::Event::Paste("pasted second".into()),
+        ],
+    );
+    assert_eq!(app.active().page.text, "typed first pasted second");
+
+    let (_directory, ctx, mut app) = app_with("head\ntail\n");
+    app.edit_command(hedit::editing::Operation::ToCrlf);
+    frame(&ctx, &mut app, vec![]);
+    frame(
+        &ctx,
+        &mut app,
+        vec![
+            key(Key::End, Modifiers::NONE),
+            egui::Event::Paste(" café\nλ".into()),
+        ],
+    );
+    assert_eq!(app.active().page.text, "head café\r\nλ\r\ntail\r\n");
+}
+
+#[test]
+fn editing_after_end_keeps_crlf_pairs_intact() {
+    for (key_code, expected) in [
+        (Key::Backspace, "hea\r\ntail\r\n"),
+        (Key::Delete, "headtail\r\n"),
+    ] {
+        let (_directory, ctx, mut app) = app_with("head\ntail\n");
+        app.edit_command(hedit::editing::Operation::ToCrlf);
+        frame(&ctx, &mut app, vec![]);
+        frame(
+            &ctx,
+            &mut app,
+            vec![
+                key(Key::End, Modifiers::NONE),
+                key(key_code, Modifiers::NONE),
+            ],
+        );
+        assert_eq!(app.active().page.text, expected);
+    }
+}
+
+#[test]
+fn empty_pastes_leave_single_and_multiple_selections_untouched() {
+    for multiple in [false, true] {
+        let (_directory, ctx, mut app) = app_with("one two three");
+        let mut selections = vec![hedit::advanced::Selection { anchor: 0, head: 3 }];
+        if multiple {
+            selections.push(hedit::advanced::Selection { anchor: 4, head: 7 });
+        }
+        app.set_selections(selections.clone());
+        frame(&ctx, &mut app, vec![]);
+        let revision = app.active().page.info.revision;
+        frame(&ctx, &mut app, vec![egui::Event::Paste(String::new())]);
+        assert_eq!(app.active().page.text, "one two three");
+        assert_eq!(app.selections(), selections);
+        assert_eq!(app.active().page.info.revision, revision);
+    }
+}
+
+#[test]
+fn paste_selections_cannot_split_crlf_pairs() {
+    for (anchor, head, expected) in [
+        (5, 8, "headcafé\r\nλ\r\nil\r\n"),
+        (1, 5, "hcafé\r\nλ\r\n\r\ntail\r\n"),
+    ] {
+        let (_directory, ctx, mut app) = app_with("head\ntail\n");
+        app.edit_command(hedit::editing::Operation::ToCrlf);
+        let original = app.active().page.text.clone();
+        app.set_selections(vec![hedit::advanced::Selection { anchor, head }]);
+        frame(&ctx, &mut app, vec![]);
+        frame(&ctx, &mut app, vec![egui::Event::Paste("café\nλ\n".into())]);
+        assert_eq!(app.active().page.text, expected);
+        app.history(&ctx, false);
+        finish_app_job(&mut app, &ctx);
+        assert_eq!(app.active().page.text, original);
+    }
+}
+
+#[test]
+fn ordinary_pastes_preserve_target_line_endings_and_undo() {
+    for crlf in [false, true] {
+        for selection in [0, 1, 2] {
+            let (_directory, ctx, mut app) = app_with("head\ntail\n");
+            if crlf {
+                app.edit_command(hedit::editing::Operation::ToCrlf);
+            }
+            let original = app.active().page.text.clone();
+            let ranges = match selection {
+                0 => vec![hedit::advanced::Selection {
+                    anchor: 0,
+                    head: original.chars().count(),
+                }],
+                1 => vec![hedit::advanced::Selection::caret(if crlf { 5 } else { 4 })],
+                _ => vec![
+                    hedit::advanced::Selection::caret(0),
+                    hedit::advanced::Selection::caret(original.chars().count()),
+                ],
+            };
+            app.set_selections(ranges);
+            frame(&ctx, &mut app, vec![]);
+            let pasted = if crlf {
+                "café\nλ\n"
+            } else {
+                "café\r\nλ\r\n"
+            };
+            frame(&ctx, &mut app, vec![egui::Event::Paste(pasted.into())]);
+            let text = &app.active().page.text;
+            let expected = if crlf {
+                [
+                    "café\r\nλ\r\n",
+                    "headcafé\r\nλ\r\n\r\ntail\r\n",
+                    "café\r\nλ\r\nhead\r\ntail\r\ncafé\r\nλ\r\n",
+                ]
+            } else {
+                [
+                    "café\nλ\n",
+                    "headcafé\nλ\n\ntail\n",
+                    "café\nλ\nhead\ntail\ncafé\nλ\n",
+                ]
+            };
+            assert_eq!(text, expected[selection]);
+            app.history(&ctx, false);
+            finish_app_job(&mut app, &ctx);
+            assert_eq!(app.active().page.text, original);
+        }
+    }
+}
+
+#[test]
 fn indented_and_history_pastes_preserve_the_target_line_endings_and_undo() {
     for crlf in [false, true] {
         for (history, inside_crlf) in [(false, false), (true, false), (false, true), (true, true)] {
