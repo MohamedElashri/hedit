@@ -10,6 +10,8 @@ use std::{
 };
 use tempfile::NamedTempFile;
 
+mod save_permissions;
+
 pub const SMALL_LIMIT: u64 = 2 * 1024 * 1024;
 pub const PAGE_SIZE: u64 = 256 * 1024;
 const IO_SIZE: u64 = 1024 * 1024;
@@ -231,7 +233,7 @@ impl SnapshotSources {
                 let replacement = if let Some(source) = self.protected.get(&key) {
                     source.clone()
                 } else {
-                    let file = File::open(directory.join(&path)).map_err(err)?;
+                    let file = crate::file_io::open_regular(&directory.join(&path)).map_err(err)?;
                     if file.metadata().map_err(err)?.len() != stamp.size {
                         return Err("A completed recovery source changed size.".into());
                     }
@@ -411,22 +413,38 @@ impl Document {
         }
     }
     pub fn open(id: u64, path: &Path) -> Result<Self, String> {
-        let mut file = File::open(path).map_err(err)?;
+        let path = fs::canonicalize(path).map_err(err)?;
+        let file = crate::file_io::open_regular(&path).map_err(err)?;
         let mut prefix = [0; 3];
-        let count = std::io::Read::read(&mut file, &mut prefix).map_err(err)?;
+        let count = file.metadata().map_err(err)?.len().min(3) as usize;
+        read_exact_at(&file, &mut prefix[..count], 0)?;
         let label = crate::text_encoding::detect(&prefix[..count]);
         if label != "UTF-8" {
-            return Self::open_with_encoding(id, path, label);
+            return Self::from_encoded_file(id, path, file, label);
         }
-        Self::open_file(id, path)
+        Self::from_file(id, file, Some(path))
     }
     pub fn open_with_encoding(id: u64, path: &Path, label: &str) -> Result<Self, String> {
         let path = fs::canonicalize(path).map_err(err)?;
-        let metadata = fs::metadata(&path).map_err(err)?;
+        let file = crate::file_io::open_regular(&path).map_err(err)?;
+        Self::from_encoded_file(id, path, file, label)
+    }
+    fn from_encoded_file(
+        id: u64,
+        path: PathBuf,
+        mut file: File,
+        label: &str,
+    ) -> Result<Self, String> {
+        use std::io::Seek;
+        let metadata = file.metadata().map_err(err)?;
         if !metadata.is_file() || metadata.len() > crate::text_encoding::DECODE_LIMIT {
             return Err("Encoding conversion supports regular files up to 32 MiB.".into());
         }
-        let (text, bom) = crate::text_encoding::decode(&fs::read(&path).map_err(err)?, label)?;
+        // Windows seek_read advances the file cursor during BOM detection.
+        file.rewind().map_err(err)?;
+        let bytes =
+            crate::file_io::read_bounded(file, crate::text_encoding::DECODE_LIMIT).map_err(err)?;
+        let (text, bom) = crate::text_encoding::decode(&bytes, label)?;
         let mut doc = Self::empty(id);
         doc.size = text.len() as u64;
         doc.eol = detected_eol(text.as_bytes());
@@ -636,7 +654,8 @@ impl Document {
                                 );
                             }
                             let source = Source::disk(
-                                File::open(directory.join(&piece.buffer)).map_err(err)?,
+                                crate::file_io::open_regular(&directory.join(&piece.buffer))
+                                    .map_err(err)?,
                             )?;
                             files.insert(piece.buffer.clone(), source.clone());
                             source
@@ -736,17 +755,12 @@ impl Document {
             return Err("Invalid stdin handoff file.".into());
         }
         let cleanup = tempfile::TempPath::try_from_path(path).map_err(err)?;
-        let mut input = File::open(&cleanup).map_err(err)?;
+        let mut input = crate::file_io::open_regular(&cleanup).map_err(err)?;
         let mut buffer = tempfile::tempfile().map_err(err)?;
         io::copy(&mut input, &mut buffer).map_err(err)?;
         drop(input);
         drop(cleanup);
         Self::from_file(id, buffer, None)
-    }
-    fn open_file(id: u64, path: &Path) -> Result<Self, String> {
-        let path = fs::canonicalize(path).map_err(err)?;
-        let file = File::open(&path).map_err(err)?;
-        Self::from_file(id, file, Some(path))
     }
     fn from_file(id: u64, file: File, path: Option<PathBuf>) -> Result<Self, String> {
         let metadata = file.metadata().map_err(err)?;
@@ -1316,8 +1330,10 @@ impl Document {
                 let file = match files.get(&piece.buffer) {
                     Some(file) => Arc::clone(file),
                     None => {
-                        let file =
-                            Arc::new(File::open(directory.join(&piece.buffer)).map_err(err)?);
+                        let file = Arc::new(
+                            crate::file_io::open_regular(&directory.join(&piece.buffer))
+                                .map_err(err)?,
+                        );
                         files.insert(piece.buffer.clone(), Arc::clone(&file));
                         file
                     }
@@ -1381,7 +1397,7 @@ impl Document {
             return Ok(doc);
         };
         validate_buffer_path(buffer)?;
-        let file = File::open(directory.join(buffer)).map_err(err)?;
+        let file = crate::file_io::open_regular(&directory.join(buffer)).map_err(err)?;
         let expected = saved
             .size
             .checked_add(if saved.bom { 3 } else { 0 })
@@ -1455,6 +1471,11 @@ impl Document {
             .transpose()?;
         let parent = target.parent().ok_or("Invalid save directory.")?;
         let mut temp = NamedTempFile::new_in(parent).map_err(err)?;
+        // Preserve access restrictions before any content reaches the temporary
+        // file, as well as when it replaces the destination.
+        if target_metadata.is_some() {
+            save_permissions::copy(&target, &temp).map_err(err)?;
+        }
         self.write_encoded_content(temp.as_file_mut())?;
         self.check_source()?;
         if self.path.as_ref() == Some(&target) {
@@ -1465,9 +1486,7 @@ impl Document {
             if meta.permissions().readonly() {
                 return Err("The file is read-only. Use Save As to choose another path.".into());
             }
-            temp.as_file()
-                .set_permissions(meta.permissions())
-                .map_err(err)?;
+            save_permissions::copy(&target, &temp).map_err(err)?;
             temp.as_file().sync_all().map_err(err)?;
             Some(Stamp::from_metadata(&meta)?)
         } else {

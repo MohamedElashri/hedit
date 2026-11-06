@@ -99,17 +99,14 @@ pub fn atomic_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
 }
 /// Read a UTF-8 text file of at most `limit` bytes.
 pub fn read_text(path: &Path, limit: u64) -> Result<String, String> {
-    if std::fs::metadata(path).map_err(|e| e.to_string())?.len() > limit {
-        return Err("Settings/workspace file is too large.".into());
-    }
-    std::fs::read_to_string(path).map_err(|e| e.to_string())
+    String::from_utf8(read_bytes(path, limit)?).map_err(|e| e.to_string())
 }
 pub fn read_json<T: serde::de::DeserializeOwned>(path: &Path, limit: u64) -> Result<T, String> {
-    if std::fs::metadata(path).map_err(|e| e.to_string())?.len() > limit {
-        return Err("Settings/workspace file is too large.".into());
-    }
-    serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())
+    serde_json::from_slice(&read_bytes(path, limit)?).map_err(|e| e.to_string())
+}
+fn read_bytes(path: &Path, limit: u64) -> Result<Vec<u8>, String> {
+    let file = crate::file_io::open_regular(path).map_err(|e| e.to_string())?;
+    crate::file_io::read_bounded(file, limit).map_err(|e| e.to_string())
 }
 pub fn load(path: &Path) -> Result<(Project, State), String> {
     let mut project: Project = read_json(path, 1024 * 1024)?;
@@ -167,10 +164,8 @@ pub fn formatting(
         if !config.exists() {
             continue;
         }
-        if std::fs::metadata(&config).map_err(|e| e.to_string())?.len() > 256 * 1024 {
-            return Err(".editorconfig exceeds 256 KiB.".into());
-        }
-        let text = std::fs::read_to_string(&config).map_err(|e| e.to_string())?;
+        let text =
+            read_text(&config, 256 * 1024).map_err(|e| format!("{}: {e}", config.display()))?;
         let root = text
             .lines()
             .take_while(|l| !l.trim().starts_with('['))
