@@ -83,11 +83,25 @@ fn run(
     // Stdin has already been consumed and its spool removed. Preserve it even
     // if creating the native window fails (for example, no graphical display).
     workspace.checkpoint()?;
+    let executable = std::env::current_exe()?;
+    let restart_directory = if directory.is_absolute() {
+        directory.clone()
+    } else {
+        std::env::current_dir()?.join(&directory)
+    };
+    let restart_requested = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let restart = std::sync::Arc::clone(&restart_requested);
     eframe::run_native(
         "hedit",
         native_options,
         Box::new(move |cc| {
-            let mut app = app::HeditApp::new(cc, workspace, errors, options.files.clone());
+            let mut app = app::HeditApp::new(
+                cc,
+                workspace,
+                errors,
+                options.files.clone(),
+                restart_requested,
+            );
             if let Some(file) = wait {
                 app.wait_for(&options.files, file);
             }
@@ -95,5 +109,8 @@ fn run(
             Ok(Box::new(app))
         }),
     )?;
+    if restart.load(std::sync::atomic::Ordering::Relaxed) {
+        launcher::restart(&executable, &restart_directory)?;
+    }
     Ok(())
 }

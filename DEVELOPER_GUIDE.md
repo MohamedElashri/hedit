@@ -380,8 +380,12 @@ before extracting, and swaps the Linux binary in last, rolling back on failure.
 On macOS it selects the universal ZIP, validates bundle metadata and the code
 signature, and atomically exchanges the complete app bundle with `RENAME_SWAP`.
 Staging happens beside the app; read-only and translocated apps use the manual
-download fallback. The current process stays open until the user quits. macOS
-release signatures are currently ad hoc, so this checks bundle integrity rather
+download fallback. The current process stays open until the user chooses Restart
+or quits. Restart follows the normal successful-checkpoint shutdown path, then
+relaunches the executable path captured before the update with only the saved
+session directory. The old UI and its recovery lock must be dropped before the
+new process starts; startup file, stdin, and wait arguments must not be replayed.
+macOS release signatures are currently ad hoc, so this checks bundle integrity rather
 than a Developer ID identity or notarization.
 `install.sh` is served from `main`, not from a release, so keep it compatible with
 the asset names of published releases.

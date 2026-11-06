@@ -39,6 +39,7 @@ impl HeditApp {
     }
 
     pub(super) fn cancel_close(&mut self) {
+        self.restart_requested.store(false, Ordering::Relaxed);
         self.close_flow = None;
         self.focus_editor |= self.closing;
         self.closing = false;

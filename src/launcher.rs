@@ -83,6 +83,30 @@ pub fn launch(
     stdin: bool,
     wait: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    launch_executable(&std::env::current_exe()?, args, directory, stdin, wait)
+}
+
+/// Called after run_native returns and drops the old session owner. Use the
+/// executable path captured before installation: Linux's current_exe can name
+/// the deleted old inode after an update. Recovery restores the open buffers;
+/// replaying --new, stdin, --wait, or file arguments would change that session.
+pub fn restart(executable: &Path, directory: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    launch_executable(
+        executable,
+        &["--session-dir".into(), directory.as_os_str().to_owned()],
+        directory,
+        false,
+        false,
+    )
+}
+
+fn launch_executable(
+    executable: &Path,
+    args: &[OsString],
+    directory: &Path,
+    stdin: bool,
+    wait: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let status_directory = tempfile::Builder::new().prefix("hedit-launch-").tempdir()?;
     let status = status_directory.path().join("status.json");
     // Capture a pipe or interactive input before releasing the terminal. The
@@ -104,12 +128,13 @@ pub fn launch(
     }
     builder.create(directory)?;
     let log = directory.join(LOG_NAME);
-    let mut command = Command::new(std::env::current_exe()?);
+    let mut command = Command::new(executable);
     command
         .arg(CHILD_ARGUMENT)
         .arg(&status)
         .arg(spool.as_deref().unwrap_or_else(|| Path::new("")))
-        .args(args);
+        .args(args)
+        .env_remove(WAIT_VARIABLE);
     let closed = status_directory.path().join("closed");
     if wait {
         command.env(WAIT_VARIABLE, &closed);
@@ -195,6 +220,96 @@ fn read_report(path: &Path) -> Option<Report> {
 mod tests {
     use super::*;
     use std::time::Instant;
+
+    #[test]
+    fn restart_driver_fixture() {
+        let Some(executable) = std::env::var_os("HEDIT_TEST_RESTART_EXECUTABLE") else {
+            return;
+        };
+        let session = std::env::var_os("HEDIT_TEST_RESTART_SESSION").unwrap();
+        assert!(std::env::var_os(WAIT_VARIABLE).is_some());
+        restart(Path::new(&executable), Path::new(&session)).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restart_runs_replacement_and_only_restores_the_saved_session() {
+        use std::os::unix::{
+            ffi::{OsStrExt, OsStringExt},
+            fs::PermissionsExt,
+        };
+        let directory = tempfile::Builder::new()
+            .prefix("hedit restart λ ")
+            .tempdir()
+            .unwrap();
+        let executable = directory.path().join("hedit");
+        fs::write(&executable, "#!/bin/sh\nexit 91\n").unwrap();
+        let old_executable = fs::File::open(&executable).unwrap();
+        let replacement = directory.path().join("replacement");
+        fs::write(
+            &replacement,
+            r##"#!/bin/sh
+printf '%s\000' "$@" > "$0.args"
+printf '%s' "${HEDIT_WAIT_FILE-unset}" > "$0.wait"
+printf '%s' '"Ready"' > "$2"
+"##,
+        )
+        .unwrap();
+        fs::set_permissions(&replacement, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::rename(replacement, &executable).unwrap();
+        // Linux accepts non-UTF-8 filenames; macOS requires valid Unicode on
+        // disk. Exercise raw bytes where the filesystem supports them.
+        let name = if cfg!(target_os = "linux") {
+            OsString::from_vec(b"saved session-\xff".to_vec())
+        } else {
+            OsString::from("saved session العربية")
+        };
+        let session = directory.path().join(name);
+        let result = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "launcher::tests::restart_driver_fixture",
+                "--nocapture",
+            ])
+            .env("HEDIT_TEST_RESTART_EXECUTABLE", &executable)
+            .env("HEDIT_TEST_RESTART_SESSION", &session)
+            .env(WAIT_VARIABLE, "stale-wait-file")
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let raw = fs::read(executable.with_extension("args")).unwrap();
+        let mut args: Vec<_> = raw
+            .strip_suffix(&[0])
+            .unwrap()
+            .split(|b| *b == 0)
+            .map(|b| OsString::from_vec(b.to_vec()))
+            .collect();
+        let startup = Startup::take_from_args(&mut args).unwrap();
+        assert!(startup.is_child());
+        assert!(startup.stdin_path().is_none());
+        let options = hedit::cli::Options::parse(args).unwrap();
+        assert_eq!(
+            options.session_dir.unwrap().as_os_str().as_bytes(),
+            session.as_os_str().as_bytes()
+        );
+        assert!(options.files.is_empty());
+        assert!(!options.stdin && !options.new_buffer && !options.wait);
+        assert_eq!(
+            fs::read_to_string(executable.with_extension("wait")).unwrap(),
+            "unset"
+        );
+        drop(old_executable);
+    }
+
+    #[test]
+    fn missing_updated_executable_reports_restart_failure() {
+        let directory = tempfile::tempdir().unwrap();
+        assert!(restart(&directory.path().join("missing"), directory.path()).is_err());
+    }
 
     #[test]
     fn internal_arguments_preserve_literal_and_non_utf8_paths() {

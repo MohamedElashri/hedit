@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- Restart hedit after installing an update, with open files and unsaved work
+  restored automatically. Choose Later to keep working until you're ready.
+
 ## [0.2.0] - 2026-11-06
 
 ### Added
