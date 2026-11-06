@@ -3,9 +3,13 @@
 use serde::{Deserialize, Serialize};
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
+
+// At most about 256 KiB of ordinary UTF-8 output can wait for the UI. A fast
+// compiler then waits on its pipe instead of filling an unbounded event queue.
+const OUTPUT_QUEUE_SIZE: usize = 32;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -234,7 +238,7 @@ pub struct Running {
     child: Arc<Mutex<Option<Child>>>,
     /// The build's process group, shared by everything the shell starts.
     group: u32,
-    /// Set once the build's output has ended.
+    /// Set once both the output has ended and the process has exited.
     done: Arc<std::sync::atomic::AtomicBool>,
     pub events: mpsc::Receiver<Event>,
 }
@@ -306,7 +310,7 @@ impl Running {
         let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let finished = Arc::clone(&done);
         let child = Arc::new(Mutex::new(Some(child)));
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::sync_channel(OUTPUT_QUEUE_SIZE);
         let started = Instant::now();
         let waiter = Arc::clone(&child);
         std::thread::spawn(move || {
@@ -325,17 +329,25 @@ impl Running {
                         };
                         let text = String::from_utf8_lossy(&pending[..valid]).into_owned();
                         pending.drain(..valid);
-                        let _ = tx.send(Event::Output(text));
-                        wake();
+                        if tx.send(Event::Output(text)).is_ok() {
+                            wake();
+                        }
                     }
                 }
             }
+            if !pending.is_empty()
+                && tx
+                    .send(Event::Output(
+                        String::from_utf8_lossy(&pending).into_owned(),
+                    ))
+                    .is_ok()
+            {
+                wake();
+            }
+            // Keep the child available to Cancel after stdout closes. Taking
+            // it out of the mutex and blocking in wait() makes it unreachable.
+            let status = wait_for_exit(&waiter);
             finished.store(true, std::sync::atomic::Ordering::Relaxed);
-            let status = waiter
-                .lock()
-                .ok()
-                .and_then(|mut c| c.take())
-                .and_then(|mut c| c.wait().ok());
             let _ = tx.send(Event::Finished(
                 status.and_then(|s| s.code()),
                 started.elapsed(),
@@ -358,7 +370,7 @@ impl Running {
             }
         }
         // A command the shell was starting as the signal arrived can miss it
-        // and keep the output open; repeat until the output ends.
+        // and keep the output open; repeat until the build and output end.
         let (group, done) = (self.group, Arc::clone(&self.done));
         std::thread::spawn(move || {
             for _ in 0..20 {
@@ -369,6 +381,26 @@ impl Running {
                 kill_group(group);
             }
         });
+    }
+}
+
+fn wait_for_exit(child: &Mutex<Option<Child>>) -> Option<ExitStatus> {
+    loop {
+        let mut guard = child.lock().ok()?;
+        match guard.as_mut()?.try_wait() {
+            Ok(Some(status)) => {
+                guard.take();
+                return Some(status);
+            }
+            Ok(None) => (),
+            Err(_) => {
+                let mut child = guard.take()?;
+                let _ = child.kill();
+                return child.wait().ok();
+            }
+        }
+        drop(guard);
+        std::thread::sleep(Duration::from_millis(10));
     }
 }
 

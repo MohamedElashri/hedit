@@ -77,6 +77,23 @@ fn settings_round_trip_through_a_commented_file() {
 }
 
 #[test]
+fn custom_build_systems_load_without_a_false_unknown_setting_warning() {
+    let (settings, warnings) = Settings::parse(
+        r#"{
+        "build_system": "Custom build",
+        "build_systems": [{"name": "Custom build", "shell_cmd": "echo custom"}]
+    }"#,
+    )
+    .unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(settings.build_systems[0].name, "Custom build");
+    assert_eq!(
+        Settings::parse(&settings.to_json()).unwrap(),
+        (settings, vec![])
+    );
+}
+
+#[test]
 fn formatting_settings_map_to_editorconfig_rules() {
     let format = FormatSettings {
         tab_size: Some(2),

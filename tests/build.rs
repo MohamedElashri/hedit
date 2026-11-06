@@ -122,6 +122,111 @@ fn builds_stream_merged_output_and_report_exit_codes() {
     assert_eq!(code, Some(3));
 }
 
+fn noisy_build() -> (tempfile::TempDir, Running) {
+    let directory = tempfile::tempdir().unwrap();
+    let python = if cfg!(windows) { "python" } else { "python3" };
+    let command = format!(
+        r#"{python} -c "import pathlib,sys; pathlib.Path('ready').touch(); sys.stdout.buffer.write(b'x'*4194304); sys.stdout.flush(); pathlib.Path('done').touch()""#
+    );
+    let running = Running::start(&command, directory.path(), || {}).unwrap();
+    let started = Instant::now();
+    while !directory.path().join("ready").exists() {
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "producer did not start"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    (directory, running)
+}
+
+#[test]
+fn build_output_waits_for_the_consumer_instead_of_growing_an_unbounded_queue() {
+    let (directory, running) = noisy_build();
+    std::thread::sleep(Duration::from_millis(200));
+    let finished_while_unread = directory.path().join("done").exists();
+    // Drain before asserting so both fixed and unfixed builds exit cleanly.
+    let (output, code) = collect(&running);
+    assert_eq!(code, Some(0), "{output}");
+    assert_eq!(output.len(), 4 * 1024 * 1024);
+    assert!(
+        !finished_while_unread,
+        "all output was queued without a consumer"
+    );
+}
+
+#[test]
+fn dropping_the_build_receiver_does_not_leave_a_blocked_output_worker() {
+    let (directory, running) = noisy_build();
+    std::thread::sleep(Duration::from_millis(200));
+    drop(running);
+    let started = Instant::now();
+    while !directory.path().join("done").exists() {
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the build stayed blocked after its receiver was dropped"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn cancellation_still_works_while_build_output_is_backpressured() {
+    let (directory, running) = noisy_build();
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(!directory.path().join("done").exists());
+    let started = Instant::now();
+    running.cancel();
+    let (_, code) = collect(&running);
+    assert_ne!(code, Some(0));
+    assert!(started.elapsed() < Duration::from_secs(5));
+    assert!(!directory.path().join("done").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn cancellation_stops_a_build_that_has_already_closed_its_output() {
+    let directory = tempfile::tempdir().unwrap();
+    let running = Running::start(
+        r#"printf '%s' "$$" > pid; touch ready; exec 1>&- 2>&-; sleep 30"#,
+        directory.path(),
+        || {},
+    )
+    .unwrap();
+    let started = Instant::now();
+    while !directory.path().join("ready").exists() {
+        assert!(started.elapsed() < Duration::from_secs(5));
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    std::thread::sleep(Duration::from_millis(200));
+    running.cancel();
+    let result = running.events.recv_timeout(Duration::from_secs(2));
+    // Always stop our fixture even when the original cancellation bug occurs.
+    if matches!(result, Err(std::sync::mpsc::RecvTimeoutError::Timeout)) {
+        let pid: i32 = std::fs::read_to_string(directory.path().join("pid"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        if let Some(pid) = rustix::process::Pid::from_raw(pid) {
+            let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
+        }
+    }
+    assert!(
+        matches!(result, Ok(Event::Finished(..))),
+        "cancellation waited for a process that had closed its output"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn build_output_keeps_an_incomplete_utf8_tail_visible() {
+    let directory = tempfile::tempdir().unwrap();
+    let running = Running::start(r"printf '\303'", directory.path(), || {}).unwrap();
+    let (output, code) = collect(&running);
+    assert_eq!(code, Some(0));
+    assert_eq!(output, "\u{fffd}");
+}
+
 fn slow_build(late: bool) -> &'static str {
     match (cfg!(windows), late) {
         (true, true) => "echo started& ping -n 31 127.0.0.1 >nul& echo late",
