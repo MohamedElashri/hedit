@@ -2113,7 +2113,11 @@ impl HeditApp {
                             egui::pos2(gutter_rect.right(), ui.clip_rect().top()),
                             ui.clip_rect().max,
                         )));
-                        let mut edit = egui::TextEdit::multiline(&mut display)
+                        let mut editor_text = clipboard_lines::EditorText {
+                            text: &mut display,
+                            crlf: buffer.page.info.eol == "CRLF",
+                        };
+                        let mut edit = egui::TextEdit::multiline(&mut editor_text)
                             .id(id)
                             .font(FontId::monospace(font_size))
                             .code_editor()
