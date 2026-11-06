@@ -36,7 +36,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: dtolnay/rust-toolchain@1.92.0
+      - uses: dtolnay/rust-toolchain@1.99.1
         with:
           components: rustfmt, clippy
       - uses: actions/setup-python@v7.1.0
@@ -65,7 +65,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: dtolnay/rust-toolchain@1.92.0
+      - uses: dtolnay/rust-toolchain@1.99.1
         with:
           components: clippy
       - uses: actions/setup-python@v7.1.0

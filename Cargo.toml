@@ -1,8 +1,8 @@
 [package]
 name = "hedit"
-version = "0.1.13"
+version = "0.2.0"
 edition = "2021"
-rust-version = "1.92"
+rust-version = "1.99"
 description = "A native text and log editor with durable unsaved files and CUDA debugging"
 license = "MIT"
 
@@ -27,7 +27,7 @@ regex = "1.13.1"
 encoding_rs = "0.8.42"
 ignore = "0.4.33"
 trash = "5.2.9"
-similar = "3.2.0"
+similar = "3.2.1"
 globset = "0.4.20"
 syntect = { version = "5.3.0", default-features = false, features = ["default-onig"] }
 two-face = { version = "0.5.2", default-features = false, features = ["syntect-default-onig"] }
@@ -35,10 +35,10 @@ unicode-bidi = "0.3"
 ab_glyph = "0.2.32"
 spellbook = "0.4.2"
 egui_commonmark = { version = "0.20.0", default-features = false, features = ["load-images"] }
-pulldown-cmark = { version = "0.12.2", default-features = false }
+pulldown-cmark = { version = "0.13.6", default-features = false }
 percent-encoding = "2"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
-latex-rust = "2.1.1"
+latex-rust = "3.0.1"
 mermaid-rs-renderer = { version = "0.3.1", default-features = false }
 resvg = { version = "0.45", default-features = false, features = ["text", "system-fonts"] }
 
@@ -60,7 +60,7 @@ windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32
 
 [target.'cfg(target_os = "macos")'.dependencies]
 plist = "1"
-zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 # Process nested Markdown blocks normally; see vendor/egui_commonmark/PATCH.md.
 [patch.crates-io]

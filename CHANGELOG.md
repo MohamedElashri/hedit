@@ -2,12 +2,20 @@
 
 ## Unreleased
 
+## [0.2.0] - 2026-11-06
+
 ### Added
 
 - Stage and unstage individual changed lines in unified and side-by-side diffs.
 - Browse changed files and commit files in collapsible folder trees, with
   filtering and a remembered Tree/List view.
 - Review syntax-colored diffs with individual character changes highlighted.
+
+### Changed
+
+- Faster diff calculations with lower memory use.
+- Improved equation parsing and rendering in Markdown.
+- Building hedit from source now requires Rust 1.99 or newer.
 
 ### Fixed
 

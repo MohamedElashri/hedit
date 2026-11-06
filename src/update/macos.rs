@@ -85,7 +85,8 @@ pub(super) fn unpack(archive: &Path, destination: &Path) -> Result<(), String> {
     // Validate the whole archive before writing anything, including metadata.
     for index in 0..zip.len() {
         let file = zip.by_index(index).map_err(error)?;
-        let name = file.name().trim_end_matches('/');
+        let file_name = file.name().map_err(error)?;
+        let name = file_name.trim_end_matches('/');
         let mode = file.unix_mode().unwrap_or(0) & 0o170000;
         if file.enclosed_name().is_none()
             || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b"/_.-+@".contains(&b))
@@ -109,7 +110,8 @@ pub(super) fn unpack(archive: &Path, destination: &Path) -> Result<(), String> {
     }
     for index in 0..zip.len() {
         let mut file = zip.by_index(index).map_err(error)?;
-        if file.name().starts_with("__MACOSX/") || file.name() == "__MACOSX" {
+        let name = file.name().map_err(error)?;
+        if name.starts_with("__MACOSX/") || name == "__MACOSX" {
             continue;
         }
         let path = destination.join(file.enclosed_name().ok_or("Unsafe archive path.")?);

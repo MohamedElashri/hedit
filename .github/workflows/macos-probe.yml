@@ -19,7 +19,7 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: 0
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: dtolnay/rust-toolchain@1.92.0
+      - uses: dtolnay/rust-toolchain@1.99.1
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
           components: rustfmt, clippy
