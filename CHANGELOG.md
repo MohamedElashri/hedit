@@ -4,33 +4,10 @@
 
 ## [0.2.1] - 2026-11-06
 
-### Added
-
-- Restart hedit after installing an update, with open files and unsaved work
-  restored automatically. Choose Later to keep working until you're ready.
-
-### Fixed
-
-- Pasting text preserves the current file's line endings, including with multiple
-  cursors.
-- Custom build systems no longer trigger an incorrect unknown-setting warning.
-- Noisy builds no longer grow memory without limit when the editor falls behind
-  their output.
-- Cancel continues to stop builds after they close their output streams.
-- Build output no longer drops a final incomplete character when a tool exits.
-- Oversized project settings, workspace files, and EditorConfig files no longer
-  consume unbounded memory. Special files are rejected instead of hanging.
-- Opening documents and restoring recovery files no longer waits for named-pipe
-  writers on Linux and macOS.
-- Git change markers and revert actions use the correct file when a Unix filename
-  contains a literal backslash.
-- Saving files and applying folder replacements retain existing access-control
-  rules and, on Linux and macOS, the file's owner and group.
-- Markdown preview enforces image-size limits and blocks `file://` image URLs.
-  On Windows, network-share and device image paths are also blocked to prevent
-  automatic authentication to image servers.
-- Markdown images pointing to named pipes no longer stall image loading on
-  Linux and macOS.
+- Restart after in-app updates, restoring open files and unsaved work.
+- Preserve line endings when pasting, including with multiple cursors.
+- Fix build output, cancellation, custom build settings, and Git change markers.
+- Preserve file access rules and improve Markdown, project, and recovery file safety.
 
 ## [0.2.0] - 2026-11-06
 
