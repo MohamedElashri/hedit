@@ -137,8 +137,10 @@ On Windows, [replace the portable package](#windows-installation).
 
 On Linux and macOS, **Help → Check for updates…** looks up the latest stable release,
 links to release notes, and installs it when you click **Install update**. hedit
-never checks, installs, or restarts on its own. Keep working while it installs; the new
-version runs the next time you start hedit.
+never checks, installs, or restarts on its own. Keep working while it installs,
+then choose **Restart hedit** to start the updated version with your open files
+and unsaved work restored. Choose **Later** to keep working and use the new
+version the next time you start hedit.
 
 On Linux, updating needs `curl`, GNU `tar`, and a writable installation made by the
 installer, a portable package, or `make install`. On macOS, updating uses the

@@ -202,6 +202,8 @@ pub struct HeditApp {
     closing: bool,
     close_flow: Option<close::CloseFlow>,
     exit_ready: bool,
+    /// Shared with main: relaunch only after the UI and session lock are dropped.
+    restart_requested: Arc<AtomicBool>,
     pending_paths: VecDeque<PathBuf>,
     error: Option<String>,
     /// File-open errors expire; keep the message so a newer error is not hidden.
@@ -324,8 +326,11 @@ impl HeditApp {
         workspace: Workspace,
         errors: Vec<String>,
         paths: Vec<PathBuf>,
+        restart_requested: Arc<AtomicBool>,
     ) -> Self {
-        Self::from_context(&cc.egui_ctx, cc.storage, workspace, errors, paths)
+        let mut app = Self::from_context(&cc.egui_ctx, cc.storage, workspace, errors, paths);
+        app.restart_requested = restart_requested;
+        app
     }
     fn from_context(
         ctx: &egui::Context,
@@ -384,6 +389,7 @@ impl HeditApp {
             closing: false,
             close_flow: None,
             exit_ready: false,
+            restart_requested: Arc::new(AtomicBool::new(false)),
             pending_paths: paths.into(),
             error: if errors.is_empty() {
                 None
@@ -3473,8 +3479,12 @@ impl eframe::App for HeditApp {
         Duration::from_secs(2)
     }
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if !self.exit_ready {
+            self.restart_requested.store(false, Ordering::Relaxed);
+        }
         self.release_waits();
         if let Err(error) = self.workspace.checkpoint() {
+            self.restart_requested.store(false, Ordering::Relaxed);
             eprintln!("hedit: final recovery checkpoint failed: {error}");
         }
         // An extra window closed with nothing in it is not reopened next time.

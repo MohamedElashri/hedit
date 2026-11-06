@@ -159,7 +159,7 @@ impl HeditApp {
         let (title, description) = if let Some(version) = &self.updates.installed {
             (
                 "Update installed",
-                format!("hedit {version} will be ready when you reopen the app."),
+                format!("Restart to use hedit {version}. Your open files and unsaved work will be restored."),
             )
         } else if self.updates.installing {
             ("Installing update…", self.updates.message.clone())
@@ -202,7 +202,7 @@ impl HeditApp {
         let mut close = false;
         let mut check = false;
         let mut install = false;
-        let mut quit = false;
+        let mut restart = false;
         egui::Window::new("Software Update")
             .id(egui::Id::new("updates"))
             .title_bar(false)
@@ -280,10 +280,10 @@ impl HeditApp {
                 ui.horizontal(|ui| {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if installed {
-                            quit = controls::primary_button(
+                            restart = controls::primary_button(
                                 ui,
                                 &self.theme,
-                                "Quit hedit",
+                                "Restart hedit",
                                 !self.busy && !self.closing,
                             )
                             .clicked();
@@ -361,15 +361,189 @@ impl HeditApp {
         if install {
             self.updates.install(ctx);
         }
-        if quit {
-            self.execute(ctx, Command::Quit);
+        if restart {
+            self.restart_after_update();
         }
+    }
+
+    fn restart_after_update(&mut self) {
+        if self.updates.installed.is_none() || self.updates.active() || self.busy || self.closing {
+            return;
+        }
+        self.restart_requested.store(true, Ordering::Relaxed);
+        self.updates.open = false;
+        self.request_quit();
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::tests::text_rect;
     use super::*;
+
+    fn click_update_button(ctx: &egui::Context, app: &mut HeditApp, label: &str) {
+        let draw = |app: &mut HeditApp, events| {
+            ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(720.0, 480.0),
+                    )),
+                    events,
+                    focused: true,
+                    ..Default::default()
+                },
+                |ctx| app.updates_window(ctx),
+            )
+        };
+        for _ in 0..3 {
+            draw(app, vec![]);
+        }
+        let output = draw(app, vec![]);
+        let at = output
+            .shapes
+            .iter()
+            .find_map(|s| text_rect(&s.shape, label))
+            .unwrap()
+            .center();
+        for pressed in [true, false] {
+            draw(
+                app,
+                vec![
+                    egui::Event::PointerMoved(at),
+                    egui::Event::PointerButton {
+                        pos: at,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+    }
+
+    fn finish_restart(ctx: &egui::Context, app: &mut HeditApp) {
+        let started = Instant::now();
+        while !app.exit_ready {
+            assert!(
+                started.elapsed() < Duration::from_secs(10),
+                "Restart did not checkpoint"
+            );
+            app.receive(ctx);
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn restart_after_update_restores_unsaved_buffers_and_view() {
+        let directory = tempfile::tempdir().unwrap();
+        let session = directory.path().join("session");
+        let (workspace, _) = Workspace::restore(session.clone()).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        let old = app.active().page.text.clone();
+        app.workspace.open[0].page.text = "unsaved note λ\n".into();
+        app.workspace.edit(0, &old).unwrap();
+        app.changed();
+        let path = directory.path().join("notes.txt");
+        std::fs::write(&path, "saved text\n").unwrap();
+        app.open(&ctx, Some(path.clone()));
+        super::super::tests::finish_app_job(&mut app, &ctx);
+        let index = app.workspace.active;
+        let old = app.active().page.text.clone();
+        app.workspace.open[index].page.text = "unsaved file edits\n".into();
+        app.workspace.edit(index, &old).unwrap();
+        app.workspace.open[index].view.anchor = 3;
+        app.workspace.open[index].view.head = 8;
+        app.changed();
+        let active = app.active().view.id;
+        app.updates.installed = Some("9.4.0".into());
+        app.updates.open = true;
+        click_update_button(&ctx, &mut app, "Restart hedit");
+        assert!(app.restart_requested.load(Ordering::Relaxed));
+        assert!(app.closing);
+        assert!(!app.updates.open);
+        assert!(!app.exit_ready, "Restart must first finish the checkpoint");
+        finish_restart(&ctx, &mut app);
+        assert_eq!(app.generation, app.persisted);
+        eframe::App::on_exit(&mut app, None);
+        assert!(app.restart_requested.load(Ordering::Relaxed));
+        drop(app);
+        // The main loop relaunches only after this old owner has been dropped.
+        let (restored, errors) = Workspace::restore(session).unwrap();
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(restored.open[0].page.text, "unsaved note λ\n");
+        let selected = &restored.open[restored.active];
+        assert_eq!(selected.view.id, active);
+        assert_eq!(selected.page.text, "unsaved file edits\n");
+        assert_eq!((selected.view.anchor, selected.view.head), (3, 8));
+        assert!(selected.page.info.dirty);
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "saved text\n");
+    }
+
+    #[test]
+    fn checkpoint_failure_cancels_restart_and_allows_retry() {
+        let directory = tempfile::tempdir().unwrap();
+        let session = directory.path().join("session");
+        let (workspace, _) = Workspace::restore(session.clone()).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        let old = app.active().page.text.clone();
+        app.workspace.open[0].page.text = "keep this unsaved note".into();
+        app.workspace.edit(0, &old).unwrap();
+        app.changed();
+        let manifest = session.join("session.json");
+        if manifest.exists() {
+            std::fs::remove_file(&manifest).unwrap();
+        }
+        std::fs::create_dir(&manifest).unwrap();
+        app.updates.installed = Some("9.4.0".into());
+        app.restart_after_update();
+        let started = Instant::now();
+        loop {
+            app.receive(&ctx);
+            if !app.closing {
+                break;
+            }
+            assert!(started.elapsed() < Duration::from_secs(10));
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(!app.restart_requested.load(Ordering::Relaxed));
+        assert!(!app.exit_ready);
+        assert!(app.error.as_ref().unwrap().starts_with(CHECKPOINT_FAILED));
+        assert_eq!(app.active().page.text, "keep this unsaved note");
+        std::fs::remove_dir(manifest).unwrap();
+        app.error = None;
+        app.restart_after_update();
+        finish_restart(&ctx, &mut app);
+        assert!(app.restart_requested.load(Ordering::Relaxed));
+        drop(app);
+        let (restored, errors) = Workspace::restore(session).unwrap();
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(restored.open[0].page.text, "keep this unsaved note");
+    }
+
+    #[test]
+    fn restart_requires_a_completed_successful_update() {
+        let directory = tempfile::tempdir().unwrap();
+        let (workspace, _) = Workspace::restore(directory.path().into()).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        app.restart_after_update();
+        assert!(!app.restart_requested.load(Ordering::Relaxed));
+        assert!(!app.closing);
+        let (tx, rx) = mpsc::channel();
+        app.updates.events = Some(rx);
+        app.updates.installing = true;
+        app.restart_after_update();
+        assert!(!app.closing);
+        tx.send(Event::Installed(Err("Download failed".into())))
+            .unwrap();
+        app.updates.poll();
+        app.restart_after_update();
+        assert!(!app.closing);
+        assert!(!app.restart_requested.load(Ordering::Relaxed));
+    }
 
     fn release() -> Release {
         Release::from_json(&serde_json::json!({
@@ -444,7 +618,7 @@ mod tests {
                     ("failed", "Try again"),
                     ("checking", "Close"),
                     ("installing", "Close"),
-                    ("installed", "Quit hedit"),
+                    ("installed", "Restart hedit"),
                 ] {
                     let mut latest = release();
                     if state == "current" {
@@ -634,6 +808,7 @@ mod tests {
                 "{state}: {button} did not close the dialog"
             );
             assert!(app.focus_editor);
+            assert!(!app.restart_requested.load(Ordering::Relaxed));
             assert!(
                 !app.closing,
                 "dismissing the dialog must not quit the editor"
