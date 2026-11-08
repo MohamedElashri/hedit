@@ -1,7 +1,6 @@
 //! Read the documentation shipped in this executable, without disk or network I/O.
 use super::*;
 use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
-use pulldown_cmark::{Event, Parser, Tag, TagEnd};
 
 macro_rules! documents {
     ($($path:literal),* $(,)?) => {
@@ -40,22 +39,13 @@ impl Reader {
         } else {
             format!("```text\n{source}\n```\n")
         };
-        let mut topics = vec![];
-        let mut heading = None;
-        for event in Parser::new(&text) {
-            match event {
-                Event::Start(Tag::Heading { .. }) => heading = Some(String::new()),
-                Event::Text(text) | Event::Code(text) if heading.is_some() => {
-                    heading.as_mut().unwrap().push_str(&text)
-                }
-                Event::End(TagEnd::Heading(_)) => topics.push(heading.take().unwrap()),
-                _ => {}
-            }
-        }
-        Self {
-            prepared: markdown::prepare(&text),
-            topics,
-        }
+        let prepared = markdown::prepare(&text);
+        let topics = prepared
+            .topics
+            .iter()
+            .map(|(title, _)| title.clone())
+            .collect();
+        Self { prepared, topics }
     }
 }
 
@@ -235,13 +225,13 @@ impl HeditApp {
                 let jump = self.guide.jump;
                 let found = std::rc::Rc::new(std::cell::Cell::new(false));
                 let seen = std::rc::Rc::clone(&found);
-                let html = move |ui: &mut egui::Ui, text: &str| {
-                    if let Some(marker) = text
-                        .trim()
-                        .strip_prefix("<!--hedit-markdown-anchor:")
-                        .and_then(|s| s.strip_suffix("-->"))
-                    {
-                        if jump.is_some() && marker.parse::<usize>().ok() == jump {
+                let heading_bytes = reader.prepared.heading_bytes.clone();
+                let block =
+                    move |ui: &mut egui::Ui, span: std::ops::Range<usize>, heading: Option<u8>| {
+                        if heading.is_some()
+                            && jump.is_some()
+                            && heading_bytes.get(jump.unwrap()) == Some(&span.start)
+                        {
                             ui.scroll_to_rect(
                                 egui::Rect::from_min_size(
                                     ui.next_widget_position(),
@@ -251,11 +241,8 @@ impl HeditApp {
                             );
                             seen.set(true);
                         }
-                    } else {
-                        ui.label(text);
-                    }
-                };
-                let mut scroll = egui::ScrollArea::both()
+                    };
+                let mut scroll = egui::ScrollArea::vertical()
                     .id_salt(("guide-body", self.guide.document))
                     .auto_shrink([false, false])
                     .min_scrolled_height(height)
@@ -264,16 +251,16 @@ impl HeditApp {
                     scroll = scroll.vertical_scroll_offset(offset);
                 }
                 let output = scroll.show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    markdown_style::apply(ui, &self.theme, self.settings.font_size);
-                    let theme = self.theme.clone();
-                    let code = move |ui: &mut egui::Ui, text: &str, language: Option<&str>| {
-                        markdown_style::code_block(ui, &theme, text, language);
-                    };
-                    CommonMarkViewer::new()
-                        .render_html_fn(Some(&html))
-                        .render_code_block_fn(Some(&code))
-                        .show(ui, &mut self.guide.cache, &reader.prepared.rendered);
+                    markdown_style::reader(ui, &self.theme, self.settings.font_size, |ui| {
+                        let theme = self.theme.clone();
+                        let code = move |ui: &mut egui::Ui, text: &str, language: Option<&str>| {
+                            markdown_style::code_block(ui, &theme, text, language);
+                        };
+                        CommonMarkViewer::new()
+                            .render_block_fn(Some(&block))
+                            .render_code_block_fn(Some(&code))
+                            .show_prepared(ui, &mut self.guide.cache, &reader.prepared.parsed);
+                    });
                 });
                 self.guide.position = output.state.offset.y;
                 if found.get() {

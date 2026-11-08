@@ -80,6 +80,38 @@ mod parsers;
 pub use egui_commonmark_backend::alerts::{Alert, AlertBundle};
 pub use egui_commonmark_backend::misc::CommonMarkCache;
 pub use egui_commonmark_backend::RenderMathFn;
+pub use pulldown_cmark;
+
+/// Parsed once, with source offsets retained for navigation and split scrolling.
+/// Applications can construct this on a worker instead of parsing on every frame.
+pub struct PreparedMarkdown {
+    events: Vec<(pulldown_cmark::Event<'static>, std::ops::Range<usize>)>,
+}
+
+impl PreparedMarkdown {
+    pub fn new(source: &str, math: bool) -> Self {
+        Self {
+            events: pulldown_cmark::Parser::new_ext(
+                source,
+                parsers::pulldown::parser_options_math(math),
+            )
+            .into_offset_iter()
+            .map(|(event, span)| (event.into_static(), span))
+            .collect(),
+        }
+    }
+
+    pub fn events(
+        &self,
+    ) -> impl Iterator<Item = &(pulldown_cmark::Event<'static>, std::ops::Range<usize>)> {
+        self.events.iter()
+    }
+}
+
+/// Called at the start of a source block. Heading levels are one through six.
+pub type RenderBlockFn = dyn Fn(&mut egui::Ui, std::ops::Range<usize>, Option<u8>);
+/// Height needed by an inline equation, including its baseline padding.
+pub type MeasureMathFn = dyn Fn(&egui::Ui, &str) -> (f32, f32);
 
 /// Application-provided native code block, with an optional language identifier.
 pub type RenderCodeBlockFn = dyn Fn(&mut egui::Ui, &str, Option<&str>);
@@ -98,6 +130,8 @@ use egui_commonmark_backend::*;
 pub struct CommonMarkViewer<'f> {
     options: CommonMarkOptions<'f>,
     code_block_fn: Option<&'f RenderCodeBlockFn>,
+    block_fn: Option<&'f RenderBlockFn>,
+    measure_math_fn: Option<&'f MeasureMathFn>,
 }
 
 impl<'f> CommonMarkViewer<'f> {
@@ -232,6 +266,38 @@ impl<'f> CommonMarkViewer<'f> {
         self
     }
 
+    pub fn render_block_fn(mut self, func: Option<&'f RenderBlockFn>) -> Self {
+        self.block_fn = func;
+        self
+    }
+
+    pub fn measure_math_fn(mut self, func: Option<&'f MeasureMathFn>) -> Self {
+        self.measure_math_fn = func;
+        self
+    }
+
+    pub fn show_prepared(
+        self,
+        ui: &mut egui::Ui,
+        cache: &mut CommonMarkCache,
+        prepared: &PreparedMarkdown,
+    ) -> egui::InnerResponse<()> {
+        egui_commonmark_backend::prepare_show(cache, ui.ctx());
+        parsers::pulldown::CommonMarkViewerInternal::new(
+            self.code_block_fn,
+            self.block_fn,
+            self.measure_math_fn,
+        )
+        .show_events(
+            ui,
+            cache,
+            &self.options,
+            prepared.events.iter().cloned(),
+            None,
+        )
+        .0
+    }
+
     /// Shows rendered markdown
     pub fn show(
         self,
@@ -241,8 +307,12 @@ impl<'f> CommonMarkViewer<'f> {
     ) -> egui::InnerResponse<()> {
         egui_commonmark_backend::prepare_show(cache, ui.ctx());
 
-        let (response, _) = parsers::pulldown::CommonMarkViewerInternal::new(self.code_block_fn)
-            .show(ui, cache, &self.options, text, None);
+        let (response, _) = parsers::pulldown::CommonMarkViewerInternal::new(
+            self.code_block_fn,
+            self.block_fn,
+            self.measure_math_fn,
+        )
+        .show(ui, cache, &self.options, text, None);
 
         response
     }
@@ -261,6 +331,8 @@ impl<'f> CommonMarkViewer<'f> {
 
         let (response, checkmark_events) = parsers::pulldown::CommonMarkViewerInternal::new(
             self.code_block_fn,
+            self.block_fn,
+            self.measure_math_fn,
         )
         .show(ui, cache, &self.options, text, None);
 
@@ -299,13 +371,12 @@ impl<'f> CommonMarkViewer<'f> {
         text: &str,
     ) {
         egui_commonmark_backend::prepare_show(cache, ui.ctx());
-        parsers::pulldown::CommonMarkViewerInternal::new(self.code_block_fn).show_scrollable(
-            Id::new(source_id),
-            ui,
-            cache,
-            &self.options,
-            text,
-        );
+        parsers::pulldown::CommonMarkViewerInternal::new(
+            self.code_block_fn,
+            self.block_fn,
+            self.measure_math_fn,
+        )
+        .show_scrollable(Id::new(source_id), ui, cache, &self.options, text);
     }
 }
 

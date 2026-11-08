@@ -3,7 +3,7 @@ use super::*;
 use std::hash::{Hash, Hasher};
 
 pub(super) fn apply(ui: &mut egui::Ui, theme: &Theme, font_size: f32) {
-    let body = (font_size + 1.0).clamp(14.0, 30.0);
+    let body = body_size(font_size);
     let style = ui.style_mut();
     let regular = egui::FontFamily::Name("hedit-reader".into());
     let strong = egui::FontFamily::Name("hedit-reader-strong".into());
@@ -20,7 +20,7 @@ pub(super) fn apply(ui: &mut egui::Ui, theme: &Theme, font_size: f32) {
     ] {
         style.text_styles.insert(name, FontId::new(size, family));
     }
-    style.spacing.item_spacing.y = 7.0;
+    style.spacing.item_spacing.y = (body * 0.6).round();
     style.visuals.override_text_color = None;
     style.visuals.widgets.noninteractive.fg_stroke.color = theme.text.color();
     style.visuals.widgets.active.fg_stroke.color = theme.text.color();
@@ -29,6 +29,39 @@ pub(super) fn apply(ui: &mut egui::Ui, theme: &Theme, font_size: f32) {
     style.visuals.faint_bg_color = theme.panel.color();
     style.visuals.striped = true;
     style.url_in_tooltip = true;
+}
+
+fn body_size(font_size: f32) -> f32 {
+    (font_size + 3.0).clamp(16.0, 32.0)
+}
+
+/// A comfortable measure in full-window mode, with responsive side margins.
+/// Code, tables, and equations own their horizontal scrolling inside this page.
+pub(super) fn reader<R>(
+    ui: &mut egui::Ui,
+    theme: &Theme,
+    font_size: f32,
+    contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    ui.scope(|ui| {
+        apply(ui, theme, font_size);
+        let available = ui.available_width();
+        let padding = (available * 0.04).clamp(12.0, 32.0);
+        let width = (body_size(font_size) * 44.0).min((available - 2.0 * padding).max(1.0));
+        ui.horizontal_top(|ui| {
+            ui.add_space(((available - width) / 2.0).max(0.0));
+            ui.vertical(|ui| {
+                ui.set_width(width);
+                ui.add_space(24.0);
+                let result = contents(ui);
+                ui.add_space(48.0);
+                result
+            })
+            .inner
+        })
+        .inner
+    })
+    .inner
 }
 
 fn link_color(theme: &Theme) -> hedit::theme::Rgb {
@@ -157,8 +190,9 @@ pub(super) fn code_block(ui: &mut egui::Ui, theme: &Theme, source: &str, languag
                 });
                 ui.add_space(4.0);
                 let code_width = ui.available_width();
-                let output = egui::ScrollArea::horizontal()
+                let output = egui::ScrollArea::both()
                     .auto_shrink([false, true])
+                    .max_height(420.0)
                     .show(ui, |ui| {
                         let mut text = text;
                         let mut layouter = |ui: &egui::Ui, _: &str, _: f32| {

@@ -39,6 +39,8 @@ mod goto_tests;
 mod macros;
 mod markdown;
 mod markdown_media;
+#[cfg(test)]
+mod markdown_reader_tests;
 mod markdown_scroll;
 mod markdown_style;
 #[cfg(test)]

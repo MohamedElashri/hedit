@@ -1,9 +1,9 @@
 //! Native Markdown reading and a live source/preview split.
 use super::markdown_media::{Figure, Kind, Media};
 use super::*;
-use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
+use egui_commonmark::pulldown_cmark::{self, Event, Tag};
+use egui_commonmark::{CommonMarkCache, CommonMarkViewer, PreparedMarkdown};
 use hedit::session::MarkdownView;
-use pulldown_cmark::{Event, Parser, Tag};
 use std::collections::HashMap;
 use std::io::Read;
 
@@ -39,176 +39,126 @@ struct PrepareJob {
 
 pub(super) struct Prepared {
     pub(super) targets: Vec<String>,
-    pub(super) rendered: String,
+    pub(super) parsed: PreparedMarkdown,
     pub(super) headings: HashMap<String, usize>,
+    pub(super) heading_bytes: Vec<usize>,
+    pub(super) topics: Vec<(String, u8)>,
     figures: Vec<Figure>,
-    heading_chars: Vec<usize>,
+    blocks: HashMap<usize, usize>,
     source_len: usize,
 }
 
-/// Add invisible scroll targets while keeping the complete Markdown document
-/// together, so reference links and footnotes still resolve across sections.
+/// Keep one parsed event stream for the lifetime of a document revision.
+/// Source offsets identify real blocks; rendering never inserts marker HTML,
+/// blank paragraphs, or synthetic line breaks into the document.
 pub(super) fn prepare(text: &str) -> Prepared {
+    let parsed = PreparedMarkdown::new(text, true);
     let mut targets = vec![];
     let mut headings = HashMap::new();
+    let mut heading_bytes = vec![];
+    let mut topics = vec![];
     let mut counts = HashMap::<String, usize>::new();
-    let mut rendered = String::with_capacity(text.len());
-    let mut copied = 0;
     let mut heading = None;
-    let mut list_depth = 0usize;
-    let mut figure: Option<(usize, String, Figure)> = None;
+    let mut figure: Option<Figure> = None;
     let mut figures = vec![];
-    let mut heading_chars = Vec::new();
+    let mut blocks = HashMap::new();
     let (mut counted_byte, mut counted_chars) = (0, 0);
-    // Match the renderer, including dollar-delimited inline/display math.
-    let options = pulldown_cmark::Options::ENABLE_TABLES
-        | pulldown_cmark::Options::ENABLE_TASKLISTS
-        | pulldown_cmark::Options::ENABLE_STRIKETHROUGH
-        | pulldown_cmark::Options::ENABLE_FOOTNOTES
-        | pulldown_cmark::Options::ENABLE_DEFINITION_LIST
-        | pulldown_cmark::Options::ENABLE_MATH;
-    for (event, span) in Parser::new_ext(text, options).into_offset_iter() {
+    for (event, span) in parsed.events() {
+        if matches!(event, Event::Start(_) | Event::Rule) {
+            counted_chars += text[counted_byte..span.start].chars().count();
+            counted_byte = span.start;
+            blocks.insert(span.start, counted_chars);
+        }
         match event {
-            Event::Start(tag) => {
-                match tag {
-                    Tag::List(_) => list_depth += 1,
-                    Tag::CodeBlock(pulldown_cmark::CodeBlockKind::Fenced(info)) => {
-                        let language = info.split_whitespace().next().unwrap_or("");
-                        let kind = if language.eq_ignore_ascii_case("mermaid") {
-                            Some(Kind::Mermaid)
-                        } else if language.eq_ignore_ascii_case("math") {
-                            Some(Kind::DisplayMath)
-                        } else {
-                            None
-                        };
-                        if let Some(kind) = kind {
-                            let line = text[..span.start].rfind('\n').map_or(0, |at| at + 1);
-                            let continuation: String = text[line..span.start]
-                                .chars()
-                                .map(|c| {
-                                    if c == '>' || c.is_whitespace() {
-                                        c
-                                    } else {
-                                        ' '
-                                    }
-                                })
-                                .collect();
-                            figure = Some((
-                                span.start,
-                                continuation,
-                                Figure {
-                                    kind,
-                                    source: String::new(),
-                                },
-                            ));
-                        }
-                    }
-                    Tag::Link { dest_url, .. } => targets.push(dest_url.into_string()),
-                    Tag::Heading { .. } => {
-                        let index = headings.len();
-                        counted_chars += text[counted_byte..span.start].chars().count();
-                        counted_byte = span.start;
-                        heading_chars.push(counted_chars);
-                        rendered.push_str(&text[copied..span.start]);
-                        // Keep a nested heading inside its quote/list. List
-                        // markers become continuation indentation on the new
-                        // lines, while blockquote markers remain in place.
-                        let line = text[..span.start].rfind('\n').map_or(0, |at| at + 1);
-                        let continuation: String = text[line..span.start]
-                            .chars()
-                            .map(|c| {
-                                if c == '>' || c.is_whitespace() {
-                                    c
-                                } else {
-                                    ' '
-                                }
-                            })
-                            .collect();
-                        rendered.push_str(&format!(
-                            "<!--hedit-markdown-anchor:{index}-->\n{continuation}\n{continuation}"
-                        ));
-                        copied = span.start;
-                        heading = Some((
-                            index,
-                            String::new(),
-                            (list_depth > 0).then_some(continuation),
-                        ));
-                    }
-                    _ => {}
+            Event::Start(Tag::Heading { level, .. }) => {
+                heading_bytes.push(span.start);
+                heading = Some((String::new(), *level as u8));
+            }
+            Event::Start(Tag::Link { dest_url, .. }) => targets.push(dest_url.to_string()),
+            Event::Start(Tag::CodeBlock(pulldown_cmark::CodeBlockKind::Fenced(info))) => {
+                figure = figure_kind(info).map(|kind| Figure {
+                    kind,
+                    source: String::new(),
+                });
+            }
+            Event::Text(value) if figure.is_some() => {
+                figure.as_mut().unwrap().source.push_str(value);
+            }
+            Event::InlineMath(value) | Event::DisplayMath(value) => {
+                figures.push(Figure {
+                    kind: if matches!(event, Event::InlineMath(_)) {
+                        Kind::InlineMath
+                    } else {
+                        Kind::DisplayMath
+                    },
+                    source: value.to_string(),
+                });
+                if let Some((label, _)) = &mut heading {
+                    label.push_str(value);
                 }
             }
-            Event::Text(text) if figure.is_some() => {
-                figure.as_mut().unwrap().2.source.push_str(&text)
+            Event::Text(value) | Event::Code(value) if heading.is_some() => {
+                heading.as_mut().unwrap().0.push_str(value);
             }
-            Event::Text(text)
-            | Event::Code(text)
-            | Event::InlineMath(text)
-            | Event::DisplayMath(text)
-                if heading.is_some() =>
-            {
-                heading.as_mut().unwrap().1.push_str(&text);
+            Event::SoftBreak | Event::HardBreak if heading.is_some() => {
+                heading.as_mut().unwrap().0.push(' ');
             }
-            Event::End(end) => {
-                if end == pulldown_cmark::TagEnd::CodeBlock {
-                    if let Some((start, continuation, value)) = figure.take() {
-                        rendered.push_str(&text[copied..start]);
-                        rendered.push_str(&format!(
-                            "<!--hedit-markdown-figure:{}-->\n{continuation}\n",
-                            figures.len()
-                        ));
-                        copied = span.end;
-                        figures.push(value);
-                    }
-                }
-                if matches!(end, pulldown_cmark::TagEnd::List(_)) {
-                    list_depth = list_depth.saturating_sub(1);
-                }
-                if matches!(end, pulldown_cmark::TagEnd::Heading(_)) {
-                    if let Some((index, label, continuation)) = heading.take() {
-                        let slug: String = label
-                            .to_lowercase()
-                            .chars()
-                            .filter(|c| {
-                                c.is_alphanumeric() || c.is_whitespace() || matches!(c, '-' | '_')
-                            })
-                            .map(|c| if c.is_whitespace() { '-' } else { c })
-                            .collect();
-                        let count = counts.entry(slug.clone()).or_default();
-                        let mut unique = if *count == 0 {
-                            slug.clone()
-                        } else {
-                            format!("{slug}-{count}")
-                        };
-                        while headings.contains_key(&unique) {
-                            *count += 1;
-                            unique = format!("{slug}-{count}");
-                        }
+            Event::End(pulldown_cmark::TagEnd::Heading(_)) => {
+                if let Some((label, level)) = heading.take() {
+                    let slug: String = label
+                        .to_lowercase()
+                        .chars()
+                        .filter(|c| {
+                            c.is_alphanumeric() || c.is_whitespace() || matches!(c, '-' | '_')
+                        })
+                        .map(|c| if c.is_whitespace() { '-' } else { c })
+                        .collect();
+                    let count = counts.entry(slug.clone()).or_default();
+                    let mut unique = if *count == 0 {
+                        slug.clone()
+                    } else {
+                        format!("{slug}-{count}")
+                    };
+                    while headings.contains_key(&unique) {
                         *count += 1;
-                        headings.insert(unique, index);
-                        if let Some(continuation) = continuation {
-                            rendered.push_str(&text[copied..span.end]);
-                            // The native renderer suppresses heading line
-                            // breaks inside lists; keep the next paragraph
-                            // from running into the heading on the same row.
-                            rendered.push_str(&format!(
-                                "\n{continuation}<!--hedit-markdown-break-->\n{continuation}\n"
-                            ));
-                            copied = span.end;
-                        }
+                        unique = format!("{slug}-{count}");
                     }
+                    *count += 1;
+                    headings.insert(unique, topics.len());
+                    topics.push((label, level));
+                }
+            }
+            Event::End(pulldown_cmark::TagEnd::CodeBlock) => {
+                if let Some(value) = figure.take() {
+                    figures.push(value);
                 }
             }
             _ => {}
         }
     }
-    rendered.push_str(&text[copied..]);
     Prepared {
-        rendered,
+        parsed,
         targets,
         headings,
+        heading_bytes,
+        topics,
         figures,
-        heading_chars,
+        blocks,
         source_len: counted_chars + text[counted_byte..].chars().count(),
+    }
+}
+
+fn figure_kind(info: &str) -> Option<Kind> {
+    match info
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "mermaid" => Some(Kind::Mermaid),
+        "math" => Some(Kind::DisplayMath),
+        _ => None,
     }
 }
 
@@ -497,6 +447,12 @@ impl HeditApp {
         let available = self.markdown_available();
         let mode = self.active().view.markdown_view;
         let mut command = None;
+        let contents = self
+            .markdown
+            .links
+            .get(&self.active().view.id)
+            .and_then(|links| links.prepared.clone());
+        let mut jump = None;
         ui.horizontal_wrapped(|ui| {
             ui.label(
                 RichText::new("Markdown")
@@ -519,7 +475,41 @@ impl HeditApp {
                 }
             }
             if available && mode != MarkdownView::Source {
-                ui.weak("Live preview");
+                ui.add_enabled_ui(
+                    contents.as_ref().is_some_and(|p| !p.topics.is_empty()),
+                    |ui| {
+                        ui.menu_button("Contents", |ui| {
+                            if ui.button("Top of document").clicked() {
+                                jump = Some(String::new());
+                                ui.close_menu();
+                            }
+                            ui.separator();
+                            if let Some(prepared) = &contents {
+                                egui::ScrollArea::vertical()
+                                    .max_height(320.0)
+                                    .show(ui, |ui| {
+                                        for (index, (title, level)) in
+                                            prepared.topics.iter().enumerate()
+                                        {
+                                            ui.horizontal(|ui| {
+                                                ui.add_space(
+                                                    f32::from(level.saturating_sub(1)) * 12.0,
+                                                );
+                                                if ui.selectable_label(false, title).clicked() {
+                                                    jump = prepared
+                                                        .headings
+                                                        .iter()
+                                                        .find(|(_, value)| **value == index)
+                                                        .map(|(slug, _)| slug.clone());
+                                                    ui.close_menu();
+                                                }
+                                            });
+                                        }
+                                    });
+                            }
+                        });
+                    },
+                );
             }
             if ui
                 .add_enabled(
@@ -534,6 +524,10 @@ impl HeditApp {
         });
         if let Some(command) = command {
             self.execute(ui.ctx(), command);
+        }
+        if let Some(fragment) = jump {
+            self.markdown.anchor = Some((self.active().view.id, fragment));
+            ui.ctx().request_repaint();
         }
         ui.separator();
         if !available {
@@ -584,6 +578,7 @@ impl HeditApp {
             .rect_filled(viewport, 0.0, self.theme.surface.color());
         let b = self.active();
         let (id, revision, path) = (b.view.id, b.page.info.revision, b.page.info.path.clone());
+        self.markdown.media.set_font_size(self.settings.font_size);
         let root = document_root(path.as_deref());
         let previous_root = self
             .markdown
@@ -621,7 +616,6 @@ impl HeditApp {
             links.path = path.clone();
             links.prepared = None;
             links.error = None;
-            self.markdown.media.forget(id);
         }
         let completed = links
             .job
@@ -639,7 +633,10 @@ impl HeditApp {
             links.job = None;
             if completed_revision == revision && completed_path == path {
                 match result {
-                    Ok(prepared) => links.prepared = Some(Arc::new(prepared)),
+                    Ok(prepared) => {
+                        self.markdown.media.retain(id, &prepared.figures);
+                        links.prepared = Some(Arc::new(prepared));
+                    }
                     Err(error) => links.error = Some(error),
                 }
             }
@@ -660,7 +657,10 @@ impl HeditApp {
                 });
             } else {
                 match prepare_checked(text) {
-                    Ok(prepared) => links.prepared = Some(Arc::new(prepared)),
+                    Ok(prepared) => {
+                        self.markdown.media.retain(id, &prepared.figures);
+                        links.prepared = Some(Arc::new(prepared));
+                    }
                     Err(error) => links.error = Some(error),
                 }
             }
@@ -675,6 +675,8 @@ impl HeditApp {
             return;
         };
         let media = self.markdown.media.clone();
+        let measure = move |ui: &egui::Ui, source: &str| media.inline_height(ui, id, source);
+        let media = self.markdown.media.clone();
         let math = move |ui: &mut egui::Ui, source: &str, inline: bool| {
             media.show(
                 ui,
@@ -687,8 +689,7 @@ impl HeditApp {
                 },
             );
         };
-        let media = self.markdown.media.clone();
-        let figures = prepared.clone();
+        let blocks = prepared.clone();
         let section = self
             .markdown
             .anchor
@@ -712,39 +713,21 @@ impl HeditApp {
         let seen = found.clone();
         let section_positions = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
         let positions = std::rc::Rc::clone(&section_positions);
-        let html = move |ui: &mut egui::Ui, html: &str| {
-            if let Some(marker) = html
-                .trim()
-                .strip_prefix("<!--hedit-markdown-anchor:")
-                .and_then(|s| s.strip_suffix("-->"))
+        let block = move |ui: &mut egui::Ui, span: std::ops::Range<usize>, heading: Option<u8>| {
+            if let Some(&source) = blocks.blocks.get(&span.start) {
+                positions
+                    .borrow_mut()
+                    .push((source as f32, ui.next_widget_position().y));
+            }
+            if heading.is_some()
+                && anchor.is_some()
+                && blocks.heading_bytes.get(anchor.unwrap()) == Some(&span.start)
             {
-                if let Ok(index) = marker.parse::<usize>() {
-                    if let Some(&source) = figures.heading_chars.get(index) {
-                        positions
-                            .borrow_mut()
-                            .push((source as f32, ui.next_widget_position().y));
-                    }
-                }
-                if marker.parse::<usize>().ok() == anchor && anchor.is_some() {
-                    ui.scroll_to_rect(
-                        egui::Rect::from_min_size(ui.next_widget_position(), egui::vec2(1.0, 1.0)),
-                        Some(egui::Align::Min),
-                    );
-                    seen.store(true, Ordering::Relaxed);
-                }
-            } else if html.trim() == "<!--hedit-markdown-break-->" {
-                ui.label("\n");
-            } else if let Some(index) = html
-                .trim()
-                .strip_prefix("<!--hedit-markdown-figure:")
-                .and_then(|s| s.strip_suffix("-->"))
-                .and_then(|s| s.parse::<usize>().ok())
-            {
-                if let Some(figure) = figures.figures.get(index) {
-                    media.show(ui, id, &figure.source, figure.kind);
-                }
-            } else {
-                ui.label(html);
+                ui.scroll_to_rect(
+                    egui::Rect::from_min_size(ui.next_widget_position(), egui::vec2(1.0, 1.0)),
+                    Some(egui::Align::Min),
+                );
+                seen.store(true, Ordering::Relaxed);
             }
         };
         let split = self.active().view.markdown_view == MarkdownView::Split;
@@ -762,10 +745,9 @@ impl HeditApp {
             cache.add_link_hook(target);
         }
         let font_size = self.settings.font_size;
-        let surface = self.theme.surface.color();
         let mut content_top = 0.0;
         let output = ui.push_id(("markdown", id, pane), |ui| {
-            let mut scroll = egui::ScrollArea::both()
+            let mut scroll = egui::ScrollArea::vertical()
                 .id_salt("rendered")
                 .auto_shrink([false, false]);
             if let Some(offset) = synchronized_offset {
@@ -780,24 +762,25 @@ impl HeditApp {
                     );
                     found.store(true, Ordering::Relaxed);
                 }
-                egui::Frame::new()
-                    .fill(surface)
-                    .inner_margin(20.0)
-                    .show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        markdown_style::apply(ui, &self.theme, font_size);
-                        let code_theme = self.theme.clone();
-                        let code = move |ui: &mut egui::Ui, text: &str, language: Option<&str>| {
+                markdown_style::reader(ui, &self.theme, font_size, |ui| {
+                    let code_theme = self.theme.clone();
+                    let media = self.markdown.media.clone();
+                    let code = move |ui: &mut egui::Ui, text: &str, language: Option<&str>| {
+                        if let Some(kind) = language.and_then(figure_kind) {
+                            media.show(ui, id, text, kind);
+                        } else {
                             markdown_style::code_block(ui, &code_theme, text, language);
-                        };
-                        CommonMarkViewer::new()
-                            .default_implicit_uri_scheme(format!("{IMAGE_SCHEME}{id}/"))
-                            .max_image_width(Some(ui.available_width().max(0.0) as usize))
-                            .render_html_fn(Some(&html))
-                            .render_math_fn(Some(&math))
-                            .render_code_block_fn(Some(&code))
-                            .show(ui, cache, &prepared.rendered);
-                    });
+                        }
+                    };
+                    CommonMarkViewer::new()
+                        .default_implicit_uri_scheme(format!("{IMAGE_SCHEME}{id}/"))
+                        .max_image_width(Some(ui.available_width().max(0.0) as usize))
+                        .render_block_fn(Some(&block))
+                        .render_math_fn(Some(&math))
+                        .measure_math_fn(Some(&measure))
+                        .render_code_block_fn(Some(&code))
+                        .show_prepared(ui, cache, &prepared.parsed);
+                });
             })
         });
         if split {

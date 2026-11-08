@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Changed
+
+- Rework Markdown preview and offline help around a centered reading column,
+  larger type, clear spacing, and locally scrolling tables and code blocks.
+- Align inline equations to the text baseline and center display equations,
+  preserving the type size of wide formulas with local scrolling.
+- Parse Markdown once per revision and navigate by original source positions;
+  reuse unchanged equations while editing and release obsolete themed media.
+
 ### Fixed
 
 - Terminal launches present the editor window and pass Wayland activation tokens
@@ -9,6 +18,7 @@
 
 ### Added
 
+- A Markdown Contents menu and source copying for rendered equations and diagrams.
 - A sidebar toggle beside the File menu, with a visible active state and shortcut
   tooltip, available in both Files and Source Control.
 

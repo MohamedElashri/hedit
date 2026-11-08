@@ -746,21 +746,32 @@ In Split, scrolling either pane also scrolls the other to the corresponding part
 of the document. This works side by side and in the stacked layout. Horizontal
 scrolling stays independent.
 
-The preview and offline guide share readable text, distinct headings and emphasis,
-and underlined links in your theme's accent color. Tables wrap within their
-columns; code blocks use your syntax colors and have a **Copy** button. Long code
-lines scroll horizontally inside the block. The preview also renders lists,
+The preview and offline guide share a centered reading column, larger text,
+comfortable line spacing, distinct headings and emphasis, and underlined links
+in your theme's accent color. The page fills the editor while keeping prose at a
+readable line length. Editor zoom also changes the reading size.
+Use **Contents** in the preview toolbar to jump to a heading or the top of the
+document without moving the source caret.
+
+Tables wrap within their columns and scroll horizontally when the table is too
+wide. Code blocks use your syntax colors and have a **Copy** button. Long code
+lines scroll horizontally inside the block; tall blocks scroll vertically. The preview also renders lists,
 task lists, and quotes. Section links scroll to their headings, including headings in
 quotes and lists. Markdown file links stay in Preview and honor `#section`
 fragments; other file links open in the editor. Local PNG and JPEG images resolve
 relative to the Markdown file's folder; Save As updates that folder. Images
 from web URLs or `file://` URLs are not fetched. On Windows, network-share and
-device image paths are also blocked. Embedded HTML is displayed as text. Preview
+device image paths are also blocked. HTML comments are hidden, `<br>` inserts a
+line break, and other embedded HTML is displayed as text. Preview
 is available for fully loaded documents up to 2 MiB; larger or paged files remain
 editable in Source.
 
 Use `$E = mc^2$` for inline LaTeX math and `$$ … $$` for a displayed equation.
-Fenced `math` blocks also render equations. Escape literal dollar signs as `\$`
+Fenced `math` blocks also render equations. Inline equations align with the text
+baseline, including fractions and matrices. Display equations are centered and
+keep their font size; wide equations scroll inside their own block. Right-click
+an equation or diagram and choose **Copy source** to copy its original notation.
+Escape literal dollar signs as `\$`
 when writing prices or other text that should not become math. Fenced `mermaid`
 blocks render diagrams, for example:
 
@@ -773,7 +784,8 @@ flowchart LR
 
 Equations and diagrams render locally in the background and follow the preview's
 theme. Unsupported or malformed input stays visible as source with an error on
-hover. Native Mermaid rendering supports common diagram types, including
+hover. Editing prose reuses unchanged equations and diagrams; changing the theme
+or closing a document releases its obsolete media. Native Mermaid rendering supports common diagram types, including
 flowcharts and sequence diagrams; some Mermaid features may be unsupported.
 Individual equations are limited to 16 KiB, and diagrams to 64 KiB, 1,000 lines,
 256 nodes, and 1,024 edges.
