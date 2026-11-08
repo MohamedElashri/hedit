@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Fixed
+
+- Terminal launches present the editor window and pass Wayland activation tokens
+  to an already running session, including when its window is minimized.
+
+### Added
+
+- A sidebar toggle beside the File menu, with a visible active state and shortcut
+  tooltip, available in both Files and Source Control.
+
 ## [0.2.1] - 2026-11-06
 
 - Restart after in-app updates, restoring open files and unsaved work.

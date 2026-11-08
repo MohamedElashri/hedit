@@ -220,8 +220,12 @@ searches; change the list under **Settings → Folders & Search**.
 Open files appear in the tab bar. The sidebar contains folders and a shortcut
 to closed-file recovery.
 
-**Ctrl+K, Ctrl+B** shows or hides the sidebar and **Ctrl+Alt+B** just its folder
-section. Folders, expanded directories, and what is shown come back next time.
+Click the sidebar icon at the top left, beside **File**, to hide or restore the
+sidebar in Files or Source Control. Its filled left pane indicates that the
+sidebar is visible; hover for the action and your current shortcut.
+**Ctrl+K, Ctrl+B** also shows or hides the sidebar and **Ctrl+Alt+B** just its
+folder section. Showing the sidebar exits distraction-free mode. Folders,
+expanded directories, and what is shown come back next time.
 
 ### Projects
 
@@ -985,8 +989,13 @@ hedit [--session-dir DIR] [--new] [-w] [FILE[:LINE[:COLUMN]] | FOLDER ...] [-]
 | `--` | Treat the rest as file names |
 | `-h`, `--version` | Help and version |
 
-hedit returns to the prompt as soon as its window is up. If it is already running,
-files go to the open window.
+hedit returns to the prompt as soon as its window is up. Terminal launches restore
+the window and request focus. On Wayland, hedit passes the terminal's activation
+token to the window, including an already running session. If the terminal does
+not provide a token, the desktop decides whether to focus the window or show an
+attention notification.
+
+If it is already running, files go to the open window.
 
 ## Keyboard shortcuts
 

@@ -40,7 +40,14 @@ fn run(
         return launcher::launch(&args, &directory, options.stdin, options.wait);
     }
     let wait = std::env::var_os(launcher::WAIT_VARIABLE).map(std::path::PathBuf::from);
-    if hedit::ipc::forward(&directory, &options, startup.stdin_path(), wait.as_deref())? {
+    let activation = hedit::activation::Launch::take_from_env();
+    if hedit::ipc::forward(
+        &directory,
+        &options,
+        startup.stdin_path(),
+        wait.as_deref(),
+        &activation,
+    )? {
         startup.ready()?;
         return Ok(());
     }
@@ -58,7 +65,13 @@ fn run(
     let (mut workspace, errors) = match hedit::workspace::Workspace::restore(directory.clone()) {
         Ok(workspace) => workspace,
         Err(error) => {
-            if hedit::ipc::forward(&directory, &options, startup.stdin_path(), wait.as_deref())? {
+            if hedit::ipc::forward(
+                &directory,
+                &options,
+                startup.stdin_path(),
+                wait.as_deref(),
+                &activation,
+            )? {
                 startup.ready()?;
                 return Ok(());
             }
@@ -102,6 +115,7 @@ fn run(
                 options.files.clone(),
                 restart_requested,
             );
+            app.request_activation(&cc.egui_ctx, activation);
             if let Some(file) = wait {
                 app.wait_for(&options.files, file);
             }

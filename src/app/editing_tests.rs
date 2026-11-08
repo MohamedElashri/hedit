@@ -481,6 +481,7 @@ fn hedit_w_waits_until_the_files_are_closed() {
         stdin: None,
         new_buffer: false,
         wait: Some(hedit::ipc::WirePath::new(&released)),
+        activation: Default::default(),
     };
     std::fs::write(
         requests.join("1.request"),

@@ -273,6 +273,8 @@ impl HeditApp {
     pub(super) fn open_source_control(&mut self, ctx: &egui::Context) {
         self.close_transient(ctx);
         self.source_control.open = true;
+        self.settings.show_sidebar = true;
+        self.distraction_free = false;
         self.focus_editor = false;
         ctx.memory_mut(|m| {
             if let Some(id) = m.focused() {

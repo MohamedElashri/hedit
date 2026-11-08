@@ -2,6 +2,73 @@
 //! cancelling look and behave the same everywhere.
 use super::*;
 
+/// A font-independent split-pane icon that remains available when the sidebar
+/// is hidden. Use a regular button for keyboard activation and focus feedback.
+pub(super) fn sidebar_button(
+    ui: &mut egui::Ui,
+    theme: &Theme,
+    shown: bool,
+    shortcut: &str,
+) -> egui::Response {
+    let label = if shown {
+        "Hide sidebar"
+    } else {
+        "Show sidebar"
+    };
+    let response = ui.add(
+        egui::Button::new("")
+            .min_size(egui::vec2(28.0, 24.0))
+            .corner_radius(4.0)
+            .selected(shown)
+            .frame(false),
+    );
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), shown, label)
+    });
+    if ui.is_rect_visible(response.rect) {
+        if !shown && (response.hovered() || response.has_focus()) {
+            ui.painter()
+                .rect_filled(response.rect, 4.0, theme.hover().color());
+        }
+        if response.has_focus() {
+            ui.painter().rect_stroke(
+                response.rect,
+                4.0,
+                egui::Stroke::new(1.0_f32, theme.accent.color()),
+                egui::StrokeKind::Inside,
+            );
+        }
+        let icon = egui::Rect::from_center_size(response.rect.center(), egui::vec2(16.0, 14.0));
+        let color = if shown || response.hovered() || response.has_focus() {
+            theme.text.color()
+        } else {
+            theme.muted.color()
+        };
+        let stroke = egui::Stroke::new(1.3_f32, color);
+        let split = icon.left() + 5.0;
+        if shown {
+            ui.painter().rect_filled(
+                egui::Rect::from_min_max(
+                    icon.left_top() + egui::vec2(1.5, 1.5),
+                    egui::pos2(split - 1.0, icon.bottom() - 1.5),
+                ),
+                0.5,
+                color,
+            );
+        }
+        ui.painter()
+            .rect_stroke(icon, 2.0, stroke, egui::StrokeKind::Inside);
+        ui.painter().line_segment(
+            [
+                egui::pos2(split, icon.top()),
+                egui::pos2(split, icon.bottom()),
+            ],
+            stroke,
+        );
+    }
+    response.on_hover_text(format!("{label} · {shortcut}"))
+}
+
 /// The same workspace selector in Files and Source Control. Labels stay visible
 /// in a narrow sidebar, and the entire segment is a keyboard-accessible target.
 pub(super) fn workspace_switcher(

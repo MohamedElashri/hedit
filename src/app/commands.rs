@@ -1185,7 +1185,7 @@ impl HeditApp {
             Command::Columns4 => self.panes.mode == 4,
             Command::Rows3 => self.panes.mode == 5,
             Command::Grid => self.panes.mode == 6,
-            Command::Sidebar => self.settings.show_sidebar,
+            Command::Sidebar => self.settings.show_sidebar && !self.distraction_free,
             Command::FolderSidebar => self.settings.show_sidebar && self.settings.show_folders,
             Command::Tabs => self.settings.show_tab_bar,
             Command::StatusBar => self.settings.show_status_bar,
@@ -1673,7 +1673,11 @@ impl HeditApp {
                 self.palette_focus = true;
                 self.palette_index = 0;
             }
-            Command::Sidebar => self.settings.show_sidebar = !self.settings.show_sidebar,
+            Command::Sidebar => {
+                self.settings.show_sidebar = !self.command_selected(Command::Sidebar);
+                self.distraction_free = false;
+                self.focus_editor = true;
+            }
             Command::FolderSidebar => {
                 self.settings.show_folders =
                     !(self.settings.show_sidebar && self.settings.show_folders);

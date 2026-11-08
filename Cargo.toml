@@ -52,6 +52,9 @@ rustix = { version = "1", features = ["fs", "process"] }
 # title bar buttons instead of winit's bare fallback frame.
 [target.'cfg(target_os = "linux")'.dependencies]
 winit = { version = "0.30.13", default-features = false, features = ["wayland-csd-adwaita"] }
+raw-window-handle = "0.6"
+wayland-client = { version = "0.31", features = ["system", "dlopen"] }
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 
 [target.'cfg(target_os = "macos")'.dependencies.eframe]
 version = "0.31.1"

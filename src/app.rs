@@ -182,6 +182,7 @@ impl Drop for RequestWatch {
 }
 
 pub struct HeditApp {
+    activation: hedit::activation::Window,
     _requests: RequestWatch,
     quality: quality::Quality,
     source_control: source_control::SourceControl,
@@ -321,6 +322,10 @@ pub struct HeditApp {
     updates: updates::Updates,
 }
 impl HeditApp {
+    pub fn request_activation(&mut self, ctx: &egui::Context, launch: hedit::activation::Launch) {
+        self.activation.request(ctx, launch);
+        self.focus_editor = true;
+    }
     pub fn new(
         cc: &eframe::CreationContext<'_>,
         workspace: Workspace,
@@ -330,6 +335,9 @@ impl HeditApp {
     ) -> Self {
         let mut app = Self::from_context(&cc.egui_ctx, cc.storage, workspace, errors, paths);
         app.restart_requested = restart_requested;
+        // SAFETY: the app owns this value and releases it in on_exit, before
+        // eframe destroys the root window and its display connection.
+        app.activation = unsafe { hedit::activation::Window::new(cc) };
         app
     }
     fn from_context(
@@ -369,6 +377,7 @@ impl HeditApp {
             .unwrap_or_default();
         panes.normalize();
         let mut app = Self {
+            activation: Default::default(),
             _requests: RequestWatch::start(ctx, workspace.store.directory().to_owned()),
             quality: Default::default(),
             source_control: source_control::SourceControl::load(storage),
@@ -3377,6 +3386,7 @@ impl eframe::App for HeditApp {
         self.updates.poll();
         self.receive(ctx);
         self.poll_incoming(ctx);
+        self.activation.update(ctx);
         self.project.poll();
         self.poll_source_control(ctx);
         if self.quality.preview.is_some_and(|id| {
@@ -3486,6 +3496,7 @@ impl eframe::App for HeditApp {
         if !self.exit_ready {
             self.restart_requested.store(false, Ordering::Relaxed);
         }
+        self.activation = Default::default();
         self.release_waits();
         if let Err(error) = self.workspace.checkpoint() {
             self.restart_requested.store(false, Ordering::Relaxed);
