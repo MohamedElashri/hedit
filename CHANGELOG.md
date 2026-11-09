@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fix Markdown table content overlapping adjacent rows and table borders.
+
 ## [0.2.2] - 2026-11-09
 
 - Improve Markdown readability, equation layout, and navigation.

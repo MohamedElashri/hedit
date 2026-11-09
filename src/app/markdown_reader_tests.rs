@@ -202,6 +202,104 @@ fn markdown_math_keeps_its_baseline_inside_lists_quotes_and_tables() {
     assert_eq!(app.active().page.text, source);
 }
 
+const TABLE_SAMPLE: &str = "Above the table.\n\n| Name | Description |\n| --- | --- |\n| Wrapped row | A longer description that wraps across several lines inside its cell, with **emphasis**, `code`, and a [reference](https://example.com). |\n| Next row | Short content. |\n\nBelow the table.\n";
+
+#[test]
+fn markdown_table_rows_and_surrounding_paragraphs_do_not_overlap() {
+    for command in [Command::MarkdownPreview, Command::MarkdownSplit] {
+        let (_directory, ctx, mut app) = fixture(TABLE_SAMPLE);
+        app.execute(&ctx, command);
+        for width in [1280.0, 720.0, 1280.0] {
+            let size = egui::vec2(width, 1200.0);
+            for pass in 0..4 {
+                let output = frame_size(&ctx, &mut app, vec![], size);
+                let above = rect(&output, "Above the table.");
+                let header = rect(&output, "Description");
+                let wrapped = rect(&output, "A longer description that wraps across several lines inside its cell, with emphasis, code, and a reference.");
+                let next = rect(&output, "Short content.");
+                let below = rect(&output, "Below the table.");
+                assert!(
+                    above.bottom() < header.top()
+                        && header.bottom() < wrapped.top()
+                        && wrapped.bottom() < next.top()
+                        && next.bottom() < below.top(),
+                    "width {width}, pass {pass}: {above:?}, {header:?}, {wrapped:?}, {next:?}, {below:?}"
+                );
+                let border = output
+                    .shapes
+                    .iter()
+                    .filter_map(|s| match &s.shape {
+                        egui::Shape::Rect(r)
+                            if r.stroke.width > 0.0
+                                && r.rect.contains_rect(header)
+                                && r.rect.contains_rect(next) =>
+                        {
+                            Some(r.rect)
+                        }
+                        _ => None,
+                    })
+                    .min_by(|a, b| a.area().total_cmp(&b.area()))
+                    .expect("table border");
+                assert!(
+                    border.contains_rect(wrapped),
+                    "{wrapped:?} outside {border:?}"
+                );
+            }
+        }
+        assert_eq!(app.active().page.text, TABLE_SAMPLE);
+    }
+}
+
+#[test]
+fn markdown_table_wrapped_headers_and_math_stay_inside_their_rows() {
+    let source = "Above the table.\n\n| Name | A description heading that wraps onto multiple lines |\n| --- | --- |\n| Fraction | Fraction before $\\frac{a_i}{b_j}$ fraction after. |\n| Matrix | Matrix before $\\begin{bmatrix} a & b \\\\ c & d \\end{bmatrix}$ matrix after. |\n| Break | First line<br>Second line |\n\nBelow the table.\n";
+    for command in [Command::MarkdownPreview, Command::MarkdownSplit] {
+        let (_directory, ctx, mut app) = fixture(source);
+        app.execute(&ctx, command);
+        finish_media(&ctx, &mut app, 2);
+        let textures = app.markdown.media.textures();
+        for width in [1280.0, 720.0, 1280.0] {
+            for pass in 0..3 {
+                let output = frame_size(&ctx, &mut app, vec![], egui::vec2(width, 1400.0));
+                let mut equations: Vec<_> = output
+                    .shapes
+                    .iter()
+                    .filter_map(|s| match &s.shape {
+                        egui::Shape::Mesh(m) if textures.contains_key(&m.texture_id) => {
+                            Some(m.vertices.iter().fold(egui::Rect::NOTHING, |r, v| {
+                                r.union(egui::Rect::from_min_max(v.pos, v.pos))
+                            }))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                equations.sort_by(|a, b| a.top().total_cmp(&b.top()));
+                assert_eq!(equations.len(), 2);
+                let rows = [
+                    rect(&output, "Above the table."),
+                    rect(
+                        &output,
+                        "A description heading that wraps onto multiple lines",
+                    ),
+                    rect(&output, "Fraction before ")
+                        .union(equations[0])
+                        .union(rect(&output, " fraction after.")),
+                    rect(&output, "Matrix before ")
+                        .union(equations[1])
+                        .union(rect(&output, " matrix after.")),
+                    rect(&output, "First line\nSecond line"),
+                    rect(&output, "Below the table."),
+                ];
+                assert!(
+                    rows.windows(2).all(|r| r[0].bottom() < r[1].top()),
+                    "width {width}, pass {pass}: {rows:?}"
+                );
+            }
+        }
+        assert_eq!(app.active().page.text, source);
+    }
+}
+
 #[test]
 fn markdown_wide_equations_scroll_locally_without_shrinking_or_widening_prose() {
     let equation = "x + ".repeat(80) + "y";
@@ -457,35 +555,38 @@ fn main() {
 fn export_markdown_reader_previews() {
     let output = PathBuf::from(std::env::var_os("HEDIT_PREVIEW_DIR").unwrap());
     std::fs::create_dir_all(&output).unwrap();
-    for (theme, name) in [(Theme::default(), "dark"), (Theme::paper(), "light")] {
-        for (command, layout, size) in [
-            (
-                Command::MarkdownPreview,
-                "preview",
-                egui::vec2(1280.0, 1100.0),
-            ),
-            (Command::MarkdownSplit, "split", egui::vec2(1280.0, 1100.0)),
-            (Command::MarkdownSplit, "compact", egui::vec2(720.0, 1000.0)),
-        ] {
-            let (_directory, ctx, mut app) = fixture(READER_SAMPLE);
-            app.set_theme(&ctx, theme.clone());
-            app.execute(&ctx, command);
-            finish_media(&ctx, &mut app, 3);
-            for _ in 0..4 {
-                frame_size(&ctx, &mut app, vec![], size);
-            }
-            let rendered = frame_size(&ctx, &mut app, vec![], size);
-            std::fs::write(
-                output.join(format!("markdown-reader-{name}-{layout}.ppm")),
-                super::rtl_tests::rasterize_with_textures(
-                    &ctx,
-                    rendered,
-                    size,
-                    1.0,
-                    &app.markdown.media.textures(),
+    for (sample_name, sample, media) in [("reader", READER_SAMPLE, 3), ("tables", TABLE_SAMPLE, 0)]
+    {
+        for (theme, name) in [(Theme::default(), "dark"), (Theme::paper(), "light")] {
+            for (command, layout, size) in [
+                (
+                    Command::MarkdownPreview,
+                    "preview",
+                    egui::vec2(1280.0, 1100.0),
                 ),
-            )
-            .unwrap();
+                (Command::MarkdownSplit, "split", egui::vec2(1280.0, 1100.0)),
+                (Command::MarkdownSplit, "compact", egui::vec2(720.0, 1000.0)),
+            ] {
+                let (_directory, ctx, mut app) = fixture(sample);
+                app.set_theme(&ctx, theme.clone());
+                app.execute(&ctx, command);
+                finish_media(&ctx, &mut app, media);
+                for _ in 0..4 {
+                    frame_size(&ctx, &mut app, vec![], size);
+                }
+                let rendered = frame_size(&ctx, &mut app, vec![], size);
+                std::fs::write(
+                    output.join(format!("markdown-{sample_name}-{name}-{layout}.ppm")),
+                    super::rtl_tests::rasterize_with_textures(
+                        &ctx,
+                        rendered,
+                        size,
+                        1.0,
+                        &app.markdown.media.textures(),
+                    ),
+                )
+                .unwrap();
+            }
         }
     }
 }

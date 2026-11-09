@@ -91,6 +91,19 @@ fn quote(ui: &mut Ui, contents: impl FnOnce(&mut Ui)) {
     );
 }
 
+fn table_cell_ui(ui: &Ui, width: f32) -> egui::UiBuilder {
+    // Grid centers a horizontal child using its initial height, before wrapped
+    // text expands it. Anchor at the row's top so the complete cell height is
+    // reserved, including on the first frame and after a width change.
+    let rect = egui::Rect::from_min_size(
+        ui.cursor().min,
+        egui::vec2(width, TextStyle::Body.resolve(ui.style()).size * 1.6),
+    );
+    egui::UiBuilder::new()
+        .max_rect(rect)
+        .layout(egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true))
+}
+
 /// Newline logic is constructed by the following:
 /// All elements try to insert a newline before them (if they are allowed)
 /// and end their own line.
@@ -776,7 +789,7 @@ impl<'f> CommonMarkViewerInternal<'f> {
                                     let previous_flow = self.flow.replace(InlineFlow::default());
                                     let measurement = self.inline_measure(ui, &col);
                                     self.paragraph_height = measurement.map(|m| m.0);
-                                    ui.horizontal_wrapped(|ui| {
+                                    ui.allocate_new_ui(table_cell_ui(ui, cell_width), |ui| {
                                         ui.set_width(cell_width);
                                         Self::reserve_inline(ui, cell_width, measurement);
                                         let strong = self.text_style.strong;
@@ -810,7 +823,7 @@ impl<'f> CommonMarkViewerInternal<'f> {
                                             self.flow.replace(InlineFlow::default());
                                         let measurement = self.inline_measure(ui, &col);
                                         self.paragraph_height = measurement.map(|m| m.0);
-                                        ui.horizontal_wrapped(|ui| {
+                                        ui.allocate_new_ui(table_cell_ui(ui, cell_width), |ui| {
                                             ui.set_width(cell_width);
                                             Self::reserve_inline(ui, cell_width, measurement);
                                             for (e, src_span) in col {

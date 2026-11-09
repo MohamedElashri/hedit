@@ -52,3 +52,9 @@ text layout within each inline run. Links retain per-row hit targets, native
 selection/copying, keyboard activation, and accessibility information. A link
 ending near the right margin cannot leave its following comma on a new line
 solely because the link and punctuation were separate widgets.
+
+Table cells are anchored at the grid row's top rather than centering an initial
+single-line horizontal layout. Wrapped content and inline math can grow that
+layout; centering it first lets painted content extend beyond the row height
+and overlap later rows or the table border. Regression coverage checks headers,
+wrapped text, line breaks, and math while resizing Preview and Split views.
