@@ -120,6 +120,21 @@ side. Review light, dark, and compact output when changing reader layout:
 HEDIT_PREVIEW_DIR=/tmp/hedit-reader cargo test --locked --bin hedit export_markdown_reader_previews -- --ignored
 ```
 
+For a broader reader audit, open the Markdown files in
+`tests/fixtures/markdown/` in an isolated session. The automated audit opens those
+real files and the repository guides at normal and compact sizes, in light and
+dark themes, Preview and Split, and larger type. It checks source preservation
+and synchronized scrolling, and writes software screenshots plus `audit.tsv`:
+
+```sh
+HEDIT_PREVIEW_DIR=/tmp/hedit-markdown-audit cargo test --locked --bin hedit audit_markdown_real_files -- --ignored --nocapture
+```
+
+Run screenshot exports separately from the full suite to avoid competing with
+tests that have short worker deadlines. Software renders and egui event replays
+do not replace hands-on desktop checks. See `docs/markdown-audit.md`
+for findings and remaining coverage.
+
 ## macOS builds
 
 Releases ship one `hedit-X.Y.Z-macos-universal.zip` with an Apple Silicon and

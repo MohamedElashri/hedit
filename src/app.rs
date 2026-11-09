@@ -42,6 +42,8 @@ mod markdown_media;
 #[cfg(test)]
 mod markdown_reader_tests;
 mod markdown_scroll;
+#[cfg(test)]
+mod markdown_stress_tests;
 mod markdown_style;
 #[cfg(test)]
 mod markdown_tests;

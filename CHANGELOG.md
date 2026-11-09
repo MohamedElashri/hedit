@@ -2,7 +2,9 @@
 
 ## Unreleased
 
-- Fix Markdown table content overlapping adjacent rows and table borders.
+- Fix Markdown table overflow, alignment, and unwanted cell indentation.
+- Preserve nested formatting and improve definition lists and footnote navigation.
+- Fix clipped diagrams, image links, and crashes when displaying large local images.
 
 ## [0.2.2] - 2026-11-09
 

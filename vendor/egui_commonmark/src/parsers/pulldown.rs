@@ -91,7 +91,7 @@ fn quote(ui: &mut Ui, contents: impl FnOnce(&mut Ui)) {
     );
 }
 
-fn table_cell_ui(ui: &Ui, width: f32) -> egui::UiBuilder {
+fn wrapped_flow_ui(ui: &Ui, width: f32) -> egui::UiBuilder {
     // Grid centers a horizontal child using its initial height, before wrapped
     // text expands it. Anchor at the row's top so the complete cell height is
     // reserved, including on the first frame and after a width change.
@@ -174,6 +174,8 @@ pub struct CommonMarkViewerInternal<'f> {
     flow_serial: usize,
     curr_table: usize,
     text_style: Style,
+    inline_styles: Vec<Style>,
+    table_alignments: Vec<pulldown_cmark::Alignment>,
     list: List,
     link: Option<Link>,
     image: Option<Image>,
@@ -211,6 +213,8 @@ impl<'f> CommonMarkViewerInternal<'f> {
             flow_serial: 0,
             curr_table: 0,
             text_style: Style::default(),
+            inline_styles: Vec::new(),
+            table_alignments: Vec::new(),
             list: List::default(),
             link: None,
             image: None,
@@ -459,7 +463,7 @@ impl<'f> CommonMarkViewerInternal<'f> {
             let previous_flow = self.flow.replace(InlineFlow::default());
             let measurement = self.inline_measure(ui, &paragraph);
             self.paragraph_height = measurement.map(|m| m.0);
-            Self::reserve_inline(ui, max_width, measurement);
+            Self::reserve_inline(ui, measurement);
             let mut paragraph = paragraph.into_iter().enumerate().peekable();
             while let Some((_, (event, span))) = paragraph.next() {
                 self.process_event(ui, &mut paragraph, event, span, cache, options, max_width);
@@ -489,17 +493,33 @@ impl<'f> CommonMarkViewerInternal<'f> {
         }
         let width = ui.available_width();
         flow.job.wrap.max_width = width;
-        flow.job.first_row_min_height = ui.cursor().height();
-        flow.job.halign = egui::Align::LEFT;
+        let horizontal = ui.layout().main_dir().is_horizontal();
+        flow.job.first_row_min_height = if horizontal {
+            ui.cursor().height()
+        } else {
+            0.0
+        };
+        flow.job.halign = if horizontal {
+            egui::Align::LEFT
+        } else {
+            ui.layout().horizontal_placement()
+        };
         flow.job.justify = false;
-        if let Some(first) = flow.job.sections.first_mut() {
+        if let Some(first) = flow.job.sections.first_mut().filter(|_| horizontal) {
             first.leading_space = width - ui.available_size_before_wrap().x;
         }
-        let pos = egui::pos2(ui.max_rect().left(), ui.cursor().top());
+        let mut pos = egui::pos2(ui.max_rect().left(), ui.cursor().top());
         let galley = ui.fonts(|fonts| fonts.layout_job(flow.job.clone()));
         // The native Label owns selection and copying. Text, emphasis, code,
         // links, and their punctuation share one Unicode wrapping decision.
-        ui.add(egui::Label::new(flow.job));
+        let response = ui.add(egui::Label::new(flow.job));
+        if !horizontal {
+            pos = match galley.job.halign {
+                egui::Align::Min => response.rect.left_top(),
+                egui::Align::Center => response.rect.center_top(),
+                egui::Align::Max => response.rect.right_top(),
+            };
+        }
         let serial = self.flow_serial;
         self.flow_serial += 1;
         for (link, (range, target)) in flow.links.into_iter().enumerate() {
@@ -566,12 +586,14 @@ impl<'f> CommonMarkViewerInternal<'f> {
         })
     }
 
-    fn reserve_inline(ui: &mut Ui, width: f32, measurement: Option<(f32, f32)>) {
+    fn reserve_inline(ui: &mut Ui, measurement: Option<(f32, f32)>) {
         if let Some((height, ascent)) = measurement {
             if ascent > 0.0 {
                 newline(ui);
                 ui.set_row_height(ascent);
-                ui.allocate_exact_size(egui::vec2(width, ascent), egui::Sense::hover());
+                // This blank row reserves ascent, not horizontal content. A
+                // full-width spacer prevents measuring an aligned math cell.
+                ui.allocate_exact_size(egui::vec2(0.0, ascent), egui::Sense::hover());
                 ui.end_row();
             }
             ui.set_row_height(height);
@@ -593,49 +615,35 @@ impl<'f> CommonMarkViewerInternal<'f> {
                 matches!(tag, pulldown_cmark::TagEnd::DefinitionListDefinition)
             });
 
-            let mut events_iter = item_events.into_iter().enumerate().peekable();
-
-            self.line.try_insert_start(ui);
-
-            // Proccess a single event separately so that we do not insert spaces where we do not
-            // want them
-            self.line.should_start_newline = false;
-            if let Some((_, (e, src_span))) = events_iter.next() {
-                self.process_event(ui, &mut events_iter, e, src_span, cache, options, max_width);
-            }
-
+            self.flush_inline(ui, cache);
+            newline(ui);
             ui.label(" ".repeat(options.indentation_spaces));
-            self.line.should_start_newline = true;
-            self.line.should_end_newline = false;
-            // Required to ensure that the content is aligned with the identation
-            ui.horizontal_wrapped(|ui| {
-                while let Some((_, (e, src_span))) = events_iter.next() {
+            let width = ui.available_size_before_wrap().x.max(1.0);
+            ui.allocate_new_ui(wrapped_flow_ui(ui, width), |ui| {
+                let previous = self.paragraph_height;
+                let previous_flow = self.flow.replace(InlineFlow::default());
+                let measurement = self.inline_measure(ui, &item_events);
+                self.paragraph_height = measurement.map(|m| m.0);
+                Self::reserve_inline(ui, measurement);
+                let mut events_iter = item_events.into_iter().enumerate().peekable();
+                while let Some((_, (event, span))) = events_iter.next() {
                     self.process_event(
                         ui,
                         &mut events_iter,
-                        e,
-                        src_span,
+                        event,
+                        span,
                         cache,
                         options,
                         max_width,
                     );
                 }
+                self.flush_inline(ui, cache);
+                self.flow = previous_flow;
+                self.paragraph_height = previous;
             });
+            self.line.should_start_newline = true;
             self.line.should_end_newline = true;
-
-            // Only end the definition items line if it is not the last element in the list
-            if !matches!(
-                events.peek(),
-                Some((
-                    _,
-                    (
-                        pulldown_cmark::Event::End(pulldown_cmark::TagEnd::DefinitionList),
-                        _
-                    )
-                ))
-            ) {
-                self.line.try_insert_end(ui);
-            }
+            newline(ui);
         }
     }
 
@@ -660,7 +668,7 @@ impl<'f> CommonMarkViewerInternal<'f> {
             // Required to ensure that the content of the list item is aligned with
             // the * or - when wrapping
             ui.horizontal_wrapped(|ui| {
-                Self::reserve_inline(ui, ui.available_width(), measurement);
+                Self::reserve_inline(ui, measurement);
                 while let Some((_, (e, src_span))) = events_iter.next() {
                     self.process_event(
                         ui,
@@ -784,69 +792,27 @@ impl<'f> CommonMarkViewerInternal<'f> {
                             .spacing(egui::vec2(16.0, 10.0))
                             .max_col_width(cell_width)
                             .show(ui, |ui| {
-                                for col in header {
-                                    let previous_height = self.paragraph_height;
-                                    let previous_flow = self.flow.replace(InlineFlow::default());
-                                    let measurement = self.inline_measure(ui, &col);
-                                    self.paragraph_height = measurement.map(|m| m.0);
-                                    ui.allocate_new_ui(table_cell_ui(ui, cell_width), |ui| {
-                                        ui.set_width(cell_width);
-                                        Self::reserve_inline(ui, cell_width, measurement);
-                                        let strong = self.text_style.strong;
-                                        self.text_style.strong = true;
-                                        for (e, src_span) in col {
-                                            let tmp_start = std::mem::replace(
-                                                &mut self.line.should_start_newline,
-                                                false,
-                                            );
-                                            let tmp_end = std::mem::replace(
-                                                &mut self.line.should_end_newline,
-                                                false,
-                                            );
-                                            self.event(ui, e, src_span, cache, options, max_width);
-                                            self.line.should_start_newline = tmp_start;
-                                            self.line.should_end_newline = tmp_end;
-                                        }
-                                        self.flush_inline(ui, cache);
-                                        self.text_style.strong = strong;
-                                    });
-                                    self.flow = previous_flow;
-                                    self.paragraph_height = previous_height;
-                                }
-
-                                ui.end_row();
-
-                                for row in rows {
-                                    for col in row {
-                                        let previous_height = self.paragraph_height;
-                                        let previous_flow =
-                                            self.flow.replace(InlineFlow::default());
-                                        let measurement = self.inline_measure(ui, &col);
-                                        self.paragraph_height = measurement.map(|m| m.0);
-                                        ui.allocate_new_ui(table_cell_ui(ui, cell_width), |ui| {
-                                            ui.set_width(cell_width);
-                                            Self::reserve_inline(ui, cell_width, measurement);
-                                            for (e, src_span) in col {
-                                                let tmp_start = std::mem::replace(
-                                                    &mut self.line.should_start_newline,
-                                                    false,
-                                                );
-                                                let tmp_end = std::mem::replace(
-                                                    &mut self.line.should_end_newline,
-                                                    false,
-                                                );
-                                                self.event(
-                                                    ui, e, src_span, cache, options, max_width,
-                                                );
-                                                self.line.should_start_newline = tmp_start;
-                                                self.line.should_end_newline = tmp_end;
+                                let alignments = std::mem::take(&mut self.table_alignments);
+                                for (row_index, row) in
+                                    std::iter::once(header).chain(rows).enumerate()
+                                {
+                                    let strong = self.text_style.strong;
+                                    self.text_style.strong |= row_index == 0;
+                                    for (column, col) in row.into_iter().enumerate() {
+                                        let alignment = match alignments.get(column) {
+                                            Some(pulldown_cmark::Alignment::Center) => {
+                                                egui::Align::Center
                                             }
-                                            self.flush_inline(ui, cache);
-                                        });
-                                        self.flow = previous_flow;
-                                        self.paragraph_height = previous_height;
+                                            Some(pulldown_cmark::Alignment::Right) => {
+                                                egui::Align::Max
+                                            }
+                                            _ => egui::Align::Min,
+                                        };
+                                        self.table_cell(
+                                            ui, cache, options, &col, alignment, cell_width,
+                                        );
                                     }
-
+                                    self.text_style.strong = strong;
                                     ui.end_row();
                                 }
                             });
@@ -860,6 +826,98 @@ impl<'f> CommonMarkViewerInternal<'f> {
 
             self.line.try_insert_end(ui);
         }
+    }
+
+    fn table_cell(
+        &mut self,
+        ui: &mut Ui,
+        cache: &mut CommonMarkCache,
+        options: &CommonMarkOptions,
+        events: &[(pulldown_cmark::Event<'_>, Range<usize>)],
+        alignment: egui::Align,
+        width: f32,
+    ) {
+        let plain = !events.iter().any(|(event, _)| {
+            matches!(
+                event,
+                pulldown_cmark::Event::InlineMath(_)
+                    | pulldown_cmark::Event::DisplayMath(_)
+                    | pulldown_cmark::Event::FootnoteReference(_)
+                    | pulldown_cmark::Event::Start(pulldown_cmark::Tag::Image { .. })
+            )
+        });
+        let builder = wrapped_flow_ui(ui, width);
+        if plain && alignment != egui::Align::Min {
+            ui.allocate_new_ui(builder.layout(egui::Layout::top_down(alignment)), |ui| {
+                ui.set_width(width);
+                self.table_cell_contents(ui, cache, options, events, width, true);
+            });
+        } else {
+            ui.allocate_new_ui(builder, |ui| {
+                ui.set_min_width(width);
+                if alignment == egui::Align::Min {
+                    self.table_cell_contents(ui, cache, options, events, width, false);
+                } else {
+                    // Measure mixed text/math at the final wrap width without
+                    // painting or activating links, then align the whole flow.
+                    let serial = self.flow_serial;
+                    let mut measure = ui.new_child(
+                        wrapped_flow_ui(ui, width)
+                            .id_salt("measure")
+                            .sizing_pass()
+                            .invisible(),
+                    );
+                    self.table_cell_contents(&mut measure, cache, options, events, width, false);
+                    self.flow_serial = serial;
+                    let content_width = measure.min_rect().width().ceil().clamp(1.0, width);
+                    let offset = (width - content_width)
+                        * if alignment == egui::Align::Center {
+                            0.5
+                        } else {
+                            1.0
+                        };
+                    let rect = egui::Rect::from_min_size(
+                        ui.cursor().min + egui::vec2(offset, 0.0),
+                        egui::vec2(
+                            content_width,
+                            TextStyle::Body.resolve(ui.style()).size * 1.6,
+                        ),
+                    );
+                    ui.allocate_new_ui(wrapped_flow_ui(ui, content_width).max_rect(rect), |ui| {
+                        self.table_cell_contents(ui, cache, options, events, content_width, false);
+                    });
+                }
+            });
+        }
+    }
+
+    fn table_cell_contents(
+        &mut self,
+        ui: &mut Ui,
+        cache: &mut CommonMarkCache,
+        options: &CommonMarkOptions,
+        events: &[(pulldown_cmark::Event<'_>, Range<usize>)],
+        width: f32,
+        vertical: bool,
+    ) {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        let previous_height = self.paragraph_height;
+        let previous_flow = self.flow.replace(InlineFlow::default());
+        let measurement = self.inline_measure(ui, events);
+        self.paragraph_height = measurement.map(|m| m.0);
+        if !vertical {
+            Self::reserve_inline(ui, measurement);
+        }
+        let start = std::mem::replace(&mut self.line.should_start_newline, false);
+        let end = std::mem::replace(&mut self.line.should_end_newline, false);
+        for (event, span) in events {
+            self.event(ui, event.clone(), span.clone(), cache, options, width);
+        }
+        self.flush_inline(ui, cache);
+        self.line.should_start_newline = start;
+        self.line.should_end_newline = end;
+        self.flow = previous_flow;
+        self.paragraph_height = previous_height;
     }
 
     fn event(
@@ -918,8 +976,23 @@ impl<'f> CommonMarkViewerInternal<'f> {
                 }
             }
             pulldown_cmark::Event::FootnoteReference(footnote) => {
-                self.flush_inline(ui, cache);
-                footnote_start(ui, &footnote);
+                let target = format!("#fn:{footnote}");
+                let label = egui::RichText::new(format!("[{footnote}]"))
+                    .small_raised()
+                    .color(ui.visuals().hyperlink_color)
+                    .underline();
+                if let Some(flow) = &mut self.flow {
+                    let start = flow.job.text.len();
+                    label.append_to(
+                        &mut flow.job,
+                        ui.style(),
+                        egui::FontSelection::Default,
+                        ui.text_valign(),
+                    );
+                    flow.links.push((start..flow.job.text.len(), target));
+                } else if ui.link(label).clicked() && cache.link_hooks().contains_key(&target) {
+                    cache.link_hooks_mut().insert(target, true);
+                }
             }
             pulldown_cmark::Event::SoftBreak => {
                 if self.flow.is_some() {
@@ -1067,21 +1140,25 @@ impl<'f> CommonMarkViewerInternal<'f> {
 
                 self.line.should_start_newline = false;
                 self.line.should_end_newline = false;
-                footnote(ui, &note);
+                ui.label(egui::RichText::new(format!("[{note}]")).small().strong());
             }
-            pulldown_cmark::Tag::Table(_) => {
+            pulldown_cmark::Tag::Table(alignments) => {
                 self.is_table = true;
+                self.table_alignments = alignments;
             }
             pulldown_cmark::Tag::TableHead => {}
             pulldown_cmark::Tag::TableRow => {}
             pulldown_cmark::Tag::TableCell => {}
             pulldown_cmark::Tag::Emphasis => {
+                self.inline_styles.push(self.text_style.clone());
                 self.text_style.emphasis = true;
             }
             pulldown_cmark::Tag::Strong => {
+                self.inline_styles.push(self.text_style.clone());
                 self.text_style.strong = true;
             }
             pulldown_cmark::Tag::Strikethrough => {
+                self.inline_styles.push(self.text_style.clone());
                 self.text_style.strikethrough = true;
             }
             pulldown_cmark::Tag::Link { dest_url, .. } => {
@@ -1106,6 +1183,7 @@ impl<'f> CommonMarkViewerInternal<'f> {
                 self.def_list.is_first_item = true;
             }
             pulldown_cmark::Tag::DefinitionListTitle => {
+                self.inline_end = Some(pulldown_cmark::TagEnd::DefinitionListTitle);
                 // we disable newline as the first title should not insert a newline
                 // as we have already done that upon the DefinitionList Tag
                 if !self.def_list.is_first_item {
@@ -1163,18 +1241,15 @@ impl<'f> CommonMarkViewerInternal<'f> {
             pulldown_cmark::TagEnd::Table => {}
             pulldown_cmark::TagEnd::TableHead => {}
             pulldown_cmark::TagEnd::TableRow => {}
-            pulldown_cmark::TagEnd::TableCell => {
-                // Ensure space between cells
-                ui.label("  ");
-            }
-            pulldown_cmark::TagEnd::Emphasis => {
-                self.text_style.emphasis = false;
-            }
-            pulldown_cmark::TagEnd::Strong => {
-                self.text_style.strong = false;
-            }
-            pulldown_cmark::TagEnd::Strikethrough => {
-                self.text_style.strikethrough = false;
+            // Parsed table cells already have grid spacing. parse_table can
+            // retain the preceding cell's end event at the next cell's start.
+            pulldown_cmark::TagEnd::TableCell => {}
+            pulldown_cmark::TagEnd::Emphasis
+            | pulldown_cmark::TagEnd::Strong
+            | pulldown_cmark::TagEnd::Strikethrough => {
+                if let Some(previous) = self.inline_styles.pop() {
+                    self.text_style = previous;
+                }
             }
             pulldown_cmark::TagEnd::Link { .. } => {
                 if let Some(link) = self.link.take() {
@@ -1208,7 +1283,56 @@ impl<'f> CommonMarkViewerInternal<'f> {
             }
             pulldown_cmark::TagEnd::Image { .. } => {
                 if let Some(image) = self.image.take() {
-                    image.end(ui, options);
+                    let alt = image
+                        .alt_text
+                        .iter()
+                        .map(|text| text.text())
+                        .collect::<String>();
+                    let sense = if self.link.is_some() {
+                        egui::Sense::click()
+                    } else {
+                        egui::Sense::hover()
+                    };
+                    let widget = egui::Image::from_uri(&image.uri)
+                        .fit_to_original_size(1.0)
+                        .max_width(options.max_width(ui))
+                        .alt_text(&alt)
+                        .sense(sense);
+                    let mut response = match widget.load_for_size(ui.ctx(), ui.available_size()) {
+                        Err(error) => ui
+                            .add(
+                                egui::Label::new(
+                                    egui::RichText::new(if alt.is_empty() {
+                                        "Image unavailable".to_owned()
+                                    } else {
+                                        format!("Image unavailable: {alt}")
+                                    })
+                                    .color(ui.visuals().warn_fg_color),
+                                )
+                                .sense(sense),
+                            )
+                            .on_hover_text(error.to_string()),
+                        Ok(_) => ui.add(widget),
+                    };
+                    if !alt.is_empty() && options.show_alt_text_on_hover {
+                        response = response.on_hover_text(&alt);
+                    }
+                    if let Some(link) = &self.link {
+                        let keyboard =
+                            response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                        if response.clicked() || response.middle_clicked() || keyboard {
+                            if cache.link_hooks().contains_key(&link.destination) {
+                                cache
+                                    .link_hooks_mut()
+                                    .insert(link.destination.clone(), true);
+                            } else {
+                                ui.ctx().open_url(egui::OpenUrl::new_tab(&link.destination));
+                            }
+                        }
+                        response
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .on_hover_text(&link.destination);
+                    }
                 }
             }
             pulldown_cmark::TagEnd::HtmlBlock => {

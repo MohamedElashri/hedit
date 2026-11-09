@@ -43,6 +43,7 @@ pub(super) struct Prepared {
     pub(super) headings: HashMap<String, usize>,
     pub(super) heading_bytes: Vec<usize>,
     pub(super) topics: Vec<(String, u8)>,
+    footnotes: HashMap<String, usize>,
     figures: Vec<Figure>,
     blocks: HashMap<usize, usize>,
     source_len: usize,
@@ -57,6 +58,7 @@ pub(super) fn prepare(text: &str) -> Prepared {
     let mut headings = HashMap::new();
     let mut heading_bytes = vec![];
     let mut topics = vec![];
+    let mut footnotes = HashMap::new();
     let mut counts = HashMap::<String, usize>::new();
     let mut heading = None;
     let mut figure: Option<Figure> = None;
@@ -75,6 +77,10 @@ pub(super) fn prepare(text: &str) -> Prepared {
                 heading = Some((String::new(), *level as u8));
             }
             Event::Start(Tag::Link { dest_url, .. }) => targets.push(dest_url.to_string()),
+            Event::FootnoteReference(label) => targets.push(format!("#fn:{label}")),
+            Event::Start(Tag::FootnoteDefinition(label)) => {
+                footnotes.insert(format!("fn:{label}"), span.start);
+            }
             Event::Start(Tag::CodeBlock(pulldown_cmark::CodeBlockKind::Fenced(info))) => {
                 figure = figure_kind(info).map(|kind| Figure {
                     kind,
@@ -142,6 +148,7 @@ pub(super) fn prepare(text: &str) -> Prepared {
         headings,
         heading_bytes,
         topics,
+        footnotes,
         figures,
         blocks,
         source_len: counted_chars + text[counted_byte..].chars().count(),
@@ -183,7 +190,7 @@ struct ImageEntry {
     state: ImageBytes,
 }
 
-fn read_image(path: &std::path::Path) -> Result<Arc<[u8]>, String> {
+fn read_image(path: &std::path::Path, max_side: u32) -> Result<Arc<[u8]>, String> {
     const LIMIT: u64 = 32 * 1024 * 1024;
     let mut options = std::fs::OpenOptions::new();
     options.read(true);
@@ -208,7 +215,34 @@ fn read_image(path: &std::path::Path) -> Result<Arc<[u8]>, String> {
     if bytes.len() as u64 > LIMIT {
         return Err("The image exceeds 32 MiB.".into());
     }
-    Ok(bytes.into())
+    let reader = || {
+        image::ImageReader::new(std::io::Cursor::new(&bytes))
+            .with_guessed_format()
+            .map_err(|e| e.to_string())
+    };
+    let (width, height) = reader()?.into_dimensions().map_err(|e| e.to_string())?;
+    if u64::from(width) * u64::from(height) > 16_000_000 {
+        return Err("The image exceeds 16 megapixels.".into());
+    }
+    if width <= max_side && height <= max_side {
+        return Ok(bytes.into());
+    }
+    // Keep large photographs and screenshots within the GPU's texture limit.
+    // Decode and resample on this same bounded worker, never in the UI frame.
+    let mut reader = reader()?;
+    let mut limits = image::Limits::default();
+    limits.max_alloc = Some(128 * 1024 * 1024);
+    reader.limits(limits);
+    let image = reader.decode().map_err(|e| e.to_string())?.resize(
+        max_side,
+        max_side,
+        image::imageops::FilterType::Triangle,
+    );
+    let mut scaled = std::io::Cursor::new(Vec::new());
+    image
+        .write_to(&mut scaled, image::ImageFormat::Png)
+        .map_err(|e| e.to_string())?;
+    Ok(scaled.into_inner().into())
 }
 
 impl egui::load::BytesLoader for Images {
@@ -262,8 +296,9 @@ impl egui::load::BytesLoader for Images {
         let uri = uri.to_owned();
         let ctx = ctx.clone();
         let in_flight = self.in_flight.clone();
+        let max_side = ctx.input(|input| input.max_texture_side).max(1) as u32;
         thread::spawn(move || {
-            let result = read_image(&path);
+            let result = read_image(&path, max_side);
             if let Some(entry) = files
                 .lock()
                 .unwrap()
@@ -703,7 +738,13 @@ impl HeditApp {
         let top = section.as_ref().is_some_and(String::is_empty);
         let anchor = section
             .as_ref()
-            .and_then(|section| prepared.headings.get(section))
+            .and_then(|section| {
+                prepared
+                    .headings
+                    .get(section)
+                    .and_then(|index| prepared.heading_bytes.get(*index))
+                    .or_else(|| prepared.footnotes.get(section))
+            })
             .copied();
         if section.is_some() && !top && anchor.is_none() {
             self.notice = "Section not found in this Markdown document.".into();
@@ -713,16 +754,13 @@ impl HeditApp {
         let seen = found.clone();
         let section_positions = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
         let positions = std::rc::Rc::clone(&section_positions);
-        let block = move |ui: &mut egui::Ui, span: std::ops::Range<usize>, heading: Option<u8>| {
+        let block = move |ui: &mut egui::Ui, span: std::ops::Range<usize>, _heading: Option<u8>| {
             if let Some(&source) = blocks.blocks.get(&span.start) {
                 positions
                     .borrow_mut()
                     .push((source as f32, ui.next_widget_position().y));
             }
-            if heading.is_some()
-                && anchor.is_some()
-                && blocks.heading_bytes.get(anchor.unwrap()) == Some(&span.start)
-            {
+            if anchor == Some(span.start) {
                 ui.scroll_to_rect(
                     egui::Rect::from_min_size(ui.next_widget_position(), egui::vec2(1.0, 1.0)),
                     Some(egui::Align::Min),
@@ -902,7 +940,7 @@ mod image_path_tests {
             .success());
         let input = path.clone();
         let (tx, rx) = mpsc::channel();
-        let worker = thread::spawn(move || tx.send(read_image(&input)).unwrap());
+        let worker = thread::spawn(move || tx.send(read_image(&input, 2048)).unwrap());
         let result = rx.recv_timeout(Duration::from_secs(2));
         // Release an unfixed reader before asserting, so a failing regression
         // test never leaves a blocked thread behind.

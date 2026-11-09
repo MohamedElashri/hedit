@@ -753,13 +753,17 @@ readable line length. Editor zoom also changes the reading size.
 Use **Contents** in the preview toolbar to jump to a heading or the top of the
 document without moving the source caret.
 
-Tables wrap within their columns and scroll horizontally when the table is too
-wide. Code blocks use your syntax colors and have a **Copy** button. Long code
+Tables honor left, center, and right column alignment, wrap within their columns,
+and scroll horizontally when the table is too wide. Footnote references link to
+their definitions. Code blocks use your syntax colors and have a **Copy** button. Long code
 lines scroll horizontally inside the block; tall blocks scroll vertically. The preview also renders lists,
 task lists, and quotes. Section links scroll to their headings, including headings in
 quotes and lists. Markdown file links stay in Preview and honor `#section`
 fragments; other file links open in the editor. Local PNG and JPEG images resolve
-relative to the Markdown file's folder; Save As updates that folder. Images
+relative to the Markdown file's folder; Save As updates that folder. Very wide or
+tall images are resized for display without changing their files. Images are
+limited to 32 MiB and 16 megapixels. Missing images show their alternative text.
+Image links open their linked page or file. Images
 from web URLs or `file://` URLs are not fetched. On Windows, network-share and
 device image paths are also blocked. HTML comments are hidden, `<br>` inserts a
 line break, and other embedded HTML is displayed as text. Preview

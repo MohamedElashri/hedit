@@ -58,3 +58,13 @@ single-line horizontal layout. Wrapped content and inline math can grow that
 layout; centering it first lets painted content extend beyond the row height
 and overlap later rows or the table border. Regression coverage checks headers,
 wrapped text, line breaks, and math while resizing Preview and Split views.
+
+The real-file audit also retains table column alignments, removes the backend's
+redundant cell-ending spaces, and measures aligned mixed text/math cells before
+painting. Measurement UIs are invisible and do not activate links. Inline style
+state is restored from a stack so nested emphasis and strong spans retain their
+outer formatting, including inside table headers. Definition lists use the same
+continuous inline flow as paragraphs. Footnote references have bracketed labels
+and link hooks that hedit resolves to the original definition source span.
+Image widgets expose alternative text on errors and preserve their enclosing
+link's activation behavior.

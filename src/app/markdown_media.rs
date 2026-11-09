@@ -215,27 +215,43 @@ impl Media {
                 ui.end_row();
             }
             let width = ui.available_width().max(1.0);
+            let body = egui::TextStyle::Body.resolve(ui.style()).size;
+            let height = match result.as_ref() {
+                Some(Ok(raster)) => raster.size.y.min(480.0),
+                Some(Err(_)) => {
+                    let code = egui::TextStyle::Monospace.resolve(ui.style()).size;
+                    (body * 1.6
+                        + code * 1.6 * source.trim_end_matches('\n').lines().count().max(1) as f32
+                        + ui.spacing().item_spacing.y)
+                        .clamp(56.0, 480.0)
+                }
+                None => (body * 3.2).max(56.0),
+            };
             // Wide equations retain their font size and scroll locally instead
             // of shrinking into illegible text or shifting the whole page.
-            ui.vertical(|ui| {
-                ui.set_width(width);
-                ui.add_space(8.0);
-                egui::ScrollArea::both()
-                    .id_salt(("figure", ui.id(), &key))
-                    .auto_shrink([false, true])
-                    .max_height(480.0)
-                    .show(ui, |ui| {
-                        let natural_width = result
-                            .as_ref()
-                            .and_then(|r| r.as_ref().ok())
-                            .map_or(width, |r| r.size.x);
-                        ui.horizontal_top(|ui| {
-                            ui.add_space(((width - natural_width) / 2.0).max(0.0).round());
-                            ui.vertical(|ui| contents(ui));
+            ui.allocate_ui_with_layout(
+                egui::vec2(width, height + 16.0),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.set_width(width);
+                    ui.add_space(8.0);
+                    egui::ScrollArea::both()
+                        .id_salt(("figure", ui.id(), &key))
+                        .auto_shrink([false, true])
+                        .max_height(480.0)
+                        .show(ui, |ui| {
+                            let natural_width = result
+                                .as_ref()
+                                .and_then(|r| r.as_ref().ok())
+                                .map_or(width, |r| r.size.x);
+                            ui.horizontal_top(|ui| {
+                                ui.add_space(((width - natural_width) / 2.0).max(0.0).round());
+                                ui.vertical(|ui| contents(ui));
+                            });
                         });
-                    });
-                ui.add_space(8.0);
-            });
+                    ui.add_space(8.0);
+                },
+            );
             if wide_inline {
                 ui.end_row();
                 ui.set_row_height(f32::from(size) * 1.6);
