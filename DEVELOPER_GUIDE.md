@@ -105,6 +105,21 @@ Internal links and Contents stay in the modal, and only explicit external-link
 clicks open a browser. Keep Help, About, F1, the command palette, and key bindings
 routed through `Command::UserGuide`.
 
+Markdown preparation retains an owned `PreparedMarkdown` event stream per
+revision, using the renderer's re-exported parser types. Index original source
+spans for headings, Contents, and block-level split scrolling; do not insert
+marker HTML or synthetic paragraphs into the source. Large revisions prepare
+on a worker, and stale replies cannot replace a newer revision. Inline math
+must reserve its ascent and descent before drawing text in the same flow.
+Keep the TeX baseline separate from the SVG bounds and the reading font size
+separate from line height. Wide figures use tiled GPU textures at their original
+logical size, since the pixel budget alone does not bound a texture's longest
+side. Review light, dark, and compact output when changing reader layout:
+
+```sh
+HEDIT_PREVIEW_DIR=/tmp/hedit-reader cargo test --locked --bin hedit export_markdown_reader_previews -- --ignored
+```
+
 ## macOS builds
 
 Releases ship one `hedit-X.Y.Z-macos-universal.zip` with an Apple Silicon and
@@ -178,9 +193,10 @@ without a window belongs in the library, with tests under `tests/`.
 | Syntax and look | `syntax.rs`, `syntax/` (grammars, lexer, keywords), `theme.rs`, `fonts.rs`, `brand.rs` |
 | Process and updates | `cli.rs`, `launcher.rs`, `ipc.rs`, `windows.rs`, `update.rs`, `update/`, `build.rs`, `debugger.rs` |
 | Window | `app.rs` (frame loop, shortcuts, editor drawing), `app/chrome.rs` (menus, tabs, sidebar, status bar), `app/commands.rs` (every command, the palette) |
+| Launch activation | `activation.rs` (one-shot presentation, Wayland activation tokens and a nonblocking native protocol binding); `main.rs`, `ipc.rs`, `app/quality.rs` (launch and existing-session handoff) |
 | App features | One file each in `src/app/`, named after the feature: `auto_complete.rs`, `definitions.rs`, `spell_check.rs`, `macros.rs`, `snippet_fields.rs`, `find_tools.rs`, `changes.rs`, `fold_gutter.rs`, `font_picker.rs`, and so on |
 | Integrated terminal | `terminal.rs` (Ghostty VT and bounded PTY IO); `app/terminal_panel.rs` (tab lifecycle, onboarding, input focus); `app/terminal_tabs.rs` (compact tab strip, reordering, menus); `app/terminal_text.rs` (bidirectional cells and cached Rustybuzz/ab_glyph output); `app/terminal_tests.rs` (UI regression tests) |
-| Markdown | `app/markdown.rs` (source/preview layout, background preparation, links, local images), `app/markdown_scroll.rs` (bidirectional split scrolling), `app/markdown_style.rs` (shared reader fonts, contrast, and cached native code blocks), `app/markdown_media.rs` (cached native math and Mermaid rendering), `app/markdown_tests.rs`; per-tab modes are stored in `session.rs` |
+| Markdown | `app/markdown.rs` (source/preview layout, background preparation, contents, links, local images), `app/markdown_scroll.rs` (bidirectional split scrolling), `app/markdown_style.rs` (shared reading column, fonts, contrast, and cached native code blocks), `app/markdown_media.rs` (equation baselines and cached native math/Mermaid rendering), `app/markdown_tests.rs`, `app/markdown_reader_tests.rs`; per-tab modes are stored in `session.rs` |
 | Offline help | `app/user_guide.rs` embeds `USER_GUIDE.md`, related documentation, and notices with `include_str!`; `app/user_guide/tests.rs` covers links, modal input, and layout |
 | Settings | `settings.rs` (the `settings.json` schema), `app/settings_store.rs`, `app/preferences.rs`, `app/settings_pages.rs` |
 

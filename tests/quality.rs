@@ -361,6 +361,7 @@ fn existing_instance_cli_forwards_paths_and_stdin_and_returns_without_a_display(
         .args(["file with spaces:4:2", "-"])
         .env_remove("DISPLAY")
         .env_remove("WAYLAND_DISPLAY")
+        .env("XDG_ACTIVATION_TOKEN", "forwarded-launch-token")
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -383,6 +384,12 @@ fn existing_instance_cli_forwards_paths_and_stdin_and_returns_without_a_display(
     assert!(incoming.request.files[0]
         .path()
         .ends_with("file with spaces:4:2"));
+    if cfg!(target_os = "linux") {
+        assert_eq!(
+            incoming.request.activation.wayland.as_deref(),
+            Some("forwarded-launch-token")
+        );
+    }
     let spool = incoming.request.stdin.as_ref().unwrap().path();
     let mut doc = Document::from_stdin(ws.editor.id(), &spool).unwrap();
     let page = doc.page(0).unwrap();

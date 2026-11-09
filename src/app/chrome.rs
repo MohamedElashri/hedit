@@ -45,6 +45,17 @@ impl HeditApp {
             )
             .show(ctx, |ui| {
                 egui::menu::bar(ui, |ui| {
+                    if controls::sidebar_button(
+                        ui,
+                        &theme,
+                        self.command_selected(Command::Sidebar),
+                        &self.shortcut_text(Command::Sidebar),
+                    )
+                    .clicked()
+                    {
+                        action = Some(Command::Sidebar);
+                    }
+                    ui.separator();
                     for (title, groups) in [
                         (
                             "File",
@@ -754,11 +765,11 @@ impl HeditApp {
         ));
     }
     fn buffer_sidebar(&mut self, ctx: &egui::Context) {
-        if self.source_control.open {
-            self.source_control_sidebar(ctx);
+        if !self.settings.show_sidebar || self.distraction_free {
             return;
         }
-        if !self.settings.show_sidebar || self.distraction_free {
+        if self.source_control.open {
+            self.source_control_sidebar(ctx);
             return;
         }
         let theme = self.theme.clone();

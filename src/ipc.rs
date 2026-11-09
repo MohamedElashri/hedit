@@ -65,6 +65,8 @@ pub struct Request {
     /// For `hedit -w`: create this file once the files are closed.
     #[serde(default)]
     pub wait: Option<WirePath>,
+    #[serde(default)]
+    pub activation: crate::activation::Launch,
 }
 pub struct Incoming {
     pub request: Request,
@@ -103,6 +105,7 @@ pub fn forward(
     options: &crate::cli::Options,
     stdin: Option<&Path>,
     wait: Option<&Path>,
+    activation: &crate::activation::Launch,
 ) -> Result<bool, String> {
     if !running(directory)? {
         return Ok(false);
@@ -123,6 +126,7 @@ pub fn forward(
         stdin: stdin.map(WirePath::new),
         new_buffer: options.new_buffer,
         wait: wait.map(WirePath::new),
+        activation: activation.clone(),
     };
     let mailbox = directory.join("requests");
     fs::create_dir_all(&mailbox).map_err(|e| e.to_string())?;

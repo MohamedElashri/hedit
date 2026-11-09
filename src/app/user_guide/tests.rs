@@ -1,5 +1,7 @@
 use super::*;
-use crate::app::tests::{click_at, click_label, frame, frame_size, key, text_rect};
+use crate::app::markdown_tests::{click_label, text_rect};
+use crate::app::tests::{click_at, frame, frame_size, key};
+use egui_commonmark::pulldown_cmark::{Event, Parser, Tag};
 
 fn fixture() -> (tempfile::TempDir, egui::Context, HeditApp) {
     let directory = tempfile::tempdir().unwrap();
@@ -25,11 +27,6 @@ fn every_local_document_link_is_bundled_and_every_fragment_exists() {
             "reader documents must not fetch images"
         );
         assert_eq!(reader.topics.len(), reader.prepared.headings.len());
-        // Math and Mermaid examples in the manual must remain examples.
-        assert!(!reader
-            .prepared
-            .rendered
-            .contains("<!--hedit-markdown-figure:"));
         let targets = reader.prepared.targets.clone();
         for target in targets {
             if target.starts_with("https://") || target.starts_with("http://") {

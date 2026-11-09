@@ -28,20 +28,60 @@ struct Key {
 pub(super) struct Raster {
     pub image: egui::ColorImage,
     pub size: egui::Vec2,
+    /// Distance from the image top to the TeX baseline, in logical points.
+    pub baseline: Option<f32>,
 }
 
 struct Entry {
     result: Option<Result<Arc<Raster>, String>>,
-    texture: Option<egui::TextureHandle>,
+    tiles: Vec<Tile>,
+}
+
+struct Tile {
+    texture: egui::TextureHandle,
+    rect: egui::Rect,
+    #[cfg(test)]
+    image: egui::ColorImage,
 }
 
 #[derive(Default)]
 pub(super) struct Media {
     entries: Mutex<HashMap<Key, Arc<Mutex<Entry>>>>,
     working: Arc<std::sync::atomic::AtomicUsize>,
+    font_size: std::sync::atomic::AtomicU32,
 }
 
 impl Media {
+    pub(super) fn set_font_size(&self, size: f32) {
+        if self.font_size.swap(size.to_bits(), Ordering::Relaxed) != size.to_bits() {
+            self.entries.lock().unwrap().clear();
+        }
+    }
+    pub(super) fn inline_height(&self, ui: &egui::Ui, document: u64, source: &str) -> (f32, f32) {
+        let size = egui::TextStyle::Body
+            .resolve(ui.style())
+            .size
+            .round()
+            .clamp(8.0, 96.0) as u16;
+        let key = Key {
+            document,
+            kind: Kind::InlineMath,
+            source: source.to_owned(),
+            size,
+            color: ui.visuals().text_color().to_array(),
+            dark: ui.visuals().dark_mode,
+        };
+        let entries = self.entries.lock().unwrap();
+        entries
+            .get(&key)
+            .and_then(|entry| {
+                let entry = entry.lock().unwrap();
+                let raster = entry.result.as_ref()?.as_ref().ok()?;
+                let (height, text_baseline, baseline) = inline_geometry(ui, raster);
+                Some((height, (baseline - text_baseline).max(0.0).ceil()))
+            })
+            .unwrap_or((f32::from(size) * 1.6, 0.0))
+    }
     pub(super) fn forget(&self, document: u64) {
         self.entries
             .lock()
@@ -49,13 +89,26 @@ impl Media {
             .retain(|key, _| key.document != document);
     }
 
+    pub(super) fn retain(&self, document: u64, figures: &[Figure]) {
+        let keep: std::collections::HashSet<_> = figures
+            .iter()
+            .map(|figure| (figure.kind, figure.source.as_str()))
+            .collect();
+        self.entries.lock().unwrap().retain(|key, _| {
+            key.document != document || keep.contains(&(key.kind, key.source.as_str()))
+        });
+    }
+
     pub(super) fn show(&self, ui: &mut egui::Ui, document: u64, source: &str, kind: Kind) {
         let block = kind != Kind::InlineMath;
-        if block {
-            ui.label("\n");
-        }
         let color = ui.visuals().text_color();
-        let size = ui.text_style_height(&egui::TextStyle::Body).round() as u16;
+        // Font size and line height are different metrics. Using the latter
+        // enlarged equations whenever the reader's line spacing increased.
+        let size = egui::TextStyle::Body
+            .resolve(ui.style())
+            .size
+            .round()
+            .clamp(8.0, 96.0) as u16;
         let key = Key {
             document,
             kind,
@@ -65,12 +118,15 @@ impl Media {
             dark: ui.visuals().dark_mode,
         };
         let mut entries = self.entries.lock().unwrap();
+        entries.retain(|old, _| {
+            old.document != document || (old.color == key.color && old.dark == key.dark)
+        });
         let entry = if let Some(entry) = entries.get(&key) {
             Some(entry.clone())
         } else if self.working.load(Ordering::Relaxed) < 2 {
             let entry = Arc::new(Mutex::new(Entry {
                 result: None,
-                texture: None,
+                tiles: vec![],
             }));
             entries.insert(key.clone(), entry.clone());
             self.working.fetch_add(1, Ordering::Relaxed);
@@ -93,38 +149,56 @@ impl Media {
         let result = entry
             .as_ref()
             .and_then(|entry| entry.lock().unwrap().result.clone());
-        match result {
+        let wide_inline = !block
+            && result
+                .as_ref()
+                .and_then(|r| r.as_ref().ok())
+                .is_some_and(|r| r.size.x > ui.max_rect().width());
+        let contents = |ui: &mut egui::Ui| match &result {
             Some(Ok(raster)) => {
                 let mut entry = entry.as_ref().unwrap().lock().unwrap();
-                let texture = entry.texture.get_or_insert_with(|| {
-                    ui.ctx().load_texture(
-                        format!("markdown-media-{}", egui::Id::new(&key).value()),
-                        raster.image.clone(),
-                        egui::TextureOptions::LINEAR,
-                    )
+                if entry.tiles.is_empty() {
+                    entry.tiles = upload(ui.ctx(), raster, egui::Id::new(&key).value());
+                }
+                let response = if block {
+                    let (rect, response) = ui.allocate_exact_size(
+                        egui::vec2(raster.size.x.ceil(), raster.size.y.ceil()),
+                        egui::Sense::click(),
+                    );
+                    paint(ui, &entry.tiles, rect.min);
+                    response
+                } else {
+                    inline_image(ui, &entry.tiles, raster)
+                };
+                response.on_hover_text(source).context_menu(|ui| {
+                    if ui.button("Copy source").clicked() {
+                        ui.ctx().copy_text(source.to_owned());
+                        ui.close_menu();
+                    }
                 });
-                ui.add(
-                    egui::Image::from_texture((texture.id(), raster.size))
-                        .max_width(ui.available_width().max(1.0)),
-                );
             }
             Some(Err(error)) => {
-                let label = match kind {
-                    Kind::Mermaid => "Mermaid",
-                    _ => "Math",
-                };
                 if block {
                     ui.colored_label(
                         ui.visuals().warn_fg_color,
-                        format!("{label} could not be rendered"),
+                        if kind == Kind::Mermaid {
+                            "Mermaid could not be rendered"
+                        } else {
+                            "Math could not be rendered"
+                        },
                     )
-                    .on_hover_text(&error);
-                    ui.label("\n");
+                    .on_hover_text(error);
                 }
-                ui.monospace(source).on_hover_text(error);
+                ui.label(
+                    RichText::new(source.trim_end_matches('\n'))
+                        .monospace()
+                        .text_style(egui::TextStyle::Monospace),
+                )
+                .on_hover_text(error);
             }
             None => {
                 if block {
+                    ui.set_min_height(56.0);
                     ui.spinner();
                     ui.weak(if kind == Kind::Mermaid {
                         "Rendering diagram…"
@@ -132,13 +206,75 @@ impl Media {
                         "Rendering equation…"
                     });
                 } else {
-                    ui.weak(source);
+                    ui.label(RichText::new(source).monospace());
                 }
             }
+        };
+        if block || wide_inline {
+            if wide_inline {
+                ui.end_row();
+            }
+            let width = ui.available_width().max(1.0);
+            // Wide equations retain their font size and scroll locally instead
+            // of shrinking into illegible text or shifting the whole page.
+            ui.vertical(|ui| {
+                ui.set_width(width);
+                ui.add_space(8.0);
+                egui::ScrollArea::both()
+                    .id_salt(("figure", ui.id(), &key))
+                    .auto_shrink([false, true])
+                    .max_height(480.0)
+                    .show(ui, |ui| {
+                        let natural_width = result
+                            .as_ref()
+                            .and_then(|r| r.as_ref().ok())
+                            .map_or(width, |r| r.size.x);
+                        ui.horizontal_top(|ui| {
+                            ui.add_space(((width - natural_width) / 2.0).max(0.0).round());
+                            ui.vertical(|ui| contents(ui));
+                        });
+                    });
+                ui.add_space(8.0);
+            });
+            if wide_inline {
+                ui.end_row();
+                ui.set_row_height(f32::from(size) * 1.6);
+            }
+        } else {
+            contents(ui);
         }
-        if block {
-            ui.label("\n");
-        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn rendered_count(&self) -> usize {
+        self.entries
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|entry| !entry.lock().unwrap().tiles.is_empty())
+            .count()
+    }
+
+    #[cfg(test)]
+    pub(super) fn baselines(&self) -> HashMap<egui::TextureId, f32> {
+        self.entries
+            .lock()
+            .unwrap()
+            .values()
+            .flat_map(|entry| {
+                let entry = entry.lock().unwrap();
+                let baseline = entry
+                    .result
+                    .as_ref()
+                    .and_then(|r| r.as_ref().ok())
+                    .and_then(|r| r.baseline);
+                entry
+                    .tiles
+                    .iter()
+                    .filter_map(|tile| Some((tile.texture.id(), baseline? - tile.rect.top())))
+                    .collect::<Vec<_>>()
+            })
+            .collect()
     }
 
     #[cfg(test)]
@@ -152,19 +288,112 @@ impl Media {
             .lock()
             .unwrap()
             .values()
-            .filter_map(|entry| {
-                let entry = entry.lock().unwrap();
-                match (&entry.texture, &entry.result) {
-                    (Some(texture), Some(Ok(raster))) => Some((texture.id(), raster.image.clone())),
-                    _ => None,
-                }
+            .flat_map(|entry| {
+                entry
+                    .lock()
+                    .unwrap()
+                    .tiles
+                    .iter()
+                    .map(|tile| (tile.texture.id(), tile.image.clone()))
+                    .collect::<Vec<_>>()
             })
             .collect()
     }
 }
 
+/// Align the TeX baseline with the surrounding reader font's actual baseline.
+/// Center-aligned flow reserves enough ascent AND descent, including fractions.
+fn inline_image(ui: &mut egui::Ui, tiles: &[Tile], raster: &Raster) -> egui::Response {
+    let (height, text_baseline, baseline) = inline_geometry(ui, raster);
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(raster.size.x.ceil(), height.ceil()),
+        egui::Sense::click(),
+    );
+    let image = egui::Rect::from_min_size(
+        egui::pos2(rect.left(), rect.top() + text_baseline - baseline),
+        raster.size,
+    );
+    paint(ui, tiles, image.min);
+    response
+}
+
+/// GPU texture limits apply to each side, independently of the pixel budget.
+/// Tile the raster while retaining its logical dimensions and sampling density.
+fn upload(ctx: &egui::Context, raster: &Raster, id: u64) -> Vec<Tile> {
+    let side = ctx.input(|i| i.max_texture_side).max(1);
+    let [width, height] = raster.image.size;
+    let mut tiles = vec![];
+    for y in (0..height).step_by(side) {
+        for x in (0..width).step_by(side) {
+            let w = side.min(width - x);
+            let h = side.min(height - y);
+            let pixels = (y..y + h)
+                .flat_map(|row| {
+                    raster.image.pixels[row * width + x..row * width + x + w]
+                        .iter()
+                        .copied()
+                })
+                .collect();
+            let image = egui::ColorImage {
+                size: [w, h],
+                pixels,
+            };
+            #[cfg(test)]
+            let retained = image.clone();
+            let texture = ctx.load_texture(
+                format!("markdown-media-{id}-{x}-{y}"),
+                image,
+                egui::TextureOptions::LINEAR,
+            );
+            let at = |x: usize, y: usize| {
+                egui::pos2(
+                    raster.size.x * x as f32 / width as f32,
+                    raster.size.y * y as f32 / height as f32,
+                )
+            };
+            tiles.push(Tile {
+                texture,
+                rect: egui::Rect::from_min_max(at(x, y), at(x + w, y + h)),
+                #[cfg(test)]
+                image: retained,
+            });
+        }
+    }
+    tiles
+}
+
+fn paint(ui: &egui::Ui, tiles: &[Tile], origin: egui::Pos2) {
+    let uv = egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0));
+    for tile in tiles {
+        ui.painter().image(
+            tile.texture.id(),
+            tile.rect.translate(origin.to_vec2()),
+            uv,
+            egui::Color32::WHITE,
+        );
+    }
+}
+
+fn inline_geometry(ui: &egui::Ui, raster: &Raster) -> (f32, f32, f32) {
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let mut job = egui::text::LayoutJob::simple(
+        "x".into(),
+        font.clone(),
+        ui.visuals().text_color(),
+        f32::INFINITY,
+    );
+    job.sections[0].format.line_height = Some(font.size * 1.6);
+    let reference = ui.fonts(|fonts| fonts.layout_job(job));
+    let glyph = &reference.rows[0].glyphs[0];
+    let offset = glyph.pos.y - reference.size().y / 2.0;
+    let baseline = raster.baseline.unwrap_or(raster.size.y * 0.75);
+    let height =
+        (2.0 * (baseline - offset).max(raster.size.y - baseline + offset)).max(reference.size().y);
+    (height.ceil(), glyph.pos.y, baseline)
+}
+
 fn render(key: &Key) -> Result<Raster, String> {
-    let svg = match key.kind {
+    let (svg, baseline) = match key.kind {
         Kind::InlineMath | Kind::DisplayMath => {
             if key.source.len() > 16 * 1024 {
                 return Err("The equation exceeds 16 KiB.".into());
@@ -180,7 +409,22 @@ fn render(key: &Key) -> Result<Raster, String> {
                 color: latex_rust::Color::rgb(key.color[0], key.color[1], key.color[2]),
                 display: key.kind == Kind::DisplayMath,
             };
-            latex_rust::latex_to_svg(&key.source, font, &options).map_err(|e| e.to_string())?
+            let ast = latex_rust::parse(&key.source).map_err(|e| e.to_string())?;
+            let tree = latex_rust::layout(
+                &ast,
+                font,
+                if options.display {
+                    latex_rust::MathStyle::Display
+                } else {
+                    latex_rust::MathStyle::Text
+                },
+            )
+            .map_err(|e| e.to_string())?;
+            let baseline = f32::from_bits(tree.height.to_ieee32_bits()) * f32::from(key.size);
+            (
+                latex_rust::render_svg(&tree, font, &options).map_err(|e| e.to_string())?,
+                Some(baseline),
+            )
         }
         Kind::Mermaid => {
             if key.source.len() > 64 * 1024 || key.source.lines().count() > 1000 {
@@ -196,10 +440,16 @@ fn render(key: &Key) -> Result<Raster, String> {
                 options.theme = mermaid_rs_renderer::Theme::dark();
             }
             options.theme.font_size = f32::from(key.size);
-            mermaid_rs_renderer::render_strict(&key.source, options).map_err(|e| e.to_string())?
+            (
+                mermaid_rs_renderer::render_strict(&key.source, options)
+                    .map_err(|e| e.to_string())?,
+                None,
+            )
         }
     };
-    rasterize(&svg)
+    let mut raster = rasterize(&svg)?;
+    raster.baseline = baseline;
+    Ok(raster)
 }
 
 fn rasterize(svg: &str) -> Result<Raster, String> {
@@ -240,6 +490,7 @@ fn rasterize(svg: &str) -> Result<Raster, String> {
             pixels.data(),
         ),
         size,
+        baseline: None,
     })
 }
 

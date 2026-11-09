@@ -1442,8 +1442,7 @@ impl HeditApp {
                 return;
             }
         };
-        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        self.request_activation(ctx, incoming.request.activation.clone());
         if incoming.request.new_buffer {
             let result = self.workspace.new_buffer();
             self.report(result);

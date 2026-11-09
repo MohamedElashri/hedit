@@ -1,10 +1,53 @@
-use super::tests::{click_label, finish_app_job, frame, frame_size, text_rect};
+use super::tests::{finish_app_job, frame, frame_size};
 use super::*;
 use hedit::session::MarkdownView;
 
 const SAMPLE: &str = "# Project notebook\n\nA **native** preview of your _Markdown_.\n\n## Release checklist\n\n- [x] Save recovery data\n- [ ] Review the release\n\n> Keep notes close to the code.\n\n| Feature | Status |\n| --- | --- |\n| Live preview | Ready |\n\n```rust\nlet message = \"Hello, Markdown!\";\n```\n\n[Project website](https://example.com)\n";
 
-fn fixture(text: &str) -> (tempfile::TempDir, egui::Context, HeditApp) {
+/// Text can be a styled span inside a paragraph's continuous native galley.
+pub(super) fn text_rect(shape: &egui::Shape, label: &str) -> Option<egui::Rect> {
+    if let Some(rect) = super::tests::text_rect(shape, label) {
+        return Some(rect);
+    }
+    let egui::Shape::Text(text) = shape else {
+        return None;
+    };
+    let at = text.galley.text().find(label)?;
+    let start = text.galley.text()[..at].chars().count();
+    let end = start + label.chars().count();
+    let mut index = 0;
+    let mut rect = egui::Rect::NOTHING;
+    for row in &text.galley.rows {
+        for glyph in &row.glyphs {
+            if (start..end).contains(&index) {
+                rect = rect.union(glyph.logical_rect().translate(text.pos.to_vec2()));
+            }
+            index += 1;
+        }
+        if row.ends_with_newline {
+            index += 1;
+        }
+    }
+    rect.is_positive().then_some(rect)
+}
+
+pub(super) fn click_label(ctx: &egui::Context, app: &mut HeditApp, label: &str) {
+    let output = frame(ctx, app, vec![]);
+    let rect = output
+        .shapes
+        .iter()
+        .find_map(|s| super::tests::text_rect(&s.shape, label))
+        .or_else(|| {
+            output
+                .shapes
+                .iter()
+                .find_map(|s| text_rect(&s.shape, label))
+        })
+        .unwrap_or_else(|| panic!("Missing text: {label}"));
+    super::tests::click_at(ctx, app, rect.center(), egui::vec2(1280.0, 820.0));
+}
+
+pub(super) fn fixture(text: &str) -> (tempfile::TempDir, egui::Context, HeditApp) {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("notes.md");
     std::fs::write(&path, text).unwrap();
@@ -27,11 +70,15 @@ fn visible(output: &egui::FullOutput, label: &str) -> bool {
 
 const MEDIA_SAMPLE: &str = "# Equations and diagrams\n\nInline math $E = mc^2$ stays beside the text.\n\n$$\n\\frac{1}{2} + x^2\n$$\n\n```math\n\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}\n```\n\n```mermaid\nflowchart LR\n    A[Edit Markdown] --> B[Live preview]\n    B --> C[Recover next launch]\n```\n\nOrdinary Markdown continues below.\n";
 
-fn finish_media(ctx: &egui::Context, app: &mut HeditApp, expected: usize) -> egui::FullOutput {
+pub(super) fn finish_media(
+    ctx: &egui::Context,
+    app: &mut HeditApp,
+    expected: usize,
+) -> egui::FullOutput {
     let started = Instant::now();
     loop {
         let output = frame(ctx, app, vec![]);
-        if !app.markdown.media.pending() && app.markdown.media.textures().len() == expected {
+        if !app.markdown.media.pending() && app.markdown.media.rendered_count() == expected {
             return output;
         }
         assert!(
@@ -71,7 +118,7 @@ fn markdown_math_and_mermaid_render_refresh_and_release_without_editing_source()
     assert_eq!(app.active().page.text, MEDIA_SAMPLE);
     assert_eq!(app.active().page.info.revision, revision);
     app.set_theme(&ctx, hedit::theme::builtin("One Light").unwrap());
-    finish_media(&ctx, &mut app, 8);
+    finish_media(&ctx, &mut app, 4);
 
     // Revision changes detach old jobs and textures; their completion must not
     // repopulate the current document's cache.
@@ -114,8 +161,8 @@ fn markdown_invalid_math_and_mermaid_keep_the_source_readable() {
         if visible(&output, "Math could not be rendered")
             && visible(&output, "Mermaid could not be rendered")
         {
-            assert!(visible(&output, "\\frac{\n"));
-            assert!(visible(&output, "not a diagram\n"));
+            assert!(visible(&output, "\\frac{"));
+            assert!(visible(&output, "not a diagram"));
             break;
         }
         assert!(started.elapsed() < Duration::from_secs(10));
@@ -684,7 +731,7 @@ fn export_markdown_nested_previews() {
 }
 
 #[test]
-fn markdown_preview_button_uses_the_full_editor_area_after_split() {
+fn markdown_preview_fills_the_editor_with_a_centered_readable_column_after_split() {
     let paragraph = "The preview should use the available editor width. ".repeat(50);
     let (_directory, ctx, mut app) = fixture(&format!("# Wide preview\n\n{paragraph}\n"));
     let size = egui::vec2(1920.0, 1080.0);
@@ -710,9 +757,10 @@ fn markdown_preview_button_uses_the_full_editor_area_after_split() {
         .find_map(|s| text_rect(&s.shape, paragraph.trim_end()))
         .unwrap();
     assert!(
-        paragraph.right() >= size.x - 80.0,
-        "preview text remained in a narrow column: {paragraph:?}"
+        paragraph.width() >= 650.0 && paragraph.width() <= 800.0,
+        "the reading column should remain comfortable in wide windows: {paragraph:?}"
     );
+    assert!((paragraph.center().x - (220.0 + size.x) / 2.0).abs() < 30.0);
     let status = egui::containers::panel::PanelState::load(&ctx, egui::Id::new("status"))
         .unwrap()
         .rect;
@@ -866,23 +914,12 @@ fn markdown_nested_quoted_blocks_keep_content_and_reference_links() {
         );
     }
     assert_eq!(app.active().page.text, source);
-    // Wrapped inline links include preceding indentation in their galley bounds;
-    // click a visible glyph rather than the center of that padded rectangle.
     let link = output
         .shapes
         .iter()
-        .find_map(|s| match &s.shape {
-            egui::Shape::Text(t) if t.galley.job.text == "linked note" => {
-                let row = &t.galley.rows[0];
-                let glyph = &row.glyphs[0];
-                Some(
-                    t.pos
-                        + egui::vec2(glyph.pos.x + glyph.advance_width / 2.0, row.rect.center().y),
-                )
-            }
-            _ => None,
-        })
-        .unwrap();
+        .find_map(|s| text_rect(&s.shape, "linked note"))
+        .unwrap()
+        .center();
     super::tests::click_at(&ctx, &mut app, link, size);
     finish_app_job(&mut app, &ctx);
     assert_eq!(app.active().page.text, "# Linked document\n");
@@ -1134,20 +1171,35 @@ fn markdown_native_reader_has_clear_links_real_emphasis_and_theme_colored_copyab
             "the reader must render menu arrows without system font installation"
         );
         let heading = galley("A readable heading");
-        let emphasis = galley("important text");
+        let format = |text: &str| {
+            output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(t) => {
+                        let at = t.galley.text().find(text)?;
+                        t.galley
+                            .job
+                            .sections
+                            .iter()
+                            .find(|s| s.byte_range.contains(&at))
+                            .map(|s| &s.format)
+                    }
+                    _ => None,
+                })
+                .unwrap()
+        };
+        let emphasis = format("important text");
         assert_eq!(
             heading.job.sections[0].format.font_id.family,
             egui::FontFamily::Name("hedit-reader-strong".into())
         );
         assert_eq!(
-            emphasis.job.sections[0].format.font_id.family,
+            emphasis.font_id.family,
             egui::FontFamily::Name("hedit-reader-strong".into())
         );
-        assert!(
-            heading.job.sections[0].format.font_id.size
-                > emphasis.job.sections[0].format.font_id.size
-        );
-        let link = &galley("a clear link").job.sections[0].format;
+        assert!(heading.job.sections[0].format.font_id.size > emphasis.font_id.size);
+        let link = format("a clear link");
         assert!(link.underline.width > 0.0);
         assert_ne!(link.color, theme.text.color());
         assert!(

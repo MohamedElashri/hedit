@@ -1,3 +1,4 @@
+pub mod activation;
 pub mod bidi;
 pub mod brand;
 pub mod build;

@@ -30,3 +30,25 @@ height, instead of allocating blank two-line labels. List rows use the same brea
 logic. Quote text retains normal contrast inside a padded panel with an accent
 rule. `app/markdown_style.rs` supplies hedit's shared typography and native code
 blocks, including its own theme-aware, frame-cached highlighter and Copy button.
+
+The reader now accepts `PreparedMarkdown`, an owned event stream that can be
+parsed on a worker and reused across frames. Navigation callbacks receive the
+original source span of each block and its heading level. hedit uses this single
+parser for contents, links, rendering, and split scrolling; it no longer injects
+HTML anchors, figure placeholders, or extra paragraphs into Markdown source.
+The parser types are re-exported so applications do not need a second parser
+version for indexing the same document.
+
+Inline math is measured before paragraph, list-item, and table-cell layout.
+Its ascent and descent reserve space before any preceding text is drawn, and
+the application retains the actual TeX baseline when painting the equation.
+Headings and loose list paragraphs always finish their row. Tables own a local
+horizontal scroll area, HTML comments are hidden, and inline `<br>` elements
+insert a line break. Regression coverage includes wide figures, nested math,
+contents navigation, and media lifecycle tests in `app/markdown_reader_tests.rs`.
+
+Text, emphasis, inline code, links, and punctuation share a continuous native
+text layout within each inline run. Links retain per-row hit targets, native
+selection/copying, keyboard activation, and accessibility information. A link
+ending near the right margin cannot leave its following comma on a new line
+solely because the link and punctuation were separate widgets.

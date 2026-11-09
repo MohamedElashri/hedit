@@ -12,6 +12,99 @@ fn app() -> (tempfile::TempDir, egui::Context, HeditApp) {
     (directory, ctx, app)
 }
 
+fn sidebar_toggle(output: &egui::FullOutput) -> egui::Rect {
+    output
+        .shapes
+        .iter()
+        .find_map(|shape| match &shape.shape {
+            egui::Shape::Rect(rect)
+                if rect.rect.size() == egui::vec2(16.0, 14.0) && rect.stroke.width == 1.3 =>
+            {
+                assert!(shape.clip_rect.contains_rect(rect.rect));
+                Some(rect.rect)
+            }
+            _ => None,
+        })
+        .expect("visible sidebar toggle")
+}
+
+#[test]
+fn sidebar_button_hides_and_restores_each_workspace_without_changing_files() {
+    for theme in [Theme::default(), Theme::paper()] {
+        for source_control in [false, true] {
+            for tabs in [false, true] {
+                let (_directory, ctx, mut app) = app();
+                app.set_theme(&ctx, theme.clone());
+                app.settings.show_tab_bar = tabs;
+                app.source_control.open = source_control;
+                app.workspace.open[0].page.text = "Keep this unsaved text.".into();
+                app.workspace.edit(0, "").unwrap();
+                for _ in 0..3 {
+                    frame_size(&ctx, &mut app, vec![], SIZE);
+                }
+                let output = frame_size(&ctx, &mut app, vec![], SIZE);
+                let toggle = sidebar_toggle(&output);
+                let file = output
+                    .shapes
+                    .iter()
+                    .find_map(|s| text_rect(&s.shape, "File"))
+                    .unwrap();
+                assert!(toggle.right() < file.left());
+                click_at(&ctx, &mut app, toggle.center(), SIZE);
+                assert!(!app.settings.show_sidebar);
+                assert_eq!(app.source_control.open, source_control);
+                let output = frame_size(&ctx, &mut app, vec![], SIZE);
+                assert!(!output.shapes.iter().any(|s| {
+                    text_rect(
+                        &s.shape,
+                        if source_control {
+                            "Repository"
+                        } else {
+                            "Files"
+                        },
+                    )
+                    .is_some()
+                }));
+                assert_eq!(sidebar_toggle(&output), toggle);
+                click_at(&ctx, &mut app, toggle.center(), SIZE);
+                assert!(app.settings.show_sidebar);
+                assert_eq!(app.source_control.open, source_control);
+                let output = frame_size(&ctx, &mut app, vec![], SIZE);
+                assert!(output.shapes.iter().any(|s| {
+                    text_rect(
+                        &s.shape,
+                        if source_control {
+                            "Repository"
+                        } else {
+                            "Files"
+                        },
+                    )
+                    .is_some()
+                }));
+                assert_eq!(app.active().page.text, "Keep this unsaved text.");
+            }
+        }
+    }
+}
+
+#[test]
+fn sidebar_button_restores_the_sidebar_from_distraction_free_mode() {
+    for shown in [false, true] {
+        let (_directory, ctx, mut app) = app();
+        app.settings.show_sidebar = shown;
+        app.execute(&ctx, Command::DistractionFree);
+        for _ in 0..3 {
+            frame_size(&ctx, &mut app, vec![], SIZE);
+        }
+        assert!(!app.command_selected(Command::Sidebar));
+        let output = frame_size(&ctx, &mut app, vec![], SIZE);
+        click_at(&ctx, &mut app, sidebar_toggle(&output).center(), SIZE);
+        assert!(!app.distraction_free);
+        assert!(app.settings.show_sidebar);
+        assert!(app.command_selected(Command::Sidebar));
+    }
+}
+
 #[test]
 fn redesign_tabs_display_rtl_filenames_and_switch_to_the_correct_buffer() {
     for name in ["ملاحظات.txt", "שלום.txt", "notes-مرحبا.rs"] {
