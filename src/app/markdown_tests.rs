@@ -77,9 +77,11 @@ pub(super) fn finish_media(
 ) -> egui::FullOutput {
     let started = Instant::now();
     loop {
-        let output = frame(ctx, app, vec![]);
+        let _ = frame(ctx, app, vec![]);
         if !app.markdown.media.pending() && app.markdown.media.rendered_count() == expected {
-            return output;
+            // A shared texture can finish after an earlier occurrence was
+            // painted as a placeholder. Capture one complete ready frame.
+            return frame(ctx, app, vec![]);
         }
         assert!(
             started.elapsed() < Duration::from_secs(15),
