@@ -52,6 +52,71 @@ fn markdown_inline_code_uses_the_surrounding_type_size() {
     }
 }
 
+#[test]
+fn markdown_nested_inline_styles_restore_the_outer_formatting() {
+    for (source, kind) in [
+        ("**Outer __inner__ tail** plain.", "strong"),
+        ("*Outer _inner_ tail* plain.", "emphasis"),
+        ("~~Outer ~~inner~~ tail~~ plain.", "strike"),
+    ] {
+        let output = render(source, 14.0, egui::vec2(1280.0, 1100.0));
+        let galley = &text(&output, "Outer inner tail plain.").galley;
+        let styled = |needle: &str| {
+            let at = galley.text().find(needle).unwrap();
+            let format = &galley
+                .job
+                .sections
+                .iter()
+                .find(|s| s.byte_range.contains(&at))
+                .unwrap()
+                .format;
+            match kind {
+                "strong" => {
+                    format.font_id.family == egui::FontFamily::Name("hedit-reader-strong".into())
+                }
+                "emphasis" => format.italics,
+                _ => format.strikethrough.width > 0.0,
+            }
+        };
+        for span in ["Outer", "inner", "tail"] {
+            assert!(styled(span), "{kind} lost on {span}");
+        }
+        assert!(
+            !styled("plain"),
+            "{kind} must end at its own closing delimiter"
+        );
+    }
+}
+
+#[test]
+fn markdown_table_headers_keep_their_weight_after_inline_styles() {
+    let output = render(
+        "| **Bold** tail | _Italic_ tail |\n| --- | --- |\n| Plain | Also plain |\n",
+        14.0,
+        egui::vec2(1280.0, 1100.0),
+    );
+    for label in ["Bold tail", "Italic tail"] {
+        assert!(
+            text(&output, label)
+                .galley
+                .job
+                .sections
+                .iter()
+                .all(|s| s.format.font_id.family
+                    == egui::FontFamily::Name("hedit-reader-strong".into())),
+            "header must remain semibold throughout {label}"
+        );
+    }
+    for label in ["Plain", "Also plain"] {
+        assert!(text(&output, label)
+            .galley
+            .job
+            .sections
+            .iter()
+            .all(|s| s.format.font_id.family == egui::FontFamily::Name("hedit-reader".into())));
+    }
+}
+
 fn text<'a>(output: &'a egui::FullOutput, label: &str) -> &'a egui::epaint::TextShape {
     output
         .shapes

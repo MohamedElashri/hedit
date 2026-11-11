@@ -64,3 +64,7 @@ delimiters add no widgets, and the backend's trailing empty row is discarded.
 Text cells honor Markdown's left/center/right alignment, including their link
 hit targets; mixed media cells retain their baseline-aware inline flow. Tables
 still scroll horizontally within the reading column when necessary.
+
+Emphasis, strong, and strikethrough tags save and restore their enclosing style
+instead of clearing a boolean on close. This preserves outer formatting after
+nested spans and keeps table headings semibold after explicit strong markup.
