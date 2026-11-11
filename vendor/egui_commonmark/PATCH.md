@@ -57,3 +57,10 @@ Inline code inherits its surrounding paragraph or heading size. Its line box
 compensates for the monospace font's ascent, aligning code with the prose
 baseline while centering the background within the shared line. Regression
 geometry and visual audit fixtures live in `app/markdown_layout_tests.rs`.
+
+Tables allocate fixed-width, top-aligned cells inside rows that reserve the
+full height of their tallest cell. Empty cells retain their width, parser cell
+delimiters add no widgets, and the backend's trailing empty row is discarded.
+Text cells honor Markdown's left/center/right alignment, including their link
+hit targets; mixed media cells retain their baseline-aware inline flow. Tables
+still scroll horizontally within the reading column when necessary.
