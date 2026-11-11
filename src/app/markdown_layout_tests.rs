@@ -53,6 +53,158 @@ fn markdown_inline_code_uses_the_surrounding_type_size() {
 }
 
 #[test]
+fn markdown_wrapped_code_keeps_the_surrounding_line_spacing() {
+    let code = "inline code ".repeat(30);
+    for font_size in [14.0, 22.0, 29.0] {
+        for scale in [1.0, 1.5, 2.0] {
+            let (_directory, ctx, mut app) = fixture(&format!("`{code}`"));
+            ctx.set_pixels_per_point(scale);
+            app.settings.font_size = font_size;
+            app.execute(&ctx, Command::MarkdownPreview);
+            let size = egui::vec2(720.0, 1600.0);
+            for _ in 0..4 {
+                frame_size(&ctx, &mut app, vec![], size);
+            }
+            let output = frame_size(&ctx, &mut app, vec![], size);
+            let code = &text(&output, &code).galley;
+            let line_height = (font_size + 3.0).clamp(16.0, 32.0) * 1.6;
+            assert!(code.rows.len() > 2);
+            for row in &code.rows {
+                assert!((row.rect.height() - line_height).abs() <= 1.0, "code-only rows must retain prose spacing at scale {scale}: {} versus {line_height}", row.rect.height());
+                assert!(
+                    (row.glyphs[0].logical_rect().center().y - row.rect.center().y).abs() <= 1.0
+                );
+            }
+            for pair in code.rows.windows(2) {
+                assert!(
+                    (pair[1].glyphs[0].pos.y - pair[0].glyphs[0].pos.y - line_height).abs() <= 1.0,
+                    "wrapped baselines must remain evenly spaced"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn markdown_wrapped_code_keeps_link_targets_and_native_copying() {
+    for linked in [false, true] {
+        let code = "code words ".repeat(18);
+        let source = if linked {
+            format!("[`{code}`](target.txt)")
+        } else {
+            format!("`{code}`")
+        };
+        let (directory, ctx, mut app) = fixture(&source);
+        let target = directory.path().join("target.txt");
+        std::fs::write(&target, "Opened from wrapped code.").unwrap();
+        app.execute(&ctx, Command::MarkdownPreview);
+        let size = egui::vec2(720.0, 1400.0);
+        for _ in 0..4 {
+            frame_size(&ctx, &mut app, vec![], size);
+        }
+        let output = frame_size(&ctx, &mut app, vec![], size);
+        let shape = text(&output, &code);
+        let first = shape.galley.rows[0].glyphs[0]
+            .logical_rect()
+            .translate(shape.pos.to_vec2());
+        let last = shape
+            .galley
+            .rows
+            .last()
+            .unwrap()
+            .glyphs
+            .last()
+            .unwrap()
+            .logical_rect()
+            .translate(shape.pos.to_vec2());
+        assert!(shape.galley.rows.len() > 1);
+        if linked {
+            super::tests::click_at(&ctx, &mut app, last.center(), size);
+            super::tests::finish_app_job(&mut app, &ctx);
+            assert_eq!(
+                app.active().page.info.path.as_deref(),
+                std::fs::canonicalize(target).unwrap().to_str()
+            );
+        } else {
+            let start = egui::pos2(first.left() + 0.1, first.center().y);
+            let end = egui::pos2(last.right() - 0.1, last.center().y);
+            let button = |pos, pressed| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            };
+            frame_size(
+                &ctx,
+                &mut app,
+                vec![egui::Event::PointerMoved(start), button(start, true)],
+                size,
+            );
+            frame_size(&ctx, &mut app, vec![egui::Event::PointerMoved(end)], size);
+            frame_size(&ctx, &mut app, vec![button(end, false)], size);
+            let output = frame_size(&ctx, &mut app, vec![egui::Event::Copy], size);
+            assert!(output.platform_output.commands.iter().any(|command| matches!(command, egui::OutputCommand::CopyText(value) if value == &code)), "wrapped inline code must retain native selection and exact source text copying");
+            assert_eq!(app.active().page.text, source);
+        }
+    }
+}
+
+#[test]
+fn markdown_table_images_do_not_shift_later_columns() {
+    let source = "| Image | Label |\n| --- | --- |\n| ![Wide](wide.png) | Beside image |\n| Plain | Beside text |\n";
+    let (directory, ctx, mut app) = fixture(source);
+    image::RgbaImage::from_pixel(800, 80, image::Rgba([80, 120, 160, 255]))
+        .save(directory.path().join("wide.png"))
+        .unwrap();
+    app.execute(&ctx, Command::MarkdownPreview);
+    let size = egui::vec2(720.0, 1100.0);
+    let started = Instant::now();
+    loop {
+        frame_size(&ctx, &mut app, vec![], size);
+        let uri = format!("hedit-markdown://{}/wide.png", app.active().view.id);
+        if matches!(
+            ctx.try_load_image(&uri, egui::load::SizeHint::default()),
+            Ok(egui::load::ImagePoll::Ready { .. })
+        ) {
+            for _ in 0..4 {
+                frame_size(&ctx, &mut app, vec![], size);
+            }
+            let output = frame_size(&ctx, &mut app, vec![], size);
+            let beside_image = output.shapes.iter().find_map(|s| match &s.shape {
+                egui::Shape::Text(t) if t.galley.text() == "Beside image" => Some(t.pos.x),
+                _ => None,
+            });
+            assert!(
+                (beside_image.expect("second cell must remain visible")
+                    - text(&output, "Beside text").pos.x)
+                    .abs()
+                    <= 1.0,
+                "an image must not expand only its own row's first column"
+            );
+            break;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "image must finish loading"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[test]
+fn markdown_table_footnotes_stay_in_the_text_flow() {
+    let output = render(
+        "| Header |\n| --- |\n| Before[^note] after |\n\n[^note]: A footnote.\n",
+        14.0,
+        egui::vec2(1280.0, 1100.0),
+    );
+    assert!(
+        (text(&output, "Before").pos.y - text(&output, " after").pos.y).abs() <= 1.0,
+        "footnotes must not split a short cell across rows"
+    );
+}
+
+#[test]
 fn markdown_nested_inline_styles_restore_the_outer_formatting() {
     for (source, kind) in [
         ("**Outer __inner__ tail** plain.", "strong"),
