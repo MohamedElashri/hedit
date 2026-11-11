@@ -22,7 +22,7 @@ pub(crate) fn newline(ui: &mut Ui) {
     ui.set_row_height(egui::TextStyle::Body.resolve(ui.style()).size * 1.6);
 }
 
-fn rich_text(style: &Style, ui: &Ui, text: &str) -> egui::RichText {
+fn rich_text(style: &Style, ui: &Ui, text: &str, height: Option<f32>) -> egui::RichText {
     let mut inline = style.clone();
     inline.heading = None;
     inline.quote = false;
@@ -41,9 +41,39 @@ fn rich_text(style: &Style, ui: &Ui, text: &str) -> egui::RichText {
         body * [2.0, 1.55, 1.28, 1.12, 1.0, 1.0][usize::from(level).min(5)]
     });
     if style.heading.is_some() {
-        text = text.size(size).strong();
+        text = text.strong();
     }
-    text.line_height(Some(size * if style.heading.is_some() { 1.3 } else { 1.6 }))
+    text = text.size(size);
+    let height = height.unwrap_or(size * if style.heading.is_some() { 1.3 } else { 1.6 });
+    let height = if style.code {
+        // Fixed line heights align the tops of different fonts in egui. Shorten
+        // the code's line box by twice the ascent difference so center alignment
+        // gives it the prose baseline and a vertically symmetric background.
+        let mut prose = TextStyle::Body.resolve(ui.style());
+        if style.strong || style.heading.is_some() {
+            if let Some(strong) = ui
+                .style()
+                .text_styles
+                .get(&TextStyle::Name("MarkdownStrong".into()))
+            {
+                prose.family = strong.family.clone();
+            }
+        }
+        prose.size = size;
+        let mut code = TextStyle::Monospace.resolve(ui.style());
+        code.size = size;
+        let ascent = |font| {
+            ui.fonts(|fonts| {
+                let galley = fonts.layout_no_wrap("M".into(), font, egui::Color32::WHITE);
+                let glyph = &galley.rows[0].glyphs[0];
+                glyph.font_impl_ascent + 0.5 * (glyph.font_height - glyph.font_impl_height)
+            })
+        };
+        (height - 2.0 * (ascent(prose) - ascent(code))).max(1.0)
+    } else {
+        height
+    };
+    text.line_height(Some(height))
 }
 
 fn with_math_font<R>(ui: &mut Ui, heading: Option<u8>, contents: impl FnOnce(&mut Ui) -> R) -> R {
@@ -961,10 +991,7 @@ impl<'f> CommonMarkViewerInternal<'f> {
     }
 
     fn event_text(&mut self, text: CowStr, ui: &mut Ui) {
-        let mut rich_text = rich_text(&self.text_style, ui, &text);
-        if let Some(height) = self.paragraph_height {
-            rich_text = rich_text.line_height(Some(height));
-        }
+        let mut rich_text = rich_text(&self.text_style, ui, &text, self.paragraph_height);
         if let Some(image) = &mut self.image {
             image.alt_text.push(rich_text);
         } else if let Some(block) = &mut self.code_block {

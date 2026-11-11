@@ -52,3 +52,8 @@ text layout within each inline run. Links retain per-row hit targets, native
 selection/copying, keyboard activation, and accessibility information. A link
 ending near the right margin cannot leave its following comma on a new line
 solely because the link and punctuation were separate widgets.
+
+Inline code inherits its surrounding paragraph or heading size. Its line box
+compensates for the monospace font's ascent, aligning code with the prose
+baseline while centering the background within the shared line. Regression
+geometry and visual audit fixtures live in `app/markdown_layout_tests.rs`.
