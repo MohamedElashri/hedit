@@ -76,6 +76,42 @@ fn rich_text(style: &Style, ui: &Ui, text: &str, height: Option<f32>) -> egui::R
     text.line_height(Some(height))
 }
 
+/// Code's shorter, baseline-adjusted box must not tighten code-only wrapped
+/// lines. Pad the laid-out rows without changing source text or font metrics.
+fn pad_inline_rows(galley: &mut std::sync::Arc<egui::Galley>, height: f32) -> bool {
+    let pixels_per_point = galley.pixels_per_point;
+    let snap = |value: f32| (value * pixels_per_point).round() / pixels_per_point;
+    let height = snap(height);
+    if !galley
+        .rows
+        .iter()
+        .any(|row| row.rect.height() < height - 0.5)
+    {
+        return false;
+    }
+    let galley = std::sync::Arc::make_mut(galley);
+    let mut offset = 0.0;
+    let mut mesh_bounds = egui::Rect::NOTHING;
+    for row in &mut galley.rows {
+        let padding = (height - row.rect.height()).max(0.0);
+        let shift = egui::vec2(0.0, offset + snap(padding / 2.0));
+        for glyph in &mut row.glyphs {
+            glyph.pos += shift;
+        }
+        for vertex in &mut row.visuals.mesh.vertices {
+            vertex.pos += shift;
+        }
+        row.visuals.mesh_bounds = row.visuals.mesh_bounds.translate(shift);
+        mesh_bounds = mesh_bounds.union(row.visuals.mesh_bounds);
+        row.rect = row.rect.translate(egui::vec2(0.0, offset));
+        row.rect.max.y += padding;
+        offset += padding;
+    }
+    galley.rect.max.y += offset;
+    galley.mesh_bounds = mesh_bounds;
+    true
+}
+
 fn with_math_font<R>(ui: &mut Ui, heading: Option<u8>, contents: impl FnOnce(&mut Ui) -> R) -> R {
     if let Some(level) = heading {
         let mut font = TextStyle::Body.resolve(ui.style());
@@ -519,13 +555,20 @@ impl<'f> CommonMarkViewerInternal<'f> {
             first.leading_space = width - ui.available_size_before_wrap().x;
         }
         let mut pos = egui::pos2(ui.max_rect().left(), ui.cursor().top());
-        let galley = ui.fonts(|fonts| fonts.layout_job(flow.job.clone()));
+        let mut galley = ui.fonts(|fonts| fonts.layout_job(flow.job.clone()));
+        let height = self.paragraph_height.unwrap_or_else(|| {
+            let body = TextStyle::Body.resolve(ui.style()).size;
+            self.text_style.heading.map_or(body * 1.6, |level| {
+                body * [2.0, 1.55, 1.28, 1.12, 1.0, 1.0][usize::from(level).min(5)] * 1.3
+            })
+        });
+        let padded = pad_inline_rows(&mut galley, height);
         // The native Label owns selection and copying. Text, emphasis, code,
         // links, and their punctuation share one Unicode wrapping decision.
         if let Some(align) = flow.cell_alignment {
             let response = ui
                 .with_layout(egui::Layout::top_down(align), |ui| {
-                    ui.add(egui::Label::new(flow.job).wrap())
+                    ui.add(egui::Label::new(galley.clone()))
                 })
                 .inner;
             pos = match align {
@@ -533,6 +576,19 @@ impl<'f> CommonMarkViewerInternal<'f> {
                 egui::Align::Center => response.rect.center_top(),
                 egui::Align::Max => response.rect.right_top(),
             };
+        } else if padded {
+            // Match Label's wrapped-row allocation, then let a native Label
+            // paint/select the adjusted galley at exactly the same position.
+            for row in &galley.rows {
+                ui.allocate_rect(row.rect.translate(pos.to_vec2()), egui::Sense::hover());
+            }
+            let mut child = ui.new_child(
+                egui::UiBuilder::new()
+                    .id_salt(("inline-flow", self.flow_serial))
+                    .max_rect(galley.rect.translate(pos.to_vec2()))
+                    .layout(egui::Layout::top_down(egui::Align::LEFT)),
+            );
+            child.add(egui::Label::new(galley.clone()));
         } else {
             ui.add(egui::Label::new(flow.job));
         }
@@ -1247,7 +1303,24 @@ impl<'f> CommonMarkViewerInternal<'f> {
             }
             pulldown_cmark::TagEnd::Image { .. } => {
                 if let Some(image) = self.image.take() {
-                    image.end(ui, options);
+                    if self.is_table {
+                        // The document-wide image limit can exceed a cell's
+                        // width. Keep subsequent columns at their shared x.
+                        let response = ui.add(
+                            egui::Image::from_uri(&image.uri)
+                                .fit_to_original_size(1.0)
+                                .max_width(max_width.min(ui.available_width())),
+                        );
+                        if options.show_alt_text_on_hover && !image.alt_text.is_empty() {
+                            response.on_hover_ui_at_pointer(|ui| {
+                                for alt in image.alt_text {
+                                    ui.label(alt);
+                                }
+                            });
+                        }
+                    } else {
+                        image.end(ui, options);
+                    }
                 }
             }
             pulldown_cmark::TagEnd::HtmlBlock => {

@@ -68,3 +68,9 @@ still scroll horizontally within the reading column when necessary.
 Emphasis, strong, and strikethrough tags save and restore their enclosing style
 instead of clearing a boolean on close. This preserves outer formatting after
 nested spans and keeps table headings semibold after explicit strong markup.
+
+Code-only wrapped rows retain the paragraph's minimum line height by padding
+the prepared galley, including its glyph positions, meshes, and selection rows.
+The native Label still owns text selection/copying, and link hit targets use the
+same padded galley. Table images are bounded by their cell width so loading a
+wide image cannot shift the remaining columns in only that row.
