@@ -118,6 +118,8 @@ side. Review light, dark, and compact output when changing reader layout:
 
 ```sh
 HEDIT_PREVIEW_DIR=/tmp/hedit-reader cargo test --locked --bin hedit export_markdown_reader_previews -- --ignored
+# Inline code, wrapping tables, nested styles, and compact split panes
+HEDIT_PREVIEW_DIR=/tmp/hedit-layout cargo test --locked --bin hedit export_markdown_layout_previews -- --ignored
 ```
 
 ## macOS builds
