@@ -746,17 +746,22 @@ In Split, scrolling either pane also scrolls the other to the corresponding part
 of the document. This works side by side and in the stacked layout. Horizontal
 scrolling stays independent.
 
-The preview and offline guide share a centered reading column, larger text,
-comfortable line spacing, distinct headings and emphasis, and underlined links
-in your theme's accent color. The page fills the editor while keeping prose at a
-readable line length. Editor zoom also changes the reading size.
+The preview and offline guide use a document layout modeled on VS Code's
+Markdown preview: compact text, consistent block spacing, a padded page that
+uses the available pane width, and rules below the first two heading levels.
+Emphasis uses real italic and semibold fonts. Inline code shares the surrounding
+text size and baseline. Links use your theme's accent color and underline on
+hover or keyboard focus; right-click a link to copy its address. Editor zoom
+also changes the reading size.
 Use **Contents** in the preview toolbar to jump to a heading or the top of the
 document without moving the source caret.
 
-Tables wrap within their columns and scroll horizontally when the table is too
-wide. Code blocks use your syntax colors and have a **Copy** button. Long code
-lines scroll horizontally inside the block; tall blocks scroll vertically. The preview also renders lists,
-task lists, and quotes. Section links scroll to their headings, including headings in
+Tables size their columns to the content, wrap long cells, and scroll
+horizontally when the table is too wide. Code blocks use your syntax colors;
+**Copy** appears on hover or keyboard focus. Long lines scroll horizontally
+inside the block, and tall samples remain part of the document's normal vertical
+scroll. Text stays selectable across paragraphs and code blocks. The preview
+also renders nested lists, task lists, quotes, and GitHub-style alerts. Section links scroll to their headings, including headings in
 quotes and lists. Markdown file links stay in Preview and honor `#section`
 fragments; other file links open in the editor. Local PNG and JPEG images resolve
 relative to the Markdown file's folder; Save As updates that folder. Images

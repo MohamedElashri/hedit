@@ -132,7 +132,7 @@ fn markdown_styled_text_and_link_punctuation_wrap_as_continuous_prose() {
         .job
         .sections
         .iter()
-        .any(|s| s.format.underline.width > 0.0));
+        .any(|s| s.format.color == app.theme.accent.color()));
     assert_eq!(app.active().page.text, source);
 }
 
@@ -229,8 +229,8 @@ fn markdown_wide_equations_scroll_locally_without_shrinking_or_widening_prose() 
             r.union(egui::Rect::from_min_max(v.pos, v.pos))
         })
     });
-    assert!(bounds.width() > 900.0 && figures.iter().all(|p| p.clip_rect.width() < 800.0));
-    assert!(rect(&output, "A paragraph after the wide equation.").left() < 400.0);
+    assert!(bounds.width() > 900.0 && figures.iter().all(|p| p.clip_rect.width() < 1050.0));
+    assert!(rect(&output, "A paragraph after the wide equation.").left() < 300.0);
     assert_eq!(app.active().page.text, source);
 }
 

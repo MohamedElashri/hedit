@@ -733,7 +733,7 @@ fn export_markdown_nested_previews() {
 }
 
 #[test]
-fn markdown_preview_fills_the_editor_with_a_centered_readable_column_after_split() {
+fn markdown_preview_fills_the_editor_with_a_padded_document_after_split() {
     let paragraph = "The preview should use the available editor width. ".repeat(50);
     let (_directory, ctx, mut app) = fixture(&format!("# Wide preview\n\n{paragraph}\n"));
     let size = egui::vec2(1920.0, 1080.0);
@@ -759,8 +759,8 @@ fn markdown_preview_fills_the_editor_with_a_centered_readable_column_after_split
         .find_map(|s| text_rect(&s.shape, paragraph.trim_end()))
         .unwrap();
     assert!(
-        paragraph.width() >= 650.0 && paragraph.width() <= 800.0,
-        "the reading column should remain comfortable in wide windows: {paragraph:?}"
+        paragraph.width() >= 1500.0 && paragraph.right() < size.x - 20.0,
+        "the document should use its preview pane with consistent side padding: {paragraph:?}"
     );
     assert!((paragraph.center().x - (220.0 + size.x) / 2.0).abs() < 30.0);
     let status = egui::containers::panel::PanelState::load(&ctx, egui::Id::new("status"))
@@ -1202,7 +1202,10 @@ fn markdown_native_reader_has_clear_links_real_emphasis_and_theme_colored_copyab
         );
         assert!(heading.job.sections[0].format.font_id.size > emphasis.font_id.size);
         let link = format("a clear link");
-        assert!(link.underline.width > 0.0);
+        assert_eq!(
+            link.underline.width, 0.0,
+            "links are underlined on hover or focus"
+        );
         assert_ne!(link.color, theme.text.color());
         assert!(
             Theme::contrast(
@@ -1216,10 +1219,26 @@ fn markdown_native_reader_has_clear_links_real_emphasis_and_theme_colored_copyab
             .sections
             .iter()
             .any(|s| s.format.color == theme.keyword.color()));
+        // Copy appears over the code on hover and remains keyboard accessible.
+        let code_shape = output
+            .shapes
+            .iter()
+            .find_map(|s| match &s.shape {
+                egui::Shape::Text(t) if t.galley.text() == code.text() => Some(t),
+                _ => None,
+            })
+            .unwrap();
+        let output = frame(
+            &ctx,
+            &mut app,
+            vec![egui::Event::PointerMoved(
+                code_shape.pos + egui::vec2(4.0, 4.0),
+            )],
+        );
         let copy = output
             .shapes
             .iter()
-            .find_map(|s| text_rect(&s.shape, "Copy"))
+            .find_map(|s| text_rect(&s.shape, "Copy").or_else(|| text_rect(&s.shape, "Copied")))
             .unwrap()
             .center();
         let button = |pressed| egui::Event::PointerButton {
@@ -1261,6 +1280,22 @@ fn markdown_native_tables_and_long_code_do_not_push_the_reader_outside_its_pane(
         frame_size(&ctx, &mut app, vec![], size);
     }
     let output = frame_size(&ctx, &mut app, vec![], size);
+    let code_shape = output
+        .shapes
+        .iter()
+        .find_map(|s| match &s.shape {
+            egui::Shape::Text(t) if t.galley.text() == code => Some(t),
+            _ => None,
+        })
+        .unwrap();
+    let output = frame_size(
+        &ctx,
+        &mut app,
+        vec![egui::Event::PointerMoved(
+            code_shape.pos + egui::vec2(4.0, 4.0),
+        )],
+        size,
+    );
     let copy = output
         .shapes
         .iter()

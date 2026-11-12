@@ -105,8 +105,16 @@ Internal links and Contents stay in the modal, and only explicit external-link
 clicks open a browser. Keep Help, About, F1, the command palette, and key bindings
 routed through `Command::UserGuide`.
 
-Markdown preparation retains an owned `PreparedMarkdown` event stream per
-revision, using the renderer's re-exported parser types. Index original source
+Markdown preparation retains an owned `PreparedMarkdown` event stream and a
+bounded document tree per revision, using the renderer's re-exported parser types.
+The native layout follows [VS Code's Markdown preview stylesheet](https://github.com/microsoft/vscode/blob/main/extensions/markdown-language-features/media/markdown.css):
+14px body text at the default zoom, 1.6 line spacing, 26px horizontal padding,
+explicit block margins, intrinsic table columns, and simple quote rules.
+`parsers/document.rs` owns block geometry; `parsers/inline.rs` owns continuous
+native text layout, selection, links, and baseline-aware media. Keep these
+responsibilities separate so nested blocks cannot leak state into later content.
+Code fences grow vertically with the document and scroll only horizontally;
+their Copy control overlays the frame on hover or keyboard focus. Index original source
 spans for headings, Contents, and block-level split scrolling; do not insert
 marker HTML or synthetic paragraphs into the source. Large revisions prepare
 on a worker, and stale replies cannot replace a newer revision. Inline math
@@ -120,6 +128,8 @@ side. Review light, dark, and compact output when changing reader layout:
 HEDIT_PREVIEW_DIR=/tmp/hedit-reader cargo test --locked --bin hedit export_markdown_reader_previews -- --ignored
 # Inline code, wrapping tables, nested styles, and compact split panes
 HEDIT_PREVIEW_DIR=/tmp/hedit-layout cargo test --locked --bin hedit export_markdown_layout_previews -- --ignored
+# Document typography, tables, alerts, code, and source/preview layouts
+HEDIT_PREVIEW_DIR=/tmp/hedit-document cargo test --locked --bin hedit export_markdown_document_previews -- --ignored
 ```
 
 ## macOS builds
@@ -198,7 +208,7 @@ without a window belongs in the library, with tests under `tests/`.
 | Launch activation | `activation.rs` (one-shot presentation, Wayland activation tokens and a nonblocking native protocol binding); `main.rs`, `ipc.rs`, `app/quality.rs` (launch and existing-session handoff) |
 | App features | One file each in `src/app/`, named after the feature: `auto_complete.rs`, `definitions.rs`, `spell_check.rs`, `macros.rs`, `snippet_fields.rs`, `find_tools.rs`, `changes.rs`, `fold_gutter.rs`, `font_picker.rs`, and so on |
 | Integrated terminal | `terminal.rs` (Ghostty VT and bounded PTY IO); `app/terminal_panel.rs` (tab lifecycle, onboarding, input focus); `app/terminal_tabs.rs` (compact tab strip, reordering, menus); `app/terminal_text.rs` (bidirectional cells and cached Rustybuzz/ab_glyph output); `app/terminal_tests.rs` (UI regression tests) |
-| Markdown | `app/markdown.rs` (source/preview layout, background preparation, contents, links, local images), `app/markdown_scroll.rs` (bidirectional split scrolling), `app/markdown_style.rs` (shared reading column, fonts, contrast, and cached native code blocks), `app/markdown_media.rs` (equation baselines and cached native math/Mermaid rendering), `app/markdown_tests.rs`, `app/markdown_reader_tests.rs`; per-tab modes are stored in `session.rs` |
+| Markdown | `app/markdown.rs` (source/preview layout, background preparation, contents, links, local images), `app/markdown_scroll.rs` (bidirectional split scrolling), `app/markdown_style.rs` (shared document padding, fonts, contrast, and cached native code blocks), `app/markdown_media.rs` (equation baselines and cached native math/Mermaid rendering), `app/markdown_tests.rs`, `app/markdown_reader_tests.rs`, `app/markdown_document_tests.rs`; per-tab modes are stored in `session.rs` |
 | Offline help | `app/user_guide.rs` embeds `USER_GUIDE.md`, related documentation, and notices with `include_str!`; `app/user_guide/tests.rs` covers links, modal input, and layout |
 | Settings | `settings.rs` (the `settings.json` schema), `app/settings_store.rs`, `app/preferences.rs`, `app/settings_pages.rs` |
 
@@ -432,12 +442,12 @@ on worker threads without a browser or network fetches. Keep the
 [Mermaid MIT notice](assets/licenses/mermaid-rs-renderer-MIT.txt) and
 [resvg MIT notice](assets/licenses/resvg-MIT.txt) with the packages too.
 
-The native Markdown renderer includes a local dependency patch for nested block
+The native Markdown renderer includes a local dependency patch for document
 layout; see [the patch notes](vendor/egui_commonmark/PATCH.md). Keep its
 [MIT notice](assets/licenses/egui_commonmark-MIT.txt) with distributed packages.
 
-Document views use bundled Noto Sans regular and semibold fonts, plus Noto Sans
-Symbols for symbols. Editor and application fonts keep their existing settings.
+Document views use bundled Noto Sans regular, semibold, italic, and semibold
+italic fonts, plus Noto Sans Symbols for symbols. Editor and application fonts keep their existing settings.
 Keep the [Noto font license](assets/licenses/Noto-Sans-OFL.txt) and font files
 under `assets/fonts/` with distributed packages. The source fonts come from
 [the Noto project](https://github.com/notofonts/noto-fonts).

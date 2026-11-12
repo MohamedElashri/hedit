@@ -13,29 +13,40 @@ pub(super) fn apply(ui: &mut egui::Ui, theme: &Theme, font_size: f32) {
         (egui::TextStyle::Heading, body * 1.8, strong.clone()),
         (egui::TextStyle::Name("MarkdownStrong".into()), body, strong),
         (
+            egui::TextStyle::Name("MarkdownEmphasis".into()),
+            body,
+            egui::FontFamily::Name("hedit-reader-emphasis".into()),
+        ),
+        (
+            egui::TextStyle::Name("MarkdownStrongEmphasis".into()),
+            body,
+            egui::FontFamily::Name("hedit-reader-strong-emphasis".into()),
+        ),
+        (
             egui::TextStyle::Monospace,
-            (body - 1.0).max(12.0),
+            body,
             egui::FontFamily::Monospace,
         ),
     ] {
         style.text_styles.insert(name, FontId::new(size, family));
     }
-    style.spacing.item_spacing.y = (body * 0.6).round();
+    style.spacing.item_spacing.y = 0.0;
     style.visuals.override_text_color = None;
     style.visuals.widgets.noninteractive.fg_stroke.color = theme.text.color();
     style.visuals.widgets.active.fg_stroke.color = theme.text.color();
     style.visuals.hyperlink_color = link_color(theme).color();
     style.visuals.code_bg_color = theme.elevated.color();
     style.visuals.faint_bg_color = theme.panel.color();
-    style.visuals.striped = true;
+    style.visuals.panel_fill = theme.surface.color();
+    style.visuals.striped = false;
     style.url_in_tooltip = true;
 }
 
 fn body_size(font_size: f32) -> f32 {
-    (font_size + 3.0).clamp(16.0, 32.0)
+    font_size.clamp(10.0, 32.0)
 }
 
-/// A comfortable measure in full-window mode, with responsive side margins.
+/// Match the editor preview's document padding instead of a magazine column.
 /// Code, tables, and equations own their horizontal scrolling inside this page.
 pub(super) fn reader<R>(
     ui: &mut egui::Ui,
@@ -46,13 +57,13 @@ pub(super) fn reader<R>(
     ui.scope(|ui| {
         apply(ui, theme, font_size);
         let available = ui.available_width();
-        let padding = (available * 0.04).clamp(12.0, 32.0);
-        let width = (body_size(font_size) * 44.0).min((available - 2.0 * padding).max(1.0));
+        let padding = 26.0_f32.min(((available - 1.0) / 2.0).max(0.0));
+        let width = (available - 2.0 * padding).max(1.0);
         ui.horizontal_top(|ui| {
             ui.add_space(((available - width) / 2.0).max(0.0));
             ui.vertical(|ui| {
                 ui.set_width(width);
-                ui.add_space(24.0);
+                ui.add_space(body_size(font_size));
                 let result = contents(ui);
                 ui.add_space(48.0);
                 result
@@ -128,7 +139,7 @@ impl egui::cache::ComputerMut<CodeKey<'_>, Arc<egui::text::LayoutJob>> for Highl
             key.theme,
         );
         for section in &mut job.sections {
-            section.format.line_height = Some(f32::from_bits(key.size) * 1.45);
+            section.format.line_height = Some(f32::from_bits(key.size) * 1.357);
         }
         Arc::new(job)
     }
@@ -153,72 +164,93 @@ pub(super) fn code_block(ui: &mut egui::Ui, theme: &Theme, source: &str, languag
                 theme,
             })
     });
-    let width = ui
-        .available_width()
-        .min(ui.ctx().screen_rect().width())
-        .max(80.0);
-    egui::Frame::new()
-        .fill(theme.background.color())
+    let width = ui.available_width().max(1.0);
+    let scale = size / 14.0;
+    let padding = 16.0 * scale;
+    let content_width = (width - 2.0 * padding - 2.0).max(1.0);
+    let frame = egui::Frame::new()
+        .fill(theme.panel.color())
         .stroke(egui::Stroke::new(1.0_f32, theme.border.color()))
-        .corner_radius(4)
-        .inner_margin(12.0)
+        .corner_radius(3)
+        .inner_margin(padding)
         .show(ui, |ui| {
-            ui.vertical(|ui| {
-                ui.set_width((width - 24.0).max(56.0));
-                let id = ui.make_persistent_id("code-copied");
-                let copied = ui.data(|d| d.get_temp::<bool>(id).unwrap_or(false));
-                let mut copy = false;
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(if language.is_empty() {
-                            "Plain text"
-                        } else {
-                            language
-                        })
-                        .small()
-                        .color(theme.muted.color()),
-                    );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let response = ui
-                            .small_button(if copied { "Copied" } else { "Copy" })
-                            .on_hover_text("Copy code");
-                        copy = response.clicked();
-                        if copied && !response.hovered() {
-                            ui.data_mut(|d| d.insert_temp(id, false));
-                        }
-                    });
+            ui.set_width(content_width);
+            // A code sample participates in the document's normal vertical
+            // flow and selection. Only long lines own a horizontal scrollbar.
+            egui::ScrollArea::horizontal()
+                .id_salt("code-lines")
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    ui.set_min_width(content_width);
+                    let galley = ui.fonts(|fonts| fonts.layout_job((*job).clone()));
+                    ui.add(egui::Label::new(galley).selectable(true));
                 });
-                ui.add_space(4.0);
-                let code_width = ui.available_width();
-                let output = egui::ScrollArea::both()
-                    .auto_shrink([false, true])
-                    .max_height(420.0)
-                    .show(ui, |ui| {
-                        let mut text = text;
-                        let mut layouter = |ui: &egui::Ui, _: &str, _: f32| {
-                            ui.fonts(|f| f.layout_job((*job).clone()))
-                        };
-                        egui::TextEdit::multiline(&mut text)
-                            .code_editor()
-                            .font(egui::TextStyle::Monospace)
-                            .frame(false)
-                            .desired_width(code_width)
-                            .desired_rows(1)
-                            .layouter(&mut layouter)
-                            .show(ui)
-                    })
-                    .inner;
-                if copy {
-                    use egui::TextBuffer;
-                    let selected = output
-                        .cursor_range
-                        .map(|cursor| text.char_range(cursor.as_sorted_char_range()))
-                        .filter(|s| !s.is_empty());
-                    ui.ctx().copy_text(selected.unwrap_or(text).to_owned());
-                    ui.data_mut(|d| d.insert_temp(id, true));
-                }
-            });
         });
+    let id = ui.make_persistent_id("copy-code");
+    let copied_id = id.with("copied-at");
+    let time = ui.input(|input| input.time);
+    let copied = ui
+        .data(|data| data.get_temp::<f64>(copied_id))
+        .is_some_and(|at| time - at < 2.0);
+    let size = egui::vec2(54.0 * scale, 24.0 * scale);
+    let rect = egui::Rect::from_min_size(
+        egui::pos2(
+            frame.response.rect.right() - size.x - 8.0 * scale,
+            frame.response.rect.top() + 8.0 * scale,
+        ),
+        size,
+    );
+    let response = ui
+        .interact(rect, id, egui::Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("Copy code");
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), "Copy code")
+    });
+    let hovered = ui
+        .input(|input| input.pointer.hover_pos())
+        .is_some_and(|pos| frame.response.rect.contains(pos));
+    if hovered || response.has_focus() || copied {
+        ui.painter().rect_filled(
+            rect,
+            3,
+            if response.hovered() {
+                theme.elevated.color()
+            } else {
+                theme.panel.color()
+            },
+        );
+        ui.painter().rect_stroke(
+            rect,
+            3,
+            egui::Stroke::new(
+                1.0_f32,
+                if response.has_focus() {
+                    theme.accent.color()
+                } else {
+                    theme.border.color()
+                },
+            ),
+            egui::StrokeKind::Inside,
+        );
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            if copied { "Copied" } else { "Copy" },
+            egui::TextStyle::Small.resolve(ui.style()),
+            theme.text.color(),
+        );
+    }
+    let keyboard = response.has_focus()
+        && ui.input_mut(|input| {
+            input.consume_key(Modifiers::NONE, Key::Enter)
+                || input.consume_key(Modifiers::NONE, Key::Space)
+        });
+    if response.clicked() || keyboard {
+        ui.ctx().copy_text(text.to_owned());
+        ui.data_mut(|data| data.insert_temp(copied_id, time));
+        ui.ctx().request_repaint_after(Duration::from_secs(2));
+    }
 }
 
 #[cfg(test)]

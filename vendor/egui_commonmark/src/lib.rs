@@ -86,18 +86,19 @@ pub use pulldown_cmark;
 /// Applications can construct this on a worker instead of parsing on every frame.
 pub struct PreparedMarkdown {
     events: Vec<(pulldown_cmark::Event<'static>, std::ops::Range<usize>)>,
+    document: parsers::document::Document,
 }
 
 impl PreparedMarkdown {
     pub fn new(source: &str, math: bool) -> Self {
+        let events: Vec<_> =
+            pulldown_cmark::Parser::new_ext(source, parsers::document::parser_options_math(math))
+                .into_offset_iter()
+                .map(|(event, span)| (event.into_static(), span))
+                .collect();
         Self {
-            events: pulldown_cmark::Parser::new_ext(
-                source,
-                parsers::pulldown::parser_options_math(math),
-            )
-            .into_offset_iter()
-            .map(|(event, span)| (event.into_static(), span))
-            .collect(),
+            document: parsers::document::Document::new(&events),
+            events,
         }
     }
 
@@ -110,8 +111,14 @@ impl PreparedMarkdown {
 
 /// Called at the start of a source block. Heading levels are one through six.
 pub type RenderBlockFn = dyn Fn(&mut egui::Ui, std::ops::Range<usize>, Option<u8>);
-/// Height needed by an inline equation, including its baseline padding.
-pub type MeasureMathFn = dyn Fn(&egui::Ui, &str) -> (f32, f32);
+/// Cached geometry needed before an inline equation is painted.
+#[derive(Clone, Copy, Debug)]
+pub struct InlineMathMetrics {
+    pub height: f32,
+    pub above: f32,
+    pub width: f32,
+}
+pub type MeasureMathFn = dyn Fn(&egui::Ui, &str) -> InlineMathMetrics;
 
 /// Application-provided native code block, with an optional language identifier.
 pub type RenderCodeBlockFn = dyn Fn(&mut egui::Ui, &str, Option<&str>);
@@ -283,18 +290,15 @@ impl<'f> CommonMarkViewer<'f> {
         prepared: &PreparedMarkdown,
     ) -> egui::InnerResponse<()> {
         egui_commonmark_backend::prepare_show(cache, ui.ctx());
-        parsers::pulldown::CommonMarkViewerInternal::new(
+        parsers::document::Renderer::new(
+            &prepared.events,
+            cache,
+            &self.options,
             self.code_block_fn,
             self.block_fn,
             self.measure_math_fn,
         )
-        .show_events(
-            ui,
-            cache,
-            &self.options,
-            prepared.events.iter().cloned(),
-            None,
-        )
+        .show(ui, &prepared.document)
         .0
     }
 
@@ -305,16 +309,8 @@ impl<'f> CommonMarkViewer<'f> {
         cache: &mut CommonMarkCache,
         text: &str,
     ) -> egui::InnerResponse<()> {
-        egui_commonmark_backend::prepare_show(cache, ui.ctx());
-
-        let (response, _) = parsers::pulldown::CommonMarkViewerInternal::new(
-            self.code_block_fn,
-            self.block_fn,
-            self.measure_math_fn,
-        )
-        .show(ui, cache, &self.options, text, None);
-
-        response
+        let prepared = PreparedMarkdown::new(text, self.options.math_fn.is_some());
+        self.show_prepared(ui, cache, &prepared)
     }
 
     /// Shows rendered markdown, and allows the rendered ui to mutate the source text.
@@ -329,12 +325,16 @@ impl<'f> CommonMarkViewer<'f> {
         self.options.mutable = true;
         egui_commonmark_backend::prepare_show(cache, ui.ctx());
 
-        let (response, checkmark_events) = parsers::pulldown::CommonMarkViewerInternal::new(
+        let prepared = PreparedMarkdown::new(text, self.options.math_fn.is_some());
+        let (response, checkmark_events) = parsers::document::Renderer::new(
+            &prepared.events,
+            cache,
+            &self.options,
             self.code_block_fn,
             self.block_fn,
             self.measure_math_fn,
         )
-        .show(ui, cache, &self.options, text, None);
+        .show(ui, &prepared.document);
 
         // Update source text for checkmarks that were clicked
         for ev in checkmark_events {
@@ -348,20 +348,8 @@ impl<'f> CommonMarkViewer<'f> {
         response
     }
 
-    /// Shows markdown inside a [`ScrollArea`].
-    /// This function is much more performant than just calling [`show`] inside a [`ScrollArea`],
-    /// because it only renders elements that are visible.
-    ///
-    /// # Caveat
-    ///
-    /// This assumes that the markdown is static. If it does change, you have to clear the cache
-    /// by using [`clear_scrollable_with_id`](CommonMarkCache::clear_scrollable_with_id) or
-    /// [`clear_scrollable`](CommonMarkCache::clear_scrollable). If the content changes every frame,
-    /// it's faster to call [`show`] directly.
-    ///
-    /// [`ScrollArea`]: egui::ScrollArea
-    /// [`show`]: crate::CommonMarkViewer::show
-    #[doc(hidden)] // Buggy in scenarios more complex than the example application
+    /// Convenience wrapper for a vertically scrolling document. Reuse a
+    /// `PreparedMarkdown` with `show_prepared` when the source is unchanged.
     #[cfg(feature = "pulldown_cmark")]
     pub fn show_scrollable(
         self,
@@ -370,75 +358,8 @@ impl<'f> CommonMarkViewer<'f> {
         cache: &mut CommonMarkCache,
         text: &str,
     ) {
-        egui_commonmark_backend::prepare_show(cache, ui.ctx());
-        parsers::pulldown::CommonMarkViewerInternal::new(
-            self.code_block_fn,
-            self.block_fn,
-            self.measure_math_fn,
-        )
-        .show_scrollable(Id::new(source_id), ui, cache, &self.options, text);
-    }
-}
-
-pub(crate) struct ListLevel {
-    current_number: Option<u64>,
-}
-
-#[derive(Default)]
-pub(crate) struct List {
-    items: Vec<ListLevel>,
-    has_list_begun: bool,
-}
-
-impl List {
-    pub fn start_level_with_number(&mut self, start_number: u64) {
-        self.items.push(ListLevel {
-            current_number: Some(start_number),
-        });
-    }
-
-    pub fn start_level_without_number(&mut self) {
-        self.items.push(ListLevel {
-            current_number: None,
-        });
-    }
-
-    pub fn is_inside_a_list(&self) -> bool {
-        !self.items.is_empty()
-    }
-
-    pub fn start_item(&mut self, ui: &mut egui::Ui, options: &CommonMarkOptions) {
-        // To ensure that newlines are only inserted within the list and not before it
-        if self.has_list_begun {
-            parsers::pulldown::newline(ui);
-        } else {
-            self.has_list_begun = true;
-        }
-
-        let len = self.items.len();
-        if let Some(item) = self.items.last_mut() {
-            ui.label(" ".repeat((len - 1) * options.indentation_spaces));
-
-            if let Some(number) = &mut item.current_number {
-                number_point(ui, &number.to_string());
-                *number += 1;
-            } else if len > 1 {
-                bullet_point_hollow(ui);
-            } else {
-                bullet_point(ui);
-            }
-        } else {
-            unreachable!();
-        }
-
-        ui.add_space(4.0);
-    }
-
-    pub fn end_level(&mut self, ui: &mut egui::Ui, insert_newline: bool) {
-        self.items.pop();
-
-        if self.items.is_empty() && insert_newline {
-            parsers::pulldown::newline(ui);
-        }
+        egui::ScrollArea::vertical()
+            .id_salt(Id::new(source_id))
+            .show(ui, |ui| self.show(ui, cache, text));
     }
 }
