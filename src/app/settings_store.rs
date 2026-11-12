@@ -465,6 +465,16 @@ pub(super) fn set_editor_font(ctx: &egui::Context, font: Option<(Vec<u8>, u32)>)
             "reader-semibold",
             include_bytes!("../../assets/fonts/NotoSans-SemiBold.ttf").as_slice(),
         ),
+        (
+            "hedit-reader-emphasis",
+            "reader-italic",
+            include_bytes!("../../assets/fonts/NotoSans-Italic.ttf").as_slice(),
+        ),
+        (
+            "hedit-reader-strong-emphasis",
+            "reader-semibold-italic",
+            include_bytes!("../../assets/fonts/NotoSans-SemiBoldItalic.ttf").as_slice(),
+        ),
     ] {
         fonts.font_data.insert(
             name.into(),

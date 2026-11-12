@@ -57,7 +57,12 @@ impl Media {
             self.entries.lock().unwrap().clear();
         }
     }
-    pub(super) fn inline_height(&self, ui: &egui::Ui, document: u64, source: &str) -> (f32, f32) {
+    pub(super) fn inline_height(
+        &self,
+        ui: &egui::Ui,
+        document: u64,
+        source: &str,
+    ) -> egui_commonmark::InlineMathMetrics {
         let size = egui::TextStyle::Body
             .resolve(ui.style())
             .size
@@ -78,9 +83,26 @@ impl Media {
                 let entry = entry.lock().unwrap();
                 let raster = entry.result.as_ref()?.as_ref().ok()?;
                 let (height, text_baseline, baseline) = inline_geometry(ui, raster);
-                Some((height, (baseline - text_baseline).max(0.0).ceil()))
+                Some(egui_commonmark::InlineMathMetrics {
+                    height,
+                    above: (baseline - text_baseline).max(0.0).ceil(),
+                    width: raster.size.x.ceil(),
+                })
             })
-            .unwrap_or((f32::from(size) * 1.6, 0.0))
+            .unwrap_or_else(|| egui_commonmark::InlineMathMetrics {
+                height: f32::from(size) * 1.6,
+                above: 0.0,
+                width: ui.fonts(|fonts| {
+                    fonts
+                        .layout_no_wrap(
+                            source.to_owned(),
+                            egui::TextStyle::Monospace.resolve(ui.style()),
+                            egui::Color32::WHITE,
+                        )
+                        .size()
+                        .x
+                }),
+            })
     }
     pub(super) fn forget(&self, document: u64) {
         self.entries

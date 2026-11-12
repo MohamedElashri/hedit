@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Rebuild native Markdown layout around VS Code's preview typography, block spacing, intrinsic tables, and lightweight quotes and alerts.
+- Use real italic fonts, selectable code blocks that scroll with the document, and code Copy controls and link underlines on hover or keyboard focus.
+
 ## [0.2.3] - 2026-11-11
 
 - Fix Markdown inline code sizing, baseline alignment, and wrapped line spacing.

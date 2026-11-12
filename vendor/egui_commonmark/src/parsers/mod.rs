@@ -1,1 +1,2 @@
-pub mod pulldown;
+pub(crate) mod document;
+pub(crate) mod inline;

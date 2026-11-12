@@ -67,7 +67,7 @@ fn markdown_wrapped_code_keeps_the_surrounding_line_spacing() {
             }
             let output = frame_size(&ctx, &mut app, vec![], size);
             let code = &text(&output, &code).galley;
-            let line_height = (font_size + 3.0).clamp(16.0, 32.0) * 1.6;
+            let line_height = font_size.clamp(10.0, 32.0) * 1.6;
             assert!(code.rows.len() > 2);
             for row in &code.rows {
                 assert!((row.rect.height() - line_height).abs() <= 1.0, "code-only rows must retain prose spacing at scale {scale}: {} versus {line_height}", row.rect.height());
@@ -226,7 +226,9 @@ fn markdown_nested_inline_styles_restore_the_outer_formatting() {
                 "strong" => {
                     format.font_id.family == egui::FontFamily::Name("hedit-reader-strong".into())
                 }
-                "emphasis" => format.italics,
+                "emphasis" => {
+                    format.font_id.family == egui::FontFamily::Name("hedit-reader-emphasis".into())
+                }
                 _ => format.strikethrough.width > 0.0,
             }
         };
@@ -255,7 +257,9 @@ fn markdown_table_headers_keep_their_weight_after_inline_styles() {
                 .sections
                 .iter()
                 .all(|s| s.format.font_id.family
-                    == egui::FontFamily::Name("hedit-reader-strong".into())),
+                    == egui::FontFamily::Name("hedit-reader-strong".into())
+                    || s.format.font_id.family
+                        == egui::FontFamily::Name("hedit-reader-strong-emphasis".into())),
             "header must remain semibold throughout {label}"
         );
     }
@@ -327,6 +331,25 @@ fn markdown_tables_honor_column_alignment_and_keep_empty_cells() {
         "empty middle cell must keep the last column in place"
     );
     assert!((bounds("F").right() - bounds("I").right()).abs() <= 1.0);
+}
+
+#[test]
+fn markdown_table_alignment_is_shared_by_short_and_long_rows() {
+    let long =
+        "A long description that should stay in its own column and share the header alignment.";
+    let source = format!("| Option | Description | Default |\n| :--- | :---: | ---: |\n| `font_size` | {long} | `14` |\n| A longer option name | Short | 123 |\n");
+    let output = render(&source, 14.0, egui::vec2(1280.0, 1100.0));
+    let center = |label| {
+        let shape = text(&output, label);
+        shape.pos.x + shape.galley.rect.center().x
+    };
+    assert!(
+        (center("Description") - center(long)).abs() <= 1.0,
+        "{} versus {}",
+        center("Description"),
+        center(long)
+    );
+    assert!((center("Short") - center(long)).abs() <= 1.0);
 }
 
 #[test]
