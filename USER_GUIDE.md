@@ -744,7 +744,10 @@ changes appear live, and each tab's view mode is kept between launches. For an u
 
 In Split, scrolling either pane also scrolls the other to the corresponding part
 of the document. This works side by side and in the stacked layout. Horizontal
-scrolling stays independent.
+scrolling stays independent. Drag the divider to resize the panes, or focus it
+and use the arrow keys (hold Shift for larger steps). Double-click the divider
+to restore equal sizes. Side-by-side and stacked layouts keep separate sizes
+for each document and editor group during the session.
 
 The preview and offline guide use a document layout modeled on VS Code's
 Markdown preview: compact text, consistent block spacing, a padded page that

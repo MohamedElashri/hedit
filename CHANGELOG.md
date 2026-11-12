@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Simplify Markdown view controls and allow resizing split panes with a mouse or keyboard.
+
 - Rebuild native Markdown layout around VS Code's preview typography, block spacing, intrinsic tables, and lightweight quotes and alerts.
 - Use real italic fonts, selectable code blocks that scroll with the document, and code Copy controls and link underlines on hover or keyboard focus.
 
