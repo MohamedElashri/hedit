@@ -454,11 +454,6 @@ impl HeditApp {
             .and_then(|links| links.prepared.clone());
         let mut jump = None;
         ui.horizontal_wrapped(|ui| {
-            ui.label(
-                RichText::new("Markdown")
-                    .strong()
-                    .color(self.theme.accent.color()),
-            );
             for (label, view, action) in [
                 ("Source", MarkdownView::Source, Command::MarkdownSource),
                 ("Split", MarkdownView::Split, Command::MarkdownSplit),
@@ -467,7 +462,7 @@ impl HeditApp {
                 if ui
                     .add_enabled(
                         self.command_enabled(action),
-                        egui::Button::new(label).selected(mode == view),
+                        egui::SelectableLabel::new(mode == view, label),
                     )
                     .clicked()
                 {
@@ -543,16 +538,105 @@ impl HeditApp {
             }
             MarkdownView::Split => {
                 let area = ui.available_rect_before_wrap();
+                let stacked = area.width() < 680.0;
+                let id = ui.make_persistent_id((
+                    "markdown-divider",
+                    self.active().view.id,
+                    pane,
+                    stacked,
+                ));
+                let mut ratio = ui.data(|data| data.get_temp::<f32>(id).unwrap_or(0.5));
+                let length = if stacked { area.height() } else { area.width() };
+                let start = if stacked { area.top() } else { area.left() };
+                let minimum =
+                    ((if stacked { 100.0 } else { 240.0 }) / length.max(1.0)).clamp(0.1, 0.45);
+                ratio = ratio.clamp(minimum, 1.0 - minimum);
+                let position = start + length * ratio;
+                let mut divider = area;
+                if stacked {
+                    divider.min.y = position - 4.0;
+                    divider.max.y = position + 4.0;
+                } else {
+                    divider.min.x = position - 4.0;
+                    divider.max.x = position + 4.0;
+                }
+                let response = ui
+                    .interact(divider, id, egui::Sense::click_and_drag())
+                    .on_hover_cursor(if stacked {
+                        egui::CursorIcon::ResizeVertical
+                    } else {
+                        egui::CursorIcon::ResizeHorizontal
+                    })
+                    .on_hover_text("Drag or use arrow keys to resize; double-click to reset");
+                if response.clicked() {
+                    response.request_focus();
+                }
+                if response.has_focus() {
+                    let change = ui.input_mut(|input| {
+                        let modifiers = input.modifiers;
+                        if modifiers != Modifiers::NONE && modifiers != Modifiers::SHIFT {
+                            return 0.0;
+                        }
+                        let (backward, forward) = if stacked {
+                            (Key::ArrowUp, Key::ArrowDown)
+                        } else {
+                            (Key::ArrowLeft, Key::ArrowRight)
+                        };
+                        let step = if modifiers.shift { 0.05 } else { 0.01 };
+                        if input.consume_key(modifiers, backward) {
+                            -step
+                        } else if input.consume_key(modifiers, forward) {
+                            step
+                        } else {
+                            0.0
+                        }
+                    });
+                    ratio = (ratio + change).clamp(minimum, 1.0 - minimum);
+                }
+                if response.double_clicked() {
+                    ratio = 0.5;
+                } else if response.dragged() {
+                    if let Some(pointer) = response.interact_pointer_pos() {
+                        let pointer = if stacked { pointer.y } else { pointer.x };
+                        ratio = ((pointer - start) / length.max(1.0)).clamp(minimum, 1.0 - minimum);
+                    }
+                }
+                response.widget_info(|| {
+                    egui::WidgetInfo::slider(
+                        ui.is_enabled(),
+                        f64::from(ratio * 100.0),
+                        "Source pane percentage",
+                    )
+                });
+                ui.data_mut(|data| data.insert_temp(id, ratio));
+                let position = start + length * ratio;
                 let mut source = area;
                 let mut preview = area;
-                // Stack the views in narrow windows instead of crushing them.
-                if area.width() >= 680.0 {
-                    source.max.x = area.center().x - 6.0;
-                    preview.min.x = area.center().x + 6.0;
+                if stacked {
+                    source.max.y = position - 4.0;
+                    preview.min.y = position + 4.0;
                 } else {
-                    source.max.y = area.center().y - 6.0;
-                    preview.min.y = area.center().y + 6.0;
+                    source.max.x = position - 4.0;
+                    preview.min.x = position + 4.0;
                 }
+                let color = if response.hovered() || response.dragged() || response.has_focus() {
+                    self.theme.accent.color()
+                } else {
+                    self.theme.border.color()
+                };
+                let line = if stacked {
+                    [
+                        egui::pos2(area.left(), position),
+                        egui::pos2(area.right(), position),
+                    ]
+                } else {
+                    [
+                        egui::pos2(position, area.top()),
+                        egui::pos2(position, area.bottom()),
+                    ]
+                };
+                ui.painter()
+                    .line_segment(line, egui::Stroke::new(1.0_f32, color));
                 ui.scope_builder(egui::UiBuilder::new().max_rect(source), |ui| {
                     ui.set_clip_rect(ui.clip_rect().intersect(source));
                     self.editor_source_pane(ui, pane);

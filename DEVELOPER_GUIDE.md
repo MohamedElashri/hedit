@@ -113,6 +113,9 @@ explicit block margins, intrinsic table columns, and simple quote rules.
 `parsers/document.rs` owns block geometry; `parsers/inline.rs` owns continuous
 native text layout, selection, links, and baseline-aware media. Keep these
 responsibilities separate so nested blocks cannot leak state into later content.
+Split-divider ratios are scoped to document, editor group, and orientation in
+native UI session data. Clamp both panes when the window changes size, keep the
+divider keyboard focusable, and preserve source/preview clipping and scroll sync.
 Code fences grow vertically with the document and scroll only horizontally;
 their Copy control overlays the frame on hover or keyboard focus. Index original source
 spans for headings, Contents, and block-level split scrolling; do not insert
@@ -208,7 +211,7 @@ without a window belongs in the library, with tests under `tests/`.
 | Launch activation | `activation.rs` (one-shot presentation, Wayland activation tokens and a nonblocking native protocol binding); `main.rs`, `ipc.rs`, `app/quality.rs` (launch and existing-session handoff) |
 | App features | One file each in `src/app/`, named after the feature: `auto_complete.rs`, `definitions.rs`, `spell_check.rs`, `macros.rs`, `snippet_fields.rs`, `find_tools.rs`, `changes.rs`, `fold_gutter.rs`, `font_picker.rs`, and so on |
 | Integrated terminal | `terminal.rs` (Ghostty VT and bounded PTY IO); `app/terminal_panel.rs` (tab lifecycle, onboarding, input focus); `app/terminal_tabs.rs` (compact tab strip, reordering, menus); `app/terminal_text.rs` (bidirectional cells and cached Rustybuzz/ab_glyph output); `app/terminal_tests.rs` (UI regression tests) |
-| Markdown | `app/markdown.rs` (source/preview layout, background preparation, contents, links, local images), `app/markdown_scroll.rs` (bidirectional split scrolling), `app/markdown_style.rs` (shared document padding, fonts, contrast, and cached native code blocks), `app/markdown_media.rs` (equation baselines and cached native math/Mermaid rendering), `app/markdown_tests.rs`, `app/markdown_reader_tests.rs`, `app/markdown_document_tests.rs`; per-tab modes are stored in `session.rs` |
+| Markdown | `app/markdown.rs` (source/preview layout, background preparation, contents, links, local images), `app/markdown_scroll.rs` (bidirectional split scrolling), `app/markdown_style.rs` (shared document padding, fonts, contrast, and cached native code blocks), `app/markdown_media.rs` (equation baselines and cached native math/Mermaid rendering), `app/markdown_tests.rs`, `app/markdown_reader_tests.rs`, `app/markdown_document_tests.rs`, `app/markdown_pane_tests.rs`; per-tab modes are stored in `session.rs` |
 | Offline help | `app/user_guide.rs` embeds `USER_GUIDE.md`, related documentation, and notices with `include_str!`; `app/user_guide/tests.rs` covers links, modal input, and layout |
 | Settings | `settings.rs` (the `settings.json` schema), `app/settings_store.rs`, `app/preferences.rs`, `app/settings_pages.rs` |
 

@@ -44,6 +44,8 @@ mod markdown_document_tests;
 mod markdown_layout_tests;
 mod markdown_media;
 #[cfg(test)]
+mod markdown_pane_tests;
+#[cfg(test)]
 mod markdown_reader_tests;
 mod markdown_scroll;
 mod markdown_style;
