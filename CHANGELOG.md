@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## [0.2.3] - 2026-11-11
+
+- Fix Markdown inline code sizing, baseline alignment, and wrapped line spacing.
+- Keep Markdown table text and images within their cells, preserving column alignment and empty cells.
+- Preserve nested bold, italic, and strikethrough formatting and table-header weight.
+
 ## [0.2.2] - 2026-11-09
 
 - Improve Markdown readability, equation layout, and navigation.
