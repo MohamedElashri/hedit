@@ -26,8 +26,8 @@ large-log viewing.
 - Recovery checkpoints, closed-file history, and undo/redo across sessions.
 - Multiple cursors, split panes, completions, and go-to-definition.
 - Native Git workspace with file/hunk/line staging, syntax-colored diffs,
-  compact folder trees, commits, history, branches,
-  conflict review, stashes, and remote operations using your installed Git.
+  branch comparisons, scoped history, line authorship, tags, reflog recovery,
+  conflict review, stashes, rebasing, and remote operations using your installed Git.
 - Markdown source, synchronized split preview, and reading modes, with math and Mermaid diagrams.
 - Dark and light themes, plus an offline User Guide built into the app.
 - Optional Ghostty-powered terminal with compact draggable tabs, Arabic shaping,

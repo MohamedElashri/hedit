@@ -16,6 +16,8 @@ use std::{
 
 const OUTPUT_LIMIT: usize = 24 * 1024 * 1024;
 pub type Result<T> = std::result::Result<T, String>;
+mod inspect;
+pub use inspect::{BlameLine, Comparison, HistoryScope, ReflogEntry, Tag};
 
 #[derive(Clone, Default)]
 pub struct Git {
@@ -89,6 +91,8 @@ impl Git {
                 "restore",
                 "diff-tree",
                 "checkout",
+                "log",
+                "blame",
             ]
             .iter()
             .any(|name| a == name)
@@ -105,6 +109,15 @@ impl Git {
             .env_remove("GIT_DIR")
             .env_remove("GIT_WORK_TREE")
             .env_remove("GIT_INDEX_FILE")
+            .env_remove("GIT_COMMON_DIR")
+            .env_remove("GIT_OBJECT_DIRECTORY")
+            .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
+            .env_remove("GIT_QUARANTINE_PATH")
+            .env_remove("GIT_SHALLOW_FILE")
+            .env_remove("GIT_GRAFT_FILE")
+            .env_remove("GIT_NAMESPACE")
+            .env_remove("GIT_PREFIX")
+            .env_remove("GIT_INTERNAL_SUPER_PREFIX")
             .env_remove("GIT_LITERAL_PATHSPECS")
             .env_remove("GIT_GLOB_PATHSPECS")
             .env_remove("GIT_NOGLOB_PATHSPECS")
@@ -233,10 +246,10 @@ impl Git {
         )?;
         let mut snapshot = parse_status(&raw)?;
         snapshot.root = root.to_owned();
-        snapshot.branches = self.command(root, &["for-each-ref", "--sort=refname", "--format=%(refname:short)%00%(refname)%00%(objectname)%00%(upstream:short)%00%(HEAD)%00%(symref)", "refs/heads", "refs/remotes"])?
+        snapshot.branches = self.command(root, &["for-each-ref", "--sort=refname", "--format=%(refname:short)%00%(refname)%00%(objectname)%00%(upstream)%00%(HEAD)%00%(symref)", "refs/heads", "refs/remotes"])?
             .lines().filter_map(|s| {
                 let v: Vec<_> = s.split('\0').collect();
-                (v.len() == 6 && v[5].is_empty()).then(|| Branch { name: v[0].into(), reference: v[1].into(), oid: v[2].into(), upstream: v[3].into(), current: v[4] == "*", remote: v[1].starts_with("refs/remotes/") })
+                (v.len() == 6 && v[5].is_empty()).then(|| Branch { name: v[1].strip_prefix("refs/heads/").or_else(|| v[1].strip_prefix("refs/remotes/")).unwrap_or(v[0]).into(), reference: v[1].into(), oid: v[2].into(), upstream: v[3].into(), current: v[4] == "*", remote: v[1].starts_with("refs/remotes/") })
             }).collect();
         snapshot.remotes = self
             .command(root, &["remote"])?
@@ -276,19 +289,9 @@ impl Git {
         Ok(snapshot)
     }
     pub fn history(&self, root: &Path, limit: usize) -> Result<Vec<Commit>> {
-        let out = self.command(
-            root,
-            &[
-                "log",
-                &format!("-{}", limit.min(2000)),
-                "--date-order",
-                "--branches",
-                "--remotes",
-                "--tags",
-                "HEAD",
-                "--format=%H%x00%P%x00%an%x00%ar%x00%D%x00%s%x00",
-            ],
-        )?;
+        self.scoped_history(root, limit, &HistoryScope::default())
+    }
+    fn parse_history(out: &str) -> Vec<Commit> {
         let mut fields = out.split('\0');
         let mut commits = Vec::new();
         while let Some(oid) = fields.next() {
@@ -320,7 +323,7 @@ impl Git {
                 subject: subject.into(),
             });
         }
-        Ok(commits)
+        commits
     }
     pub fn diff(&self, root: &Path, selection: &Selection) -> Result<Diff> {
         if selection.kind == DiffKind::Conflict {
@@ -389,6 +392,11 @@ impl Git {
         ]);
         match &selection.kind {
             DiffKind::Staged => arguments.push("--cached".into()),
+            DiffKind::Compare { base, head } => {
+                check_oid(base)?;
+                check_oid(head)?;
+                arguments.extend(args(&[base, head]));
+            }
             DiffKind::Commit(oid) => {
                 check_oid(oid)?;
                 if let Some(parent) = self.first_parent(root, oid)? {
@@ -436,8 +444,7 @@ impl Git {
         arguments.push(selection.path.as_os_str().into());
         let bytes = self.checked(root, &arguments, None, false)?;
         let patch = String::from_utf8_lossy(&bytes).into_owned();
-        let applicable =
-            !matches!(selection.kind, DiffKind::Commit(_)) && std::str::from_utf8(&bytes).is_ok();
+        let applicable = !selection.kind.read_only() && std::str::from_utf8(&bytes).is_ok();
         Ok(Diff::parse(patch, applicable))
     }
     pub fn commit_files(&self, root: &Path, oid: &str) -> Result<Vec<FileStatus>> {
@@ -575,7 +582,7 @@ impl Git {
             }
             Operation::Switch(branch) => {
                 valid_ref(branch)?;
-                args(&["switch", "--", branch])
+                args(&["switch", "--no-guess", "--", branch])
             }
             Operation::CreateBranch(branch) => {
                 valid_ref(branch)?;
@@ -587,11 +594,82 @@ impl Git {
             } => {
                 valid_ref(local)?;
                 valid_ref(reference)?;
-                args(&["switch", "--track", "-c", local, reference])
+                let reference = if reference.starts_with("refs/remotes/") {
+                    reference.clone()
+                } else {
+                    format!("refs/remotes/{reference}")
+                };
+                args(&["switch", "--track", "-c", local, &reference])
             }
             Operation::DeleteBranch(branch) => {
                 valid_ref(branch)?;
                 args(&["branch", "-d", "--", branch])
+            }
+            Operation::RenameBranch { old, new } => {
+                valid_ref(old)?;
+                valid_ref(new)?;
+                args(&["branch", "-m", "--", old, new])
+            }
+            Operation::CreateBranchAt { name, oid } => {
+                valid_ref(name)?;
+                check_oid(oid)?;
+                args(&["branch", "--", name, oid])
+            }
+            Operation::Rebase(reference) => {
+                let oid = self.resolve_commit(root, reference)?;
+                // Keep dirty saved files visible instead of silently autostashing them.
+                args(&["rebase", "--no-autostash", &oid])
+            }
+            Operation::SetUpstream { branch, upstream } => {
+                valid_ref(branch)?;
+                valid_ref(upstream)?;
+                args(&[
+                    "branch",
+                    &format!("--set-upstream-to={upstream}"),
+                    "--",
+                    branch,
+                ])
+            }
+            Operation::CreateTag { name, oid, message } => {
+                valid_ref(name)?;
+                check_oid(oid)?;
+                if message.trim().is_empty() {
+                    return Err("Enter a tag message.".into());
+                }
+                input = Some(message.as_bytes().to_vec());
+                args(&["tag", "-a", "--file=-", "--", name, oid])
+            }
+            Operation::DeleteTag { name, expected } => {
+                valid_ref(name)?;
+                check_oid(expected)?;
+                let reference = format!("refs/tags/{name}");
+                // Compare-and-delete the reviewed object, including annotated tags.
+                args(&["update-ref", "-d", &reference, expected])
+            }
+            Operation::UndoCommit { expected } => {
+                check_oid(expected)?;
+                if self.command(root, &["rev-parse", "HEAD"])?.trim() != expected {
+                    return Err("HEAD changed. Refresh before undoing the last commit.".into());
+                }
+                let snapshot = self.snapshot(root, 1)?;
+                if snapshot.operation.is_some() || snapshot.files.iter().any(|f| f.conflict) {
+                    return Err("Finish the current Git operation before undoing a commit.".into());
+                }
+                let parent = self
+                    .first_parent(root, expected)?
+                    .ok_or("The initial commit cannot be undone here. Use Revert instead.")?;
+                // Soft-reset semantics, but check HEAD's old value atomically.
+                // Updating ORIG_HEAD in the same transaction preserves Git's
+                // conventional recovery point without touching index/worktree.
+                let transaction =
+                    format!("update HEAD {parent} {expected}\nupdate ORIG_HEAD {expected}\n");
+                self.operation_output(
+                    root,
+                    &args(&["update-ref", "-m", "hedit: undo last commit", "--stdin"]),
+                    Some(transaction.as_bytes()),
+                    false,
+                )?;
+                return Ok("Last commit undone. Index and working files preserved; its changes remain staged.".into());
             }
             Operation::Merge(branch) => {
                 valid_ref(branch)?;
@@ -837,6 +915,7 @@ fn path_args(prefix: &[&str], paths: &[PathBuf]) -> Result<Vec<OsString>> {
 }
 fn validate_relative(path: &Path) -> Result<()> {
     if path.as_os_str().is_empty()
+        || path.as_os_str().as_encoded_bytes().contains(&0)
         || path
             .components()
             .any(|c| !matches!(c, Component::Normal(_)))
@@ -1033,7 +1112,13 @@ pub enum DiffKind {
     Staged,
     Untracked,
     Commit(String),
+    Compare { base: String, head: String },
     Conflict,
+}
+impl DiffKind {
+    pub fn read_only(&self) -> bool {
+        matches!(self, Self::Commit(_) | Self::Compare { .. })
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Selection {
@@ -1066,6 +1151,31 @@ pub enum Operation {
         remote: String,
     },
     DeleteBranch(String),
+    RenameBranch {
+        old: String,
+        new: String,
+    },
+    CreateBranchAt {
+        name: String,
+        oid: String,
+    },
+    SetUpstream {
+        branch: String,
+        upstream: String,
+    },
+    Rebase(String),
+    CreateTag {
+        name: String,
+        oid: String,
+        message: String,
+    },
+    DeleteTag {
+        name: String,
+        expected: String,
+    },
+    UndoCommit {
+        expected: String,
+    },
     Merge(String),
     CherryPick(String),
     Revert(String),
@@ -1110,6 +1220,7 @@ impl Operation {
                 | Self::CreateBranch(_)
                 | Self::TrackBranch { .. }
                 | Self::Merge(_)
+                | Self::Rebase(_)
                 | Self::CherryPick(_)
                 | Self::Revert(_)
                 | Self::Continue(_)
