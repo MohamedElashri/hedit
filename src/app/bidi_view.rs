@@ -27,7 +27,7 @@ pub(super) struct RowDirs {
 /// right-to-left text.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct BidiRows {
-    rows: Vec<Option<RowDirs>>,
+    pub(super) rows: Vec<Option<RowDirs>>,
 }
 
 impl BidiRows {
@@ -95,7 +95,7 @@ pub(super) fn apply(fonts: &Fonts, galley: Arc<Galley>, base: Base) -> (Arc<Gall
         let shaped = bidi::shape(&chars);
         let mut start = 0;
         for r in rows {
-            let row = &mut galley.rows[r];
+            let row = Arc::make_mut(&mut galley.rows[r]);
             let count = row.glyphs.len();
             let rtl = line.row_rtl(start, start + count);
             let quads: Vec<bool> = row.glyphs.iter().map(|g| !g.uv_rect.is_nothing()).collect();
@@ -300,7 +300,7 @@ fn locate(galley: &Galley, index: usize) -> (usize, usize) {
 fn row_start(galley: &Galley, row: usize) -> usize {
     galley.rows[..row]
         .iter()
-        .map(Row::char_count_including_newline)
+        .map(|row| row.char_count_including_newline())
         .sum()
 }
 

@@ -68,17 +68,74 @@ fn file_row(ui: &mut egui::Ui, theme: &Theme, label: &str, selected: bool) -> eg
     response
 }
 
+pub(super) struct Task {
+    pub cancel: Arc<AtomicBool>,
+    pub rx: mpsc::Receiver<Result<hedit::search::Results, String>>,
+}
+impl Drop for Task {
+    fn drop(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+}
+
 impl HeditApp {
-    pub(super) fn folder_preview_valid(&self) -> bool {
-        self.quality
-            .preview_query
+    pub(super) fn receive_folder_search(&mut self, ctx: &egui::Context) {
+        let result = self
+            .quality
+            .folder_task
             .as_ref()
-            .is_some_and(|(q, r, f, o)| {
-                q == &self.query
-                    && r == &self.replacement
-                    && f == &self.quality.filter
-                    && o == &self.quality.options
-            })
+            .and_then(|task| match task.rx.try_recv() {
+                Ok(result) => Some(result),
+                Err(mpsc::TryRecvError::Empty) => None,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    Some(Err("Folder search stopped unexpectedly.".into()))
+                }
+            });
+        if let Some(result) = result {
+            let cancelled = self
+                .quality
+                .folder_task
+                .as_ref()
+                .unwrap()
+                .cancel
+                .load(Ordering::Relaxed);
+            self.quality.folder_task = None;
+            if cancelled {
+                self.quality.folder_state = State::Cancelled;
+            } else {
+                match result {
+                    Ok(results) => self.quality_event(ctx, quality::Event::Results(results)),
+                    Err(error) => self.quality.folder_state = State::Failed(error),
+                }
+            }
+        }
+    }
+    pub(super) fn folder_preview_valid(&self) -> bool {
+        self.quality.folder_task.is_none()
+            && self.quality.folder_revisions
+                == self
+                    .workspace
+                    .open
+                    .iter()
+                    .map(|b| (b.view.id, b.page.info.revision))
+                    .collect::<Vec<_>>()
+            && self.quality.folder_roots
+                == self
+                    .workspace
+                    .folders
+                    .iter()
+                    .map(|f| PathBuf::from(&f.path))
+                    .collect::<Vec<_>>()
+            && self
+                .quality
+                .preview_query
+                .as_ref()
+                .is_some_and(|(q, r, f, o)| {
+                    q == &self.query
+                        && r == &self.replacement
+                        && f == &self.quality.filter
+                        && o == &self.quality.options
+                })
     }
 
     pub(super) fn folder_search_window(&mut self, ctx: &egui::Context) {
@@ -118,7 +175,7 @@ impl HeditApp {
                     }
                     if searching {
                         if ui.add_sized([98.0, 28.0], egui::Button::new("Cancel search")).clicked() {
-                            self.cancel.store(true, Ordering::Relaxed);
+                            if let Some(task) = &self.quality.folder_task { task.cancel.store(true, Ordering::Relaxed); }
                         }
                     } else {
                         run = controls::primary_button(ui, &self.theme,
@@ -435,7 +492,7 @@ impl HeditApp {
             ui.colored_label(
                 self.theme.warning.color(),
                 if !valid {
-                    "Settings changed. Preview again before applying."
+                    "Files, folders, or settings changed. Preview again before applying."
                 } else {
                     "Preview is incomplete. Narrow the search before applying."
                 },

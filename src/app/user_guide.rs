@@ -15,6 +15,7 @@ documents! {
     "assets/licenses/latex-rust-MIT.txt", "assets/licenses/latex-rust-dvipsnames.tsv",
     "assets/licenses/LPPL-1.3c.txt", "assets/licenses/mermaid-rs-renderer-MIT.txt",
     "assets/licenses/resvg-MIT.txt", "assets/licenses/egui_commonmark-MIT.txt",
+    "assets/licenses/egui-epaint-MIT.txt",
     "assets/licenses/ayu-colors-MIT.txt", "assets/licenses/night-owl-MIT.txt",
     "assets/licenses/cobalt2-MIT.txt", "assets/licenses/everforest-MIT.txt",
     "assets/licenses/kanagawa-MIT.txt", "assets/licenses/flexoki-MIT.txt",

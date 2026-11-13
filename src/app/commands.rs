@@ -3,6 +3,7 @@ use super::*;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum Command {
+    ConnectSsh,
     MarkdownSource,
     MarkdownSplit,
     MarkdownPreview,
@@ -227,6 +228,7 @@ pub(super) enum Command {
 }
 impl Command {
     pub(super) const ALL: &'static [Self] = &[
+        Self::ConnectSsh,
         Self::MarkdownSource,
         Self::MarkdownSplit,
         Self::MarkdownPreview,
@@ -450,7 +452,8 @@ impl Command {
     fn opens_window(self) -> bool {
         matches!(
             self,
-            Self::Switcher
+            Self::ConnectSsh
+                | Self::Switcher
                 | Self::Palette
                 | Self::Appearance
                 | Self::Goto
@@ -483,6 +486,7 @@ impl Command {
     }
     pub(super) fn label(self) -> &'static str {
         match self {
+            Self::ConnectSsh => "Connect via SSH…",
             Self::MarkdownSource => "Markdown: show source",
             Self::MarkdownSplit => "Markdown: split source and preview",
             Self::MarkdownPreview => "Markdown: render preview",
@@ -845,6 +849,7 @@ impl Command {
             Self::MovePane => "Ctrl+Alt+Shift+Right",
             Self::Fold => "Ctrl+Shift+[",
             Self::Unfold => "Ctrl+Shift+]",
+            Self::ConnectSsh => "",
             Self::New => "Ctrl+N",
             Self::NewWindow => "Ctrl+Shift+N",
             Self::Open => "Ctrl+O",
@@ -1148,6 +1153,7 @@ impl HeditApp {
                 .path
                 .as_ref()
                 .is_some_and(|p| hedit::counterpart::supported(std::path::Path::new(p))),
+            Command::ConnectSsh => self.workspace.remote.is_none(),
             Command::OpenRecent => !self.recent_files.is_empty(),
             Command::SelectBookmarks => {
                 !self.active().view.bookmarks.is_empty() && !self.active().page.info.paged
@@ -1584,6 +1590,7 @@ impl HeditApp {
                 }
                 self.report(r);
             }
+            Command::ConnectSsh => self.remote_ui.dialog = true,
             Command::Open => self.open(ctx, None),
             Command::NewWindow => {
                 let session = hedit::windows::new_session(self.workspace.store.directory());

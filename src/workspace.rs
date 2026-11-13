@@ -596,20 +596,39 @@ impl Workspace {
 }
 
 pub fn splice<'a>(old: &str, new: &'a str) -> (usize, usize, &'a str) {
-    let mut prefix = old
-        .bytes()
-        .zip(new.bytes())
+    // Comparing blocks lets the compiler use vectorized equality for the
+    // unchanged region; scalar comparison only locates the differing byte.
+    let matched = old
+        .as_bytes()
+        .as_chunks::<64>()
+        .0
+        .iter()
+        .zip(new.as_bytes().as_chunks::<64>().0.iter())
         .take_while(|(a, b)| a == b)
-        .count();
+        .count()
+        * 64;
+    let mut prefix = matched
+        + old.as_bytes()[matched..]
+            .iter()
+            .zip(new.as_bytes()[matched..].iter())
+            .take_while(|(a, b)| a == b)
+            .count();
     while !old.is_char_boundary(prefix) || !new.is_char_boundary(prefix) {
         prefix -= 1;
     }
-    let mut suffix = old[prefix..]
-        .bytes()
-        .rev()
-        .zip(new[prefix..].bytes().rev())
+    let matched = old.as_bytes()[prefix..]
+        .rchunks_exact(64)
+        .zip(new.as_bytes()[prefix..].rchunks_exact(64))
         .take_while(|(a, b)| a == b)
-        .count();
+        .count()
+        * 64;
+    let mut suffix = matched
+        + old.as_bytes()[prefix..old.len() - matched]
+            .iter()
+            .rev()
+            .zip(new.as_bytes()[prefix..new.len() - matched].iter().rev())
+            .take_while(|(a, b)| a == b)
+            .count();
     while !old.is_char_boundary(old.len() - suffix) || !new.is_char_boundary(new.len() - suffix) {
         suffix -= 1;
     }

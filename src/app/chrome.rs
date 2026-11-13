@@ -66,6 +66,7 @@ impl HeditApp {
                                     Command::Open,
                                     Command::OpenFolder,
                                 ],
+                                vec![Command::ConnectSsh],
                                 vec![Command::RefreshFolder, Command::CloseFolder],
                                 vec![
                                     Command::Save,
@@ -226,6 +227,9 @@ impl HeditApp {
                             }
                         });
                     }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        self.remote_menu(ui)
+                    });
                 });
             });
         if self.open_menu != open_menu {
@@ -258,7 +262,7 @@ impl HeditApp {
                     .inner_margin(egui::Margin {
                         left: 6,
                         right: 6,
-                        top: 5,
+                        top: 2,
                         bottom: 0,
                     }),
             )
@@ -297,7 +301,7 @@ impl HeditApp {
                                         sw: 0,
                                         se: 0,
                                     })
-                                    .inner_margin(egui::Margin::symmetric(12, 4))
+                                    .inner_margin(egui::Margin::symmetric(10, 3))
                                     .show(ui, |ui| {
                                         ui.push_id(buffer.page.info.id, |ui| {
                                             ui.horizontal(|ui| {
@@ -461,8 +465,10 @@ impl HeditApp {
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    let buffer = self.active();
-                    let (line, col) = hedit::advanced::line_column(
+                    let buffer = &self.workspace.open[self.workspace.active];
+                    let source_index =
+                        self.projections[self.panes.focused].source_index(&buffer.page.text);
+                    let (line, col) = source_index.line_column(
                         &buffer.page.text,
                         buffer.view.head,
                         buffer.view.tab_size.unwrap_or(4) as usize,
@@ -521,7 +527,19 @@ impl HeditApp {
                         ctx.request_repaint_after(NOTICE_TIME - age);
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let (label, color) = if self.closing {
+                        let remote = self.workspace.remote.as_ref().map(|r| r.status());
+                        let (label, color) = if let Some((connected, _, pending, _)) = &remote {
+                            if !connected {
+                                (
+                                    "Disconnected · pending edits remain in memory",
+                                    theme.warning,
+                                )
+                            } else if *pending > 0 {
+                                ("Waiting for durable SSH host receipts", theme.warning)
+                            } else {
+                                ("Recovery durable on SSH host", theme.muted)
+                            }
+                        } else if self.closing {
                             ("Finishing recovery…", theme.warning)
                         } else if self.checkpoint_pending {
                             ("Checkpointing…", theme.warning)

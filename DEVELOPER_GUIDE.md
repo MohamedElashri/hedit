@@ -98,6 +98,41 @@ done
 cargo test --locked --release --bin hedit profile_ -- --ignored --nocapture
 ```
 
+Large editable pages use paragraph-aligned blocks (about 4 KiB each). An inline
+edit reshapes the affected blocks and shares unchanged rows with the previous
+frame. A single long paragraph can still require a large layout; adding or
+removing rows and changing syntax colors can also require copying later rows.
+The source line index updates from UTF-8-safe splices, and an unchanged tab can
+reuse its layout. Each pane keeps at most three inactive layouts within a
+64 MiB accounting budget, in addition to its active layout. This is a cache
+budget, not a limit on total editor memory.
+
+`vendor/egui` and `vendor/epaint` pin the upstream version recorded in
+`Cargo.lock` under its MIT license. The
+renderer patch changes `Galley.rows` to `Vec<Arc<Row>>`, uses copy-on-write for
+selection/transform mutations, and retains unrounded `Row.layout_rect` for
+paragraph placement at fractional display scales. Hedit recomputes vertical
+glyph rounding when moving rows. Keep these patches small when updating egui;
+compare incremental results with the full renderer, including mesh vertices,
+colors, wrapping, RTL, and 125%/150% scaling. The licenses remain in the vendor
+directories and the shipped [MIT notice](assets/licenses/egui-epaint-MIT.txt).
+The Markdown integration also uses copy-on-write when adding line padding.
+
+The ignored `profile_typing_positions` benchmark reports p50/p95/p99 CPU frame
+times for 64 inline edits at the start, middle, and end of a 1.46 MB buffer.
+Run profiles serially on an otherwise idle machine. These headless frames do
+not include native event delivery, GPU presentation, or SSH durability latency;
+use a separate temporary session for native interaction and crash recovery tests.
+Do not treat CPU timings as input-to-screen measurements or hard CI thresholds.
+
+Folder searches own immutable open-file snapshots and a separate cancellation
+token; they never acquire the editor's mutation lock. Completion cannot clear a
+save's busy state. Replacement previews require unchanged open-file revisions,
+workspace roots, and search settings; disk hashes remain checked at application.
+SSH receipts and connection changes request repaints through a callback invoked
+outside the transport state lock. Pending receipts retain a timer for the
+backpressure deadline; unchanged idle host polls do not repaint the window.
+
 The offline User Guide renders the repository's Markdown with the same native
 renderer as file previews. Edit the source documents directly; do not keep a
 second copy of their text in UI code. Rebuild the executable after documentation

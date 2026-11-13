@@ -43,57 +43,6 @@ impl HeditApp {
             }
         }
         let remote = self.workspace.remote.clone();
-        egui::TopBottomPanel::top("ssh-workspace").show(ctx, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                if let Some(remote) = &remote {
-                    let (connected, trusted, pending, status) = remote.status();
-                    ui.strong(format!(
-                        "SSH · {} · {}",
-                        remote.config.target.host, remote.config.root
-                    ));
-                    ui.label(format!("{status} · {pending} pending"));
-                    if !connected
-                        && ui
-                            .add_enabled(
-                                self.remote_ui.pending.is_none(),
-                                egui::Button::new("Reconnect"),
-                            )
-                            .clicked()
-                    {
-                        let remote = remote.clone();
-                        self.remote_background(ctx, move || remote.reconnect());
-                    }
-                    if connected
-                        && ui
-                            .add_enabled(
-                                self.remote_ui.pending.is_none(),
-                                egui::Button::new(if trusted {
-                                    "Revoke execution trust"
-                                } else {
-                                    "Trust for Git, builds and terminal…"
-                                }),
-                            )
-                            .clicked()
-                    {
-                        if trusted {
-                            let remote = remote.clone();
-                            self.remote_background(ctx, move || remote.trust(false));
-                        } else {
-                            self.remote_ui.dialog = true;
-                        }
-                    }
-                    if ui.button("New remote file").clicked() {
-                        self.remote_new(ctx);
-                    }
-                    if ui.button("Open remote path…").clicked() {
-                        self.remote_ui.picker = Some(Picker::Open);
-                        self.remote_ui.path.clear();
-                    }
-                } else if ui.button("Connect via SSH…").clicked() {
-                    self.remote_ui.dialog = true;
-                }
-            });
-        });
         if self.remote_ui.dialog {
             let mut open = true;
             let mut connect = false;
@@ -191,9 +140,108 @@ impl HeditApp {
                 }
             }
         }
-        if self.workspace.remote.is_some() {
+        if self
+            .workspace
+            .remote
+            .as_ref()
+            .is_some_and(|r| r.status().2 > 0)
+        {
+            // Keep the backpressure deadline visible even if a receipt stalls.
             ctx.request_repaint_after(Duration::from_millis(100));
         }
+    }
+    /// Host identity and execution permissions remain visible in the menu bar,
+    /// including distraction-free mode and when the status bar is hidden.
+    pub(super) fn remote_menu(&mut self, ui: &mut egui::Ui) {
+        let Some(remote) = self.workspace.remote.clone() else {
+            return;
+        };
+        let (connected, trusted, pending, status) = remote.status();
+        let state = if !connected {
+            "disconnected".to_owned()
+        } else if pending > 0 {
+            format!("{pending} pending")
+        } else if trusted {
+            "trusted".into()
+        } else {
+            "restricted".into()
+        };
+        let color = if !connected || pending > 0 {
+            self.theme.warning
+        } else {
+            self.theme.muted
+        };
+        ui.menu_button(
+            RichText::new(format!("SSH · {} · {state}", remote.config.target.host))
+                .size(11.0)
+                .color(color.color()),
+            |ui| {
+                ui.strong(format!("SSH · {}", remote.config.target.host));
+                ui.label(&remote.config.root);
+                ui.label(&status);
+                ui.label(if trusted {
+                    "Execution trusted for this connection"
+                } else {
+                    "Execution restricted"
+                });
+                ui.separator();
+                if !connected
+                    && ui
+                        .add_enabled(
+                            self.remote_ui.pending.is_none(),
+                            egui::Button::new("Reconnect"),
+                        )
+                        .clicked()
+                {
+                    let connection = remote.clone();
+                    self.remote_background(ui.ctx(), move || connection.reconnect());
+                    ui.close_menu();
+                }
+                if connected
+                    && ui
+                        .add_enabled(
+                            self.remote_ui.pending.is_none(),
+                            egui::Button::new(if trusted {
+                                "Revoke execution trust"
+                            } else {
+                                "Trust for Git, builds and terminal…"
+                            }),
+                        )
+                        .clicked()
+                {
+                    if trusted {
+                        let connection = remote.clone();
+                        self.remote_background(ui.ctx(), move || connection.trust(false));
+                    } else {
+                        self.remote_ui.dialog = true;
+                    }
+                    ui.close_menu();
+                }
+                if ui
+                    .add_enabled(
+                        connected && !self.busy,
+                        egui::Button::new("New remote file"),
+                    )
+                    .clicked()
+                {
+                    self.remote_new(ui.ctx());
+                    ui.close_menu();
+                }
+                if ui
+                    .add_enabled(
+                        connected && !self.busy,
+                        egui::Button::new("Open remote path…"),
+                    )
+                    .clicked()
+                {
+                    self.remote_ui.picker = Some(Picker::Open);
+                    self.remote_ui.path.clear();
+                    ui.close_menu();
+                }
+            },
+        )
+        .response
+        .on_hover_text(format!("{status}\nRecovery stays on the SSH host."));
     }
     fn remote_background(
         &mut self,

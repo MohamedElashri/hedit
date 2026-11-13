@@ -40,6 +40,9 @@ pub(super) struct Quality {
     pub folder_context: bool,
     pub folder_collapsed: std::collections::HashSet<PathBuf>,
     pub folder_state: folder_search::State,
+    pub folder_task: Option<folder_search::Task>,
+    pub folder_revisions: Vec<(u64, u64)>,
+    pub folder_roots: Vec<PathBuf>,
     pub folder_snapshot: Option<(String, String, search::Options)>,
     pub folder_regex: Option<regex::Regex>,
     pub filter: String,
@@ -792,9 +795,24 @@ impl HeditApp {
                 Some((path, b.page.text.clone()))
             })
             .collect();
-        let cancel = Arc::clone(&self.cancel);
-        self.job(ctx, move || {
-            search::folders(
+        // Search holds immutable snapshots, never the UI's mutation lock.
+        self.quality.folder_revisions = self
+            .workspace
+            .open
+            .iter()
+            .map(|b| (b.view.id, b.page.info.revision))
+            .collect();
+        self.quality.folder_roots = roots.clone();
+        self.quality.folder_task = None; // Cancels a superseded search.
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = mpsc::channel();
+        self.quality.folder_task = Some(folder_search::Task {
+            cancel: cancel.clone(),
+            rx,
+        });
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            let result = search::folders(
                 &roots,
                 &filter,
                 &query,
@@ -802,8 +820,9 @@ impl HeditApp {
                 &options,
                 &open,
                 &cancel,
-            )
-            .map(|r| Action::Quality(Box::new(Event::Results(r))))
+            );
+            let _ = tx.send(result);
+            ctx.request_repaint();
         });
     }
     pub(super) fn apply_folder_replacements(&mut self, ctx: &egui::Context) {

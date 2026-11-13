@@ -284,7 +284,11 @@ pub fn pair(
     typed: char,
     single_quotes: bool,
 ) -> Option<Batch> {
-    if typed == '\'' && !single_quotes {
+    if (typed == '\'' && !single_quotes)
+        || !(OPENERS.contains(&typed)
+            || CLOSERS.contains(&typed)
+            || matches!(typed, '\"' | '\'' | '`'))
+    {
         return None;
     }
     let chars: Vec<char> = text.chars().collect();
@@ -539,6 +543,23 @@ pub struct Projection {
 impl Projection {
     pub fn new(source: &str, width: usize, folds: &[Fold]) -> Self {
         let width = width.clamp(1, 8);
+        if folds.is_empty() && !source.as_bytes().contains(&b'\t') {
+            let count = source.chars().count();
+            return Self {
+                text: source.to_owned(),
+                source_lines: (1..=memchr::memchr_iter(b'\n', source.as_bytes()).count() + 1)
+                    .collect(),
+                segments: vec![Segment {
+                    display: 0,
+                    length: count,
+                    start: 0,
+                    end: count,
+                    kind: SegmentKind::Text,
+                }],
+                length: count,
+                source_length: count,
+            };
+        }
         let chars: Vec<_> = source.chars().collect();
         let mut result = Self {
             text: String::new(),
@@ -685,7 +706,22 @@ impl Projection {
             matches!(s.kind, SegmentKind::Fold) && start < s.display + s.length && end > s.display
         })
     }
+    pub fn is_identity(&self) -> bool {
+        self.segments
+            .iter()
+            .all(|s| matches!(s.kind, SegmentKind::Text))
+    }
     pub fn edited(&self, source: &str, display: &str, selection: Selection) -> Batch {
+        if self.is_identity() {
+            let count = display.chars().count();
+            return Batch {
+                text: display.to_owned(),
+                selections: vec![Selection {
+                    anchor: selection.anchor.min(count),
+                    head: selection.head.min(count),
+                }],
+            };
+        }
         let (a, b, insertion) = splice(&self.text, display);
         let start = self.text[..a].chars().count();
         let end = self.text[..b].chars().count();

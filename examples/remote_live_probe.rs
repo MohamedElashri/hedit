@@ -6,7 +6,10 @@ use hedit::{
 use hedit_core::backend::{Backend, Call, FsQuery, PtyEvent};
 use std::{
     path::{Path, PathBuf},
-    sync::{atomic::AtomicBool, Arc},
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc,
+    },
     time::{Duration, Instant},
 };
 fn main() {
@@ -32,6 +35,11 @@ fn run() -> Result<(), String> {
         root: args[3].clone(),
         takeover: false,
     })?;
+    let wakes = Arc::new(AtomicUsize::new(0));
+    let counter = wakes.clone();
+    remote.set_wake(Arc::new(move || {
+        counter.fetch_add(1, Ordering::Relaxed);
+    }));
     let path = remote.path("file")?;
     let mut doc = remote.open(1, &path)?;
     assert!(doc.is_ephemeral());
@@ -56,6 +64,13 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
 
+    // Work receipts wake the UI, while unchanged periodic host checks stay quiet.
+    remote.flush()?;
+    std::thread::sleep(Duration::from_millis(100));
+    let idle_wakes = wakes.load(Ordering::Relaxed);
+    assert!(idle_wakes > 0);
+    std::thread::sleep(Duration::from_millis(1600));
+    assert_eq!(wakes.load(Ordering::Relaxed), idle_wakes);
     for _ in 0..24 {
         doc.replace(0, 0, "ب🦀".into(), doc.info().revision)?;
         std::thread::sleep(Duration::from_millis(2));

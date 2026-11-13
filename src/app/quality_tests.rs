@@ -410,11 +410,12 @@ fn project_replacement_edits_open_buffers_unsaved_and_keeps_newer_text() {
         app.receive(&ctx);
         thread::sleep(Duration::from_millis(5));
     }
-    assert!(app
-        .error
-        .as_ref()
-        .unwrap()
-        .contains("changed since the preview"));
+    assert!(app.error.is_none());
+    assert!(app.notice.contains("fresh, complete replacement preview"));
+    assert!(
+        !app.quality.results.plans.is_empty(),
+        "keep the old preview for review"
+    );
     assert_eq!(app.active().page.text, "my unsaved text");
     assert_eq!(std::fs::read_to_string(path).unwrap(), "needle\n");
 }

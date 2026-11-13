@@ -271,6 +271,9 @@ stay local. There is no hedit cloud, relay, or account.
 
 ### Connect to a host
 
+Choose **File → Connect via SSH…**, or find **Connect via SSH** in the command
+palette. The connection opens a separate window.
+
 Build the helper on a Linux or macOS destination from the same checkout as the
 editor. Create its destination directory first:
 
@@ -306,8 +309,10 @@ Optional arguments are `--ssh-user USER`, `--ssh-port PORT`,
 `--ssh-config /absolute/local/config`, and `--ssh-takeover`. Takeover explicitly
 fences the previous writer. A new writer waits for cancelled tool jobs to finish.
 
-The SSH bar identifies the host and workspace. Use the folder tree, Go to
-Anything, or **Open remote path…** to open files. Paths entered in remote dialogs
+The compact **SSH · host** menu identifies the connection and shows its trust
+state or pending edits. Open it for the workspace path, durability status,
+reconnection, and trust controls. Use the folder tree, Go to Anything, or
+**Open remote path…** in that menu to open files. Paths entered in remote dialogs
 are relative to the workspace, or absolute paths inside it. **New remote file**
 creates an untitled, host-recoverable scratchpad. Save As creates a new host file
 and refuses an existing target.
@@ -334,7 +339,8 @@ disabled. The helper uses a private Unix socket rather than a host network
 listener. Recovery storage requires private ownership and Unix permissions;
 on macOS, extended ACL grants on that storage or its ancestors are also rejected.
 
-The SSH bar shows outstanding edit receipts. **Durable on SSH host** means the
+The SSH menu shows outstanding edit receipts; its host and trust indicator
+remain visible when the status bar is hidden or distraction-free mode is active. **Durable on SSH host** means the
 host has committed accepted edits to its recovery journal. A disconnected editor
 retains pending edits in memory and pauses editing. **Reconnect** checks the
 original recovery identity and reconciles the same edit sequences. If another

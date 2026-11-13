@@ -9,6 +9,7 @@ license = "MIT"
 [workspace]
 members = ["crates/hedit-remote", "crates/hedit-core"]
 default-members = ["."]
+exclude = ["vendor/egui", "vendor/epaint"]
 resolver = "2"
 
 [features]
@@ -75,8 +76,11 @@ windows-sys = { version = "0.61", features = ["Win32_Security", "Win32_Storage_F
 plist = "1"
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
-# Native document layout and inline flow; see vendor/egui_commonmark/PATCH.md.
+# Native editor row sharing and document layout; see DEVELOPER_GUIDE.md
+# and vendor/egui_commonmark/PATCH.md.
 [patch.crates-io]
+egui = { path = "vendor/egui" }
+epaint = { path = "vendor/epaint" }
 egui_commonmark = { path = "vendor/egui_commonmark" }
 # Select Ghostty's required Zig compiler for normal Cargo and Make builds.
 libghostty-vt-sys = { path = "vendor/libghostty-vt-sys" }

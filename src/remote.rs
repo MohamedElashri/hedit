@@ -49,6 +49,14 @@ struct State {
     infos: HashMap<String, DocumentInfo>,
     changed: HashMap<u64, bool>,
     trusted: bool,
+    wake: Option<Arc<dyn Fn() + Send + Sync>>,
+}
+fn notify(state: &Mutex<State>) {
+    // Never invoke a UI callback while holding the transport's state lock.
+    let wake = state.lock().unwrap().wake.clone();
+    if let Some(wake) = wake {
+        wake();
+    }
 }
 #[derive(Clone)]
 pub struct Connection {
@@ -116,6 +124,7 @@ impl Connection {
             infos: HashMap::new(),
             changed: HashMap::new(),
             trusted: false,
+            wake: None,
         }));
         let (tx, rx) = mpsc::sync_channel(128);
         let shared = state.clone();
@@ -129,6 +138,7 @@ impl Connection {
                     Err(_) => {
                         let connected = shared.lock().unwrap().connected;
                         if connected {
+                            let mut changed_state = false;
                             let ids = {
                                 let s = shared.lock().unwrap();
                                 let mut ids =
@@ -152,12 +162,15 @@ impl Connection {
                                     {
                                         let mut s = shared.lock().unwrap();
                                         for (id, changed) in values {
-                                            s.changed.insert(id, changed);
+                                            changed_state |=
+                                                s.changed.insert(id, changed).unwrap_or(false)
+                                                    != changed;
                                         }
                                     }
                                 }
                                 other => {
                                     let mut s = shared.lock().unwrap();
+                                    changed_state = true;
                                     s.connected = false;
                                     s.trusted = false;
                                     s.error =
@@ -165,6 +178,9 @@ impl Connection {
                                             "Invalid host change response.".into()
                                         }));
                                 }
+                            }
+                            if changed_state {
+                                notify(&shared);
                             }
                         }
                         continue;
@@ -269,6 +285,7 @@ impl Connection {
                         let _ = reply.send(result);
                     }
                 }
+                notify(&shared);
             }
         });
         let connection = Arc::new(Self {
@@ -279,6 +296,10 @@ impl Connection {
         });
         backend::register(connection.prefix.clone(), connection.clone());
         Ok(connection)
+    }
+    /// Receipts and connection changes wake the UI; idle change polls do not.
+    pub fn set_wake(&self, wake: Arc<dyn Fn() + Send + Sync>) {
+        self.state.lock().unwrap().wake = Some(wake);
     }
     pub fn root(&self) -> PathBuf {
         PathBuf::from(&self.prefix)
@@ -375,6 +396,7 @@ impl Connection {
         let epoch = self.state.lock().unwrap().epoch;
         self.call(Request::Trust { epoch, allow })?;
         self.state.lock().unwrap().trusted = allow;
+        notify(&self.state);
         Ok(())
     }
     pub fn writable(&self) -> bool {
@@ -1031,8 +1053,23 @@ mod tests {
                 infos: HashMap::new(),
                 changed: HashMap::new(),
                 trusted: false,
+                wake: None,
             })),
         }
+    }
+    #[test]
+    fn ui_notifications_run_outside_the_transport_state_lock() {
+        let remote = disconnected();
+        let state = remote.state.clone();
+        let called = Arc::new(AtomicBool::new(false));
+        let flag = called.clone();
+        remote.set_wake(Arc::new(move || {
+            assert!(state.try_lock().is_ok());
+            flag.store(true, Ordering::Relaxed);
+        }));
+        notify(&remote.state);
+        assert!(called.load(Ordering::Relaxed));
+        remote.state.lock().unwrap().wake = None;
     }
     #[test]
     fn host_paths_cannot_become_local_filesystem_capabilities() {

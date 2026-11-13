@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Reuse paragraph layouts and source line indexes while typing, and cache recently used tab layouts within a bounded memory budget.
+- Keep typing available during folder search and reject replacement previews after open buffers or workspace roots change.
+- Compact the tab strip and SSH controls; show host identity, trust and durability state without a permanent connection toolbar or idle repaint loop.
+
 - Add private SSH workspaces for remote files, search, Git, builds and terminals, with host-only recovery and explicit execution trust.
 - Add fenced writers, bounded edit queues, crash-safe save/reconnect handling, strict path isolation and live SSH crash tests.
 

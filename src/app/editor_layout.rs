@@ -5,6 +5,9 @@ use hedit::{
     theme::Theme,
 };
 use std::sync::{mpsc, Arc, Weak};
+mod blocks;
+mod text_index;
+pub(super) use text_index::TextIndex;
 
 /// Re-highlighting more than this many bytes runs on a background thread,
 /// showing the quick lexer's colors meanwhile.
@@ -74,6 +77,8 @@ pub(super) fn code_job(
 #[derive(Default)]
 pub(super) struct LayoutCache {
     entry: Option<Entry>,
+    document: Option<(u64, u64)>,
+    inactive: Vec<((u64, u64), Entry)>,
     grammar: syntax::grammar::Grammar,
     /// A grammar highlight running on a background thread.
     job: Option<mpsc::Receiver<syntax::grammar::Moved>>,
@@ -89,11 +94,67 @@ struct Entry {
     /// The grammar colors used, or `None` for the lexer's.
     runs: Option<Runs>,
     galley: Arc<Galley>,
+    blocks: Option<Vec<blocks::Block>>,
     /// Glyph directions of rows with right-to-left text.
     bidi: Arc<super::bidi_view::BidiRows>,
 }
 
+impl Entry {
+    fn bytes(&self) -> usize {
+        self.galley.job.text.len()
+            + self.galley.num_vertices * std::mem::size_of::<egui::epaint::Vertex>()
+            + self.galley.num_indices * std::mem::size_of::<u32>()
+            + self
+                .galley
+                .rows
+                .iter()
+                .map(|row| {
+                    std::mem::size_of::<egui::epaint::text::Row>()
+                        + row.glyphs.len() * std::mem::size_of::<egui::epaint::text::Glyph>()
+                })
+                .sum::<usize>()
+            + self.galley.job.sections.len() * std::mem::size_of::<egui::text::LayoutSection>()
+            + self.runs.as_ref().map_or(0, |runs| {
+                runs.len() * std::mem::size_of::<(usize, egui::Color32)>()
+            })
+            + self
+                .blocks
+                .as_ref()
+                .map_or(0, |blocks| blocks.iter().map(blocks::Block::bytes).sum())
+    }
+}
+
 impl LayoutCache {
+    /// Retain a few recently used tabs within a strict inactive-layout budget.
+    /// Large pages are released rather than multiplying glyph and mesh memory.
+    pub(super) fn activate(&mut self, document: (u64, u64)) {
+        if self.document == Some(document) {
+            return;
+        }
+        const BUDGET: usize = 64 * 1024 * 1024;
+        let next = self
+            .inactive
+            .iter()
+            .position(|(key, _)| *key == document)
+            .map(|i| self.inactive.remove(i).1);
+        if let (Some(key), Some(entry)) = (self.document, self.entry.take()) {
+            if entry.bytes() <= BUDGET {
+                self.inactive.push((key, entry));
+            }
+        }
+        while self.inactive.len() > 3
+            || self
+                .inactive
+                .iter()
+                .map(|(_, entry)| entry.bytes())
+                .sum::<usize>()
+                > BUDGET
+        {
+            self.inactive.remove(0);
+        }
+        self.document = Some(document);
+        self.entry = next;
+    }
     /// The height of the first laid-out row.
     #[cfg(test)]
     pub(super) fn row_height(&self) -> Option<f32> {
@@ -144,13 +205,32 @@ impl LayoutCache {
             theme,
             runs.as_deref().map(Vec::as_slice),
         );
-        let (galley, bidi) = ui.fonts(|fonts| {
-            let galley = fonts.layout_job(job);
-            super::bidi_view::apply(
-                fonts,
-                galley,
-                super::bidi_view::Base::for_language(language),
-            )
+        let compatible = self.entry.as_ref().filter(|entry| {
+            entry.language == language
+                && entry.font == font
+                && entry.wrap_width == wrap_width
+                && entry.pixels_per_point == pixels_per_point
+                && entry.atlas.ptr_eq(&Arc::downgrade(&atlas))
+                && entry.theme == *theme
+        });
+        let (galley, bidi, blocks) = ui.fonts(|fonts| {
+            let base = super::bidi_view::Base::for_language(language);
+            if text.len() >= 16 * 1024 {
+                let old = compatible.and_then(|entry| {
+                    entry.blocks.as_ref().map(|blocks| {
+                        (
+                            entry.galley.as_ref(),
+                            entry.bidi.as_ref(),
+                            blocks.as_slice(),
+                        )
+                    })
+                });
+                let (galley, bidi, blocks) = blocks::layout(fonts, job, base, old);
+                (galley, bidi, Some(blocks))
+            } else {
+                let (galley, bidi) = super::bidi_view::apply(fonts, fonts.layout_job(job), base);
+                (galley, bidi, None)
+            }
         });
         self.entry = Some(Entry {
             language,
@@ -161,6 +241,7 @@ impl LayoutCache {
             theme: theme.clone(),
             runs,
             galley: Arc::clone(&galley),
+            blocks,
             bidi: Arc::new(bidi),
         });
         galley
@@ -221,6 +302,56 @@ impl LayoutCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn warm_tabs_reuse_layout_and_evict_the_least_recent_tab() {
+        let ctx = egui::Context::default();
+        let mut cache = LayoutCache::default();
+        let font = Font {
+            size: 14.0,
+            line_height: None,
+        };
+        let mut first = None;
+        let _ = ctx.run(Default::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                for key in 0..4 {
+                    cache.activate((key, 0));
+                    let galley = cache.layout(
+                        ui,
+                        &format!("tab {key}"),
+                        Language::PlainText,
+                        font,
+                        800.0,
+                        &Theme::default(),
+                    );
+                    if key == 0 {
+                        first = Some(galley);
+                    }
+                }
+                cache.activate((0, 0));
+                let warm = cache.layout(
+                    ui,
+                    "tab 0",
+                    Language::PlainText,
+                    font,
+                    800.0,
+                    &Theme::default(),
+                );
+                assert!(Arc::ptr_eq(first.as_ref().unwrap(), &warm));
+                cache.activate((4, 0));
+                cache.layout(
+                    ui,
+                    "tab 4",
+                    Language::PlainText,
+                    font,
+                    800.0,
+                    &Theme::default(),
+                );
+                assert_eq!(cache.inactive.len(), 3);
+                assert!(!cache.inactive.iter().any(|(key, _)| key.0 == 1));
+            });
+        });
+    }
 
     #[test]
     fn unhighlighted_code_keeps_the_editor_font_instead_of_the_ui_default() {
@@ -441,25 +572,45 @@ mod tests {
     }
 }
 
-/// Cache the original-coordinate mapping independently of syntax galley layout.
+/// Source coordinates survive display projections (tabs and folds) and are updated
+/// from the same minimal splice as a document edit.
 #[derive(Default)]
 pub(super) struct ProjectionCache {
+    source: String,
+    index: Option<Arc<text_index::TextIndex>>,
+    generation: u64,
     entry: Option<(
-        String,
+        u64,
         u8,
         Vec<hedit::advanced::Fold>,
         Arc<hedit::advanced::Projection>,
     )>,
 }
 impl ProjectionCache {
+    pub(super) fn source_index(&mut self, text: &str) -> Arc<text_index::TextIndex> {
+        if let Some(index) = &mut self.index {
+            if self.source != text {
+                Arc::make_mut(index).update(&self.source, text);
+                self.source.clear();
+                self.source.push_str(text);
+                self.generation = self.generation.wrapping_add(1);
+            }
+        } else {
+            self.index = Some(Arc::new(text_index::TextIndex::new(text)));
+            self.source.push_str(text);
+        }
+        Arc::clone(self.index.as_ref().unwrap())
+    }
     pub(super) fn get(
         &mut self,
         text: &str,
         width: u8,
         folds: &[hedit::advanced::Fold],
     ) -> Arc<hedit::advanced::Projection> {
-        if let Some((source, previous_width, previous_folds, projection)) = &self.entry {
-            if source == text && *previous_width == width && previous_folds == folds {
+        self.source_index(text);
+        if let Some((generation, previous_width, previous_folds, projection)) = &self.entry {
+            if *generation == self.generation && *previous_width == width && previous_folds == folds
+            {
                 return Arc::clone(projection);
             }
         }
@@ -469,7 +620,7 @@ impl ProjectionCache {
             folds,
         ));
         self.entry = Some((
-            text.to_owned(),
+            self.generation,
             width,
             folds.to_vec(),
             Arc::clone(&projection),

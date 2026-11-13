@@ -89,6 +89,7 @@ fn pad_inline_rows(galley: &mut std::sync::Arc<egui::Galley>, height: f32) -> bo
     let mut offset = 0.0;
     let mut mesh_bounds = egui::Rect::NOTHING;
     for row in &mut galley.rows {
+        let row = std::sync::Arc::make_mut(row);
         let padding = (height - row.rect.height()).max(0.0);
         let shift = egui::vec2(0.0, offset + snap(padding / 2.0));
         for glyph in &mut row.glyphs {
