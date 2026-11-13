@@ -4,16 +4,10 @@
 
 ## [0.4.0] - 2026-11-13
 
-- Compare branches, tags, and commits directly or from their common ancestor in the native diff workspace.
-- Browse history by branch or file, inspect line authorship, and open the responsible commit.
-- Create and review annotated tags, recover earlier commits through the local reflog, and undo the last commit while keeping changes staged.
-- Rename branches, select upstreams, and rebase with conflict review and continue/abort actions.
-- Simplify the repository header, branch picker, commit readiness, and operation feedback; retain filters and selections when moving between Git views.
-- Review files with Previous/Next controls and customizable keyboard shortcuts, submit commits from the keyboard, and navigate back from contextual reviews.
-- Fix ambiguous local/remote branch switching, reuse existing tracking branches, and reject stale branch switches instead of guessing a remote branch.
-- Keep the current diff and commit draft visible after cancelled operations or failed clones, and show clone progress and cancellation.
-- Improve Git dialog focus, keyboard submission, commit-history accessibility, and reporting of unavailable commit details.
-- Prevent inherited Git repository settings or malformed file paths from redirecting repository actions.
+- Add Git comparisons, scoped history, line authorship, tags, and reflog recovery.
+- Add branch renaming, upstream selection, rebasing, and commit undo that keeps changes staged.
+- Streamline Git navigation, keyboard controls, branch selection, and operation feedback.
+- Fix ambiguous branch switching and preserve reviews and drafts after failed or cancelled operations.
 
 ## [0.3.0] - 2026-11-12
 
