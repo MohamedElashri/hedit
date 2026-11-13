@@ -1485,6 +1485,9 @@ impl HeditApp {
             self.execute(ctx, Command::SelectAllMatches);
         }
         self.quality_shortcuts(ctx);
+        if self.source_control.open && self.git_review_shortcuts(ctx) {
+            return;
+        }
         self.filter_overridden_clipboard(ctx);
         if self.overridden(Command::SelectAll) {
             let _ = tab_switch::take_exact(ctx, cmd, Key::A);

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## [0.4.0] - 2026-11-13
+
+- Add Git comparisons, scoped history, line authorship, tags, and reflog recovery.
+- Add branch renaming, upstream selection, rebasing, and commit undo that keeps changes staged.
+- Streamline Git navigation, keyboard controls, branch selection, and operation feedback.
+- Fix ambiguous branch switching and preserve reviews and drafts after failed or cancelled operations.
+
 ## [0.3.0] - 2026-11-12
 
 - Redesign Markdown preview with VS Code-style typography, tables, quotes, alerts, and code blocks.

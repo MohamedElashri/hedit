@@ -30,6 +30,9 @@ pub(super) enum Command {
     CompareDisk,
     GitDiff,
     SourceControl,
+    GitCommit,
+    GitNextFile,
+    GitPreviousFile,
     NextChange,
     PreviousChange,
     RevertChange,
@@ -251,6 +254,9 @@ impl Command {
         Self::CompareDisk,
         Self::GitDiff,
         Self::SourceControl,
+        Self::GitCommit,
+        Self::GitNextFile,
+        Self::GitPreviousFile,
         Self::NextChange,
         Self::PreviousChange,
         Self::RevertChange,
@@ -504,6 +510,9 @@ impl Command {
             Self::CompareDisk => "Compare with disk…",
             Self::GitDiff => "Compare file with Git HEAD…",
             Self::SourceControl => "Source Control",
+            Self::GitCommit => "Git: Commit staged changes",
+            Self::GitNextFile => "Git: Next file",
+            Self::GitPreviousFile => "Git: Previous file",
             Self::NextChange => "Next change",
             Self::PreviousChange => "Previous change",
             Self::RevertChange => "Revert change",
@@ -716,6 +725,9 @@ impl Command {
             Self::NextTerminal => "Ctrl+Page Down",
             Self::PreviousTerminal => "Ctrl+Page Up",
             Self::SourceControl => "Ctrl+Shift+G",
+            Self::GitCommit => "Ctrl+Enter",
+            Self::GitNextFile => "Alt+Down",
+            Self::GitPreviousFile => "Alt+Up",
             Self::UserGuide => "F1",
             Self::FindFiles => "Ctrl+Shift+F",
             Self::CloseAll => "Ctrl+K, Ctrl+W",
@@ -1029,6 +1041,17 @@ impl HeditApp {
             return false;
         }
         match command {
+            Command::GitCommit => {
+                self.source_control.open
+                    && self.source_control.view == source_control::View::Changes
+                    && self.source_control.can_commit()
+            }
+            Command::GitNextFile => {
+                self.source_control.open && self.source_control.can_move_review(true)
+            }
+            Command::GitPreviousFile => {
+                self.source_control.open && self.source_control.can_move_review(false)
+            }
             Command::ExpandToTag => {
                 !self.active().page.info.paged
                     && matches!(
@@ -1232,6 +1255,9 @@ impl HeditApp {
             if !matches!(
                 command,
                 Command::SourceControl
+                    | Command::GitCommit
+                    | Command::GitNextFile
+                    | Command::GitPreviousFile
                     | Command::Palette
                     | Command::UserGuide
                     | Command::About
@@ -1313,6 +1339,9 @@ impl HeditApp {
             Command::CompareDisk => self.compare_disk(ctx, false),
             Command::GitDiff => self.compare_disk(ctx, true),
             Command::SourceControl => self.open_source_control(ctx),
+            Command::GitCommit => self.git_submit_commit(ctx),
+            Command::GitNextFile => self.source_control.move_review(ctx, true),
+            Command::GitPreviousFile => self.source_control.move_review(ctx, false),
             Command::NextChange => self.next_change(ctx, true),
             Command::PreviousChange => self.next_change(ctx, false),
             Command::RevertChange => self.revert_change(),

@@ -1,6 +1,6 @@
 [package]
 name = "hedit"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 rust-version = "1.99"
 description = "A native text and log editor with durable unsaved files and CUDA debugging"

@@ -134,6 +134,11 @@ impl HeditApp {
             Overlay::Build => self.build.open = false,
         }
     }
+    pub(super) fn transient_overlay_open(&self) -> bool {
+        Overlay::ALL.into_iter().any(|overlay| {
+            !matches!(overlay, Overlay::Find | Overlay::Build) && self.overlay_open(overlay)
+        })
+    }
     /// Close every transient window before opening another. The Find bar is a
     /// panel, not a window, so it stays.
     pub(super) fn close_transient(&mut self, ctx: &egui::Context) {

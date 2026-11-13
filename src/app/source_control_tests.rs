@@ -1376,3 +1376,974 @@ fn source_control_visual_preview() {
         }
     }
 }
+
+#[test]
+fn branch_comparison_uses_read_only_diff_and_refreshes_moving_revisions() {
+    let (_directory, ctx, mut app, git) = fixture();
+    let root = app.source_control.root.clone().unwrap();
+    let base = git.resolve_commit(&root, "HEAD").unwrap();
+    git.execute(&root, &Operation::Stage(vec!["main.rs".into()]))
+        .unwrap();
+    git.execute(
+        &root,
+        &Operation::Commit {
+            message: "Handle missing notes".into(),
+            amend: false,
+        },
+    )
+    .unwrap();
+    app.git_start_comparison(&ctx, base.clone(), "HEAD".into());
+    finish_git(&ctx, &mut app);
+    assert_eq!(app.source_control.view, View::Compare);
+    assert!(app.source_control.error.is_none());
+    click_label(&ctx, &mut app, "main.rs");
+    finish_git(&ctx, &mut app);
+    assert!(matches!(
+        app.source_control.selection.as_ref().unwrap().kind,
+        DiffKind::Compare { .. }
+    ));
+    assert!(!app.source_control.diff.as_ref().unwrap().supports_partial());
+    for size in [egui::vec2(1280.0, 820.0), egui::vec2(800.0, 600.0)] {
+        let output = frame_size(&ctx, &mut app, vec![], size);
+        assert!(visible(&output, "Copy diff"));
+        assert!(visible(&output, "Base"));
+        assert!(!visible(&output, "Stage file"));
+        assert!(!visible(&output, "Stage hunk"));
+        let before =
+            egui::containers::panel::PanelState::load(&ctx, egui::Id::new("source-control"))
+                .unwrap()
+                .rect
+                .width();
+        for _ in 0..8 {
+            frame_size(&ctx, &mut app, vec![], size);
+        }
+        let after =
+            egui::containers::panel::PanelState::load(&ctx, egui::Id::new("source-control"))
+                .unwrap()
+                .rect
+                .width();
+        assert!(
+            (after - before).abs() < 1.0,
+            "Revision inputs must not widen the sidebar on every frame: {before} to {after}"
+        );
+        assert!(after <= size.x * 0.4 + 1.0);
+    }
+    std::fs::write(root.join("main.rs"), "fn main() {}\n").unwrap();
+    git.execute(&root, &Operation::Stage(vec!["main.rs".into()]))
+        .unwrap();
+    git.execute(
+        &root,
+        &Operation::Commit {
+            message: "Newer change".into(),
+            amend: false,
+        },
+    )
+    .unwrap();
+    app.source_control.request(&ctx, None);
+    finish_git(&ctx, &mut app);
+    assert!(
+        app.source_control.selection.is_none(),
+        "A moved tip must not display the old diff under the new comparison"
+    );
+    assert!(app.source_control.diff.is_none());
+}
+
+#[test]
+fn advanced_queries_keep_file_scope_and_ignore_outdated_worker_results() {
+    let (_directory, ctx, mut app, git) = fixture();
+    let root = app.source_control.root.clone().unwrap();
+    std::fs::write(root.join("other.txt"), "other\n").unwrap();
+    git.execute(&root, &Operation::Stage(vec!["other.txt".into()]))
+        .unwrap();
+    git.execute(
+        &root,
+        &Operation::Commit {
+            message: "Unrelated commit".into(),
+            amend: false,
+        },
+    )
+    .unwrap();
+    app.git_file_history(&ctx, "main.rs".into());
+    finish_git(&ctx, &mut app);
+    let data = app.source_control.inspection_data().unwrap();
+    let inspect::Data::History(commits) = &*data else {
+        panic!("Expected scoped history");
+    };
+    assert_eq!(commits.len(), 1);
+    assert_eq!(commits[0].subject, "Read project notes");
+    app.git_branch_history(&ctx, "HEAD".into());
+    // Simulate closing/changing the view before its background request completes.
+    app.source_control.view = View::Changes;
+    finish_git(&ctx, &mut app);
+    assert!(app.source_control.inspection_data().is_none());
+    app.git_line_history(&ctx, "main.rs".into());
+    finish_git(&ctx, &mut app);
+    let data = app.source_control.inspection_data().unwrap();
+    let inspect::Data::Blame(lines) = &*data else {
+        panic!("Expected line history");
+    };
+    assert!(lines.iter().any(|l| l.text.contains("unwrap()")));
+    assert!(lines.iter().all(|l| !l.text.contains("unwrap_or_default")));
+    let output = frame_size(&ctx, &mut app, vec![], egui::vec2(800.0, 600.0));
+    assert!(visible(&output, "Show line history"));
+    assert!(visible(&output, "main.rs"));
+    assert!(visible(&output, "use std::path::Path;"));
+}
+
+#[test]
+fn recovery_branch_and_soft_undo_preserve_unsaved_editor_text_but_rebase_is_blocked() {
+    let (_directory, ctx, mut app, git) = fixture();
+    let root = app.source_control.root.clone().unwrap();
+    git.execute(&root, &Operation::Stage(vec!["main.rs".into()]))
+        .unwrap();
+    git.execute(
+        &root,
+        &Operation::Commit {
+            message: "Second commit".into(),
+            amend: false,
+        },
+    )
+    .unwrap();
+    let oid = git.resolve_commit(&root, "HEAD").unwrap();
+    app.open(&ctx, Some(root.join("main.rs")));
+    finish_app_job(&mut app, &ctx);
+    let before = app.active().page.text.clone();
+    let index = app.workspace.active;
+    app.workspace.open[index]
+        .page
+        .text
+        .push_str("// unsaved idea\n");
+    app.workspace.edit(index, &before).unwrap();
+    app.source_control.open = true;
+    app.git_action(&ctx, Operation::Rebase("main".into()));
+    assert!(!app.source_control.pending);
+    assert!(app
+        .source_control
+        .error
+        .as_ref()
+        .unwrap()
+        .contains("Save or close"));
+    app.source_control.prompt = Some(Prompt::Named {
+        action: inspect::NamedAction::Branch(oid.clone()),
+        name: "recovered".into(),
+        message: String::new(),
+    });
+    frame(&ctx, &mut app, vec![]);
+    click_label(&ctx, &mut app, "Create branch");
+    finish_git(&ctx, &mut app);
+    assert_eq!(git.resolve_commit(&root, "recovered").unwrap(), oid);
+    assert_eq!(git.snapshot(&root, 10).unwrap().branch, "main");
+    app.git_action(&ctx, Operation::UndoCommit { expected: oid });
+    finish_git(&ctx, &mut app);
+    assert!(app.active().page.text.ends_with("// unsaved idea\n"));
+    assert!(app.active().page.info.dirty);
+    assert!(git.snapshot(&root, 10).unwrap().files[0].staged());
+}
+
+#[test]
+fn more_menu_opens_tags_and_recovery_without_crowding_primary_views() {
+    let (_directory, ctx, mut app, _git) = fixture();
+    click_label(&ctx, &mut app, "More");
+    click_label(&ctx, &mut app, "Tags");
+    finish_git(&ctx, &mut app);
+    assert_eq!(app.source_control.view, View::Tags);
+    let output = frame_size(&ctx, &mut app, vec![], egui::vec2(800.0, 600.0));
+    assert!(visible(&output, "Tag HEAD…"));
+    // A view-specific menu title keeps the selected tool discoverable.
+    click_label(&ctx, &mut app, "Tags");
+    click_label(&ctx, &mut app, "Recovery");
+    finish_git(&ctx, &mut app);
+    assert_eq!(app.source_control.view, View::Recovery);
+    assert!(
+        matches!(&*app.source_control.inspection_data().unwrap(), inspect::Data::Recovery(entries) if !entries.is_empty())
+    );
+}
+
+#[test]
+#[ignore = "writes native advanced Git preview images"]
+fn advanced_git_visual_preview() {
+    let (directory, ctx, mut app, git) = fixture();
+    let root = app.source_control.root.clone().unwrap();
+    let base = git.resolve_commit(&root, "HEAD").unwrap();
+    git.execute(&root, &Operation::Stage(vec!["main.rs".into()]))
+        .unwrap();
+    git.execute(
+        &root,
+        &Operation::Commit {
+            message: "Handle missing notes gracefully".into(),
+            amend: false,
+        },
+    )
+    .unwrap();
+    let oid = git.resolve_commit(&root, "HEAD").unwrap();
+    git.execute(
+        &root,
+        &Operation::CreateTag {
+            name: "v1.0.0".into(),
+            oid: oid.clone(),
+            message: "First native release".into(),
+        },
+    )
+    .unwrap();
+    let destination = std::env::var_os("HEDIT_PREVIEW_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| directory.path().into());
+    std::fs::create_dir_all(&destination).unwrap();
+    for (view, label) in [
+        (View::Compare, "compare"),
+        (View::Blame, "blame"),
+        (View::Recovery, "recovery"),
+        (View::History, "history"),
+    ] {
+        match view {
+            View::Compare => {
+                app.git_start_comparison(&ctx, base.clone(), "HEAD".into());
+                finish_git(&ctx, &mut app);
+                click_label(&ctx, &mut app, "main.rs");
+                finish_git(&ctx, &mut app);
+            }
+            View::Blame => {
+                app.git_line_history(&ctx, "main.rs".into());
+                finish_git(&ctx, &mut app);
+            }
+            View::History => {
+                app.git_branch_history(&ctx, "HEAD".into());
+                finish_git(&ctx, &mut app);
+                app.source_control.commit = Some(oid.clone());
+                app.source_control.request(&ctx, None);
+                finish_git(&ctx, &mut app);
+                click_label(&ctx, &mut app, "main.rs");
+                finish_git(&ctx, &mut app);
+            }
+            _ => {
+                app.source_control.clear_review();
+                app.source_control.view = view;
+                app.source_control.request(&ctx, None);
+                finish_git(&ctx, &mut app);
+            }
+        }
+        for name in ["Hedit Ink", "Hedit Paper"] {
+            app.set_theme(&ctx, hedit::theme::builtin(name).unwrap());
+            for size in [egui::vec2(1280.0, 820.0), egui::vec2(800.0, 600.0)] {
+                let output = frame_size(&ctx, &mut app, vec![], size);
+                let bytes = super::super::rtl_tests::rasterize(&ctx, output, size, 1.0);
+                std::fs::write(
+                    destination.join(format!(
+                        "git-{label}-{}-{}.ppm",
+                        if name == "Hedit Ink" { "dark" } else { "light" },
+                        size.x
+                    )),
+                    bytes,
+                )
+                .unwrap();
+            }
+        }
+    }
+}
+
+#[test]
+fn review_queue_and_keyboard_navigation_follow_the_filtered_files() {
+    let (_directory, ctx, mut app, _git) = fixture();
+    let root = app.source_control.root.clone().unwrap();
+    std::fs::write(root.join("a.txt"), "A\n").unwrap();
+    std::fs::write(root.join("b.txt"), "B\n").unwrap();
+    app.source_control.request(&ctx, None);
+    finish_git(&ctx, &mut app);
+    let first = app.source_control.review_queue();
+    assert_eq!(first.len(), 3);
+    assert!(
+        Arc::ptr_eq(&first, &app.source_control.review_queue()),
+        "Idle frames must reuse the review list"
+    );
+    click_label(&ctx, &mut app, "Review changes");
+    finish_git(&ctx, &mut app);
+    assert_eq!(
+        app.source_control.selection.as_ref().unwrap().path,
+        Path::new("a.txt")
+    );
+    frame(&ctx, &mut app, vec![key(Key::ArrowDown, Modifiers::ALT)]);
+    finish_git(&ctx, &mut app);
+    assert_eq!(
+        app.source_control.selection.as_ref().unwrap().path,
+        Path::new("b.txt")
+    );
+    click_label(&ctx, &mut app, "Previous");
+    finish_git(&ctx, &mut app);
+    assert_eq!(
+        app.source_control.selection.as_ref().unwrap().path,
+        Path::new("a.txt")
+    );
+    app.source_control.filter = "main".into();
+    assert_eq!(app.source_control.review_queue().len(), 1);
+    frame(&ctx, &mut app, vec![key(Key::ArrowDown, Modifiers::ALT)]);
+    finish_git(&ctx, &mut app);
+    assert_eq!(
+        app.source_control.selection.as_ref().unwrap().path,
+        Path::new("main.rs")
+    );
+    assert!(visible(&frame(&ctx, &mut app, vec![]), "File 1 of 1"));
+    assert!(app.source_control.open);
+}
+
+#[test]
+fn contextual_back_and_view_switches_restore_the_review_and_filters() {
+    let (_directory, ctx, mut app, _git) = fixture();
+    app.source_control.filter = "main".into();
+    app.source_control.select(
+        &ctx,
+        Selection {
+            path: "main.rs".into(),
+            kind: DiffKind::Working,
+        },
+    );
+    finish_git(&ctx, &mut app);
+    let selection = app.source_control.selection.clone();
+    app.git_file_history(&ctx, "main.rs".into());
+    finish_git(&ctx, &mut app);
+    assert_eq!(app.source_control.view, View::History);
+    click_label(&ctx, &mut app, "Back to Changes");
+    finish_git(&ctx, &mut app);
+    assert_eq!(app.source_control.selection, selection);
+    assert_eq!(app.source_control.filter, "main");
+    app.source_control.visit(&ctx, View::History, false);
+    finish_git(&ctx, &mut app);
+    app.source_control.filter = "Read project".into();
+    let oid = app.source_control.snapshot.as_ref().unwrap().commits[0]
+        .oid
+        .clone();
+    app.source_control.commit = Some(oid.clone());
+    app.source_control.request(&ctx, None);
+    finish_git(&ctx, &mut app);
+    app.source_control.select(
+        &ctx,
+        Selection {
+            path: "main.rs".into(),
+            kind: DiffKind::Commit(oid.clone()),
+        },
+    );
+    finish_git(&ctx, &mut app);
+    app.git_start_comparison(&ctx, oid.clone(), "HEAD".into());
+    finish_git(&ctx, &mut app);
+    click_label(&ctx, &mut app, "Back to History");
+    finish_git(&ctx, &mut app);
+    assert_eq!(app.source_control.filter, "Read project");
+    assert_eq!(app.source_control.commit, Some(oid.clone()));
+    assert_eq!(
+        app.source_control.selection.as_ref().unwrap().kind,
+        DiffKind::Commit(oid)
+    );
+    app.source_control.visit(&ctx, View::Changes, false);
+    finish_git(&ctx, &mut app);
+    assert_eq!(app.source_control.filter, "main");
+    assert_eq!(app.source_control.selection, selection);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn commit_readiness_shortcut_feedback_and_amend_confirmation_are_consistent() {
+    let (_directory, ctx, mut app, git) = fixture();
+    ctx.enable_accesskit();
+    let root = app.source_control.root.clone().unwrap();
+    let output = frame(&ctx, &mut app, vec![]);
+    assert!(accessible_node(&output, "Commit staged (0)").is_disabled());
+    assert!(visible(
+        &output,
+        "Stage files or selected lines to include them."
+    ));
+    let editor_text = app.active().page.text.clone();
+    app.git_action(&ctx, Operation::Stage(vec!["main.rs".into()]));
+    finish_git(&ctx, &mut app);
+    let output = frame(&ctx, &mut app, vec![]);
+    assert!(visible(&output, "Files staged"));
+    assert!(accessible_node(&output, "Commit staged (1)").is_disabled());
+    app.source_control.draft = "Commit with a shortcut".into();
+    frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::COMMAND)]);
+    finish_git(&ctx, &mut app);
+    assert!(app.source_control.open);
+    assert_eq!(app.active().page.text, editor_text);
+    assert_eq!(
+        git.history(&root, 20).unwrap()[0].subject,
+        "Commit with a shortcut"
+    );
+    assert!(visible(&frame(&ctx, &mut app, vec![]), "Commit created"));
+    let oid = git.resolve_commit(&root, "HEAD").unwrap();
+    app.source_control.amend = true;
+    app.source_control.draft = "Amended message".into();
+    frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::COMMAND)]);
+    assert!(visible(&frame(&ctx, &mut app, vec![]), "Amend commit"));
+    click_label(&ctx, &mut app, "Cancel");
+    assert_eq!(git.resolve_commit(&root, "HEAD").unwrap(), oid);
+    frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::COMMAND)]);
+    click_label(&ctx, &mut app, "Amend commit");
+    finish_git(&ctx, &mut app);
+    assert_eq!(
+        git.history(&root, 20).unwrap()[0].subject,
+        "Amended message"
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn background_refresh_keeps_navigation_live_and_repository_actions_disabled() {
+    let (_directory, ctx, mut app, _git) = fixture();
+    ctx.enable_accesskit();
+    app.source_control.pending = true;
+    let output = frame(&ctx, &mut app, vec![]);
+    assert!(!visible(&output, "Git is working…"));
+    assert!(!visible(&output, "Cancel"));
+    assert!(!accessible_node(&output, "main.rs").is_disabled());
+    assert!(accessible_node(&output, "Stage all").is_disabled());
+    click_label(&ctx, &mut app, "History");
+    assert_eq!(app.source_control.view, View::History);
+    assert!(app.source_control.pending);
+}
+
+#[test]
+fn compact_branch_picker_switches_branches_and_keeps_common_actions_discoverable() {
+    let (_directory, ctx, mut app, git) = fixture();
+    let root = app.source_control.root.clone().unwrap();
+    let oid = git.resolve_commit(&root, "HEAD").unwrap();
+    git.execute(
+        &root,
+        &Operation::CreateBranchAt {
+            name: "feature/notes".into(),
+            oid,
+        },
+    )
+    .unwrap();
+    app.source_control.request(&ctx, None);
+    finish_git(&ctx, &mut app);
+    let output = frame_size(&ctx, &mut app, vec![], egui::vec2(800.0, 600.0));
+    assert!(visible(&output, "Local repository"));
+    assert!(visible(&output, "Add remote…"));
+    assert!(!visible(&output, "Pull"));
+    assert!(!visible(&output, "Push"));
+    click_label(&ctx, &mut app, "main");
+    assert!(visible(&frame(&ctx, &mut app, vec![]), "Find a branch…"));
+    click_label(&ctx, &mut app, "feature/notes");
+    finish_git(&ctx, &mut app);
+    assert_eq!(git.snapshot(&root, 20).unwrap().branch, "feature/notes");
+    assert!(visible(&frame(&ctx, &mut app, vec![]), "Branch switched"));
+}
+
+#[test]
+fn comparison_starts_with_a_useful_base_and_swap_applies_immediately() {
+    let (_directory, ctx, mut app, git) = fixture();
+    let root = app.source_control.root.clone().unwrap();
+    let base = git.resolve_commit(&root, "HEAD").unwrap();
+    git.execute(&root, &Operation::Stage(vec!["main.rs".into()]))
+        .unwrap();
+    git.execute(
+        &root,
+        &Operation::Commit {
+            message: "A second commit".into(),
+            amend: false,
+        },
+    )
+    .unwrap();
+    app.source_control.request(&ctx, None);
+    finish_git(&ctx, &mut app);
+    app.source_control.visit(&ctx, View::Compare, false);
+    finish_git(&ctx, &mut app);
+    let data = app.source_control.inspection_data().unwrap();
+    let inspect::Data::Compare(before) = &*data else {
+        panic!("Expected comparison");
+    };
+    assert_eq!(before.base, base);
+    assert_eq!(before.files.len(), 1);
+    click_label(&ctx, &mut app, "Swap");
+    finish_git(&ctx, &mut app);
+    let data = app.source_control.inspection_data().unwrap();
+    let inspect::Data::Compare(after) = &*data else {
+        panic!("Expected comparison");
+    };
+    assert_eq!(after.head, base);
+    assert!(after.files.is_empty());
+}
+
+#[test]
+fn git_commands_are_available_in_the_catalog_and_respect_custom_bindings() {
+    let (_directory, ctx, mut app, git) = fixture();
+    assert!(Command::ALL.contains(&Command::GitCommit));
+    assert!(Command::ALL.contains(&Command::GitNextFile));
+    assert!(!app.command_enabled(Command::GitCommit));
+    assert!(app.command_enabled(Command::GitNextFile));
+    assert!(!app.command_enabled(Command::GitPreviousFile));
+    let root = app.source_control.root.clone().unwrap();
+    app.git_action(&ctx, Operation::Stage(vec!["main.rs".into()]));
+    finish_git(&ctx, &mut app);
+    app.source_control.draft = "Use a custom Git binding".into();
+    app.quality.config.keybindings.push(quality::Binding {
+        command: Command::GitCommit,
+        shortcut: "F9".into(),
+        editor_only: false,
+    });
+    let before = git.resolve_commit(&root, "HEAD").unwrap();
+    frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::COMMAND)]);
+    assert!(!app.source_control.pending);
+    assert!(app.source_control.open);
+    assert_eq!(git.resolve_commit(&root, "HEAD").unwrap(), before);
+    frame(&ctx, &mut app, vec![key(Key::F9, Modifiers::NONE)]);
+    finish_git(&ctx, &mut app);
+    assert_eq!(
+        git.history(&root, 20).unwrap()[0].subject,
+        "Use a custom Git binding"
+    );
+    assert!(app.source_control.open);
+}
+
+#[test]
+fn missing_repository_and_filtered_changes_offer_a_useful_next_step() {
+    let (_directory, ctx, mut app, _git) = fixture();
+    app.source_control.filter = "does-not-match".into();
+    let output = frame(&ctx, &mut app, vec![]);
+    assert!(visible(&output, "No files match this filter"));
+    assert!(!visible(&output, "Working tree clean"));
+    click_label(&ctx, &mut app, "Clear filter");
+    assert!(app.source_control.filter.is_empty());
+    assert!(visible(&frame(&ctx, &mut app, vec![]), "Review changes"));
+    app.source_control.snapshot = None;
+    app.source_control.root = None;
+    let output = frame(&ctx, &mut app, vec![]);
+    assert!(visible(&output, "Open a Git repository to get started"));
+    assert!(!visible(&output, "Working tree clean"));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn diverged_branches_and_operation_banners_offer_actions_that_can_succeed() {
+    let (_directory, ctx, mut app, _git) = fixture();
+    ctx.enable_accesskit();
+    let mut snapshot = (**app.source_control.snapshot.as_ref().unwrap()).clone();
+    snapshot.remotes = vec!["origin".into()];
+    snapshot.upstream = "origin/main".into();
+    snapshot.ahead = 2;
+    snapshot.behind = 3;
+    snapshot.operation = Some("Merge in progress".into());
+    snapshot.files[0].conflict = true;
+    app.source_control.snapshot = Some(Arc::new(snapshot));
+    app.source_control.view = View::Branches;
+    let output = frame_size(&ctx, &mut app, vec![], egui::vec2(800.0, 600.0));
+    assert!(visible(&output, "Branches have diverged"));
+    assert!(accessible_node(&output, "Pull 3").is_disabled());
+    assert!(accessible_node(&output, "Push 2").is_disabled());
+    assert!(!accessible_node(&output, "Compare").is_disabled());
+    assert!(visible(&output, "Merge in progress"));
+    assert!(visible(&output, "Resolve in Changes"));
+    assert!(accessible_node(&output, "Continue").is_disabled());
+    assert!(!accessible_node(&output, "Abort…").is_disabled());
+}
+
+#[test]
+fn commit_shortcut_includes_text_delivered_in_the_same_input_batch() {
+    let (_directory, ctx, mut app, git) = fixture();
+    let root = app.source_control.root.clone().unwrap();
+    app.git_action(&ctx, Operation::Stage(vec!["main.rs".into()]));
+    finish_git(&ctx, &mut app);
+    app.source_control.draft = "Message".into();
+    click_label(&ctx, &mut app, "Message");
+    frame(
+        &ctx,
+        &mut app,
+        vec![
+            egui::Event::Text("final".into()),
+            key(Key::Enter, Modifiers::COMMAND),
+        ],
+    );
+    finish_git(&ctx, &mut app);
+    assert!(git.history(&root, 20).unwrap()[0].subject.contains("final"));
+    assert!(app.source_control.draft.is_empty());
+}
+
+#[test]
+fn missing_commit_details_report_an_error_instead_of_an_empty_review() {
+    let (_directory, ctx, mut app, _git) = fixture();
+    app.source_control.view = View::History;
+    app.source_control.commit = Some("0123456789012345678901234567890123456789".into());
+    app.source_control.request(&ctx, None);
+    finish_git(&ctx, &mut app);
+    assert!(
+        app.source_control
+            .error
+            .as_ref()
+            .is_some_and(|e| e.contains("commit")),
+        "A pruned or otherwise missing commit must produce a visible error"
+    );
+    assert!(app.source_control.files.is_empty());
+    assert!(app.source_control.diff.is_none());
+}
+
+#[test]
+fn git_text_prompts_focus_the_first_field_and_accept_enter() {
+    let (_directory, ctx, mut app, git) = fixture();
+    let root = app.source_control.root.clone().unwrap();
+    app.source_control.prompt = Some(Prompt::Branch(String::new()));
+    frame(&ctx, &mut app, vec![]);
+    frame(
+        &ctx,
+        &mut app,
+        vec![egui::Event::Text("typed-branch".into())],
+    );
+    assert!(
+        matches!(&app.source_control.prompt, Some(Prompt::Branch(name)) if name == "typed-branch")
+    );
+    frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)]);
+    finish_git(&ctx, &mut app);
+    assert!(app.source_control.prompt.is_none());
+    assert_eq!(git.snapshot(&root, 20).unwrap().branch, "typed-branch");
+}
+
+#[test]
+fn remote_branch_picker_reuses_an_existing_local_tracking_branch() {
+    let (_directory, ctx, mut app, git) = fixture();
+    let root = app.source_control.root.clone().unwrap();
+    let remote = tempfile::tempdir().unwrap();
+    git.command(remote.path(), &["init", "--bare", "-b", "main"])
+        .unwrap();
+    git.execute(
+        &root,
+        &Operation::AddRemote {
+            name: "origin".into(),
+            url: remote.path().to_string_lossy().into_owned(),
+        },
+    )
+    .unwrap();
+    git.execute(
+        &root,
+        &Operation::Publish {
+            remote: "origin".into(),
+            branch: "main".into(),
+        },
+    )
+    .unwrap();
+    app.source_control.request(&ctx, None);
+    finish_git(&ctx, &mut app);
+    click_label(&ctx, &mut app, "main");
+    click_label(&ctx, &mut app, "origin/main");
+    finish_git(&ctx, &mut app);
+    assert!(
+        app.source_control.error.is_none(),
+        "Selecting an already-tracked remote branch must not fail: {:?}",
+        app.source_control.error
+    );
+    assert_eq!(git.snapshot(&root, 20).unwrap().branch, "main");
+}
+
+#[test]
+fn tracking_dialog_suggests_the_correct_name_for_remotes_containing_slashes() {
+    let (_directory, ctx, mut app, git) = fixture();
+    let root = app.source_control.root.clone().unwrap();
+    let oid = git.resolve_commit(&root, "HEAD").unwrap();
+    let remote = tempfile::tempdir().unwrap();
+    git.command(remote.path(), &["init", "--bare"]).unwrap();
+    git.execute(
+        &root,
+        &Operation::AddRemote {
+            name: "team/origin".into(),
+            url: remote.path().to_string_lossy().into_owned(),
+        },
+    )
+    .unwrap();
+    git.command(
+        &root,
+        &["update-ref", "refs/remotes/team/origin/topic", &oid],
+    )
+    .unwrap();
+    app.source_control.request(&ctx, None);
+    finish_git(&ctx, &mut app);
+    click_label(&ctx, &mut app, "main");
+    click_label(&ctx, &mut app, "team/origin/topic");
+    assert!(
+        matches!(&app.source_control.prompt,Some(Prompt::Named { name, .. }) if name == "topic")
+    );
+    frame(&ctx, &mut app, vec![egui::Event::Text("my-topic".into())]);
+    frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)]);
+    finish_git(&ctx, &mut app);
+    assert_eq!(git.snapshot(&root, 20).unwrap().branch, "my-topic");
+    assert_eq!(
+        git.command(&root, &["rev-parse", "--symbolic-full-name", "@{upstream}"])
+            .unwrap()
+            .trim(),
+        "refs/remotes/team/origin/topic"
+    );
+}
+
+#[test]
+fn cloning_exposes_progress_and_a_failed_clone_preserves_the_current_review() {
+    let (_directory, ctx, mut app, _git) = fixture();
+    app.source_control.select(
+        &ctx,
+        Selection {
+            path: "main.rs".into(),
+            kind: DiffKind::Working,
+        },
+    );
+    finish_git(&ctx, &mut app);
+    app.source_control.draft = "Keep my commit draft".into();
+    let root = app.source_control.root.clone().unwrap();
+    let selected = app.source_control.selection.clone();
+    let patch = app.source_control.diff.as_ref().unwrap().patch.clone();
+    // An existing destination is rejected before any clone process can write.
+    app.git_clone(&ctx, "/nonexistent/disposable-source".into(), root.clone());
+    let output = ctx.run(egui::RawInput::default(), |ctx| {
+        app.source_control_editor(ctx)
+    });
+    assert!(visible(&output, "Cloning repository…"));
+    assert!(visible(&output, "Cancel"));
+    finish_git(&ctx, &mut app);
+    assert!(app.source_control.error.is_some());
+    assert_eq!(app.source_control.root, Some(root));
+    assert!(app.source_control.snapshot.is_some());
+    assert_eq!(app.source_control.selection, selected);
+    assert_eq!(app.source_control.diff.as_ref().unwrap().patch, patch);
+    assert_eq!(app.source_control.draft, "Keep my commit draft");
+}
+
+#[test]
+fn tag_remote_and_clone_forms_work_by_keyboard_and_preserve_repository_drafts() {
+    let (_directory, ctx, mut app, git) = fixture();
+    let original = app.source_control.root.clone().unwrap();
+    let oid = git.resolve_commit(&original, "HEAD").unwrap();
+    app.source_control.draft = "Keep the original repository draft".into();
+    app.source_control.prompt = Some(Prompt::Named {
+        action: inspect::NamedAction::Tag(oid.clone()),
+        name: String::new(),
+        message: String::new(),
+    });
+    frame(&ctx, &mut app, vec![]);
+    frame(
+        &ctx,
+        &mut app,
+        vec![egui::Event::Text("keyboard-tag".into())],
+    );
+    frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)]);
+    frame(
+        &ctx,
+        &mut app,
+        vec![egui::Event::Text("Keyboard annotation".into())],
+    );
+    frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::COMMAND)]);
+    finish_git(&ctx, &mut app);
+    assert!(app.source_control.prompt.is_none());
+    let tag = git
+        .tags(&original)
+        .unwrap()
+        .into_iter()
+        .find(|tag| tag.name == "keyboard-tag")
+        .unwrap();
+    assert_eq!(tag.commit, Some(oid));
+    assert!(git
+        .command(&original, &["cat-file", "-p", &tag.object])
+        .unwrap()
+        .contains("Keyboard annotation"));
+    let mirror = tempfile::tempdir().unwrap();
+    git.command(mirror.path(), &["init", "--bare", "-b", "main"])
+        .unwrap();
+    app.source_control.prompt = Some(Prompt::Remote {
+        name: "origin".into(),
+        url: String::new(),
+    });
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![egui::Event::Text("mirror".into())]);
+    frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)]);
+    frame(
+        &ctx,
+        &mut app,
+        vec![egui::Event::Text(
+            mirror.path().to_string_lossy().into_owned(),
+        )],
+    );
+    frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)]);
+    finish_git(&ctx, &mut app);
+    assert!(app.source_control.prompt.is_none());
+    assert!(app.source_control.error.is_none());
+    assert!(git
+        .snapshot(&original, 20)
+        .unwrap()
+        .remotes
+        .contains(&"mirror".into()));
+    git.execute(
+        &original,
+        &Operation::Publish {
+            remote: "mirror".into(),
+            branch: "main".into(),
+        },
+    )
+    .unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    let cloned = destination.path().join("cloned");
+    app.source_control.prompt = Some(Prompt::Clone {
+        url: String::new(),
+        destination: String::new(),
+    });
+    frame(&ctx, &mut app, vec![]);
+    frame(
+        &ctx,
+        &mut app,
+        vec![egui::Event::Text(
+            mirror.path().to_string_lossy().into_owned(),
+        )],
+    );
+    frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)]);
+    frame(
+        &ctx,
+        &mut app,
+        vec![egui::Event::Text(cloned.to_string_lossy().into_owned())],
+    );
+    frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)]);
+    finish_git(&ctx, &mut app);
+    assert!(app.source_control.prompt.is_none());
+    assert!(app.source_control.error.is_none());
+    assert_eq!(
+        app.source_control.root,
+        Some(git.discover(&cloned).unwrap())
+    );
+    assert!(visible(&frame(&ctx, &mut app, vec![]), "Repository cloned"));
+    app.source_control.change_root(&ctx, original);
+    finish_git(&ctx, &mut app);
+    assert_eq!(
+        app.source_control.draft,
+        "Keep the original repository draft"
+    );
+}
+
+#[test]
+fn history_rows_select_when_clicking_the_subject_author_or_reference_text() {
+    let (_directory, ctx, mut app, _git) = fixture();
+    ctx.style_mut(|style| style.interaction.selectable_labels = true);
+    app.source_control.visit(&ctx, View::History, false);
+    finish_git(&ctx, &mut app);
+    for field in 0..3 {
+        app.source_control.clear_review();
+        app.source_control.last_refresh = Instant::now();
+        let commit = app.source_control.snapshot.as_ref().unwrap().commits[0].clone();
+        let label = match field {
+            0 => commit.subject.clone(),
+            1 => format!("{} · {}", commit.author, commit.date),
+            _ => commit.refs.clone(),
+        };
+        assert!(!label.is_empty());
+        click_label(&ctx, &mut app, &label);
+        finish_git(&ctx, &mut app);
+        assert_eq!(
+            app.source_control.commit,
+            Some(commit.oid),
+            "Clicking commit text must select its row: {label}"
+        );
+        assert!(!app.source_control.files.is_empty());
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn history_rows_expose_accessible_selection_state() {
+    let (_directory, ctx, mut app, _git) = fixture();
+    ctx.enable_accesskit();
+    app.source_control.visit(&ctx, View::History, false);
+    finish_git(&ctx, &mut app);
+    let subject = app.source_control.snapshot.as_ref().unwrap().commits[0]
+        .subject
+        .clone();
+    for selected in [false, true] {
+        if selected {
+            click_label(&ctx, &mut app, &subject);
+            finish_git(&ctx, &mut app);
+        }
+        let output = frame(&ctx, &mut app, vec![]);
+        assert!(
+            output
+                .platform_output
+                .accesskit_update
+                .unwrap()
+                .nodes
+                .iter()
+                .any(|(_, node)| node.label() == Some(subject.as_str())
+                    && node.toggled()
+                        == Some(if selected {
+                            egui::accesskit::Toggled::True
+                        } else {
+                            egui::accesskit::Toggled::False
+                        })),
+            "Commit row must expose its selection state"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn cancelling_a_running_commit_keeps_the_review_visible_and_allows_retry() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_directory, ctx, mut app, git) = fixture();
+    let root = app.source_control.root.clone().unwrap();
+    app.git_action(&ctx, Operation::Stage(vec!["main.rs".into()]));
+    finish_git(&ctx, &mut app);
+    let selection = Selection {
+        path: "main.rs".into(),
+        kind: DiffKind::Staged,
+    };
+    app.source_control.select(&ctx, selection.clone());
+    finish_git(&ctx, &mut app);
+    let before = git.command(&root, &["rev-parse", "HEAD"]).unwrap();
+    let hooks = root.join("hooks");
+    std::fs::create_dir(&hooks).unwrap();
+    let hook = hooks.join("pre-commit");
+    std::fs::write(
+        &hook,
+        "#!/bin/sh\nprintf ready > hook-started\nexec sleep 30\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    git.command(
+        &root,
+        &["config", "core.hooksPath", hooks.to_str().unwrap()],
+    )
+    .unwrap();
+    app.source_control.draft = "Retry this cancelled commit".into();
+    let operation = Operation::Commit {
+        message: app.source_control.draft.clone(),
+        amend: false,
+    };
+    app.git_action(&ctx, operation.clone());
+    let started = Instant::now();
+    while !root.join("hook-started").exists() {
+        assert!(started.elapsed() < Duration::from_secs(5));
+        thread::sleep(Duration::from_millis(5));
+    }
+    app.source_control.cancel.store(true, Ordering::Relaxed);
+    while app.source_control.pending {
+        assert!(started.elapsed() < Duration::from_secs(10));
+        app.poll_source_control(&ctx);
+        assert!(
+            app.source_control.snapshot.is_some(),
+            "Cancellation must keep the repository review visible"
+        );
+        assert_eq!(app.source_control.selection, Some(selection.clone()));
+        assert!(app.source_control.diff.is_some());
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(git.command(&root, &["rev-parse", "HEAD"]).unwrap(), before);
+    assert_eq!(app.source_control.draft, "Retry this cancelled commit");
+    assert!(app
+        .source_control
+        .error
+        .as_ref()
+        .is_some_and(|e| e.contains("cancelled")));
+    assert!(app
+        .source_control
+        .snapshot
+        .as_ref()
+        .unwrap()
+        .files
+        .iter()
+        .any(FileStatus::staged));
+    git.command(
+        &root,
+        &["config", "core.hooksPath", "/nonexistent/hedit-test-hooks"],
+    )
+    .unwrap();
+    app.git_action(&ctx, operation);
+    finish_git(&ctx, &mut app);
+    assert_ne!(git.command(&root, &["rev-parse", "HEAD"]).unwrap(), before);
+    assert!(app.source_control.draft.is_empty());
+    assert!(app.source_control.error.is_none());
+}

@@ -612,14 +612,28 @@ terminal support explain this on the Terminal settings page.
 Use the **Files / Source Control** switch at the top of the sidebar, **Tools →
 Source Control**, or **Ctrl+Shift+G** (**Cmd+Shift+G** on macOS). The active segment
 is highlighted; narrow sidebars shorten Source Control to **Git**. Switching views
-keeps your editor tabs and commit message. This native workspace uses
+keeps your editor tabs and commit message. Each Git view remembers its filter and
+selected file or commit. Contextual history and comparison links offer **Back to…**
+to return to the previous review. This native workspace uses
 Git installed on your `PATH` (Git 2.30 or newer). Your existing Git identity,
 credential helpers, SSH agent, signing settings, hooks, and remotes apply.
 It does not require a browser or a hosting-service account.
 
 The repository selector discovers repositories from your workspace folders and
-the active file. **…** opens another repository or clones a URL/local repository
-into a new folder. Enter the full destination path when cloning. A folder without
+the active file. Its **…** menu holds **Refresh**, **Open repository…**, **Clone
+repository…**, and remote actions. Click the branch name to search and switch
+branches or create a new one. Selecting a remote branch reuses an existing local
+tracking branch; otherwise a dialog lets you choose its local name. Git dialogs
+focus the first field. Enter submits a one-field dialog or the final single-line
+field; Ctrl+Enter (Cmd+Enter on macOS) submits completed forms, including tags.
+Destructive confirmations still require choosing the named action. Local repositories show **Add remote…**; connected
+branches show relevant Pull/Push counts and **Fetch**, or **Publish branch** when
+an upstream is missing. Counts reflect the last fetch. Diverged branches offer
+**Compare** before you choose a merge or rebase. Clone a URL/local repository
+into a new folder. Enter the full destination path when cloning. Clone progress
+shows a Cancel action; a failed or cancelled clone keeps the previous repository,
+review, and commit draft. A partially created destination may remain and can be
+inspected before choosing a new destination. A folder without
 Git can be initialized from the sidebar. **Files** or **Ctrl+W** returns to the
 editor; open tabs, cursor positions, and unsaved text remain available.
 
@@ -631,6 +645,13 @@ staged files. New files have a text preview; binary files show a summary. **Unif
 and **Side by side** share syntax coloring, character-change highlights, line
 numbers, and horizontal scrolling. Narrow windows use Unified automatically. **Copy diff** copies the
 complete patch, including headers hidden from the visual review.
+
+Choose **Review changes** to start at the first matching file. **Previous** and
+**Next**, or **Alt+Up / Alt+Down** (**Option+Up / Option+Down** on macOS), step through
+file comparisons in Changes, commit reviews, and branch comparisons. The counter
+shows your position. Navigation follows the file filter; a file with both staged
+and working edits has a separate comparison for each side. Clear a filter with its
+close button to see the full list again.
 
 Both layouts offer **Copy line** and **Copy diff** from the right-click menu;
 **Copy line** copies the saved source without the diff marker. Line numbers stay
@@ -665,9 +686,13 @@ tree, with a separate **Filter files…** field.
 - The review follows a file into its new group after staging or unstaging, and
   clears after the file has no remaining changes. Unstaging only changes the
   index and can be done while the editor has unsaved text.
-- Enter a message and choose **Commit staged**. Only the index is committed.
-  Unsaved editor edits are not included. **Amend** replaces the latest commit and
-  asks for confirmation because it changes the commit ID.
+- Enter a message and choose **Commit staged**, or press **Ctrl+Enter**
+  (**Cmd+Enter** on macOS). Only the index is committed. Unsaved editor edits are
+  not included. The message below the button explains what is needed when it is
+  disabled. The commit button’s **…** menu offers **Amend last commit**, which
+  asks for confirmation because it changes the commit ID. Git commit and
+  next/previous file commands also appear in the command palette and can be
+  customized in Key Bindings.
 - **Discard working changes…** restores a tracked file from the index after
   confirmation. A copy of an existing regular file is kept under the session's
   `git-backups` directory; **Git output** reports its path. Staged text is kept.
@@ -691,13 +716,74 @@ cherry-picked/reverted in a terminal. History initially loads 200 commits;
 
 **Branches** creates and switches local branches, creates local tracking branches
 from remote branches, merges into the current branch, and deletes merged local
-branches. The **…** menu beside a branch holds its actions. Git refuses deletion
-of an unmerged branch. Remotes can be added and removed here too.
+branches. The **…** menu beside a branch also offers comparison, scoped history,
+renaming, setting an upstream, and rebasing the current branch onto it. Rebase
+rewrites commit IDs and asks for confirmation; conflicts use the same Continue
+and Abort controls in Changes. Save or close unsaved repository files first.
+Git refuses deletion of an unmerged branch. Remotes can be added and removed here too.
 
-**Stashes** saves tracked and untracked working changes with a description.
+**More → Stashes** saves tracked and untracked working changes with a description.
 **Apply** restores the saved working/index state and keeps the stash; **Drop…**
 removes it after confirmation. If applying produces conflicts, resolve and stage
 them before continuing other work.
+
+### Compare branches and revisions
+
+Choose **More → Compare**, or **Compare with current branch** from a branch’s
+**…** menu. Pick a Base and Head using branch pickers, or enter tags, commit IDs,
+or revisions such as `HEAD~3`. **Compare** lists the affected files and shows
+how many commits Head is ahead of or behind Base. Opening Compare chooses the
+upstream, another main branch, or HEAD’s parent as an initial base when available.
+**Swap** reverses the inputs and updates the review immediately. Press Enter in a
+revision field or choose Compare to apply edited inputs; a hint identifies inputs
+that have not yet been applied.
+
+**Changes since common ancestor** reviews Head’s contribution since the branches
+diverged, like a pull request. Turn it off to compare the current contents of the
+two revisions directly. Select a file to use the normal Unified or Side by side
+diff with syntax colors and Copy diff. These comparisons are read-only. Reviews
+are pinned to exact commit IDs; refreshing a moving branch clears an outdated
+file selection so a previous patch cannot appear under the new comparison.
+
+### File history and line authorship
+
+In **History**, expand **History scope** to limit commits to a branch or revision,
+a repository-relative file or folder, or both. **Apply scope** applies the inputs;
+**All history** clears them. The regular Filter field searches the loaded commits.
+A file’s context menu also offers **File history**, including for files in commit
+reviews. File history follows the selected path; it does not follow earlier names
+across renames.
+
+Choose **More → Line history**, enter a repository-relative file and revision,
+then **Show line history**. **Active file** uses the current editor file. A changed
+file’s context menu offers the same view. Each line shows its author, commit ID,
+and source text; select a commit ID to inspect that commit. Filtering matches
+source text, authors, IDs, and commit summaries. The view uses committed UTF-8
+text at the selected revision, so saved working changes and unsaved editor text
+are excluded. It follows the editor’s theme, font, spacing, and tab settings.
+
+### Tags and recovery
+
+**More → Tags** lists local tags. **Tag HEAD…**, or **More… → Tag…** in a commit’s
+detail bar, creates an annotated tag with a message. A tag’s **…** menu inspects its commit,
+compares it with HEAD, creates a branch there, copies its name, or deletes the local
+tag. Deletion checks the reviewed tag object, so a tag moved by another Git client
+must be refreshed first. Tags are managed locally; publishing tags uses a terminal.
+
+**More → Recovery** shows the local HEAD reflog, including movements caused by
+commits, resets, switches, and rebases. **Recover branch…** gives an earlier commit
+a new branch name without switching the current checkout or changing saved or
+unsaved files. Selecting a reflog commit ID opens its history and file diffs, even
+when the commit is no longer reachable from another branch. Reflog entries are
+local and may expire according to Git’s configuration.
+
+**Undo last commit…** moves the current branch to its first parent while preserving
+the index, working files, and unsaved editor text. The undone changes remain staged,
+alongside any existing staged edits. This asks for confirmation and checks that
+HEAD still matches the reviewed commit. The initial commit and operations already
+in progress cannot be undone here. Use **Revert…** for commits shared with others.
+**More… → Branch here…** in any commit’s detail bar also creates a branch without
+switching.
 
 ### Conflicts and remotes
 
@@ -715,15 +801,19 @@ Replacing a conflict checks both the working file and the reviewed index sides;
 if another Git client changes either, refresh and review before trying again.
 
 **Fetch** updates remote references. **Pull** only fast-forwards the upstream;
-divergent histories require an explicit merge or a terminal rebase. **Push** uses
+divergent histories require an explicit merge or rebase from Branches. **Push** uses
 Git's configured destination. **Publish** lets a branch without an upstream pick
 a remote and sets its upstream. These actions never force-push. Configure
 credentials outside hedit if Git reports that authentication is unavailable;
 terminal password prompts are disabled, while configured credential helpers and
 SSH agents remain usable.
 
-Git work runs in the background. **Refresh** reloads repository state, which also
-refreshes every four seconds while this workspace is visible. **Cancel** stops
+Git work runs in the background. **Refresh** in the repository’s **…** menu reloads
+repository state, which also refreshes every four seconds while this workspace is
+visible. Automatic refresh uses a small branch-row indicator and keeps file/view
+navigation available. Actions show their progress by name and a short completion
+message; confirmation buttons name the action they perform. Operation controls
+for conflicts remain visible when switching Git views. **Cancel** stops
 the current operation; refresh afterward to inspect its outcome. Git commands
 time out after 30 seconds locally or 120 seconds for network operations and have
 a 24 MiB output limit. **Git output** keeps recent action results. The normal

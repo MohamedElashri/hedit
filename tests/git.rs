@@ -1,4 +1,4 @@
-use hedit::git::{DiffKind, Git, Operation, Selection};
+use hedit::git::{DiffKind, Git, HistoryScope, Operation, Selection};
 use std::{path::Path, sync::atomic::Ordering};
 
 fn repo() -> (tempfile::TempDir, Git) {
@@ -1029,4 +1029,1147 @@ fn discard_can_restore_a_deleted_parent_folder_and_amend_updates_only_staged_tex
         std::fs::read_to_string(root.join("sub/file.txt")).unwrap(),
         "working\n"
     );
+}
+
+#[test]
+fn comparisons_distinguish_branch_contributions_from_tip_contents() {
+    let (directory, git) = repo();
+    let root = directory.path();
+    write(root, "base.txt", "base\n");
+    stage(&git, root, "base.txt");
+    commit(&git, root, "Base");
+    git.execute(root, &Operation::CreateBranch("feature".into()))
+        .unwrap();
+    write(root, "feature.txt", "feature\n");
+    stage(&git, root, "feature.txt");
+    commit(&git, root, "Feature");
+    git.execute(root, &Operation::Switch("main".into()))
+        .unwrap();
+    write(root, "main.txt", "main\n");
+    stage(&git, root, "main.txt");
+    commit(&git, root, "Main only");
+    let contribution = git.compare(root, "main", "feature", true).unwrap();
+    assert_eq!((contribution.ahead, contribution.behind), (1, 1));
+    assert_eq!(contribution.files.len(), 1);
+    assert_eq!(contribution.files[0].path, Path::new("feature.txt"));
+    let diff = git
+        .diff(
+            root,
+            &Selection {
+                path: "feature.txt".into(),
+                kind: DiffKind::Compare {
+                    base: contribution.base,
+                    head: contribution.head,
+                },
+            },
+        )
+        .unwrap();
+    assert!(diff.patch.contains("+feature"));
+    assert!(!diff.supports_partial());
+    let tips = git.compare(root, "main", "feature", false).unwrap();
+    assert_eq!(tips.files.len(), 2);
+    let reverse = git.compare(root, "feature", "main", true).unwrap();
+    assert_eq!(reverse.files[0].path, Path::new("main.txt"));
+    assert!(git
+        .compare(root, "--output=/tmp/oops", "HEAD", false)
+        .is_err());
+    assert!(git.compare(root, "missing", "HEAD", false).is_err());
+}
+
+#[test]
+fn scoped_history_and_blame_use_literal_paths_and_committed_text() {
+    let (directory, git) = repo();
+    let root = directory.path();
+    #[cfg(unix)]
+    let path = ":(glob)*.txt";
+    #[cfg(not(unix))]
+    let path = "[literal].txt";
+    write(root, path, "first\n日本語\n");
+    stage(&git, root, path);
+    commit(&git, root, "Base text");
+    let first = git.resolve_commit(root, "HEAD").unwrap();
+    write(root, "other.txt", "other\n");
+    stage(&git, root, "other.txt");
+    commit(&git, root, "Unrelated");
+    git.command(root, &["config", "user.name", "Second Author"])
+        .unwrap();
+    write(root, path, "updated\n日本語\n");
+    stage(&git, root, path);
+    commit(&git, root, "Change first line");
+    let last = git.resolve_commit(root, "HEAD").unwrap();
+    write(root, path, "unstaged\n");
+    let history = git
+        .scoped_history(
+            root,
+            20,
+            &HistoryScope {
+                reference: Some("main".into()),
+                path: Some(path.into()),
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        history
+            .iter()
+            .map(|c| c.subject.as_str())
+            .collect::<Vec<_>>(),
+        ["Change first line", "Base text"]
+    );
+    let blame = git.blame(root, "HEAD", Path::new(path)).unwrap();
+    assert_eq!(blame.len(), 2);
+    assert_eq!(
+        (
+            &blame[0].oid,
+            blame[0].number,
+            blame[0].author.as_str(),
+            blame[0].text.as_str()
+        ),
+        (&last, 1, "Second Author", "updated")
+    );
+    assert_eq!((&blame[1].oid, blame[1].text.as_str()), (&first, "日本語"));
+    assert!(git.blame(root, "HEAD", Path::new("../outside")).is_err());
+    assert!(git
+        .scoped_history(
+            root,
+            20,
+            &HistoryScope {
+                reference: Some("--all".into()),
+                path: None
+            }
+        )
+        .is_err());
+}
+
+#[test]
+fn annotated_tags_are_reviewable_and_delete_checks_the_reviewed_object() {
+    let (directory, git) = repo();
+    let root = directory.path();
+    write(root, "file", "one\n");
+    stage(&git, root, "file");
+    commit(&git, root, "One");
+    let oid = git.resolve_commit(root, "HEAD").unwrap();
+    git.execute(
+        root,
+        &Operation::CreateTag {
+            name: "v1.0".into(),
+            oid: oid.clone(),
+            message: "Release one\n\nDetails".into(),
+        },
+    )
+    .unwrap();
+    let tag = git.tags(root).unwrap().remove(0);
+    assert_eq!(tag.name, "v1.0");
+    assert_eq!(tag.commit, Some(oid.clone()));
+    assert_ne!(tag.object, oid);
+    assert!(git
+        .command(root, &["cat-file", "-p", &tag.object])
+        .unwrap()
+        .contains("Release one\n\nDetails"));
+    assert!(git
+        .execute(
+            root,
+            &Operation::CreateTag {
+                name: "v1.0".into(),
+                oid: oid.clone(),
+                message: "Duplicate".into()
+            }
+        )
+        .is_err());
+    git.command(root, &["tag", "-f", "v1.0", &oid]).unwrap();
+    assert!(git
+        .execute(
+            root,
+            &Operation::DeleteTag {
+                name: tag.name.clone(),
+                expected: tag.object
+            }
+        )
+        .is_err());
+    assert_eq!(git.tags(root).unwrap()[0].commit, Some(oid.clone()));
+    git.execute(
+        root,
+        &Operation::DeleteTag {
+            name: tag.name,
+            expected: oid,
+        },
+    )
+    .unwrap();
+    assert!(git.tags(root).unwrap().is_empty());
+}
+
+#[test]
+fn undo_and_reflog_recovery_preserve_the_index_worktree_and_checkout() {
+    let (directory, git) = repo();
+    let root = directory.path();
+    write(root, "file", "one\n");
+    stage(&git, root, "file");
+    commit(&git, root, "One");
+    let first = git.resolve_commit(root, "HEAD").unwrap();
+    assert!(git
+        .execute(
+            root,
+            &Operation::UndoCommit {
+                expected: first.clone()
+            }
+        )
+        .is_err());
+    write(root, "file", "two\n");
+    stage(&git, root, "file");
+    commit(&git, root, "Two");
+    let second = git.resolve_commit(root, "HEAD").unwrap();
+    write(root, "file", "staged\n");
+    stage(&git, root, "file");
+    write(root, "file", "working\n");
+    assert!(git
+        .execute(
+            root,
+            &Operation::UndoCommit {
+                expected: first.clone()
+            }
+        )
+        .is_err());
+    git.execute(
+        root,
+        &Operation::UndoCommit {
+            expected: second.clone(),
+        },
+    )
+    .unwrap();
+    assert_eq!(git.resolve_commit(root, "HEAD").unwrap(), first);
+    assert_eq!(git.resolve_commit(root, "ORIG_HEAD").unwrap(), second);
+    assert_eq!(git.command(root, &["show", ":file"]).unwrap(), "staged\n");
+    assert_eq!(
+        std::fs::read_to_string(root.join("file")).unwrap(),
+        "working\n"
+    );
+    assert!(git
+        .reflog(root, 20)
+        .unwrap()
+        .iter()
+        .any(|e| e.oid == second && e.subject.contains("Two")));
+    git.execute(
+        root,
+        &Operation::CreateBranchAt {
+            name: "recovered".into(),
+            oid: second.clone(),
+        },
+    )
+    .unwrap();
+    assert_eq!(git.resolve_commit(root, "recovered").unwrap(), second);
+    assert_eq!(git.snapshot(root, 10).unwrap().branch, "main");
+    assert_eq!(
+        std::fs::read_to_string(root.join("file")).unwrap(),
+        "working\n"
+    );
+}
+
+#[test]
+fn branch_rename_upstream_and_rebase_work_without_shell_or_checkout_shortcuts() {
+    let (directory, git) = repo();
+    let root = directory.path();
+    write(root, "file", "one\n");
+    stage(&git, root, "file");
+    commit(&git, root, "One");
+    git.execute(root, &Operation::CreateBranch("topic".into()))
+        .unwrap();
+    write(root, "topic", "topic\n");
+    stage(&git, root, "topic");
+    commit(&git, root, "Topic");
+    let old = git.resolve_commit(root, "HEAD").unwrap();
+    git.execute(root, &Operation::Switch("main".into()))
+        .unwrap();
+    write(root, "main", "main\n");
+    stage(&git, root, "main");
+    commit(&git, root, "Main");
+    git.execute(root, &Operation::Switch("topic".into()))
+        .unwrap();
+    git.execute(
+        root,
+        &Operation::RenameBranch {
+            old: "topic".into(),
+            new: "feature/native".into(),
+        },
+    )
+    .unwrap();
+    git.execute(
+        root,
+        &Operation::SetUpstream {
+            branch: "feature/native".into(),
+            upstream: "refs/heads/main".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(git.snapshot(root, 10).unwrap().upstream, "main");
+    git.execute(root, &Operation::Rebase("refs/heads/main".into()))
+        .unwrap();
+    assert_ne!(git.resolve_commit(root, "HEAD").unwrap(), old);
+    assert!(root.join("main").exists() && root.join("topic").exists());
+    assert!(Operation::Rebase("main".into()).changes_worktree());
+    assert!(!Operation::UndoCommit { expected: old }.changes_worktree());
+}
+
+#[test]
+fn rebase_refuses_dirty_saved_files_and_supports_conflict_abort_and_continue() {
+    let (directory, git) = repo();
+    let root = directory.path();
+    write(root, "file", "base\n");
+    stage(&git, root, "file");
+    commit(&git, root, "Base");
+    git.execute(root, &Operation::CreateBranch("topic".into()))
+        .unwrap();
+    write(root, "file", "topic\n");
+    stage(&git, root, "file");
+    commit(&git, root, "Topic");
+    let topic = git.resolve_commit(root, "HEAD").unwrap();
+    git.execute(root, &Operation::Switch("main".into()))
+        .unwrap();
+    write(root, "file", "main\n");
+    stage(&git, root, "file");
+    commit(&git, root, "Main");
+    git.execute(root, &Operation::Switch("topic".into()))
+        .unwrap();
+    git.command(root, &["config", "rebase.autoStash", "true"])
+        .unwrap();
+    write(root, "file", "unsaved to index\n");
+    assert!(git
+        .execute(root, &Operation::Rebase("main".into()))
+        .is_err());
+    assert_eq!(
+        std::fs::read_to_string(root.join("file")).unwrap(),
+        "unsaved to index\n"
+    );
+    assert!(git.snapshot(root, 10).unwrap().stashes.is_empty());
+    write(root, "file", "topic\n");
+    assert!(git
+        .execute(root, &Operation::Rebase("main".into()))
+        .is_err());
+    let snapshot = git.snapshot(root, 10).unwrap();
+    assert_eq!(snapshot.operation.as_deref(), Some("Rebase in progress"));
+    assert!(snapshot.files[0].conflict);
+    assert!(git
+        .execute(
+            root,
+            &Operation::UndoCommit {
+                expected: snapshot.oid
+            }
+        )
+        .is_err());
+    git.execute(root, &Operation::Abort("Rebase in progress".into()))
+        .unwrap();
+    assert_eq!(git.resolve_commit(root, "HEAD").unwrap(), topic);
+    assert_eq!(
+        std::fs::read_to_string(root.join("file")).unwrap(),
+        "topic\n"
+    );
+    assert!(git
+        .execute(root, &Operation::Rebase("main".into()))
+        .is_err());
+    write(root, "file", "main and topic\n");
+    stage(&git, root, "file");
+    git.execute(root, &Operation::Continue("Rebase in progress".into()))
+        .unwrap();
+    assert!(git.snapshot(root, 10).unwrap().operation.is_none());
+    assert_eq!(
+        std::fs::read_to_string(root.join("file")).unwrap(),
+        "main and topic\n"
+    );
+}
+
+#[test]
+fn empty_and_cancelled_inspection_queries_do_not_misreport_history() {
+    let (directory, git) = repo();
+    let root = directory.path();
+    assert!(git.tags(root).unwrap().is_empty());
+    assert!(git.reflog(root, 20).unwrap().is_empty());
+    assert!(git.compare(root, "HEAD", "HEAD", true).is_err());
+    git.cancel.store(true, Ordering::Relaxed);
+    assert!(git.reflog(root, 20).unwrap_err().contains("cancelled"));
+    assert!(git.tags(root).is_err());
+    assert!(git.blame(root, "HEAD", Path::new("file")).is_err());
+}
+
+#[test]
+fn local_and_remote_branch_name_collisions_remain_switchable_and_trackable() {
+    let (directory, git) = repo();
+    let root = directory.path();
+    write(root, "file", "base\n");
+    stage(&git, root, "file");
+    commit(&git, root, "Base");
+    let oid = git.resolve_commit(root, "HEAD").unwrap();
+    git.execute(
+        root,
+        &Operation::CreateBranchAt {
+            name: "origin/main".into(),
+            oid: oid.clone(),
+        },
+    )
+    .unwrap();
+    git.command(root, &["update-ref", "refs/remotes/origin/main", &oid])
+        .unwrap();
+    git.command(
+        root,
+        &[
+            "config",
+            "remote.origin.url",
+            directory.path().to_str().unwrap(),
+        ],
+    )
+    .unwrap();
+    git.command(
+        root,
+        &[
+            "config",
+            "remote.origin.fetch",
+            "+refs/heads/*:refs/remotes/origin/*",
+        ],
+    )
+    .unwrap();
+    let snapshot = git.snapshot(root, 20).unwrap();
+    let local = snapshot
+        .branches
+        .iter()
+        .find(|b| b.reference == "refs/heads/origin/main")
+        .unwrap();
+    let remote = snapshot
+        .branches
+        .iter()
+        .find(|b| b.reference == "refs/remotes/origin/main")
+        .unwrap();
+    assert_eq!(local.name, "origin/main");
+    assert_eq!(remote.name, "origin/main");
+    git.execute(root, &Operation::Switch(local.name.clone()))
+        .unwrap();
+    assert_eq!(git.snapshot(root, 20).unwrap().branch, "origin/main");
+    git.execute(
+        root,
+        &Operation::TrackBranch {
+            local: "tracking-main".into(),
+            remote: remote.reference.clone(),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        git.command(root, &["rev-parse", "--symbolic-full-name", "@{upstream}"])
+            .unwrap()
+            .trim(),
+        "refs/remotes/origin/main"
+    );
+}
+
+#[test]
+fn cherry_pick_and_revert_complete_or_abort_conflicts_without_losing_history() {
+    let (directory, git) = repo();
+    let root = directory.path();
+    write(root, "file", "base\n");
+    stage(&git, root, "file");
+    commit(&git, root, "Base");
+    git.execute(root, &Operation::CreateBranch("topic".into()))
+        .unwrap();
+    write(root, "file", "topic\n");
+    stage(&git, root, "file");
+    commit(&git, root, "Topic edit");
+    let topic = git.resolve_commit(root, "HEAD").unwrap();
+    git.execute(root, &Operation::Switch("main".into()))
+        .unwrap();
+    git.execute(root, &Operation::CherryPick(topic.clone()))
+        .unwrap();
+    let applied = git.resolve_commit(root, "HEAD").unwrap();
+    assert_eq!(
+        std::fs::read_to_string(root.join("file")).unwrap(),
+        "topic\n"
+    );
+    git.execute(root, &Operation::Revert(applied.clone()))
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(root.join("file")).unwrap(),
+        "base\n"
+    );
+    write(root, "file", "main\n");
+    stage(&git, root, "file");
+    commit(&git, root, "Main edit");
+    let before = git.resolve_commit(root, "HEAD").unwrap();
+    assert!(git
+        .execute(root, &Operation::CherryPick(topic.clone()))
+        .is_err());
+    assert_eq!(
+        git.snapshot(root, 20).unwrap().operation.as_deref(),
+        Some("Cherry-pick in progress")
+    );
+    git.execute(root, &Operation::Abort("Cherry-pick in progress".into()))
+        .unwrap();
+    assert_eq!(git.resolve_commit(root, "HEAD").unwrap(), before);
+    assert_eq!(
+        std::fs::read_to_string(root.join("file")).unwrap(),
+        "main\n"
+    );
+    assert!(git.execute(root, &Operation::CherryPick(topic)).is_err());
+    write(root, "file", "combined\n");
+    stage(&git, root, "file");
+    git.execute(root, &Operation::Continue("Cherry-pick in progress".into()))
+        .unwrap();
+    assert!(git.snapshot(root, 20).unwrap().operation.is_none());
+    assert!(git
+        .execute(root, &Operation::Revert(applied.clone()))
+        .is_err());
+    assert_eq!(
+        git.snapshot(root, 20).unwrap().operation.as_deref(),
+        Some("Revert in progress")
+    );
+    git.execute(root, &Operation::Abort("Revert in progress".into()))
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(root.join("file")).unwrap(),
+        "combined\n"
+    );
+    assert!(git.execute(root, &Operation::Revert(applied)).is_err());
+    write(root, "file", "resolved revert\n");
+    stage(&git, root, "file");
+    git.execute(root, &Operation::Continue("Revert in progress".into()))
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(root.join("file")).unwrap(),
+        "resolved revert\n"
+    );
+    assert!(git.snapshot(root, 20).unwrap().operation.is_none());
+}
+
+#[test]
+fn first_parent_merge_review_and_non_destructive_branch_deletion_are_consistent() {
+    let (directory, git) = repo();
+    let root = directory.path();
+    write(root, "base", "base\n");
+    stage(&git, root, "base");
+    commit(&git, root, "Base");
+    git.execute(root, &Operation::CreateBranch("topic".into()))
+        .unwrap();
+    write(root, "topic", "topic\n");
+    stage(&git, root, "topic");
+    commit(&git, root, "Topic");
+    git.execute(root, &Operation::Switch("main".into()))
+        .unwrap();
+    assert!(git
+        .execute(root, &Operation::DeleteBranch("topic".into()))
+        .is_err());
+    write(root, "main", "main\n");
+    stage(&git, root, "main");
+    commit(&git, root, "Main");
+    git.execute(root, &Operation::Merge("topic".into()))
+        .unwrap();
+    let merge = git.resolve_commit(root, "HEAD").unwrap();
+    let files = git.commit_files(root, &merge).unwrap();
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].path, Path::new("topic"));
+    assert!(git
+        .diff(root, &select("topic", DiffKind::Commit(merge.clone())))
+        .unwrap()
+        .patch
+        .contains("+topic"));
+    assert!(git
+        .execute(root, &Operation::CherryPick(merge.clone()))
+        .is_err());
+    assert!(git.execute(root, &Operation::Revert(merge)).is_err());
+    assert!(git.snapshot(root, 20).unwrap().operation.is_none());
+    git.execute(root, &Operation::DeleteBranch("topic".into()))
+        .unwrap();
+    assert!(git.resolve_commit(root, "topic").is_err());
+    assert!(git
+        .execute(root, &Operation::DeleteBranch("main".into()))
+        .is_err());
+}
+
+#[test]
+fn stale_stash_identifiers_cannot_drop_a_newer_stash() {
+    let (directory, git) = repo();
+    let root = directory.path();
+    write(root, "file", "base\n");
+    stage(&git, root, "file");
+    commit(&git, root, "Base");
+    write(root, "file", "first stash\n");
+    git.execute(root, &Operation::Stash("First".into()))
+        .unwrap();
+    let old = git.snapshot(root, 20).unwrap().stashes.remove(0);
+    write(root, "file", "second stash\n");
+    git.execute(root, &Operation::Stash("Second".into()))
+        .unwrap();
+    assert!(git
+        .execute(
+            root,
+            &Operation::DropStash {
+                name: old.name,
+                oid: old.oid
+            }
+        )
+        .unwrap_err()
+        .contains("changed"));
+    assert_eq!(git.snapshot(root, 20).unwrap().stashes.len(), 2);
+}
+
+#[test]
+fn switching_a_deleted_local_branch_never_guesses_a_remote_branch() {
+    let (directory, git) = repo();
+    let root = directory.path();
+    write(root, "file", "base\n");
+    stage(&git, root, "file");
+    commit(&git, root, "Base");
+    let oid = git.resolve_commit(root, "HEAD").unwrap();
+    git.execute(
+        root,
+        &Operation::CreateBranchAt {
+            name: "topic".into(),
+            oid: oid.clone(),
+        },
+    )
+    .unwrap();
+    git.command(root, &["update-ref", "refs/remotes/origin/topic", &oid])
+        .unwrap();
+    git.command(
+        root,
+        &["config", "remote.origin.url", root.to_str().unwrap()],
+    )
+    .unwrap();
+    git.command(
+        root,
+        &[
+            "config",
+            "remote.origin.fetch",
+            "+refs/heads/*:refs/remotes/origin/*",
+        ],
+    )
+    .unwrap();
+    git.execute(root, &Operation::DeleteBranch("topic".into()))
+        .unwrap();
+    assert!(
+        git.execute(root, &Operation::Switch("topic".into()))
+            .is_err(),
+        "A stale Switch action must not silently create a tracking branch"
+    );
+    assert_eq!(git.snapshot(root, 20).unwrap().branch, "main");
+    assert!(!git
+        .snapshot(root, 20)
+        .unwrap()
+        .branches
+        .iter()
+        .any(|b| b.reference == "refs/heads/topic"));
+}
+
+#[test]
+fn inherited_repository_environment_fixture() {
+    let Some(root) = std::env::var_os("HEDIT_TEST_ENV_REPOSITORY") else {
+        return;
+    };
+    let root = Path::new(&root);
+    let git = Git::default();
+    stage(&git, root, "file");
+    commit(&git, root, "Only change the selected repository");
+}
+
+#[test]
+fn inherited_common_dir_cannot_redirect_commits_to_a_different_repository() {
+    let (selected, git) = repo();
+    let (other, _) = repo();
+    write(selected.path(), "file", "selected\n");
+    stage(&git, selected.path(), "file");
+    commit(&git, selected.path(), "Selected base");
+    write(other.path(), "file", "other\n");
+    stage(&git, other.path(), "file");
+    commit(&git, other.path(), "Other base");
+    let before = git.resolve_commit(other.path(), "HEAD").unwrap();
+    write(selected.path(), "file", "edited selected\n");
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "inherited_repository_environment_fixture",
+            "--nocapture",
+        ])
+        .env("HEDIT_TEST_ENV_REPOSITORY", selected.path())
+        .env("GIT_COMMON_DIR", other.path().join(".git"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        git.resolve_commit(other.path(), "HEAD").unwrap(),
+        before,
+        "Inherited GIT_COMMON_DIR must not redirect a selected repository action"
+    );
+    assert_eq!(
+        git.history(selected.path(), 20).unwrap()[0].subject,
+        "Only change the selected repository"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn cancelling_a_running_hook_stops_its_process_group_and_preserves_staged_changes() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::{Duration, Instant};
+    let (directory, git) = repo();
+    let root = directory.path();
+    write(root, "file", "base\n");
+    stage(&git, root, "file");
+    commit(&git, root, "Base");
+    let before = git.resolve_commit(root, "HEAD").unwrap();
+    write(root, "file", "staged\n");
+    stage(&git, root, "file");
+    let hooks = root.join("hooks");
+    std::fs::create_dir(&hooks).unwrap();
+    let hook = hooks.join("pre-commit");
+    std::fs::write(
+        &hook,
+        "#!/bin/sh\nprintf ready > hook-started\nexec sleep 30\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    git.command(root, &["config", "core.hooksPath", hooks.to_str().unwrap()])
+        .unwrap();
+    let worker_git = git.clone();
+    let worker_root = root.to_owned();
+    let worker = std::thread::spawn(move || {
+        worker_git.execute(
+            &worker_root,
+            &Operation::Commit {
+                message: "Cancelled".into(),
+                amend: false,
+            },
+        )
+    });
+    let start = Instant::now();
+    while !root.join("hook-started").exists() {
+        assert!(start.elapsed() < Duration::from_secs(8));
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    git.cancel.store(true, Ordering::Relaxed);
+    assert!(worker.join().unwrap().unwrap_err().contains("cancelled"));
+    assert!(start.elapsed() < Duration::from_secs(10));
+    git.cancel.store(false, Ordering::Relaxed);
+    assert_eq!(git.resolve_commit(root, "HEAD").unwrap(), before);
+    assert!(git
+        .snapshot(root, 20)
+        .unwrap()
+        .files
+        .iter()
+        .any(|f| f.path == Path::new("file") && f.staged()));
+    assert_eq!(
+        std::fs::read_to_string(root.join("file")).unwrap(),
+        "staged\n"
+    );
+    git.command(
+        root,
+        &["config", "core.hooksPath", "/nonexistent/hedit-test-hooks"],
+    )
+    .unwrap();
+    commit(&git, root, "Retry after cancellation");
+}
+
+#[test]
+fn index_lock_failures_keep_the_lock_and_all_working_text() {
+    let (directory, git) = repo();
+    let root = directory.path();
+    write(root, "file", "base\n");
+    stage(&git, root, "file");
+    commit(&git, root, "Base");
+    write(root, "file", "working\n");
+    let lock = root.join(".git/index.lock");
+    std::fs::write(&lock, "held by another client").unwrap();
+    assert!(git
+        .execute(root, &Operation::Stage(vec!["file".into()]))
+        .unwrap_err()
+        .contains("index.lock"));
+    assert_eq!(
+        std::fs::read_to_string(&lock).unwrap(),
+        "held by another client"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("file")).unwrap(),
+        "working\n"
+    );
+}
+
+#[test]
+fn oversized_git_output_is_rejected_without_losing_repository_state() {
+    let (directory, git) = repo();
+    let root = directory.path();
+    std::fs::write(root.join("large.txt"), vec![b'x'; 25 * 1024 * 1024]).unwrap();
+    stage(&git, root, "large.txt");
+    commit(&git, root, "Large text");
+    let before = git.resolve_commit(root, "HEAD").unwrap();
+    assert!(git
+        .command(root, &["show", "HEAD:large.txt"])
+        .unwrap_err()
+        .contains("24 MiB"));
+    assert_eq!(git.resolve_commit(root, "HEAD").unwrap(), before);
+    assert!(git.snapshot(root, 20).unwrap().files.is_empty());
+}
+
+#[test]
+fn divergent_local_remotes_reject_pull_and_push_without_rewriting_either_side() {
+    let (directory, git) = repo();
+    let root = directory.path();
+    write(root, "file", "base\n");
+    stage(&git, root, "file");
+    commit(&git, root, "Base");
+    let remote = tempfile::tempdir().unwrap();
+    git.command(remote.path(), &["init", "--bare", "-b", "main"])
+        .unwrap();
+    git.execute(
+        root,
+        &Operation::AddRemote {
+            name: "origin".into(),
+            url: remote.path().to_string_lossy().into_owned(),
+        },
+    )
+    .unwrap();
+    git.execute(
+        root,
+        &Operation::Publish {
+            remote: "origin".into(),
+            branch: "main".into(),
+        },
+    )
+    .unwrap();
+    let clone_parent = tempfile::tempdir().unwrap();
+    let clone = git
+        .clone_repository(
+            remote.path().to_str().unwrap(),
+            &clone_parent.path().join("other"),
+        )
+        .unwrap();
+    for (key, value) in [
+        ("user.name", "Remote Author"),
+        ("user.email", "remote@example.invalid"),
+        ("commit.gpgsign", "false"),
+        ("core.hooksPath", "/nonexistent/hedit-test-hooks"),
+    ] {
+        git.command(&clone, &["config", key, value]).unwrap();
+    }
+    write(&clone, "remote", "remote\n");
+    stage(&git, &clone, "remote");
+    commit(&git, &clone, "Remote edit");
+    git.execute(&clone, &Operation::Push).unwrap();
+    write(root, "local", "local\n");
+    stage(&git, root, "local");
+    commit(&git, root, "Local edit");
+    git.execute(root, &Operation::Fetch).unwrap();
+    let snapshot = git.snapshot(root, 20).unwrap();
+    assert_eq!((snapshot.ahead, snapshot.behind), (1, 1));
+    let local = snapshot.oid;
+    let remote_before = git
+        .command(remote.path(), &["rev-parse", "refs/heads/main"])
+        .unwrap();
+    assert!(git.execute(root, &Operation::Pull).is_err());
+    assert!(git.execute(root, &Operation::Push).is_err());
+    assert_eq!(git.resolve_commit(root, "HEAD").unwrap(), local);
+    assert_eq!(
+        git.command(remote.path(), &["rev-parse", "refs/heads/main"])
+            .unwrap(),
+        remote_before
+    );
+    assert!(git.snapshot(root, 20).unwrap().files.is_empty());
+    git.execute(root, &Operation::Merge("refs/remotes/origin/main".into()))
+        .unwrap();
+    git.execute(root, &Operation::Push).unwrap();
+    assert!(root.join("local").exists() && root.join("remote").exists());
+    assert_eq!(
+        (
+            git.snapshot(root, 20).unwrap().ahead,
+            git.snapshot(root, 20).unwrap().behind
+        ),
+        (0, 0)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn advanced_queries_preserve_non_utf8_paths_with_quoting_disabled() {
+    use std::os::unix::ffi::OsStringExt;
+    let (directory, git) = repo();
+    let root = directory.path();
+    let path = std::path::PathBuf::from(std::ffi::OsString::from_vec(b"literal-\xff.txt".to_vec()));
+    // Git trees can contain paths that APFS cannot check out. Test the object
+    // directly so the same real-Git case also runs on macOS.
+    use std::io::Write;
+    let mut hash = std::process::Command::new("git")
+        .args(["hash-object", "-w", "--stdin"])
+        .current_dir(root)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    hash.stdin
+        .take()
+        .unwrap()
+        .write_all("Unicode source: 日本語\n".as_bytes())
+        .unwrap();
+    let blob = hash.wait_with_output().unwrap();
+    assert!(blob.status.success());
+    let blob = String::from_utf8(blob.stdout).unwrap();
+    let mut tree = std::process::Command::new("git")
+        .args(["mktree", "-z"])
+        .current_dir(root)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut record = format!("100644 blob {}\t", blob.trim()).into_bytes();
+    record.extend_from_slice(b"literal-\xff.txt\0");
+    tree.stdin.take().unwrap().write_all(&record).unwrap();
+    let tree = tree.wait_with_output().unwrap();
+    assert!(tree.status.success());
+    let tree = String::from_utf8(tree.stdout).unwrap();
+    let oid = git
+        .command(root, &["commit-tree", tree.trim(), "-m", "Non-UTF-8 path"])
+        .unwrap();
+    git.command(root, &["update-ref", "refs/heads/main", oid.trim()])
+        .unwrap();
+    git.command(root, &["config", "core.quotePath", "false"])
+        .unwrap();
+    assert_eq!(
+        git.scoped_history(
+            root,
+            20,
+            &HistoryScope {
+                reference: None,
+                path: Some(path.clone())
+            }
+        )
+        .unwrap()
+        .len(),
+        1
+    );
+    let lines = git.blame(root, "HEAD", &path).unwrap();
+    assert_eq!(lines[0].text, "Unicode source: 日本語");
+}
+
+#[test]
+fn sha256_repositories_support_review_tags_partial_staging_and_undo() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let git = Git::default();
+    git.command(root, &["init", "--object-format=sha256", "-b", "main"])
+        .unwrap();
+    for (key, value) in [
+        ("user.name", "SHA256 Test"),
+        ("user.email", "sha256@example.invalid"),
+        ("commit.gpgsign", "false"),
+        ("tag.gpgsign", "false"),
+        ("core.hooksPath", "/nonexistent/hedit-test-hooks"),
+    ] {
+        git.command(root, &["config", key, value]).unwrap();
+    }
+    write(root, "file", "one\ntwo\n");
+    stage(&git, root, "file");
+    commit(&git, root, "Base");
+    let base = git.resolve_commit(root, "HEAD").unwrap();
+    assert_eq!(base.len(), 64);
+    write(root, "file", "ONE\ntwo\n");
+    let selection = select("file", DiffKind::Working);
+    let diff = git.diff(root, &selection).unwrap();
+    git.execute(
+        root,
+        &Operation::Hunk {
+            selection,
+            expected: diff.patch,
+            hunk: 0,
+        },
+    )
+    .unwrap();
+    commit(&git, root, "Edit");
+    let head = git.resolve_commit(root, "HEAD").unwrap();
+    git.execute(
+        root,
+        &Operation::CreateTag {
+            name: "sha256-tag".into(),
+            oid: head.clone(),
+            message: "SHA256 tag".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(git.tags(root).unwrap()[0].commit, Some(head.clone()));
+    assert_eq!(
+        git.compare(root, &base, &head, false).unwrap().files.len(),
+        1
+    );
+    git.execute(root, &Operation::UndoCommit { expected: head })
+        .unwrap();
+    assert_eq!(git.resolve_commit(root, "HEAD").unwrap(), base);
+    assert!(git.snapshot(root, 20).unwrap().files[0].staged());
+}
+
+#[test]
+fn stash_apply_conflicts_keep_the_saved_stash_and_allow_manual_resolution() {
+    let (directory, git) = repo();
+    let root = directory.path();
+    write(root, "file", "base\n");
+    stage(&git, root, "file");
+    commit(&git, root, "Base");
+    write(root, "file", "stashed\n");
+    git.execute(root, &Operation::Stash("Unfinished work".into()))
+        .unwrap();
+    let stash = git.snapshot(root, 20).unwrap().stashes[0].oid.clone();
+    write(root, "file", "committed\n");
+    stage(&git, root, "file");
+    commit(&git, root, "Conflicting edit");
+    assert!(git
+        .execute(root, &Operation::ApplyStash(stash.clone()))
+        .is_err());
+    let snapshot = git.snapshot(root, 20).unwrap();
+    assert!(snapshot.files[0].conflict);
+    assert_eq!(snapshot.stashes[0].oid, stash);
+    let preview = git.diff(root, &select("file", DiffKind::Conflict)).unwrap();
+    assert!(preview
+        .conflict
+        .unwrap()
+        .theirs
+        .unwrap()
+        .contains("stashed"));
+    write(root, "file", "resolved\n");
+    stage(&git, root, "file");
+    commit(&git, root, "Resolve stash conflict");
+    assert_eq!(git.snapshot(root, 20).unwrap().stashes[0].oid, stash);
+    assert!(git.snapshot(root, 20).unwrap().files.is_empty());
+}
+
+#[test]
+fn detached_undo_and_occupied_worktree_branches_preserve_other_checkouts() {
+    let (directory, git) = repo();
+    let root = directory.path();
+    write(root, "file", "base\n");
+    stage(&git, root, "file");
+    commit(&git, root, "Base");
+    let base = git.resolve_commit(root, "HEAD").unwrap();
+    write(root, "file", "next\n");
+    stage(&git, root, "file");
+    commit(&git, root, "Next");
+    let head = git.resolve_commit(root, "HEAD").unwrap();
+    let linked = tempfile::tempdir().unwrap();
+    let worktree = linked.path().join("linked");
+    git.command(
+        root,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "occupied",
+            worktree.to_str().unwrap(),
+            "HEAD",
+        ],
+    )
+    .unwrap();
+    assert!(git
+        .execute(root, &Operation::Switch("occupied".into()))
+        .is_err());
+    assert!(git
+        .execute(root, &Operation::DeleteBranch("occupied".into()))
+        .is_err());
+    assert_eq!(
+        std::fs::read_to_string(worktree.join("file")).unwrap(),
+        "next\n"
+    );
+    git.command(root, &["switch", "--detach", "HEAD"]).unwrap();
+    git.execute(
+        root,
+        &Operation::UndoCommit {
+            expected: head.clone(),
+        },
+    )
+    .unwrap();
+    let snapshot = git.snapshot(root, 20).unwrap();
+    assert_eq!(snapshot.branch, "(detached)");
+    assert_eq!(snapshot.oid, base);
+    assert_eq!(git.resolve_commit(root, "refs/heads/main").unwrap(), head);
+    assert!(snapshot.files[0].staged());
+}
+
+#[test]
+fn repository_initialization_refuses_existing_and_nested_repositories() {
+    let directory = tempfile::tempdir().unwrap();
+    let git = Git::default();
+    git.execute(directory.path(), &Operation::Init).unwrap();
+    assert!(git.snapshot(directory.path(), 20).unwrap().unborn);
+    assert!(git.execute(directory.path(), &Operation::Init).is_err());
+    let nested = directory.path().join("nested");
+    std::fs::create_dir(&nested).unwrap();
+    assert!(git.execute(&nested, &Operation::Init).is_err());
+    assert!(!nested.join(".git").exists());
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "exercises the actual 30-second Git timeout"]
+fn a_running_local_operation_times_out_and_allows_a_clean_retry() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::{Duration, Instant};
+    let (directory, git) = repo();
+    let root = directory.path();
+    write(root, "file", "base\n");
+    stage(&git, root, "file");
+    commit(&git, root, "Base");
+    let before = git.resolve_commit(root, "HEAD").unwrap();
+    write(root, "file", "staged\n");
+    stage(&git, root, "file");
+    let hooks = root.join("timeout-hooks");
+    std::fs::create_dir(&hooks).unwrap();
+    let hook = hooks.join("pre-commit");
+    std::fs::write(&hook, "#!/bin/sh\nexec sleep 60\n").unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    git.command(root, &["config", "core.hooksPath", hooks.to_str().unwrap()])
+        .unwrap();
+    let start = Instant::now();
+    let error = git
+        .execute(
+            root,
+            &Operation::Commit {
+                message: "Must time out".into(),
+                amend: false,
+            },
+        )
+        .unwrap_err();
+    assert!(error.contains("timed out"), "{error}");
+    assert!(
+        start.elapsed() >= Duration::from_secs(29) && start.elapsed() < Duration::from_secs(40)
+    );
+    assert_eq!(git.resolve_commit(root, "HEAD").unwrap(), before);
+    assert!(git
+        .snapshot(root, 20)
+        .unwrap()
+        .files
+        .iter()
+        .any(|f| f.path == Path::new("file") && f.staged()));
+    git.command(
+        root,
+        &["config", "core.hooksPath", "/nonexistent/hedit-test-hooks"],
+    )
+    .unwrap();
+    commit(&git, root, "Retry after timeout");
+}
+
+#[test]
+fn embedded_nul_in_a_path_cannot_inject_additional_stage_or_unstage_paths() {
+    let (directory, git) = repo();
+    let root = directory.path();
+    write(root, "first", "first\n");
+    write(root, "second", "second\n");
+    let invalid = std::path::PathBuf::from("first\0second");
+    assert!(git
+        .execute(root, &Operation::Stage(vec![invalid.clone()]))
+        .is_err());
+    assert!(git
+        .snapshot(root, 20)
+        .unwrap()
+        .files
+        .iter()
+        .all(|f| f.untracked()));
+    stage(&git, root, "first");
+    assert!(git
+        .execute(root, &Operation::Unstage(vec![invalid]))
+        .is_err());
+    assert!(git
+        .snapshot(root, 20)
+        .unwrap()
+        .files
+        .iter()
+        .any(|f| f.path == Path::new("first") && f.staged()));
 }

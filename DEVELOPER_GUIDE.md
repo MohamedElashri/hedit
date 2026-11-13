@@ -305,9 +305,14 @@ output is bounded.
 
 **Git changes saved repository state.** Source Control requires the installed
 Git executable (2.30+); no shell or embedded web UI is involved. Keep commands
-on background workers and serialize repository actions. Parse porcelain v2 with
+on background workers and serialize repository actions. Clear inherited repository
+location variables, including `GIT_COMMON_DIR`, object directories, namespaces,
+and index/worktree overrides. Preserve the user's normal Git configuration.
+Parse porcelain v2 with
 NUL records so paths containing spaces, newlines, and non-UTF-8 bytes stay intact
-on Unix. Pass literal pathspecs only to path-taking commands: applying
+on Unix. Reject embedded NUL bytes before constructing NUL-delimited path input,
+so a single supplied path cannot inject additional stage/unstage selections.
+Pass literal pathspecs only to path-taking commands: applying
 `--literal-pathspecs` globally breaks `stash --include-untracked` cleanup on Git
 2.43. Preserve first-parent semantics for merge-commit file diffs. The history
 graph follows object parents, not display order alone.
@@ -322,6 +327,16 @@ preserves the previous view. Partial staging and discard validate the reviewed
 diff; conflict replacement validates working text and all reviewed index sides.
 Include stdout and stderr in failed Git operation messages, since merge conflict
 details may be printed to stdout. Skip symbolic branch aliases such as remote HEAD.
+Derive branch names from their full namespace rather than `refname:short`, which
+adds disambiguating prefixes when names collide. Use full remote refs for tracking,
+reuse existing local upstreams, and disable implicit remote guessing for switches.
+Surface commit detail errors only while that same commit is still selected.
+Clone requests must expose their activity/cancel state. A failed or cancelled
+clone reports its outcome while preserving the previous review, snapshot, and
+commit draft; it must not apply its failed snapshot to the selected repository.
+Cancelled repository workers also preserve the last review, then immediately
+reconcile the repository with a fresh cancellation signal. Commit-history rows
+must expose their selection state to accessibility clients.
 Back up regular files before discard/conflict replacement, then report the
 backup path. Keep existing Git gutter comparison independent of index operations.
 Tests in `tests/git.rs` use disposable repositories and local bare remotes;
@@ -336,6 +351,36 @@ line endings; they never write working files. Selection indices refer to the
 reviewed diff and must be cleared when that diff or file selection changes.
 Pierre Diffs/Trees inform the interaction design; their DOM-based packages are
 not dependencies of the native application.
+
+Advanced queries live in `git/inspect.rs` and `app/source_control/inspect.rs`.
+Branch/revision comparisons resolve both tips to immutable commit IDs before
+listing files or generating patches. Merge-base mode changes the diff base, while
+ahead/behind counts still describe the two tips. Comparison diffs are read-only;
+never offer staging controls for them. Drop a selected comparison if a refreshed
+tip moves. Scope and query identities guard background results, and changing
+repositories clears the extra inspection state. File paths in history and blame
+remain literal, including pathspec-like names and non-UTF-8 paths on Unix.
+
+Line history uses committed text, bounds Git output, virtualizes visible rows,
+and caches filtered row indices. Source previews bound individual line layouts
+and share editor font/tab settings. Reflog recovery creates a branch without
+switching the worktree. Undo uses an atomic reference transaction with soft-reset
+semantics and preserves the index, working files, and unsaved buffers; rebase uses
+the normal worktree mutation guard. Tag deletion uses compare-and-delete with the reviewed tag object ID.
+
+Git UX helpers in `app/source_control/ux.rs` keep repository controls compact,
+remember per-view locations, and build a filtered file-review queue. Cache queue
+rows by snapshot/query identity and filters so idle frames do not re-sort large
+repositories. Contextual links offer a return path; root changes clear all cached
+locations. Route commit and previous/next review commands through the catalog so
+palette, buttons, default shortcuts, and custom bindings share availability.
+Background reads keep navigation enabled while mutations remain serialized;
+completion notices describe actions without exposing raw command output.
+Git dialogs focus/select the first input once, advance through URL forms with
+Enter, and reserve explicit action buttons for destructive confirmations. Blame
+validates UTF-8 source lines separately from raw filename metadata. The real-Git
+suite also covers SHA-256 repositories, running-hook cancellation, lock failures,
+remote divergence, and an opt-in test of the actual local-operation timeout.
 
 Editor and Git code views share `editor_layout::Font` and `code_job` for font
 metrics, spacing, gutters, and syntax layout. Git statuses use the active theme's
