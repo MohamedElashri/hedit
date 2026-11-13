@@ -81,3 +81,29 @@ jobs:
         run: make clippy
       - name: Tests
         run: make test-macos
+
+  remote-live:
+    name: Remote SSH and crash recovery
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@1.99.1
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Prepare disposable SSH tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openssh-server
+          sudo systemctl stop ssh.service ssh.socket || true
+      - name: Install pinned Zig for the editor integration probe
+        run: python scripts/setup-zig.py
+      - uses: Swatinem/rust-cache@v2.9.3
+        with:
+          key: remote-ssh
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Test headless helper
+        run: make test-remote
+      - name: Real SSH and deterministic client and worker crashes
+        run: make test-remote-live

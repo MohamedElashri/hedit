@@ -6,11 +6,19 @@ rust-version = "1.99"
 description = "A native text and log editor with durable unsaved files and CUDA debugging"
 license = "MIT"
 
+[workspace]
+members = ["crates/hedit-remote", "crates/hedit-core"]
+default-members = ["."]
+resolver = "2"
+
 [features]
 default = ["terminal"]
 terminal = ["dep:libghostty-vt", "dep:portable-pty", "dep:rustybuzz"]
 
 [dependencies]
+getrandom = "0.4"
+hedit-core = { path = "crates/hedit-core" }
+hedit-remote = { path = "crates/hedit-remote" }
 libghostty-vt = { version = "=0.2.2", default-features = false, optional = true }
 portable-pty = { version = "0.9", optional = true }
 rustybuzz = { version = "0.20.1", optional = true }

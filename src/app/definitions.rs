@@ -72,6 +72,9 @@ impl HeditApp {
     }
     /// Find where the word at the cursor is defined, or every place it is used.
     pub(super) fn look_up(&mut self, ctx: &egui::Context, references: bool) {
+        if self.workspace.remote.is_some() {
+            return;
+        }
         let Some(name) = self.lookup_name() else {
             self.notice = "Place the cursor on a name first.".into();
             return;
@@ -265,6 +268,9 @@ impl HeditApp {
     }
     /// Show, keep, or close the definitions list for the hovered name.
     pub(super) fn hover_definitions(&mut self, ctx: &egui::Context) {
+        if self.workspace.remote.is_some() {
+            return;
+        }
         let target = self.hover_target.take();
         if !self.settings.show_definitions || self.busy {
             self.hover = None;

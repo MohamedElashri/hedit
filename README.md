@@ -24,6 +24,8 @@ large-log viewing.
 </p>
 
 - Recovery checkpoints, closed-file history, and undo/redo across sessions.
+- [Private SSH workspaces](USER_GUIDE.md#ssh-remote-workspaces) with host-only recovery,
+  remote files/search/Git/builds/terminals, and explicit execution trust.
 - Multiple cursors, split panes, completions, and go-to-definition.
 - Native Git workspace with file/hunk/line staging, syntax-colored diffs,
   branch comparisons, scoped history, line authorship, tags, reflog recovery,

@@ -65,6 +65,24 @@ fn open_for_metadata(path: &Path) -> io::Result<fs::File> {
         }
     }
 }
+#[cfg(unix)]
+pub(super) fn copy_fd(source: &fs::File, destination: &fs::File) -> io::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = source.metadata()?;
+    let staged = destination.metadata()?;
+    if !metadata.is_file() {
+        return Err(io::Error::other("Save destination must be a regular file."));
+    }
+    if metadata.uid() != staged.uid() || metadata.gid() != staged.gid() {
+        rustix::fs::fchown(
+            destination,
+            Some(rustix::process::Uid::from_raw(metadata.uid())),
+            Some(rustix::process::Gid::from_raw(metadata.gid())),
+        )?;
+    }
+    copy_acl(source, destination)?;
+    destination.set_permissions(metadata.permissions())
+}
 
 #[cfg(target_os = "macos")]
 fn copy_acl(source: &fs::File, destination: &fs::File) -> io::Result<()> {

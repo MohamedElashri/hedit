@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add private SSH workspaces for remote files, search, Git, builds and terminals, with host-only recovery and explicit execution trust.
+- Add fenced writers, bounded edit queues, crash-safe save/reconnect handling, strict path isolation and live SSH crash tests.
+
 ## [0.4.0] - 2026-11-13
 
 - Add Git comparisons, scoped history, line authorship, tags, and reflog recovery.

@@ -20,34 +20,53 @@ fn run(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let options = hedit::cli::Options::parse(args.clone())?;
     if options.help {
-        println!("hedit — keep your train of thought\n\nUsage: hedit [--session-dir DIR] [--new] [FILE[:LINE[:COLUMN]] | FOLDER ...] [-]\n\n  -                 Read UTF-8 stdin into an unsaved file\n  --new             Add a new file\n  -w, --wait        Wait until the files are closed (for git and other tools)\n  --session-dir DIR Use an isolated session (one process per session)\n  --                Treat remaining arguments as paths\n  -h, --help        Show help\n  -V, --version     Show version\n\nhedit opens in the running session and releases the terminal after startup.\nBuild and run with Cargo. CUDA tools are optional.");
+        println!("hedit — keep your train of thought\n\nUsage: hedit [--session-dir DIR] [--new] [FILE[:LINE[:COLUMN]] | FOLDER ...] [-]\n\n  -                 Read UTF-8 stdin into an unsaved file\n  --new             Add a new file\n  -w, --wait        Wait until the files are closed (for git and other tools)\n  --session-dir DIR Use an isolated session (one process per session)\n  --ssh HOST        Open a separate private SSH workspace\n  --ssh-root DIR    Absolute workspace directory on the host\n  --ssh-helper FILE Absolute installed helper on the host\n  --ssh-state DIR   Private host recovery directory\n  --ssh-user USER   SSH user (optional)\n  --ssh-port PORT   SSH port (default 22)\n  --ssh-config FILE Trusted absolute local SSH config\n  --ssh-takeover    Explicitly fence another workspace writer\n  --                Treat remaining arguments as paths\n  -h, --help        Show help\n  -V, --version     Show version\n\nhedit opens in the running session and releases the terminal after startup.\nBuild and run with Cargo. CUDA tools are optional.");
         return Ok(());
     }
     if options.version {
         println!("hedit {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
+    let remote_window = options.remote.is_some();
     let directory = options
         .session_dir
         .clone()
-        .or_else(|| std::env::var_os("HEDIT_SESSION_DIR").map(Into::into))
+        .or_else(|| {
+            if remote_window {
+                let mut id = [0u8; 16];
+                getrandom::fill(&mut id).ok()?;
+                Some(std::env::temp_dir().join(format!(
+                    "hedit-ssh-{}",
+                    id.iter().map(|b| format!("{b:02x}")).collect::<String>()
+                )))
+            } else {
+                std::env::var_os("HEDIT_SESSION_DIR").map(Into::into)
+            }
+        })
         .or_else(|| {
             directories::ProjectDirs::from("", "hedit", "hedit")
                 .map(|d| d.data_local_dir().join("session"))
         })
         .ok_or("Cannot determine session directory; pass --session-dir.")?;
     if !startup.is_child() {
+        let mut args = args.clone();
+        if options.session_dir.is_none() {
+            args.push("--session-dir".into());
+            args.push(directory.clone().into_os_string());
+        }
         return launcher::launch(&args, &directory, options.stdin, options.wait);
     }
     let wait = std::env::var_os(launcher::WAIT_VARIABLE).map(std::path::PathBuf::from);
     let activation = hedit::activation::Launch::take_from_env();
-    if hedit::ipc::forward(
-        &directory,
-        &options,
-        startup.stdin_path(),
-        wait.as_deref(),
-        &activation,
-    )? {
+    if !remote_window
+        && hedit::ipc::forward(
+            &directory,
+            &options,
+            startup.stdin_path(),
+            wait.as_deref(),
+            &activation,
+        )?
+    {
         startup.ready()?;
         return Ok(());
     }
@@ -57,21 +76,28 @@ fn run(
             .with_min_inner_size([720.0, 480.0])
             .with_app_id("hedit")
             .with_icon(std::sync::Arc::new(app::icon())),
+        persist_window: !remote_window,
         persistence_path: Some(directory.join("window.ron")),
         ..Default::default()
     };
     // Acquire the session lock before starting the UI. A second process must
     // never overwrite this process's snapshots.
-    let (mut workspace, errors) = match hedit::workspace::Workspace::restore(directory.clone()) {
+    let (mut workspace, errors) = match if let Some(config) = options.remote.clone() {
+        hedit::workspace::Workspace::connect_remote(directory.clone(), config)
+    } else {
+        hedit::workspace::Workspace::restore(directory.clone())
+    } {
         Ok(workspace) => workspace,
         Err(error) => {
-            if hedit::ipc::forward(
-                &directory,
-                &options,
-                startup.stdin_path(),
-                wait.as_deref(),
-                &activation,
-            )? {
+            if !remote_window
+                && hedit::ipc::forward(
+                    &directory,
+                    &options,
+                    startup.stdin_path(),
+                    wait.as_deref(),
+                    &activation,
+                )?
+            {
                 startup.ready()?;
                 return Ok(());
             }
@@ -79,7 +105,10 @@ fn run(
         }
     };
     // Reopen the extra windows that were open with the main window last time.
-    if let Ok(exe) = std::env::current_exe() {
+    if let Some(exe) = (!remote_window)
+        .then(std::env::current_exe)
+        .and_then(Result::ok)
+    {
         for session in hedit::windows::to_restore(&directory) {
             let _ = hedit::windows::spawn(&exe, &session, false);
         }
@@ -96,6 +125,23 @@ fn run(
     // Stdin has already been consumed and its spool removed. Preserve it even
     // if creating the native window fails (for example, no graphical display).
     workspace.checkpoint()?;
+    let paths = if let Some(remote) = &workspace.remote {
+        options
+            .files
+            .iter()
+            .map(|p| {
+                p.to_str()
+                    .ok_or("SSH input paths must be UTF-8.")
+                    .and_then(|p| {
+                        remote
+                            .path(p)
+                            .map_err(|_| "Invalid SSH workspace input path.")
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        options.files.clone()
+    };
     let executable = std::env::current_exe()?;
     let restart_directory = if directory.is_absolute() {
         directory.clone()
@@ -108,13 +154,7 @@ fn run(
         "hedit",
         native_options,
         Box::new(move |cc| {
-            let mut app = app::HeditApp::new(
-                cc,
-                workspace,
-                errors,
-                options.files.clone(),
-                restart_requested,
-            );
+            let mut app = app::HeditApp::new(cc, workspace, errors, paths, restart_requested);
             app.request_activation(&cc.egui_ctx, activation);
             if let Some(file) = wait {
                 app.wait_for(&options.files, file);
@@ -124,7 +164,19 @@ fn run(
         }),
     )?;
     if restart.load(std::sync::atomic::Ordering::Relaxed) {
-        launcher::restart(&executable, &restart_directory)?;
+        if remote_window {
+            let mut command = std::process::Command::new(&executable);
+            command.args(&args);
+            if options.session_dir.is_none() {
+                command.arg("--session-dir").arg(&restart_directory);
+            }
+            let mut child = command.spawn()?;
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+        } else {
+            launcher::restart(&executable, &restart_directory)?;
+        }
     }
     Ok(())
 }

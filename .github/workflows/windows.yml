@@ -43,9 +43,9 @@ jobs:
           key: windows-x86_64
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Clippy
-        run: cargo clippy --locked --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Rust tests
-        run: cargo test --locked --no-fail-fast
+        run: cargo test --locked --workspace --no-fail-fast
       - name: Release metadata tests
         run: python scripts/test-release.py
       - name: Compiler setup tests

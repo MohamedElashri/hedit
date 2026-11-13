@@ -72,6 +72,7 @@ mod quality_windows;
 mod recovery_tests;
 #[cfg(test)]
 mod redesign_tests;
+mod remote;
 #[cfg(test)]
 mod rtl_tests;
 #[cfg(test)]
@@ -190,6 +191,7 @@ impl Drop for RequestWatch {
 }
 
 pub struct HeditApp {
+    remote_ui: remote::RemoteUi,
     activation: hedit::activation::Window,
     _requests: RequestWatch,
     quality: quality::Quality,
@@ -355,6 +357,11 @@ impl HeditApp {
         errors: Vec<String>,
         paths: Vec<PathBuf>,
     ) -> Self {
+        let storage = if workspace.remote.is_some() {
+            None
+        } else {
+            storage
+        };
         let mut errors = errors;
         let theme = match storage.and_then(|s| s.get_string("theme")) {
             Some(json) => match Theme::from_json(&json) {
@@ -385,6 +392,7 @@ impl HeditApp {
             .unwrap_or_default();
         panes.normalize();
         let mut app = Self {
+            remote_ui: Default::default(),
             activation: Default::default(),
             _requests: RequestWatch::start(ctx, workspace.store.directory().to_owned()),
             quality: Default::default(),
@@ -566,6 +574,25 @@ impl HeditApp {
             return;
         }
         self.checkpoint_at = Instant::now();
+        if let Some(remote) = self.workspace.remote.clone() {
+            let view = match self.workspace.remote_view() {
+                Ok(view) => view,
+                Err(e) => {
+                    self.error = Some(e);
+                    return;
+                }
+            };
+            let generation = self.generation;
+            let sender = self.checkpoint_tx.clone();
+            let ctx = ctx.clone();
+            self.checkpoint_pending = true;
+            self.checkpoint_worker = Some(thread::spawn(move || {
+                let result = remote.metadata(Some(view)).map(|_| ());
+                let _ = sender.send(Checkpoint { generation, result });
+                ctx.request_repaint();
+            }));
+            return;
+        }
         let store: Arc<SessionStore> = Arc::clone(&self.workspace.store);
         let snapshot = match hedit::session::SessionSnapshot::capture(
             &self.workspace.editor,
@@ -612,12 +639,60 @@ impl HeditApp {
         self.open_path(ctx, Some(path), false);
     }
     fn open_path(&mut self, ctx: &egui::Context, path: Option<PathBuf>, allow_new: bool) {
-        if allow_new
+        if self.workspace.remote.is_none()
+            && allow_new
             && path
                 .as_ref()
                 .is_some_and(|p| p.extension().is_some_and(|e| e == "hedit-project"))
         {
             self.load_project(ctx, path);
+            return;
+        }
+        if let Some(remote) = self.workspace.remote.clone() {
+            let Some(path) = path else {
+                self.remote_ui.picker = Some(remote::Picker::Open);
+                self.remote_ui.path.clear();
+                return;
+            };
+            if !hedit_core::backend::is_remote(&path) {
+                self.error =
+                    Some("Open remote files using paths inside this SSH workspace.".into());
+                return;
+            }
+            if let Some(buffer) = self
+                .workspace
+                .open
+                .iter()
+                .find(|b| b.page.info.path.as_deref() == path.to_str())
+            {
+                let id = buffer.view.id;
+                if let Some(index) = self.workspace.open.iter().position(|b| b.view.id == id) {
+                    self.workspace.active = index;
+                }
+                return;
+            }
+            if let Some(index) = self.workspace.closed.iter().position(|view| {
+                self.workspace
+                    .editor
+                    .get(view.id)
+                    .ok()
+                    .and_then(|doc| {
+                        doc.lock()
+                            .ok()
+                            .map(|doc| doc.remote_location() == Some(path.as_path()))
+                    })
+                    .unwrap_or(false)
+            }) {
+                let result = self.workspace.reopen_at(index);
+                self.report(result);
+                return;
+            }
+            let editor = self.workspace.editor.clone();
+            self.job(ctx, move || {
+                let mut doc = remote.open(editor.id(), &path)?;
+                let page = doc.page(0)?;
+                Ok(Action::Add(doc, page, 0))
+            });
             return;
         }
         self.navigation_mark();
@@ -748,6 +823,11 @@ impl HeditApp {
     }
     fn save_file(&mut self, ctx: &egui::Context, save_as: bool) {
         let id = self.active().view.id;
+        if self.workspace.remote.is_some() && (save_as || self.active().page.info.path.is_none()) {
+            self.remote_ui.picker = Some(remote::Picker::Save(id));
+            self.remote_ui.path.clear();
+            return;
+        }
         if save_as || self.active().page.info.path.is_none() {
             let name = self
                 .active()
@@ -2153,6 +2233,7 @@ impl HeditApp {
                             .interactive(
                                 !self.busy
                                     && !self.closing
+                                    && self.workspace.remote.as_ref().is_none_or(|r| r.writable())
                                     && !buffer.follow
                                     && !self.preferences_open
                                     && !self.palette
@@ -2943,6 +3024,10 @@ impl HeditApp {
                     // the user's edited view in a new independent unsaved file.
                     let text = self.workspace.open[index].page.text.clone();
                     self.workspace.open[index].page.text = old;
+                    if self.workspace.remote.is_some() {
+                        self.error = Some(error);
+                        return;
+                    }
                     let result = (|| {
                         let mut doc = Document::empty(self.workspace.editor.id());
                         doc.replace(0, 0, text, 0)?;
@@ -3393,7 +3478,12 @@ impl HeditApp {
     }
 }
 impl eframe::App for HeditApp {
+    fn persist_egui_memory(&self) -> bool {
+        self.workspace.remote.is_none()
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.remote_controls(ctx);
         self.updates.poll();
         self.receive(ctx);
         self.poll_incoming(ctx);
@@ -3484,6 +3574,9 @@ impl eframe::App for HeditApp {
         }
     }
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        if self.workspace.remote.is_some() {
+            return;
+        }
         self.source_control.save(storage);
         eframe::set_value(storage, "recent_projects", &self.quality.recent);
         eframe::set_value(storage, "recent_files", &self.recent_files);
@@ -3504,6 +3597,13 @@ impl eframe::App for HeditApp {
         Duration::from_secs(2)
     }
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if self.workspace.remote.is_some() {
+            self.cancel_build();
+            #[cfg(feature = "terminal")]
+            for tab in &mut self.terminal.tabs {
+                tab.session.stop();
+            }
+        }
         if !self.exit_ready {
             self.restart_requested.store(false, Ordering::Relaxed);
         }
@@ -3512,6 +3612,9 @@ impl eframe::App for HeditApp {
         if let Err(error) = self.workspace.checkpoint() {
             self.restart_requested.store(false, Ordering::Relaxed);
             eprintln!("hedit: final recovery checkpoint failed: {error}");
+        }
+        if self.workspace.remote.is_some() {
+            return;
         }
         // An extra window closed with nothing in it is not reopened next time.
         let session = self.workspace.store.directory().to_owned();

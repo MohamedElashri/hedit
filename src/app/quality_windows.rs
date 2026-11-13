@@ -376,6 +376,7 @@ impl HeditApp {
             ui.label(path.display().to_string());
             let mut enter=false;
             if matches!(operation,FileOperation::Rename|FileOperation::Duplicate){
+                if self.workspace.remote.is_some()&&operation==FileOperation::Move {ui.label("Destination file path relative to the SSH workspace");}
                 let response=ui.text_edit_singleline(&mut self.quality.file_name);
                 enter=response.lost_focus()&&ui.input(|i|i.key_pressed(Key::Enter));
             }

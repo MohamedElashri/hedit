@@ -150,6 +150,11 @@ impl ProjectBrowser {
 
 impl HeditApp {
     pub(super) fn open_folder(&mut self, ctx: &egui::Context) {
+        if self.workspace.remote.is_some() {
+            self.remote_ui.picker = Some(remote::Picker::Folder);
+            self.remote_ui.path.clear();
+            return;
+        }
         self.job(ctx, || {
             match rfd::FileDialog::new()
                 .set_title("Add folders — hedit")
@@ -322,7 +327,14 @@ impl HeditApp {
                 for folder in folders {
                     ui.push_id(("project-root", &folder.path), |ui| {
                         let path = &folder.path;
-                        let name = std::path::Path::new(path)
+                        let display = self
+                            .workspace
+                            .remote
+                            .as_ref()
+                            .filter(|r| r.root() == std::path::Path::new(path))
+                            .map(|r| r.config.root.as_str())
+                            .unwrap_or(path);
+                        let name = std::path::Path::new(display)
                             .file_name()
                             .unwrap_or(std::ffi::OsStr::new(path))
                             .to_string_lossy();

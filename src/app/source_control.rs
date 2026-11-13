@@ -410,6 +410,10 @@ impl HeditApp {
         });
     }
     fn browse_git_repository(&mut self, ctx: &egui::Context) {
+        if self.workspace.remote.is_some() {
+            self.error=Some("Add the remote repository folder using Open remote folder, then open Source Control.".into());
+            return;
+        }
         if self.source_control.pending {
             return;
         }
@@ -976,7 +980,7 @@ impl HeditApp {
     }
     fn git_open_file(&mut self, ctx: &egui::Context, path: &Path) {
         if let Some(root) = &self.source_control.root {
-            let path = root.join(path);
+            let path = hedit::remote::join(root, path);
             self.source_control.open = false;
             self.open(ctx, Some(path));
         }
@@ -1937,6 +1941,17 @@ impl HeditApp {
         }
     }
     fn git_clone(&mut self, ctx: &egui::Context, url: String, destination: PathBuf) {
+        let destination = if let Some(remote) = &self.workspace.remote {
+            match remote.path(&destination.to_string_lossy()) {
+                Ok(path) => path,
+                Err(e) => {
+                    self.error = Some(e);
+                    return;
+                }
+            }
+        } else {
+            destination
+        };
         if self.source_control.pending {
             return;
         }

@@ -1,13 +1,14 @@
 //! Read-only queries resolve revisions to immutable objects before diffing.
 use super::*;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct HistoryScope {
     /// None includes all branches, tags, and HEAD.
     pub reference: Option<String>,
+    #[serde(with = "crate::wire_path::option")]
     pub path: Option<PathBuf>,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Comparison {
     pub base: String,
     pub head: String,
@@ -15,20 +16,20 @@ pub struct Comparison {
     pub ahead: usize,
     pub behind: usize,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Tag {
     pub name: String,
     pub object: String,
     pub commit: Option<String>,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ReflogEntry {
     pub oid: String,
     pub selector: String,
     pub subject: String,
     pub date: String,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct BlameLine {
     pub oid: String,
     pub number: usize,
@@ -39,6 +40,11 @@ pub struct BlameLine {
 
 impl Git {
     pub fn resolve_commit(&self, root: &Path, reference: &str) -> Result<String> {
+        if let Some(result) = self.remote(root, crate::backend::GitQuery::Resolve(reference.into()))
+        {
+            return result;
+        }
+
         valid_ref(reference)?;
         let oid = self.command(
             root,
@@ -59,6 +65,16 @@ impl Git {
         limit: usize,
         scope: &HistoryScope,
     ) -> Result<Vec<Commit>> {
+        if let Some(result) = self.remote(
+            root,
+            crate::backend::GitQuery::ScopedHistory {
+                limit,
+                scope: scope.clone(),
+            },
+        ) {
+            return result;
+        }
+
         let mut arguments = args(&[
             "log",
             &format!("-{}", limit.clamp(1, 2000)),
@@ -87,6 +103,17 @@ impl Git {
         head: &str,
         merge_base: bool,
     ) -> Result<Comparison> {
+        if let Some(result) = self.remote(
+            root,
+            crate::backend::GitQuery::Compare {
+                base: base.into(),
+                head: head.into(),
+                merge_base,
+            },
+        ) {
+            return result;
+        }
+
         self.require_root(root)?;
         let tip = self.resolve_commit(root, base)?;
         let head = self.resolve_commit(root, head)?;
@@ -152,6 +179,10 @@ impl Git {
         })
     }
     pub fn tags(&self, root: &Path) -> Result<Vec<Tag>> {
+        if let Some(result) = self.remote(root, crate::backend::GitQuery::Tags) {
+            return result;
+        }
+
         let text = self.command(root, &["for-each-ref", "--sort=-creatordate", "--format=%(refname:strip=2)%00%(objectname)%00%(objecttype)%00%(*objectname)%00%(*objecttype)", "refs/tags"])?;
         Ok(text
             .lines()
@@ -174,6 +205,10 @@ impl Git {
             .collect())
     }
     pub fn reflog(&self, root: &Path, limit: usize) -> Result<Vec<ReflogEntry>> {
+        if let Some(result) = self.remote(root, crate::backend::GitQuery::Reflog(limit)) {
+            return result;
+        }
+
         self.require_root(root)?;
         // An unborn HEAD has no log. Propagate cancellation and process errors.
         if !self
@@ -208,6 +243,16 @@ impl Git {
     }
     /// Blame committed text only: unsaved and unstaged edits never masquerade as history.
     pub fn blame(&self, root: &Path, reference: &str, path: &Path) -> Result<Vec<BlameLine>> {
+        if let Some(result) = self.remote(
+            root,
+            crate::backend::GitQuery::Blame {
+                reference: reference.into(),
+                path: path.to_owned(),
+            },
+        ) {
+            return result;
+        }
+
         validate_relative(path)?;
         let oid = self.resolve_commit(root, reference)?;
         let mut arguments = args(&["blame", "--line-porcelain", &oid, "--"]);
