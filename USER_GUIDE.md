@@ -15,6 +15,7 @@ outside the modal.
 - [Installation](#installation)
 - [Updates](#updates)
 - [Files and folders](#files-and-folders)
+- [SSH remote workspaces](#ssh-remote-workspaces)
 - [Editing](#editing)
 - [Finding and navigating](#finding-and-navigating)
 - [Writing code](#writing-code)
@@ -260,6 +261,138 @@ encoding…** reopens or saves a file in another encoding, such as Windows-1252,
 ISO-8859-1, Shift JIS, or GBK; characters that cannot be converted are refused,
 never replaced. **Edit → Line endings** converts a file to LF or CRLF. Binary
 files are not supported.
+
+## SSH remote workspaces
+
+Choose **Connect via SSH…** in the SSH bar to open a remote workspace in a
+separate native window. Files, folder search and replacement, Source Control,
+builds, and terminal processes use the SSH host. Rendering and editing views
+stay local. There is no hedit cloud, relay, or account.
+
+### Connect to a host
+
+Build the helper on a Linux or macOS destination from the same checkout as the
+editor. Create its destination directory first:
+
+```sh
+cargo build --release --locked -p hedit-remote
+mkdir -p "$HOME/.local/bin"
+install -m 700 target/release/hedit-remote "$HOME/.local/bin/hedit-remote"
+```
+
+Verify the host key through your normal OpenSSH workflow before connecting.
+hedit refuses unknown and changed keys. Authentication uses OpenSSH keys or your
+existing agent; password and interactive authentication prompts are unsupported.
+
+Supply the host or alias, absolute workspace and installed helper paths, and an
+absolute private state directory on the host. A state directory belongs to one
+workspace; use a different directory for each workspace. Select the port
+explicitly when it differs from the default, including aliases with a custom
+port. An optional SSH configuration must be a trusted absolute local file.
+Configuration and its includes can execute `Match exec` commands; do not use a
+configuration supplied by a remote repository.
+
+You can also connect from the command line:
+
+```sh
+hedit --ssh devbox \
+  --ssh-root /home/me/project \
+  --ssh-helper /home/me/.local/bin/hedit-remote \
+  --ssh-state /home/me/.local/state/hedit/project \
+  src/main.rs
+```
+
+Optional arguments are `--ssh-user USER`, `--ssh-port PORT`,
+`--ssh-config /absolute/local/config`, and `--ssh-takeover`. Takeover explicitly
+fences the previous writer. A new writer waits for cancelled tool jobs to finish.
+
+The SSH bar identifies the host and workspace. Use the folder tree, Go to
+Anything, or **Open remote path…** to open files. Paths entered in remote dialogs
+are relative to the workspace, or absolute paths inside it. **New remote file**
+creates an untitled, host-recoverable scratchpad. Save As creates a new host file
+and refuses an existing target.
+
+Git, builds, and terminals require **Trust for Git, builds and terminal…** for
+each connection. Trust permits execution with the SSH account's permissions,
+including Git hooks, filters, configuration, shells, and build scripts. It is
+not a sandbox. Revoking trust cancels jobs and stops tracked processes;
+reconnecting clears trust. The terminal also needs its normal opt-in setting.
+
+### Privacy and recovery
+
+Remote content, unsaved edits, undo history, tab state, searches, Git patches and
+drafts, and terminal output are not written to local recovery or GUI state.
+A temporary local session directory can contain launch and IPC metadata and
+diagnostics. Connection arguments contain paths and host metadata, not keys.
+The operating system, swap, hibernation, crash collectors, clipboard managers,
+screenshots, and explicit copy/paste or exports are outside this application-level
+storage guarantee. Trust the host and SSH account with their own files and recovery.
+
+OpenSSH uses strict host-key checks. Agent, X11, tunnel and port forwarding,
+existing multiplexed connections, local commands, ProxyCommand and ProxyJump are
+disabled. The helper uses a private Unix socket rather than a host network
+listener. Recovery storage requires private ownership and Unix permissions;
+on macOS, extended ACL grants on that storage or its ancestors are also rejected.
+
+The SSH bar shows outstanding edit receipts. **Durable on SSH host** means the
+host has committed accepted edits to its recovery journal. A disconnected editor
+retains pending edits in memory and pauses editing. **Reconnect** checks the
+original recovery identity and reconciles the same edit sequences. If another
+writer advanced a document, editing stays paused to preserve the stale view.
+
+Editing also pauses when outstanding work reaches 64 edits, 1 MiB, or two seconds
+without catching up. A client crash can lose edits without a durable receipt;
+there is deliberately no local recovery fallback. Accepted host transactions
+continue if their client disappears, and committed text can recover without the
+source file.
+
+Saving checks the expected source digest, preserves ownership, mode and supported
+ACLs, and syncs an atomic file replacement and its parent directory. A worker
+crash after publication is reconciled before saved state is published. Uncertain
+saves and tool mutations are not blindly retried. External changes, permission
+failures and symlinks preserve editor text; use Save As to keep a conflicting
+version under a new name. The final source check and rename are separate OS
+operations, so an uncooperative external writer can still race that interval.
+
+Renames record inode identity and reconcile recovery paths after crashes.
+Corrupt or ambiguous recovery, quota exhaustion, and filesystem errors retain
+recovery data for inspection. Keep SQLite WAL and sidecars together; do not
+manipulate a live state directory. Back it up using a SQLite-aware procedure
+after stopping its worker.
+
+Build and terminal output uses separate bounded streams. Losing a stream stops
+its tracked process; losing the control connection stops tracked shell/build
+groups and cancels jobs. Intentionally detached processes remain managed by the
+SSH account. Terminal output drains before exit is reported. A worker with no
+connections exits after five minutes, leaving recovery on disk.
+
+### Supported scope and limits
+
+- Direct SSH to Linux or macOS hosts; Windows can be a client. Windows hosts,
+  jump hosts, automatic helper installation, passwords and interactive MFA are
+  not implemented.
+- Recovery storage must use an approved host-local filesystem: ext-family, XFS,
+  btrfs or ZFS on Linux, or APFS on macOS. Network filesystems, tmpfs and unknown
+  filesystems cannot hold durable recovery. Projects may use separate storage,
+  subject to its save semantics.
+- Up to 128 retained documents, 8 MiB of decoded text per document, a 128 MiB
+  logical journal budget, 16 socket peers, and eight tool jobs/processes per
+  session. Individual pending edits share the 1 MiB client queue budget.
+- Compaction runs every 512 edits, retaining up to 256 undo/redo changes within
+  a 16 MiB history budget and 256 recent deduplication receipts. Quotas fail
+  closed; unsaved recovery is not automatically deleted.
+- The folder browser skips non-UTF-8 names and symlinks. Git transport preserves
+  Unix filename bytes, but the folder UI does not cover every such path. File
+  duplication is supported; directory duplication is not. Trash moves into host
+  state and refuses cross-filesystem moves.
+- Keep one remote tab open; create another scratchpad before closing the last
+  tab. Remote project-file persistence, Markdown preview, CUDA/debugging,
+  definition/reference lookup, compare-disk and mini-diff tools are unavailable.
+  Regular editing, syntax highlighting, folder search, Source Control, builds,
+  and terminals remain available.
+
+See [SSH architecture and testing](DEVELOPER_GUIDE.md#ssh-architecture-and-testing)
+for implementation invariants and live test instructions.
 
 ## Editing
 

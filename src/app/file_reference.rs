@@ -3,6 +3,10 @@ use hedit::{advanced::Selection, file_reference};
 
 impl HeditApp {
     pub(super) fn open_file_reference(&mut self, ctx: &egui::Context) {
+        if self.workspace.remote.is_some() {
+            self.error = Some("Use the remote file browser to open SSH files.".into());
+            return;
+        }
         let b = self.active();
         let Some(reference) = file_reference::at(
             &b.page.text,

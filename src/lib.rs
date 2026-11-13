@@ -46,6 +46,7 @@ pub type SharedDocument = Arc<Mutex<Document>>;
 pub struct Editor {
     documents: Mutex<HashMap<u64, SharedDocument>>,
     next_id: AtomicU64,
+    ephemeral: Mutex<std::collections::HashSet<u64>>,
 }
 
 impl Editor {
@@ -60,7 +61,19 @@ impl Editor {
             .cloned()
             .ok_or_else(|| "The document is no longer open.".into())
     }
+    pub fn is_ephemeral(&self, id: u64) -> bool {
+        self.ephemeral
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains(&id)
+    }
     pub fn insert(&self, doc: Document) -> Result<(), String> {
+        if doc.is_ephemeral() {
+            self.ephemeral
+                .lock()
+                .map_err(|e| e.to_string())?
+                .insert(doc.id);
+        }
         self.documents
             .lock()
             .map_err(|e| e.to_string())?
@@ -76,3 +89,5 @@ impl Editor {
     }
 }
 pub mod advanced;
+
+pub mod remote;

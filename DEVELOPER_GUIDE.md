@@ -74,6 +74,8 @@ smoke-tests a Linux release package.
 | `make lint` | `make static`, then Clippy |
 | `make test` | Rust tests plus Zig setup, release metadata, installer, macOS, and Windows package tests |
 | `make test-macos` | The tests that apply on macOS (the CI macOS job) |
+| `make test-remote` | Headless SSH workspace and host recovery tests |
+| `make test-remote-live` | Disposable loopback SSH server, real client/worker crash tests, and latency sampling; requires `sshd` |
 | `make check` | Lint and tests, without a release build |
 | `make package` / `make smoke` | Build a release package under `dist/` / install it in a temporary prefix and run it |
 | `make release-check RELEASE_TAG=vX.Y.Z` | Check the tag, package version, and dated changelog entry |
@@ -270,6 +272,116 @@ with `scripts/setup-zig.py` when upgrading Ghostty. Run
 reports an incomplete cache, remove only `target/ghostty-toolchain` and retry,
 or set `ZIG` to a matching compiler. Automatic installation requires Python with
 pip and network access on the first build.
+
+## SSH architecture and testing
+
+See [SSH remote workspaces](USER_GUIDE.md#ssh-remote-workspaces) for installation,
+connection options, privacy boundaries, supported scope and limits.
+
+`crates/hedit-core` shares the document, encoding, filesystem, folder search, Git
+and build engine between the GUI and `crates/hedit-remote`. The helper does not
+link the GUI. The editor opens each SSH workspace in a separate process/window;
+local sessions and remote content do not share persistence. Release builds and
+`cargo run` still select the editor by default. Workspace tests and Clippy cover
+the shared engine and helper as well as the editor.
+
+### Isolation and trust invariants
+
+Remote documents use memory-backed pieces and an immutable remote marker. The
+editor records that marker without locking a document during checkpoint capture,
+and both local session capture and document snapshots reject remote documents.
+Remote windows disable egui memory and window persistence, recent-file/project
+writes, and Git draft persistence. Changing a document's name or save target must
+not remove its remote identity.
+
+The backend registry routes remote URIs explicitly and fails closed when a
+provider disappears. Validate every host-provided filesystem path against the
+opened host root before returning it to the UI. A host response must never
+become a local file, folder, shell directory or process capability. Relative Git
+paths preserve Unix bytes over the wire; URI encoding must preserve literal
+percent signs, spaces and filename boundaries. Build working directories and
+terminal fallback directories must also remain remote.
+
+Source filesystem operations walk pinned directory descriptors, reject symlink
+components, traversal and special files, and use exclusive staging and
+no-replace renames where appropriate. Recovery files require account ownership,
+private permissions, no hard links or symlinks, and supported durable storage.
+On macOS, reject ACL grants that could bypass Unix permission bits, including
+on recovery ancestors. Source file saves preserve their existing access rules.
+
+Git, builds and shells require connection-scoped execution trust. They have the
+SSH account's normal permissions; this is not a tool sandbox. Trust is reset on
+reconnect or ownership loss. Do not infer execution trust from merely opening a
+folder. SSH configuration and installed helper paths are explicitly trusted
+inputs, never supplied automatically by repository content. OpenSSH arguments
+must continue to override forwarding, unrelated connection reuse, local commands
+and proxy execution. See the [OpenSSH configuration manual](https://man.openbsd.org/ssh_config).
+
+### Recovery and concurrency invariants
+
+The host journal uses SQLite WAL with full synchronization and macOS fullfsync.
+Only construct a durable receipt after its transaction commits. Preserve the
+original baseline, reconstructable current text and bounded host undo/redo history.
+A recovery session identity, writer epoch, document sequence, payload digest and
+base revision prevent stale writes and duplicate replay. Separate state directories
+also contend on a canonical workspace inode lock. Each client view carries its
+own expected host revision for editing, saving, history and reloading.
+
+The client queues edits without network I/O on the UI thread. Bound pending work
+and pause editing when it exceeds its age, count or byte budget. Reconnect must
+check the original session, replay the same sequences and payloads, and compare
+host revisions before permitting more edits. Retain uncertain text in memory;
+never make a local recovery copy or silently discard it.
+
+Save intents commit before source publication. Reconcile an interrupted save
+against its destination digest rather than blindly executing it again. Rename
+intents record inode identity and reconcile document paths transactionally. The
+source check and filesystem rename cannot provide compare-and-swap against an
+uncooperative external writer; preserve and report conflicts.
+
+Compaction atomically checkpoints text and bounded history, retains recent
+receipts, and rejects compacted old sequences as conflicts instead of new edits.
+Corrupt, future-schema, full or unsupported storage must remain intact. SQLite's
+[WAL documentation](https://sqlite.org/wal.html) describes its filesystem and
+synchronization assumptions; process-kill tests do not certify power-loss safety.
+
+Run tool jobs outside the edit actor. Separate authenticated service connections
+and bounded output queues keep builds and terminal streams from sitting ahead
+of edit receipts. Cancellation, dropped service connections and owner loss must
+reclaim jobs and stop tracked processes. Do not grant a new owner while an old
+job is still running. Drain terminal output before reporting exit. Bulk transfers
+are bounded, use four chunks in flight, and reserve space for the outer reply
+envelope as well as the payload.
+
+### Verification
+
+```sh
+make test-remote
+make test-remote-live
+cargo test --locked --workspace
+cargo clippy --locked --workspace --all-targets -- -D warnings
+```
+
+The live harness requires OpenSSH server/client and keygen. It starts an isolated
+IPv4 loopback server with disposable keys, pinned host keys, private homes and
+state, and no real user credentials or agent. It covers unknown/changed host keys,
+disabled forwarding/local commands, quoted install paths, service authorization,
+writer fencing, peer limits and abandoned-job cleanup. Deterministic process-kill
+cases cover both sides of edit commit, source publication and compaction, plus
+reconnecting the production client after losing a committed edit's receipt.
+The editor backend probe exercises files, search, Git, builds, PTYs, scratchpads,
+stale views, large reads/uploads, host-only view metadata and reload previews.
+
+The fault-enabled helper is built separately and cannot be built in release
+mode. Avoid logging document contents, patches, input, terminal output, tokens or
+SSH diagnostics from production sessions. Test diagnostics may reference only
+the harness's disposable resources.
+
+A native macOS GUI run also typed an unsaved marker over SSH, killed the actual
+editor, reopened host recovery, saved it, and scanned the local session directory
+for the marker. No local marker was found. The CI Linux job runs the live harness;
+Linux/Windows CI results and WAN testing were not locally verified. These tests
+are not an independent security audit or hardware power-loss validation.
 
 ## Rules to keep
 

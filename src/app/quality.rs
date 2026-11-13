@@ -615,7 +615,10 @@ impl HeditApp {
                 return false;
             }
             if doc.info().encoding == "UTF-8" {
-                doc.set_bom(needs_bom);
+                if let Err(error) = doc.set_bom(needs_bom) {
+                    self.error = Some(error);
+                    return false;
+                }
             }
             self.workspace.open[self.workspace.active].page.info = doc.info();
         }
@@ -785,7 +788,7 @@ impl HeditApp {
             .iter()
             .filter(|b| !b.page.info.paged && !b.follow)
             .filter_map(|b| {
-                let path = std::fs::canonicalize(b.page.info.path.as_ref()?).ok()?;
+                let path = remote_canonical(b.page.info.path.as_ref()?)?;
                 Some((path, b.page.text.clone()))
             })
             .collect();
@@ -819,11 +822,7 @@ impl HeditApp {
         let mut open_errors = vec![];
         for plan in open_plans {
             let index = self.workspace.open.iter().position(|b| {
-                b.page
-                    .info
-                    .path
-                    .as_ref()
-                    .and_then(|p| std::fs::canonicalize(p).ok())
+                b.page.info.path.as_ref().and_then(|p| remote_canonical(p))
                     == Some(plan.path.clone())
             });
             let Some(index) = index else {
@@ -1332,12 +1331,51 @@ impl HeditApp {
             .unwrap_or_default()
             .to_string_lossy()
             .into_owned();
+        if self.workspace.remote.is_some() {
+            self.quality.file_name = if operation == FileOperation::Move {
+                String::new()
+            } else {
+                percent_encoding::percent_decode_str(&self.quality.file_name)
+                    .decode_utf8_lossy()
+                    .into_owned()
+            };
+        }
         self.quality.file_action = Some((path, operation));
     }
     pub(super) fn perform_file_action(&mut self, ctx: &egui::Context) {
         let Some((path, operation)) = self.quality.file_action.take() else {
             return;
         };
+        if let Some(remote) = self.workspace.remote.clone() {
+            let name = self.quality.file_name.clone();
+            self.job(ctx, move || {
+                remote.flush()?;
+                let path = hedit::folder::entry_path(&path)?;
+                let to = match operation {
+                    FileOperation::Rename => Some(PathBuf::from(hedit::folder::rename_path(
+                        path.to_string_lossy().into_owned(),
+                        name,
+                    )?)),
+                    FileOperation::Move => {
+                        let target = remote.path(&name)?;
+                        Some(hedit::folder::move_path(&path, &target)?)
+                    }
+                    FileOperation::Duplicate => {
+                        let target = hedit::folder::duplicate_sibling(&path, &name)?;
+                        return Ok(Action::Created(
+                            target.to_string_lossy().into_owned(),
+                            false,
+                        ));
+                    }
+                    FileOperation::Trash => {
+                        hedit::folder::trash_path(&path)?;
+                        None
+                    }
+                };
+                Ok(Action::Quality(Box::new(Event::FileChanged(path, to))))
+            });
+            return;
+        }
         // Documents and roots use resolved paths. Normalize the source before
         // mutation, while its ancestors still exist (e.g. macOS /var aliases).
         let path = match hedit::folder::entry_path(&path) {
@@ -1487,6 +1525,9 @@ impl HeditApp {
                     .is_none_or(|t| t.elapsed() >= Duration::from_secs(30)))
     }
     pub(super) fn poll_git(&mut self, ctx: &egui::Context) {
+        if self.workspace.remote.is_some() {
+            return;
+        }
         if self.quality.git_pending
             || self.busy
             || self.closing
@@ -1560,4 +1601,13 @@ pub(super) fn refocused(ctx: &egui::Context) -> bool {
             .iter()
             .any(|e| matches!(e, egui::Event::WindowFocused(true)))
     })
+}
+
+fn remote_canonical(path: &str) -> Option<PathBuf> {
+    let p = PathBuf::from(path);
+    if hedit_core::backend::is_remote(&p) {
+        Some(p)
+    } else {
+        std::fs::canonicalize(p).ok()
+    }
 }

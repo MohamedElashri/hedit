@@ -1243,6 +1243,39 @@ impl HeditApp {
         }
     }
     pub(super) fn execute(&mut self, ctx: &egui::Context, command: Command) {
+        if self.workspace.remote.is_some() {
+            match command {
+                Command::New => {
+                    self.remote_new(ctx);
+                    return;
+                }
+                Command::OpenFolder => {
+                    self.remote_ui.picker = Some(remote::Picker::Folder);
+                    self.remote_ui.path.clear();
+                    return;
+                }
+                Command::OpenProject
+                | Command::SaveProject
+                | Command::SaveProjectAs
+                | Command::RecentProjects
+                | Command::SaveMacro
+                | Command::MarkdownSplit
+                | Command::MarkdownPreview
+                | Command::MarkdownRefresh
+                | Command::GotoDefinition
+                | Command::GotoReferences
+                | Command::SwitchCounterpart
+                | Command::OpenFileReference
+                | Command::CompareDisk
+                | Command::GitDiff
+                | Command::Gpu
+                | Command::ToolSettings => {
+                    self.error = Some("This tool is not available in SSH workspaces yet.".into());
+                    return;
+                }
+                _ => (),
+            }
+        }
         if !self.command_enabled(command) {
             return;
         }

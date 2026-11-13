@@ -409,6 +409,9 @@ impl HeditApp {
         self.markdown_available() && self.active().view.markdown_view == MarkdownView::Preview
     }
     pub(super) fn markdown_available(&self) -> bool {
+        if self.workspace.remote.is_some() {
+            return false;
+        }
         let b = self.active();
         b.language() == syntax::Language::Markdown
             && !b.page.info.paged
@@ -416,6 +419,10 @@ impl HeditApp {
     }
 
     pub(super) fn set_markdown_view(&mut self, ctx: &egui::Context, view: MarkdownView) {
+        if self.workspace.remote.is_some() && view != MarkdownView::Source {
+            self.error = Some("Markdown preview is unavailable in SSH workspaces.".into());
+            return;
+        }
         if self.active().view.markdown_view != view && view != MarkdownView::Source {
             self.refresh_markdown(ctx);
         }
@@ -440,6 +447,10 @@ impl HeditApp {
     }
 
     pub(super) fn markdown_pane(&mut self, ui: &mut egui::Ui, pane: usize) {
+        if self.workspace.remote.is_some() {
+            self.editor_source_pane(ui, pane);
+            return;
+        }
         if self.active().language() != syntax::Language::Markdown {
             self.editor_source_pane(ui, pane);
             return;

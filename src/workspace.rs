@@ -135,6 +135,7 @@ impl Buffer {
     }
 }
 pub struct Workspace {
+    pub remote: Option<Arc<crate::remote::Connection>>,
     pub editor: Arc<Editor>,
     pub store: Arc<SessionStore>,
     pub open: Vec<Buffer>,
@@ -143,6 +144,85 @@ pub struct Workspace {
     pub folders: Vec<FolderView>,
 }
 impl Workspace {
+    pub fn connect_remote(
+        directory: PathBuf,
+        config: crate::remote::Config,
+    ) -> Result<(Self, Vec<String>), String> {
+        let remote = crate::remote::Connection::connect(config)?;
+        let editor = Arc::new(Editor::default());
+        let store = Arc::new(SessionStore::new(directory));
+        let mut workspace = Self {
+            remote: Some(remote.clone()),
+            editor,
+            store,
+            open: vec![],
+            closed: vec![],
+            active: 0,
+            folders: vec![FolderView {
+                path: remote.root().to_string_lossy().into_owned(),
+                visible: true,
+                expanded: vec![],
+                collapsed: false,
+            }],
+        };
+        let saved = remote
+            .metadata(None)
+            .ok()
+            .and_then(|v| serde_json::from_value::<SessionView>(v).ok());
+        let mut identities = std::collections::HashMap::new();
+        for info in remote.list()? {
+            let host_id = info.document;
+            let id = workspace.editor.id();
+            identities.insert(host_id, id);
+            let mut document = remote.recover(id, info)?;
+            let page = document.page(0)?;
+            workspace.add(document, page)?;
+        }
+        if let Some(saved) = saved {
+            let mut buffers = std::mem::take(&mut workspace.open);
+            let mut open = vec![];
+            for mut view in saved.open {
+                view.markdown_view = Default::default();
+                if let Some(id) = identities.get(&view.id) {
+                    view.id = *id;
+                    if let Some(n) = buffers.iter().position(|b| b.view.id == *id) {
+                        let mut b = buffers.remove(n);
+                        if let Ok(doc) = workspace.editor.get(*id) {
+                            if let Ok(mut doc) = doc.lock() {
+                                if let Ok(page) = doc.page(view.page_start) {
+                                    b = Buffer::new(page, Some(view));
+                                }
+                            }
+                        }
+                        open.push(b);
+                    }
+                }
+            }
+            for mut view in saved.closed {
+                view.markdown_view = Default::default();
+                if let Some(id) = identities.get(&view.id) {
+                    view.id = *id;
+                    if let Some(n) = buffers.iter().position(|b| b.view.id == *id) {
+                        buffers.remove(n);
+                        workspace.closed.push(view);
+                    }
+                }
+            }
+            open.extend(buffers);
+            workspace.active = saved
+                .active
+                .and_then(|id| identities.get(&id))
+                .and_then(|id| open.iter().position(|b| b.view.id == *id))
+                .unwrap_or(0);
+            workspace.open = open;
+        }
+        if workspace.open.is_empty() {
+            let mut document = remote.scratch(workspace.editor.id())?;
+            let page = document.page(0)?;
+            workspace.add(document, page)?;
+        }
+        Ok((workspace, vec![]))
+    }
     pub fn restore(directory: PathBuf) -> Result<(Self, Vec<String>), String> {
         let editor = Arc::new(Editor::default());
         let store = Arc::new(SessionStore::new(directory));
@@ -190,6 +270,7 @@ impl Workspace {
             !blank
         });
         let mut workspace = Self {
+            remote: None,
             editor,
             store,
             open,
@@ -213,6 +294,11 @@ impl Workspace {
         Ok(())
     }
     pub fn new_buffer(&mut self) -> Result<(), String> {
+        if self.remote.is_some() {
+            return Err(
+                "Use New remote file in the SSH bar to create a host-backed scratchpad.".into(),
+            );
+        }
         let mut document = Document::empty(self.editor.id());
         let page = document.page(0)?;
         self.add(document, page)
@@ -227,7 +313,27 @@ impl Workspace {
             folders: self.folders.clone(),
         }
     }
+    pub fn remote_view(&self) -> Result<serde_json::Value, String> {
+        let remote = self.remote.as_ref().ok_or("Not an SSH workspace.")?;
+        let mut view = self.view();
+        let mut ids = std::collections::HashMap::new();
+        for tab in view.open.iter_mut().chain(&mut view.closed) {
+            let shared = self.editor.get(tab.id)?;
+            let doc = shared.lock().map_err(|e| e.to_string())?;
+            let path = doc
+                .remote_location()
+                .ok_or("A local buffer cannot enter a remote workspace.")?;
+            let host = remote.identity(path)?;
+            ids.insert(tab.id, host);
+            tab.id = host;
+        }
+        view.active = view.active.and_then(|id| ids.get(&id).copied());
+        serde_json::to_value(view).map_err(|e| e.to_string())
+    }
     pub fn checkpoint(&self) -> Result<(), String> {
+        if let Some(remote) = &self.remote {
+            return remote.metadata(Some(self.remote_view()?)).map(|_| ());
+        }
         self.store.save(&self.editor, self.view())
     }
     /// Keep the last empty, unnamed scratchpad as the editor's blank state.
@@ -277,6 +383,12 @@ impl Workspace {
                 }
             }
         }
+        if self.remote.is_some() && self.open.len() == 1 {
+            return Err(
+                "Keep one remote tab open. Create another remote file before closing this tab."
+                    .into(),
+            );
+        }
         let buffer = self.open.remove(index);
         self.closed.push(buffer.view);
         self.after_close(index)
@@ -287,6 +399,12 @@ impl Workspace {
             return Ok(());
         };
         self.editor.remove(buffer.view.id)?;
+        if self.remote.is_some() && self.open.len() == 1 {
+            return Err(
+                "Keep one remote tab open. Create another remote file before discarding this tab."
+                    .into(),
+            );
+        }
         self.open.remove(index);
         self.after_close(index)
     }
