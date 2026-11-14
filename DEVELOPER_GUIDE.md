@@ -299,7 +299,8 @@ Saved fixtures remained unchanged and no native panic was recorded.
 Large editable pages use paragraph-aligned blocks (about 4 KiB each). An inline
 edit reshapes the affected blocks and shares unchanged rows with the previous
 frame. A single long paragraph can still require a large layout; adding or
-removing rows and changing syntax colors can also require copying later rows.
+removing rows and changing syntax colors can still require copying glyph metadata
+for later rows; unchanged mesh vertex/index buffers remain shared.
 The source coordinate index updates from UTF-8-safe splices. Its balanced chunks
 cover at most 256 Unicode scalars; interior chunks stay at least half full after
 edits. Byte lookup and supported tab-column lookup use a binary search followed
@@ -324,6 +325,46 @@ compare incremental results with the full renderer, including mesh vertices,
 colors, wrapping, RTL, and 125%/150% scaling. The licenses remain in the vendor
 directories and the shipped [MIT notice](assets/licenses/egui-epaint-MIT.txt).
 The Markdown integration also uses copy-on-write when adding line padding.
+
+`RowVisuals.mesh` is an `Arc<Mesh>`. A row can keep its mesh and triangle index
+while `mesh_offset` translates it; `mesh_bounds` already includes that offset.
+The tessellator applies it before rotation and passes it to spatial-index clipping.
+Use `translate_mesh` for movement and `mesh_mut` before changing geometry: the
+latter copies shared data, bakes the translation, and invalidates the local
+triangle index. Color-only changes can keep the translation and index. Empty
+visuals share an immutable empty mesh, avoiding an allocation for each placeholder.
+
+Cached block placement still recomputes glyph baselines. If physical-pixel
+rounding requires individual quad corrections, only that row's mesh is
+materialized; otherwise its buffers and index stay shared with the live previous
+frame. Syntax-section renumbering does not copy unchanged meshes. Glyph storage
+is still copied when row metadata changes, and genuinely changed colors/styles
+still need their normal update work. The inactive-layout accounting budget
+includes the shared mesh allocation/header conservatively.
+
+Tests compare row movement with the previous eager implementation and compare
+translated rendering with explicitly materialized geometry across clipping,
+rotation, scaling, selection, fractional scales and repeated movements.
+
+```sh
+cargo test --locked --release --bin hedit profile_row_mesh_movement -- --ignored --nocapture --test-threads=1
+```
+
+An idle paired sample on the development Mac (12 alternating samples) measured:
+
+| Placement fixture | Eager p50 / p95 | Shared p50 / p95 | Used mesh geometry reused |
+| --- | ---: | ---: | ---: |
+| 40,000 short rows | 23.07 / 33.57 ms | 8.18 / 10.33 ms | 95,680,000 bytes |
+| 100 long rows | 1.83 / 3.26 ms | 0.36 / 0.67 ms | 10,400,000 bytes |
+
+This isolates row movement while a previous frame remains live. It excludes
+initial layout, source indexing, syntax analysis, whole-galley assembly, IO and
+native input/display latency. Geometry bytes count used vertices/indices, not
+total allocation capacity or resident memory.
+The optimized native SSH app separately passed header insertion/Undo in a
+40,000-line CRLF file, replacement/Undo across two split groups, and host-only
+Unicode/CRLF draft recovery after actual-client SIGKILL. Saved fixtures remained
+unchanged, the local session contained logs only, and no native panic occurred.
 
 The renderer also keeps a lazy, thread-safe cursor index on each galley.
 Character/paragraph lookups use binary search; row and end lookups use cached
@@ -406,8 +447,8 @@ culling, not a hard vertex-count limit.
 
 The tessellator reserves only submitted geometry, rather than the entire galley.
 Pure TextShape translation retains shared glyph meshes. Scaling, selection-mesh
-insertion, RTL reshaping and incremental row movement invalidate affected bounds;
-color/UV changes preserve them. The derived cache contains only bounds and index
+insertion, RTL reshaping and individual quad corrections invalidate affected bounds;
+row-mesh translations and color/UV changes preserve them. The derived cache contains only bounds and index
 ranges, stays in RAM, is omitted from serialization/equality, and is counted in
 the editor's inactive-layout accounting budget. It does not retain text or create
 an SSH client recovery cache. Source layout meshes remain allocated separately.

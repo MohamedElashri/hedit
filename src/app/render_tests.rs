@@ -289,7 +289,7 @@ fn multiline_reservation_is_limited_to_visible_rows_and_cache_initialization_is_
 }
 
 #[test]
-fn moving_reused_layout_blocks_invalidates_warm_mesh_bounds() {
+fn moving_reused_layout_blocks_share_warm_local_mesh_bounds() {
     let ctx = egui::Context::default();
     let mut cache = editor_layout::LayoutCache::default();
     let source = format!("{}\n", "abcdefghij".repeat(200)).repeat(20);
@@ -327,7 +327,14 @@ fn moving_reused_layout_blocks_invalidates_warm_mesh_bounds() {
     assert!(first.rows[10].visuals.mesh_cache.bytes() > 0);
     let next = layout(&format!("prefix\n{source}"));
     assert_eq!(next.rows[11].text(), first.rows[10].text());
-    assert_eq!(next.rows[11].visuals.mesh_cache.bytes(), 0);
+    assert!(Arc::ptr_eq(
+        &next.rows[11].visuals.mesh,
+        &first.rows[10].visuals.mesh
+    ));
+    assert_eq!(
+        next.rows[11].visuals.mesh_cache.bytes(),
+        first.rows[10].visuals.mesh_cache.bytes()
+    );
     let y = next.rows[11].rect.bottom() - 2.0;
     equivalent(
         &TextShape::new(
@@ -338,6 +345,84 @@ fn moving_reused_layout_blocks_invalidates_warm_mesh_bounds() {
         egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(600.0, 20.0)),
         true,
     );
+}
+
+#[test]
+fn translated_row_meshes_match_materialized_geometry_through_clipping_and_mutations() {
+    for scale in [1.0, 1.25, 1.5, 2.0] {
+        let (_ctx, g) = styled(&"αe\u{301}🦀 italic text ".repeat(400), scale);
+        let mut shared = (*g).clone();
+        for row in &mut shared.rows {
+            let row = Arc::make_mut(row);
+            let delta = egui::vec2(17.25, 23.5);
+            row.rect = row.rect.translate(delta);
+            row.layout_rect = row.layout_rect.translate(delta);
+            for glyph in &mut row.glyphs {
+                glyph.pos += delta;
+            }
+            row.visuals.translate_mesh(delta);
+        }
+        shared.mesh_bounds = shared
+            .rows
+            .iter()
+            .fold(egui::Rect::NOTHING, |b, r| b.union(r.visuals.mesh_bounds));
+        let mut materialized = shared.clone();
+        for row in &mut materialized.rows {
+            Arc::make_mut(row).visuals.mesh_mut();
+        }
+        for angle in [0.0, 0.37] {
+            for mutation in 0..3 {
+                let mut a = TextShape::new(
+                    egui::pos2(-shared.rect.width() / 2.0, 0.25),
+                    Arc::new(shared.clone()),
+                    egui::Color32::WHITE,
+                );
+                let mut b =
+                    TextShape::new(a.pos, Arc::new(materialized.clone()), egui::Color32::WHITE);
+                a.angle = angle;
+                b.angle = angle;
+                if mutation == 1 {
+                    for shape in [&mut a, &mut b] {
+                        let cursors = egui::text_selection::CursorRange {
+                            primary: shape.galley.end(),
+                            secondary: shape.galley.begin(),
+                        };
+                        egui::text_selection::visuals::paint_text_selection(
+                            &mut shape.galley,
+                            &egui::Visuals::dark(),
+                            &cursors,
+                            None,
+                        );
+                    }
+                } else if mutation == 2 {
+                    let mut sa = egui::Shape::Text(a);
+                    let mut sb = egui::Shape::Text(b);
+                    sa.scale(1.5);
+                    sb.scale(1.5);
+                    let egui::Shape::Text(aa) = sa else {
+                        unreachable!()
+                    };
+                    let egui::Shape::Text(bb) = sb else {
+                        unreachable!()
+                    };
+                    a = aa;
+                    b = bb;
+                }
+                let clip =
+                    egui::Rect::from_min_max(egui::pos2(0.25, 20.5), egui::pos2(400.75, 75.25));
+                let actual = visible_triangles(&mesh(&a, clip, true, true), clip);
+                let expected = visible_triangles(&mesh(&b, clip, false, true), clip);
+                assert_eq!(
+                    actual, expected,
+                    "scale={scale} angle={angle} mutation={mutation}"
+                );
+                assert!(Arc::ptr_eq(
+                    &shared.rows[0].visuals.mesh,
+                    &g.rows[0].visuals.mesh
+                ));
+            }
+        }
+    }
 }
 #[test]
 fn extreme_horizontal_offsets_and_sparse_triangle_vertices_preserve_clip_edges() {
@@ -368,7 +453,7 @@ fn extreme_horizontal_offsets_and_sparse_triangle_vertices_preserve_clip_edges()
         .iter()
         .map(|&i| count as u32 - 1 - i)
         .collect();
-    row.visuals.mesh = mesh;
+    row.visuals.mesh = Arc::new(mesh);
     row.visuals.mesh_cache.invalidate();
     text.galley = Arc::new(g);
     equivalent(&text, clip, true);
@@ -427,9 +512,9 @@ fn nonfinite_geometry_and_nontriangle_index_lists_retain_the_uncached_path() {
             (*row_index::tests::layout(&"abcdefghij".repeat(1000), f32::INFINITY, 1.0)).clone();
         let row = Arc::make_mut(&mut g.rows[0]);
         if nonfinite {
-            row.visuals.mesh.vertices[100].pos.x = f32::NAN;
+            row.visuals.mesh_mut().vertices[100].pos.x = f32::NAN;
         } else {
-            row.visuals.mesh.indices.push(0);
+            row.visuals.mesh_mut().indices.push(0);
         }
         let g = Arc::new(g);
         let clip = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(600.0, 40.0));
@@ -468,7 +553,7 @@ fn block_culling_keeps_a_physical_pixel_guard_for_backend_scissor_rounding() {
             );
         }
         row.visuals.mesh_bounds = rectangles.calc_bounds();
-        row.visuals.mesh = rectangles;
+        row.visuals.mesh = Arc::new(rectangles);
         row.visuals.glyph_vertex_range = 0..0;
         row.visuals.mesh_cache.invalidate();
         let text = TextShape::new(egui::Pos2::ZERO, Arc::new(g), egui::Color32::WHITE);

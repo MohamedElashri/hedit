@@ -580,9 +580,14 @@ pub struct RowVisuals {
     pub mesh_cache: super::TextMeshCache,
     /// The tessellated text, using non-normalized (texel) UV coordinates.
     /// That is, you need to divide the uv coordinates by the texture size.
-    pub mesh: Mesh,
+    pub mesh: Arc<Mesh>,
 
-    /// Bounds of the mesh, and can be used for culling.
+    /// Translation applied when painting the shared mesh. Glyph and row
+    /// coordinates retain their normal galley coordinates.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub mesh_offset: Vec2,
+
+    /// Bounds in galley coordinates, including `mesh_offset`, for culling.
     /// Does NOT include leading or trailing whitespace glyphs!!
     pub mesh_bounds: Rect,
 
@@ -602,11 +607,38 @@ impl Default for RowVisuals {
     fn default() -> Self {
         Self {
             mesh_cache: Default::default(),
-            mesh: Default::default(),
+            mesh: {
+                // Default visuals are placeholders while rows are laid out.
+                // Share an immutable empty mesh instead of allocating one Arc
+                // for every empty row or short-lived placeholder.
+                static EMPTY: std::sync::OnceLock<Arc<Mesh>> = std::sync::OnceLock::new();
+                Arc::clone(EMPTY.get_or_init(|| Arc::new(Mesh::default())))
+            },
+            mesh_offset: Vec2::ZERO,
             mesh_bounds: Rect::NOTHING,
             glyph_index_start: 0,
             glyph_vertex_range: 0..0,
         }
+    }
+}
+
+impl RowVisuals {
+    /// Move geometry without copying its immutable mesh or spatial index.
+    pub fn translate_mesh(&mut self, delta: Vec2) {
+        self.mesh_offset += delta;
+        self.mesh_bounds = self.mesh_bounds.translate(delta);
+    }
+
+    /// Materialize any translation before changing vertices or indices.
+    /// The caller updates `mesh_bounds` after its mutation.
+    pub fn mesh_mut(&mut self) -> &mut Mesh {
+        self.mesh_cache.invalidate();
+        let mesh = Arc::make_mut(&mut self.mesh);
+        if self.mesh_offset != Vec2::ZERO {
+            mesh.translate(self.mesh_offset);
+            self.mesh_offset = Vec2::ZERO;
+        }
+        mesh
     }
 }
 

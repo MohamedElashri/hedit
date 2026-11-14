@@ -49,12 +49,12 @@ pub fn paint_text_selection(
         };
 
         let rect = Rect::from_min_max(pos2(left, row.min_y()), pos2(right, row.max_y()));
-        let mesh = &mut row.visuals.mesh;
+        let glyph_index_start = row.visuals.glyph_index_start;
+        let mesh = row.visuals.mesh_mut();
 
         // Time to insert the selection rectangle into the row mesh.
         // It should be on top (after) of any background in the galley,
         // but behind (before) any glyphs. The row visuals has this information:
-        let glyph_index_start = row.visuals.glyph_index_start;
 
         // Start by appending the selection rectangle to end of the mesh, as two triangles (= 6 indices):
         let num_indices_before = mesh.indices.len();

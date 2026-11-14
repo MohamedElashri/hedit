@@ -188,8 +188,8 @@ fn retessellate(
     pixels_per_point: f32,
 ) {
     let round = |v: f32| (v * pixels_per_point).round() / pixels_per_point;
-    let mesh = &mut row.visuals.mesh;
     let mut vertex = row.visuals.glyph_vertex_range.start;
+    let mesh = row.visuals.mesh_mut();
     for (i, glyph) in row.glyphs.iter().enumerate() {
         if !quads[i] {
             continue;

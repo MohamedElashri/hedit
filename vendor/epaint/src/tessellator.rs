@@ -2067,10 +2067,11 @@ impl Tessellator {
                     color = color.gamma_multiply(*opacity_factor);
                 }
                 debug_assert!(color != Color32::PLACEHOLDER, "A placeholder color made it to the tessellator. You forgot to set a fallback color.");
+                let local = pos.to_vec2() + row.visuals.mesh_offset;
                 let offset = if *angle == 0.0 {
-                    pos.to_vec2()
+                    local
                 } else {
-                    rotator * pos.to_vec2()
+                    rotator * local
                 };
                 Vertex {
                     pos: galley_pos + offset,
@@ -2106,13 +2107,17 @@ impl Tessellator {
                     // Backends round logical clip bounds to physical scissor
                     // pixels. Retain a pixel around the clip at block edges.
                     let clip = self.clip_rect.expand(1.0 / self.pixels_per_point);
-                    index.visit(clip, galley_pos.to_vec2(), |leaf| {
-                        append(
-                            &mesh.indices[leaf.indices.clone()],
-                            leaf.vertices.clone(),
-                            out,
-                        )
-                    });
+                    index.visit(
+                        clip,
+                        galley_pos.to_vec2() + row.visuals.mesh_offset,
+                        |leaf| {
+                            append(
+                                &mesh.indices[leaf.indices.clone()],
+                                leaf.vertices.clone(),
+                                out,
+                            )
+                        },
+                    );
                 } else {
                     append(&mesh.indices, 0..mesh.vertices.len(), out);
                 }

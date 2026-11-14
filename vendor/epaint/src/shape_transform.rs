@@ -91,7 +91,7 @@ pub fn adjust_colors(
                 let galley = Arc::make_mut(galley);
                 for row in &mut galley.rows {
                     let row = Arc::make_mut(row);
-                    for vertex in &mut row.visuals.mesh.vertices {
+                    for vertex in &mut Arc::make_mut(&mut row.visuals.mesh).vertices {
                         adjust_color(&mut vertex.color);
                     }
                 }

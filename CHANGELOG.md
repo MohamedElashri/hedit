@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Share unchanged row meshes when inserting lines, moving cached paragraphs, renumbering syntax sections or padding Markdown rows.
+- Preserve clipping indexes across mesh translations and materialize geometry for selection, scaling, bidi changes or fractional-baseline corrections.
+
 - Reuse the unchanged glyph and mesh prefix when appending to compatible long unwrapped paragraphs, including after idle frames.
 - Keep append candidates weak and scoped to their font atlas; retain full layout for other edits, wrapping, decorations and changed formatting.
 

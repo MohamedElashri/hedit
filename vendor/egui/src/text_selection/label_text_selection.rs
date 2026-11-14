@@ -188,12 +188,10 @@ impl LabelSelectionState {
                                     for row_selection in row_selections {
                                         if let Some(row) = galley.rows.get_mut(row_selection.row) {
                                             let row = Arc::make_mut(row);
+                                            let mesh = Arc::make_mut(&mut row.visuals.mesh);
                                             for vertex_index in row_selection.vertex_indices {
-                                                if let Some(vertex) = row
-                                                    .visuals
-                                                    .mesh
-                                                    .vertices
-                                                    .get_mut(vertex_index as usize)
+                                                if let Some(vertex) =
+                                                    mesh.vertices.get_mut(vertex_index as usize)
                                                 {
                                                     vertex.color = epaint::Color32::TRANSPARENT;
                                                 }

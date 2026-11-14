@@ -465,7 +465,7 @@ impl Shape {
                     for row in &mut galley.rows {
                         let row = Arc::make_mut(row);
                         row.visuals.mesh_bounds = transform.scaling * row.visuals.mesh_bounds;
-                        for v in &mut row.visuals.mesh.vertices {
+                        for v in &mut row.visuals.mesh_mut().vertices {
                             v.pos =
                                 Pos2::new(transform.scaling * v.pos.x, transform.scaling * v.pos.y);
                         }

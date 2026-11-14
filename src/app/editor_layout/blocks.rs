@@ -126,10 +126,8 @@ fn place(row: &mut Arc<Row>, dy: f32, old: &[usize], new: &[usize], job: &Layout
         row.layout_rect.max.y = top + height;
         row.rect.min.y = top.round_ui();
         row.rect.max.y = (top + height).round_ui();
-        for vertex in &mut row.visuals.mesh.vertices {
-            vertex.pos.y += dy;
-        }
         let mut vertex = row.visuals.glyph_vertex_range.start;
+        let mut corrections = Vec::new();
         for glyph in &mut row.glyphs {
             let format = &job.sections[glyph.section_index as usize].format;
             let y = pixel(
@@ -140,16 +138,26 @@ fn place(row: &mut Arc<Row>, dy: f32, old: &[usize], new: &[usize], job: &Layout
             let correction = y - (glyph.pos.y + dy);
             glyph.pos.y = y;
             if !glyph.uv_rect.is_nothing() {
-                if let Some(quad) = row.visuals.mesh.vertices.get_mut(vertex..vertex + 4) {
-                    for v in quad {
-                        v.pos.y += correction;
-                    }
+                if correction != 0.0 {
+                    corrections.push((vertex, correction));
                 }
                 vertex += 4;
             }
         }
-        row.visuals.mesh_bounds = row.visuals.mesh.calc_bounds();
-        row.visuals.mesh_cache.invalidate();
+        row.visuals.translate_mesh(egui::vec2(0.0, dy));
+        if !corrections.is_empty() {
+            // Fractional rounding can move individual baselines differently.
+            // Materialize only these rows, preserving the original corrections.
+            let mesh = row.visuals.mesh_mut();
+            for (vertex, correction) in corrections {
+                if let Some(quad) = mesh.vertices.get_mut(vertex..vertex + 4) {
+                    for v in quad {
+                        v.pos.y += correction;
+                    }
+                }
+            }
+            row.visuals.mesh_bounds = mesh.calc_bounds();
+        }
     }
 }
 pub(super) fn layout(
@@ -273,6 +281,233 @@ pub(super) fn layout(
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Independent eager-placement reference from before shared meshes.
+    #[test]
+    fn translated_rows_match_eager_geometry_across_repeated_moves_and_rounding() {
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            let fonts = Fonts::new(scale, 4096, egui::FontDefinitions::default());
+            let job = code_job(
+                "AVATAR αe\u{301}🦀 text",
+                Language::PlainText,
+                Font {
+                    size: 14.25,
+                    line_height: Some(21.25),
+                },
+                f32::INFINITY,
+                &Theme::default(),
+                None,
+            );
+            let g = fonts.layout_job(job.clone());
+            let mut actual = g.rows[0].clone();
+            let mut expected = actual.clone();
+            for dy in [17.25, -5.5, 42.0, 14.0, -20.0] {
+                let snapshot = actual.clone();
+                let original_vertices = snapshot.visuals.mesh.vertices.clone();
+                place(&mut actual, dy, &[0], &[0], &job, scale);
+                eager_place(&mut expected, dy, &[0], &[0], &job, scale);
+                assert_eq!(actual.glyphs, expected.glyphs);
+                assert_eq!(actual.rect, expected.rect);
+                assert_eq!(actual.visuals.mesh.indices, expected.visuals.mesh.indices);
+                for (a, b) in actual
+                    .visuals
+                    .mesh
+                    .vertices
+                    .iter()
+                    .zip(&expected.visuals.mesh.vertices)
+                {
+                    close(a.pos.x + actual.visuals.mesh_offset.x, b.pos.x);
+                    close(a.pos.y + actual.visuals.mesh_offset.y, b.pos.y);
+                    assert_eq!(a.uv, b.uv);
+                    assert_eq!(a.color, b.color);
+                }
+                assert_eq!(snapshot.visuals.mesh.vertices, original_vertices);
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "manual optimized paired profile of eager versus shared row-mesh movement"]
+    fn profile_row_mesh_movement() {
+        for (label, text) in [
+            (
+                "40k short rows",
+                "let value = compute(item);\n".repeat(40_000),
+            ),
+            (
+                "100 long rows",
+                format!("{}\n", "abcdefghij".repeat(100)).repeat(100),
+            ),
+        ] {
+            let fonts = Fonts::new(1.0, 4096, egui::FontDefinitions::default());
+            let job = code_job(
+                &text,
+                Language::PlainText,
+                Font {
+                    size: 14.0,
+                    line_height: None,
+                },
+                f32::INFINITY,
+                &Theme::default(),
+                None,
+            );
+            let g = fonts.layout_job(job.clone());
+            let mut samples = [Vec::new(), Vec::new()];
+            let mut shared_bytes = 0;
+            for n in 0..12 {
+                for shared in if n % 2 == 0 {
+                    [false, true]
+                } else {
+                    [true, false]
+                } {
+                    let mut rows = g.rows.clone();
+                    let start = std::time::Instant::now();
+                    for row in &mut rows {
+                        if shared {
+                            place(row, 17.0, &[0], &[0], &job, 1.0)
+                        } else {
+                            eager_place(row, 17.0, &[0], &[0], &job, 1.0)
+                        }
+                    }
+                    samples[usize::from(shared)].push(start.elapsed().as_secs_f64() * 1000.0);
+                    if shared {
+                        shared_bytes = rows
+                            .iter()
+                            .zip(&g.rows)
+                            .filter(|(a, b)| Arc::ptr_eq(&a.visuals.mesh, &b.visuals.mesh))
+                            .map(|(r, _)| {
+                                r.visuals.mesh.vertices.len()
+                                    * std::mem::size_of::<egui::epaint::Vertex>()
+                                    + r.visuals.mesh.indices.len() * 4
+                            })
+                            .sum::<usize>();
+                    }
+                    std::hint::black_box(rows);
+                }
+            }
+            for sample in &mut samples {
+                sample.sort_by(f64::total_cmp)
+            }
+            eprintln!("Row movement {label}: eager p50={:.3} p95={:.3}ms; shared p50={:.3} p95={:.3}ms; mesh bytes reused={shared_bytes}",samples[0][6],samples[0][11],samples[1][6],samples[1][11]);
+        }
+    }
+
+    #[test]
+    fn fractional_baseline_corrections_materialize_only_the_changed_mesh() {
+        let fonts = Fonts::new(1.0, 4096, egui::FontDefinitions::default());
+        let job = code_job(
+            "glyph",
+            Language::PlainText,
+            Font {
+                size: 14.0,
+                line_height: None,
+            },
+            f32::INFINITY,
+            &Theme::default(),
+            None,
+        );
+        let g = fonts.layout_job(job.clone());
+        let mut row = (*g.rows[0]).clone();
+        row.glyphs[0].pos.y += 0.125;
+        for vertex in &mut row.visuals.mesh_mut().vertices[..4] {
+            vertex.pos.y += 0.125;
+        }
+        row.visuals.mesh_bounds = row.visuals.mesh.calc_bounds();
+        let original = Arc::new(row);
+        let mut actual = original.clone();
+        let mut expected = original.clone();
+        place(&mut actual, 17.0, &[0], &[0], &job, 1.0);
+        eager_place(&mut expected, 17.0, &[0], &[0], &job, 1.0);
+        assert!(!Arc::ptr_eq(&actual.visuals.mesh, &original.visuals.mesh));
+        assert_eq!(actual.visuals.mesh_offset, egui::Vec2::ZERO);
+        assert_eq!(actual.glyphs, expected.glyphs);
+        assert_eq!(actual.visuals.mesh, expected.visuals.mesh);
+    }
+
+    #[test]
+    fn syntax_section_renumbering_keeps_unchanged_meshes_shared() {
+        let fonts = Fonts::new(1.0, 4096, egui::FontDefinitions::default());
+        let mut job = code_job(
+            "value",
+            Language::PlainText,
+            Font {
+                size: 14.0,
+                line_height: None,
+            },
+            f32::INFINITY,
+            &Theme::default(),
+            None,
+        );
+        let g = fonts.layout_job(job.clone());
+        let mut row = g.rows[0].clone();
+        job.sections.insert(0, job.sections[0].clone());
+        place(&mut row, 0.0, &[0], &[1], &job, 1.0);
+        assert!(Arc::ptr_eq(&row.visuals.mesh, &g.rows[0].visuals.mesh));
+        assert!(row.glyphs.iter().all(|g| g.section_index == 1));
+        assert!(g.rows[0].glyphs.iter().all(|g| g.section_index == 0));
+    }
+
+    fn eager_place(
+        row: &mut Arc<Row>,
+        dy: f32,
+        old: &[usize],
+        new: &[usize],
+        job: &LayoutJob,
+        ppp: f32,
+    ) {
+        if dy == 0.0 && old == new {
+            return;
+        }
+        let row = Arc::make_mut(row);
+        row.visuals.mesh_mut();
+        if old != new {
+            let remap = |id: u32| {
+                new[old
+                    .binary_search(&(id as usize))
+                    .expect("cached section belongs to its block")] as u32
+            };
+            row.section_index_at_start = remap(row.section_index_at_start);
+            for glyph in &mut row.glyphs {
+                glyph.section_index = remap(glyph.section_index);
+            }
+        }
+        if dy != 0.0 {
+            let pixel = |v: f32| (v * ppp).round() / ppp;
+            let height = pixel(row.layout_rect.height());
+            let top = pixel(row.layout_rect.min.y + dy);
+            let dy = top - row.layout_rect.min.y;
+            row.layout_rect.min.y = top;
+            row.layout_rect.max.y = top + height;
+            row.rect.min.y = top.round_ui();
+            row.rect.max.y = (top + height).round_ui();
+            for vertex in &mut Arc::make_mut(&mut row.visuals.mesh).vertices {
+                vertex.pos.y += dy;
+            }
+            let mut vertex = row.visuals.glyph_vertex_range.start;
+            for glyph in &mut row.glyphs {
+                let format = &job.sections[glyph.section_index as usize].format;
+                let y = pixel(
+                    top + glyph.font_impl_ascent
+                        + format.valign.to_factor() * (height - glyph.line_height)
+                        + 0.5 * (glyph.font_height - glyph.font_impl_height),
+                );
+                let correction = y - (glyph.pos.y + dy);
+                glyph.pos.y = y;
+                if !glyph.uv_rect.is_nothing() {
+                    if let Some(quad) = Arc::make_mut(&mut row.visuals.mesh)
+                        .vertices
+                        .get_mut(vertex..vertex + 4)
+                    {
+                        for v in quad {
+                            v.pos.y += correction;
+                        }
+                    }
+                    vertex += 4;
+                }
+            }
+            row.visuals.mesh_bounds = row.visuals.mesh.calc_bounds();
+            row.visuals.mesh_cache.invalidate();
+        }
+    }
     #[test]
     fn single_block_retains_the_raw_galley_through_idle_frames_and_appends() {
         let fonts = Fonts::new(1.25, 4096, egui::FontDefinitions::default());
@@ -342,11 +577,17 @@ mod tests {
             }
             assert_eq!(a.visuals.mesh.indices, b.visuals.mesh.indices);
             assert_eq!(a.visuals.mesh.vertices.len(), b.visuals.mesh.vertices.len());
-            for (a, b) in a.visuals.mesh.vertices.iter().zip(&b.visuals.mesh.vertices) {
-                close(a.pos.x, b.pos.x);
-                close(a.pos.y, b.pos.y);
-                assert_eq!(a.color, b.color);
-                assert_eq!(a.uv, b.uv);
+            for (av, bv) in a.visuals.mesh.vertices.iter().zip(&b.visuals.mesh.vertices) {
+                close(
+                    av.pos.x + a.visuals.mesh_offset.x,
+                    bv.pos.x + b.visuals.mesh_offset.x,
+                );
+                close(
+                    av.pos.y + a.visuals.mesh_offset.y,
+                    bv.pos.y + b.visuals.mesh_offset.y,
+                );
+                assert_eq!(av.color, bv.color);
+                assert_eq!(av.uv, bv.uv);
             }
         }
     }

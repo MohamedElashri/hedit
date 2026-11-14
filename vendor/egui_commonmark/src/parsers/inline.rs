@@ -95,10 +95,7 @@ fn pad_inline_rows(galley: &mut std::sync::Arc<egui::Galley>, height: f32) -> bo
         for glyph in &mut row.glyphs {
             glyph.pos += shift;
         }
-        for vertex in &mut row.visuals.mesh.vertices {
-            vertex.pos += shift;
-        }
-        row.visuals.mesh_bounds = row.visuals.mesh_bounds.translate(shift);
+        row.visuals.translate_mesh(shift);
         mesh_bounds = mesh_bounds.union(row.visuals.mesh_bounds);
         row.rect = row.rect.translate(egui::vec2(0.0, offset));
         row.rect.max.y += padding;

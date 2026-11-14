@@ -111,6 +111,8 @@ impl Entry {
                 .iter()
                 .map(|row| {
                     std::mem::size_of::<egui::epaint::text::Row>()
+                        + std::mem::size_of::<egui::epaint::Mesh>()
+                        + 2 * std::mem::size_of::<usize>() // shared mesh allocation header
                         + row.visuals.mesh_cache.bytes()
                         + row.glyphs.len() * std::mem::size_of::<egui::epaint::text::Glyph>()
                 })

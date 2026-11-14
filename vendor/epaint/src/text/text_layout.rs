@@ -923,7 +923,8 @@ fn tessellate_row(
 
     RowVisuals {
         mesh_cache: Default::default(),
-        mesh,
+        mesh: Arc::new(mesh),
+        mesh_offset: Vec2::ZERO,
         mesh_bounds,
         glyph_index_start,
         glyph_vertex_range: glyph_vertex_start..glyph_vertex_end,
