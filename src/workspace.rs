@@ -208,7 +208,16 @@ impl Workspace {
                     }
                 }
             }
-            open.extend(buffers);
+            // A cancelled read can finish on the host after the view was saved.
+            // Keep its clean baseline recoverable without reopening an unwanted
+            // tab; unlisted drafts must always remain visible after a crash.
+            for buffer in buffers {
+                if buffer.page.info.path.is_some() && !buffer.page.info.dirty {
+                    workspace.closed.push(buffer.view);
+                } else {
+                    open.push(buffer);
+                }
+            }
             workspace.active = saved
                 .active
                 .and_then(|id| identities.get(&id))

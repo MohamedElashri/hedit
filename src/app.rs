@@ -34,6 +34,7 @@ mod folder_search_tests;
 mod folding_tests;
 mod font_picker;
 mod goto_anything;
+mod goto_matches;
 #[cfg(test)]
 mod goto_tests;
 mod macros;
@@ -54,6 +55,7 @@ mod markdown_tests;
 mod markup_selection;
 #[cfg(test)]
 mod markup_selection_tests;
+mod opening;
 #[cfg(test)]
 mod overlay_tests;
 mod overlays;
@@ -128,7 +130,7 @@ enum Action {
     Quality(Box<quality::Event>),
     Add(Document, Page, usize),
     Activate(u64),
-    Reopen(u64, Option<(Page, usize)>),
+    ReopenRead(u64, Page, Option<usize>),
     Folder(hedit::folder::FolderListing),
     Folders(Vec<hedit::folder::FolderListing>),
     Created(String, bool),
@@ -141,8 +143,6 @@ enum Action {
     Discarded(u64, Option<Page>),
     ThemeImported(Theme),
     DebugProgram(PathBuf),
-    /// Open a `path:line` location.
-    OpenAt(PathBuf),
     OpenFailed(String),
     /// A font loaded for the `font_face` setting.
     /// A font for `font_face`: its name, file bytes, and face index.
@@ -209,6 +209,8 @@ pub struct HeditApp {
     persisted: u64,
     last_saved: Option<Instant>,
     busy: bool,
+    opens: opening::Opens,
+    goto_matches: goto_matches::TargetCache,
     cancel: Arc<AtomicBool>,
     closing: bool,
     close_flow: Option<close::CloseFlow>,
@@ -414,6 +416,8 @@ impl HeditApp {
             persisted: 0,
             last_saved: None,
             busy: false,
+            opens: Default::default(),
+            goto_matches: Default::default(),
             cancel: Arc::new(AtomicBool::new(false)),
             closing: false,
             close_flow: None,
@@ -565,6 +569,7 @@ impl HeditApp {
             return;
         }
         self.busy = true;
+        self.opens.interrupt_focus();
         self.cancel.store(false, Ordering::Relaxed);
         let sender = self.tx.clone();
         let ctx = ctx.clone();
@@ -663,6 +668,7 @@ impl HeditApp {
                     Some("Open remote files using paths inside this SSH workspace.".into());
                 return;
             }
+            let (path, location) = opening::remote_location(&path);
             if let Some(buffer) = self
                 .workspace
                 .open
@@ -672,10 +678,14 @@ impl HeditApp {
                 let id = buffer.view.id;
                 if let Some(index) = self.workspace.open.iter().position(|b| b.view.id == id) {
                     self.workspace.active = index;
+                    if let Some((line, column)) = location {
+                        self.jump_to_line(ctx, line as usize, Some(column as usize));
+                    }
+                    self.focus_editor = true;
                 }
                 return;
             }
-            if let Some(index) = self.workspace.closed.iter().position(|view| {
+            if let Some(view) = self.workspace.closed.iter().find(|view| {
                 self.workspace
                     .editor
                     .get(view.id)
@@ -687,15 +697,40 @@ impl HeditApp {
                     })
                     .unwrap_or(false)
             }) {
-                let result = self.workspace.reopen_at(index);
-                self.report(result);
+                let (id, start) = (view.id, view.page_start);
+                let editor = self.workspace.editor.clone();
+                let label = view.name.clone();
+                self.read_open(ctx, label, move || {
+                    let mut doc = editor.get(id)?.lock().map_err(|e| e.to_string())?.clone();
+                    let offset = if let Some((line, column)) = location {
+                        doc.location_offset(line, column)?.saturating_sub(4096)
+                    } else {
+                        start
+                    };
+                    let page = doc.page(offset)?;
+                    let cursor = if let Some((line, column)) = location {
+                        let at = doc.location_offset(line, column)?;
+                        Some(page.text[..(at - page.start) as usize].chars().count())
+                    } else {
+                        None
+                    };
+                    Ok(Action::ReopenRead(id, page, cursor))
+                });
                 return;
             }
             let editor = self.workspace.editor.clone();
-            self.job(ctx, move || {
+            let label = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            self.read_open(ctx, label, move || {
                 let mut doc = remote.open(editor.id(), &path)?;
-                let page = doc.page(0)?;
-                Ok(Action::Add(doc, page, 0))
+                let (line, column) = location.unwrap_or((1, 1));
+                let offset = doc.location_offset(line, column)?;
+                let page = doc.page(offset.saturating_sub(4096))?;
+                let cursor = page.text[..(offset - page.start) as usize].chars().count();
+                Ok(Action::Add(doc, page, cursor))
             });
             return;
         }
@@ -708,7 +743,7 @@ impl HeditApp {
             .filter_map(|view| {
                 let doc = self.workspace.editor.get(view.id).ok()?;
                 let path = doc.lock().ok()?.info().path?;
-                Some((path, view.id))
+                Some((path, view.id, view.page_start))
             })
             .collect();
         let open_paths: Vec<_> = self
@@ -717,6 +752,10 @@ impl HeditApp {
             .iter()
             .map(|b| (b.page.info.path.clone(), b.page.info.id))
             .collect();
+        let label = path.as_ref().and_then(|p| p.file_name()).map_or_else(
+            || "file picker…".into(),
+            |p| p.to_string_lossy().into_owned(),
+        );
         let open = move || -> Result<Action, String> {
             let path = match path {
                 Some(path) => path,
@@ -756,7 +795,7 @@ impl HeditApp {
                     return Ok(Action::Activate(*id));
                 }
                 let shared = editor.get(*id)?;
-                let mut doc = shared.lock().map_err(|e| e.to_string())?;
+                let mut doc = shared.lock().map_err(|e| e.to_string())?.clone();
                 let offset = doc.location_offset(line, col)?;
                 let page = doc.page(offset.saturating_sub(4096))?;
                 let cursor = page.text
@@ -765,18 +804,22 @@ impl HeditApp {
                     .count();
                 return Ok(Action::Page(*id, page, Some((cursor, cursor))));
             }
-            if let Some((_, id)) = closed_paths.iter().find(|(p, _)| p == &canonical) {
-                let location = if plain_path {
+            if let Some((_, id, start)) = closed_paths.iter().find(|(p, _, _)| p == &canonical) {
+                let shared = editor.get(*id)?;
+                let mut doc = shared.lock().map_err(|e| e.to_string())?.clone();
+                let offset = if plain_path {
+                    *start
+                } else {
+                    doc.location_offset(line, col)?.saturating_sub(4096)
+                };
+                let page = doc.page(offset)?;
+                let cursor = if plain_path {
                     None
                 } else {
-                    let shared = editor.get(*id)?;
-                    let mut doc = shared.lock().map_err(|e| e.to_string())?;
                     let offset = doc.location_offset(line, col)?;
-                    let page = doc.page(offset.saturating_sub(4096))?;
-                    let cursor = page.text[..(offset - page.start) as usize].chars().count();
-                    Some((page, cursor))
+                    Some(page.text[..(offset - page.start) as usize].chars().count())
                 };
-                return Ok(Action::Reopen(*id, location));
+                return Ok(Action::ReopenRead(*id, page, cursor));
             }
             let mut doc = if allow_new {
                 Document::open_or_new(editor.id(), &path)?
@@ -788,7 +831,9 @@ impl HeditApp {
             let cursor = page.text[..(offset - page.start) as usize].chars().count();
             Ok(Action::Add(doc, page, cursor))
         };
-        self.job(ctx, move || Ok(open().unwrap_or_else(Action::OpenFailed)));
+        self.read_open(ctx, label, move || {
+            Ok(open().unwrap_or_else(Action::OpenFailed))
+        });
     }
     fn load_page(&mut self, ctx: &egui::Context, offset: u64, reload: bool) {
         let editor = Arc::clone(&self.workspace.editor);
@@ -989,19 +1034,78 @@ impl HeditApp {
     }
     fn receive(&mut self, ctx: &egui::Context) {
         self.receive_folder_search(ctx);
-        while let Ok(event) = self.rx.try_recv() {
+        self.opens.pump(ctx);
+        loop {
+            let (event, request) = if let Ok(event) = self.rx.try_recv() {
+                (event, None)
+            } else if !self.busy {
+                match self.opens.take() {
+                    Some((request, event)) => (event, Some(request)),
+                    None => break,
+                }
+            } else {
+                break;
+            };
+            let background = request
+                .as_ref()
+                .is_some_and(|request| !self.open_focus(request));
+            let keep_view = background.then(|| (self.active().view.id, self.focus_editor));
+            if request.is_some() {
+                if self.closing {
+                    continue;
+                }
+                if let Ok(Action::Page(id, page, _)) = &event {
+                    if self
+                        .workspace
+                        .open
+                        .iter()
+                        .find(|b| b.view.id == *id)
+                        .is_none_or(|b| {
+                            b.page.info.revision != page.info.revision
+                                || b.page.info.path != page.info.path
+                        })
+                    {
+                        self.notice =
+                            "The file changed while opening. Open the location again.".into();
+                        continue;
+                    }
+                }
+            }
+            let event = if request.is_some() {
+                event.map(|action| self.reconcile_open(action))
+            } else {
+                event
+            };
+            if background && matches!(&event, Ok(Action::Activate(_) | Action::Page(..))) {
+                continue;
+            }
+            if let Some(request) = &request {
+                self.quality.preview_request = request.preview
+                    && !background
+                    && matches!(
+                        &event,
+                        Ok(Action::Add(..)
+                            | Action::Activate(_)
+                            | Action::ReopenRead(..)
+                            | Action::Page(..))
+                    );
+            }
             let opened = matches!(
                 &event,
-                Ok(Action::Add(..) | Action::Activate(..) | Action::Reopen(..) | Action::Page(..))
+                Ok(Action::Add(..)
+                    | Action::Activate(..)
+                    | Action::ReopenRead(..)
+                    | Action::Page(..))
             );
             // Fonts and Git markers load beside jobs, not as them.
-            let side = match &event {
-                Ok(Action::Quality(event)) => {
-                    matches!(&**event, quality::Event::GitMarkers(..))
-                }
-                Ok(Action::Font(..) | Action::FallbackFonts | Action::FontFamilies(_)) => true,
-                _ => false,
-            };
+            let side = request.is_some()
+                || match &event {
+                    Ok(Action::Quality(event)) => {
+                        matches!(&**event, quality::Event::GitMarkers(..))
+                    }
+                    Ok(Action::Font(..) | Action::FallbackFonts | Action::FontFamilies(_)) => true,
+                    _ => false,
+                };
             if !side {
                 self.busy = false;
             }
@@ -1022,27 +1126,8 @@ impl HeditApp {
                         self.navigation_mark();
                     }
                 }
-                Ok(Action::Reopen(id, location)) => {
-                    if let Some(index) = self.workspace.closed.iter().position(|v| v.id == id) {
-                        let result = self.workspace.reopen_at(index);
-                        if result.is_ok() {
-                            if let Some((page, cursor)) = location {
-                                self.reveal_markdown_source(ctx);
-                                let buffer = &mut self.workspace.open[self.workspace.active];
-                                buffer.set_page(page);
-                                buffer.view.anchor = cursor;
-                                buffer.view.head = cursor;
-                                buffer.reveal_cursor = true;
-                            }
-                            self.finish_preview();
-                            self.navigation_mark();
-                        } else {
-                            self.quality.preview_request = false;
-                        }
-                        self.report(result);
-                    } else {
-                        self.quality.preview_request = false;
-                    }
+                Ok(Action::ReopenRead(id, page, cursor)) => {
+                    self.apply_reopen_read(ctx, id, page, cursor, !background);
                 }
                 Ok(Action::Folder(listing)) => self.set_folder(listing),
                 Ok(Action::Folders(listings)) => {
@@ -1069,8 +1154,10 @@ impl HeditApp {
                     }
                     self.report(result);
                     self.apply_format_preferences();
-                    self.finish_preview();
-                    self.navigation_mark();
+                    if !background {
+                        self.finish_preview();
+                        self.navigation_mark();
+                    }
                 }
                 Ok(Action::History(id, page, redo, current)) => {
                     if let Some(index) = self
@@ -1225,7 +1312,6 @@ impl HeditApp {
                 Ok(Action::FallbackFonts) => {
                     settings_store::set_editor_font(ctx, self.editor_font.clone());
                 }
-                Ok(Action::OpenAt(path)) => self.pending_paths.push_back(path),
                 Ok(Action::OpenFailed(error)) => {
                     self.quality.preview_request = false;
                     if self.quality.incoming.is_some() {
@@ -1252,8 +1338,14 @@ impl HeditApp {
                     self.cancel_close();
                 }
             }
-            if !side && !self.busy {
+            if (!side || request.is_some()) && !self.busy && !background {
                 self.finish_markdown_link(ctx, opened);
+            }
+            if let Some((view, focus)) = keep_view {
+                if let Some(index) = self.workspace.open.iter().position(|b| b.view.id == view) {
+                    self.workspace.active = index;
+                }
+                self.focus_editor = focus;
             }
         }
         while let Ok(checkpoint) = self.checkpoint_rx.try_recv() {
@@ -1274,7 +1366,7 @@ impl HeditApp {
         }
         self.expire_error(Instant::now());
         self.advance_close();
-        if !self.busy && !self.closing {
+        if !self.busy && !self.closing && self.opens.room() {
             if let Some(path) = self.pending_paths.pop_front() {
                 self.open(ctx, Some(path));
             }
@@ -3408,11 +3500,9 @@ impl HeditApp {
                 });
             self.shelf_open = open && !overlays::clicked_away(ctx, &shown);
             if let Some(index) = restore {
-                let result = self.workspace.reopen_at(index);
-                if result.is_ok() {
+                if self.reopen_closed(ctx, index) {
                     self.shelf_open = false;
                 }
-                self.report(result);
             }
             if !open {
                 self.focus_editor = true;
@@ -3489,7 +3579,9 @@ impl eframe::App for HeditApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.note_open_input(ctx);
         self.remote_controls(ctx);
+        self.opening_bar(ctx);
         self.updates.poll();
         self.receive(ctx);
         self.poll_incoming(ctx);
@@ -3699,6 +3791,7 @@ mod tests {
             ..Default::default()
         };
         let output = ctx.run(input, |ctx| {
+            app.note_open_input(ctx);
             app.poll_source_control(ctx);
             app.shortcuts(ctx);
             app.chrome(ctx);
@@ -3730,7 +3823,11 @@ mod tests {
 
     pub(super) fn finish_app_job(app: &mut HeditApp, ctx: &egui::Context) {
         let started = Instant::now();
-        while app.busy || app.quality.folder_task.is_some() || !app.pending_paths.is_empty() {
+        while app.busy
+            || app.opens.pending()
+            || app.quality.folder_task.is_some()
+            || !app.pending_paths.is_empty()
+        {
             assert!(
                 started.elapsed() < Duration::from_secs(5),
                 "background job timed out"
@@ -4150,6 +4247,7 @@ mod tests {
                 },
             )],
         );
+        finish_app_job(&mut app, &ctx);
         assert_eq!(app.workspace.open.len(), 2);
         assert!(app.workspace.closed.is_empty());
     }

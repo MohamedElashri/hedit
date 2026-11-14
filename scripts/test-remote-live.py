@@ -559,6 +559,39 @@ class LiveTests(unittest.TestCase):
         self.assertIn(b"PENDING_RECONCILIATION_OK", stdout)
         self.assertEqual(self.root.joinpath("file").read_text(), "PENDING_ONCEbase")
 
+    def test_editor_flush_frontier_allows_later_edits_behind_a_delayed_read(self):
+        worker, _ = self.worker()
+        self.root.joinpath("file").write_text("base")
+        probe = ROOT / "target/debug/examples/remote_live_probe"
+        process = subprocess.Popen([str(probe), str(LAB.client_config), str(ARGS.binary),
+                                    str(self.state), str(self.root), str(LAB.port), "barrier_frontier"],
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.clients.append(process)
+        def line():
+            self.assertTrue(select.select([process.stdout], [], [], 10)[0], "probe boundary timed out")
+            return process.stdout.readline()
+        self.assertEqual(line(), b"FRONTIER_READY\n")
+        os.kill(worker.pid, signal.SIGSTOP)
+        try:
+            process.stdin.write(b"x")
+            process.stdin.flush()
+            self.assertEqual(line(), b"EDIT_QUEUED\n")
+        finally:
+            os.kill(worker.pid, signal.SIGCONT)
+        stdout, stderr = process.communicate(timeout=30)
+        self.assertEqual(process.returncode, 0, stderr.decode())
+        self.assertIn(b"BARRIER_FRONTIER_OK", stdout)
+        self.assertEqual(self.root.joinpath("file").read_text(), "FRONTIER_ONCEbase")
+
+    def test_unlisted_clean_baselines_stay_closed_and_unsaved_drafts_reopen(self):
+        self.root.joinpath("file").write_text("baseline")
+        probe = ROOT / "target/debug/examples/remote_live_probe"
+        result = subprocess.run([str(probe), str(LAB.client_config), str(ARGS.binary),
+                                 str(self.state), str(self.root), str(LAB.port), "unlisted_recovery"],
+                                capture_output=True, text=True, timeout=40)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("UNLISTED_RECOVERY_OK", result.stdout)
+
     def test_editor_backend_full_workspace(self):
         self.root.joinpath("file").write_text("BASE\n")
         self.root.joinpath("large.txt").write_text("x" * (2 * 1024 * 1024))

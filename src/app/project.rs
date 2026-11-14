@@ -684,7 +684,7 @@ mod tests {
             }],
         );
         let started = Instant::now();
-        while app.busy || !app.pending_paths.is_empty() {
+        while app.busy || app.opens.pending() || !app.pending_paths.is_empty() {
             app.receive(&ctx);
             assert!(started.elapsed() < Duration::from_secs(5));
             thread::sleep(Duration::from_millis(5));

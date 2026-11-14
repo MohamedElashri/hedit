@@ -1170,7 +1170,11 @@ impl HeditApp {
                     && !self.active().follow
                     && self.quality.git_base.contains_key(&self.active().view.id)
             }
-            Command::Reopen => !self.workspace.closed.is_empty(),
+            Command::Reopen => self
+                .workspace
+                .closed
+                .iter()
+                .any(|v| !self.opens.reopening(v.id)),
             Command::Follow => {
                 self.active().page.info.path.is_some() && !self.active().page.info.dirty
             }
@@ -1608,8 +1612,14 @@ impl HeditApp {
                 self.request_close(vec![self.active().view.id]);
             }
             Command::Reopen => {
-                let r = self.workspace.reopen();
-                self.report(r);
+                if let Some(index) = self
+                    .workspace
+                    .closed
+                    .iter()
+                    .rposition(|view| !self.opens.reopening(view.id))
+                {
+                    self.reopen_closed(ctx, index);
+                }
             }
             Command::Shelf => self.shelf_open = true,
             Command::Rename => self.open_unsaved_file_name(),
@@ -1866,6 +1876,8 @@ impl HeditApp {
         let commands = !paste && (self.commands_only || self.palette_query.starts_with('>'));
         let mut target: Option<goto_anything::Target> = None;
         let mut preview = None;
+        let mut targets_ready = false;
+        let mut targets_pending = false;
         let down = ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowDown));
         let up = ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowUp));
         let enter = ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter));
@@ -1969,16 +1981,13 @@ impl HeditApp {
                 }
             } else if here {
                 // Targets in the current file, previewed as you move.
-                let b = self.active();
-                let path = b.page.info.path.clone().map(PathBuf::from).unwrap_or_default();
                 match goto.clone().unwrap() {
-                    goto_anything::Target::Symbol(query) => {
-                        for (name, line) in goto_anything::symbol_matches(&b.page.text, &path, &query)
-                            .into_iter()
-                            .take(500)
-                        {
-                            items.push((name, format!("line {line}"), Item::Line(line, None)));
-                        }
+                    target @ (goto_anything::Target::Symbol(_) | goto_anything::Target::Text(_)) => {
+                        let buffer = &self.workspace.open[self.workspace.active];
+                        if let Some((matches, ready)) = self.goto_matches.get(ctx, buffer, &target) {
+                            targets_ready = ready;
+                            for (name, line) in matches.iter() { items.push((name.clone(), format!("line {line}"), Item::Line(*line, None))); }
+                        } else { targets_pending = true; ui.horizontal(|ui| { ui.spinner(); ui.weak("Finding matches…"); }); }
                     }
                     goto_anything::Target::Line(line, column) => {
                         if let Some(line) = line {
@@ -1987,11 +1996,6 @@ impl HeditApp {
                                 None => format!("Go to line {line}"),
                             };
                             items.push((label, String::new(), Item::Line(line, column)));
-                        }
-                    }
-                    goto_anything::Target::Text(query) => {
-                        for (text, line) in goto_anything::text_matches(&b.page.text, &query, 500) {
-                            items.push((text, format!("line {line}"), Item::Line(line, None)));
                         }
                     }
                 }
@@ -2035,6 +2039,7 @@ impl HeditApp {
                         ui.colored_label(self.theme.warning.color(), error);
                     }
                     None => {
+                        targets_pending = true;
                         ui.horizontal(|ui| {
                             ui.spinner();
                             ui.weak("Searching folders…");
@@ -2050,31 +2055,28 @@ impl HeditApp {
                 self.palette_index = (self.palette_index + items.len() - 1) % items.len();
             }
             let navigate = down || up;
-            if navigate || changed {
+            if navigate || changed || targets_ready {
                 if let Some((_, _, Item::Line(line, column))) = items.get(self.palette_index) {
                     preview = Some((*line, *column));
                 }
             }
             ui.separator();
-            egui::ScrollArea::vertical()
-                .max_height((ctx.screen_rect().height() - 190.0).clamp(120.0, 320.0))
-                .show(ui, |ui| {
-                    for (index, (label, shortcut, item)) in items.iter().enumerate() {
-                        let response = ui.add(
-                            egui::Button::new(highlighted(ui, label, &filter, self.theme.accent.color()))
-                                .selected(index == self.palette_index)
-                                .shortcut_text(shortcut)
-                                .min_size(egui::vec2(ui.available_width(), 28.0)),
-                        );
-                        if navigate && index == self.palette_index {
-                            response.scroll_to_me(None);
-                        }
-                        if response.clicked() {
-                            chosen = Some(item.clone());
-                        }
-                    }
-                });
-            if items.is_empty() {
+            let height = (ctx.screen_rect().height() - 190.0).clamp(120.0, 320.0);
+            let mut scroll = egui::ScrollArea::vertical().id_salt("palette-results").max_height(height);
+            if navigate || changed || targets_ready {
+                let stride = 28.0 + ui.spacing().item_spacing.y;
+                scroll = scroll.vertical_scroll_offset((self.palette_index as f32 * stride - height / 2.0).max(0.0));
+            }
+            scroll.show_rows(ui, 28.0, items.len(), |ui, rows| {
+                for index in rows {
+                    let (label, shortcut, item) = &items[index];
+                    let response = ui.add(egui::Button::new(highlighted(ui, label, &filter, self.theme.accent.color()))
+                        .selected(index == self.palette_index).shortcut_text(shortcut)
+                        .min_size(egui::vec2(ui.available_width(), 28.0)));
+                    if response.clicked() { chosen = Some(item.clone()); }
+                }
+            });
+            if items.is_empty() && !targets_pending {
                 ui.label("No matching results.");
             }
             if enter {

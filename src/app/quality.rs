@@ -378,6 +378,7 @@ impl HeditApp {
                 self.notice = "Project and workspace saved.".into();
             }
             Event::ProjectLoaded(path, project, state, tabs) => {
+                self.opens.cancel();
                 if let Err(e) = self.workspace.checkpoint() {
                     self.error = Some(e);
                     return;
@@ -1106,6 +1107,7 @@ impl HeditApp {
         });
     }
     pub(super) fn load_project(&mut self, ctx: &egui::Context, path: Option<PathBuf>) {
+        self.opens.cancel();
         if let Some(current) = self.quality.project_path.clone() {
             match self
                 .project_snapshot()
@@ -1365,6 +1367,9 @@ impl HeditApp {
         let Some((path, operation)) = self.quality.file_action.take() else {
             return;
         };
+        if operation != FileOperation::Duplicate {
+            self.opens.cancel();
+        }
         if let Some(remote) = self.workspace.remote.clone() {
             let name = self.quality.file_name.clone();
             self.job(ctx, move || {
@@ -1475,7 +1480,11 @@ impl HeditApp {
             return;
         }
         if self.quality.incoming.is_some() {
-            if !self.busy && self.pending_paths.is_empty() && !self.checkpoint_pending {
+            if !self.busy
+                && !self.opens.pending()
+                && self.pending_paths.is_empty()
+                && !self.checkpoint_pending
+            {
                 if self.generation != self.persisted {
                     self.checkpoint(ctx);
                     return;
@@ -1486,7 +1495,7 @@ impl HeditApp {
             }
             return;
         }
-        if self.busy || !self.pending_paths.is_empty() {
+        if self.busy || self.opens.pending() || !self.pending_paths.is_empty() {
             return;
         }
         let Some(incoming) = hedit::ipc::receive(self.workspace.store.directory()) else {

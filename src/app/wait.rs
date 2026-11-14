@@ -58,9 +58,9 @@ impl HeditApp {
             .open
             .iter()
             .filter_map(|b| b.page.info.path.as_deref())
-            .map(|p| std::fs::canonicalize(p).unwrap_or_else(|_| PathBuf::from(p)))
+            .map(PathBuf::from)
             .collect();
-        let loading = self.busy || !self.pending_paths.is_empty();
+        let loading = self.busy || self.opens.pending() || !self.pending_paths.is_empty();
         self.waits.retain_mut(|wait| {
             if wait.paths.is_empty() {
                 return true; // Released when the window closes.
@@ -72,7 +72,7 @@ impl HeditApp {
             // A file that never opened (for example, it was refused) must not
             // keep the terminal waiting forever.
             let gave_up = !loading && wait.since.elapsed() > Duration::from_secs(5);
-            if wait.seen || gave_up {
+            if (!loading && wait.seen) || gave_up {
                 release(&wait.file);
                 return false;
             }
@@ -98,6 +98,30 @@ impl HeditApp {
 mod tests {
     use super::*;
     use crate::app::{close::Choice, tests::finish_app_job};
+
+    #[test]
+    fn a_slow_open_does_not_release_a_wait_before_the_result_arrives() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("slow.txt");
+        std::fs::write(&path, "text").unwrap();
+        let released = directory.path().join("released");
+        let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        app.wait_for(&[path], released.clone());
+        app.waits[0].since = Instant::now() - Duration::from_secs(6);
+        let (tx, rx) = mpsc::channel();
+        app.read_open(&ctx, "slow.txt".into(), move || {
+            rx.recv().unwrap();
+            Ok(Action::Nothing)
+        });
+        app.track_waits();
+        assert!(!released.exists());
+        tx.send(()).unwrap();
+        finish_app_job(&mut app, &ctx);
+        app.track_waits();
+        assert!(released.exists());
+    }
 
     #[test]
     fn waiting_for_a_new_relative_path_does_not_release_while_it_is_open() {

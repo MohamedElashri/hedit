@@ -25,6 +25,7 @@ impl HeditApp {
         if self.closing {
             return;
         }
+        self.cancel_opens();
         self.closing = true;
         self.close_flow = Some(CloseFlow { tabs: tabs.into() });
         self.advance_close();
@@ -33,6 +34,7 @@ impl HeditApp {
     pub(super) fn request_quit(&mut self) {
         // Leave every tab open for session recovery. receive() waits for jobs
         // and a successful checkpoint before allowing the window to close.
+        self.cancel_opens();
         self.close_flow = None;
         self.closing = true;
         self.focus_editor = false;

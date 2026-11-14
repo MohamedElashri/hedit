@@ -350,3 +350,63 @@ fn live_find_counts_zero_width_regex_matches_and_enter_advances() {
     }
     assert_eq!(app.active().page.text, "α\nβ\nγ");
 }
+
+#[test]
+#[ignore = "manual release CPU profile of Go to Anything over a large source buffer"]
+fn profile_goto_navigation() {
+    let source: String = (0..20000)
+        .map(|i| format!("fn compute_{i}() {{ let value = {i}; }}\n"))
+        .collect();
+    let directory = tempfile::tempdir().unwrap();
+    let (mut workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+    workspace.open[0].page.text = source.clone();
+    workspace.edit(0, "").unwrap();
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    for query in ["@compute", "#absent_query"] {
+        app.palette = true;
+        app.palette_query = query.into();
+        for _ in 0..3 {
+            frame(&ctx, &mut app, vec![]);
+        }
+        let until = Instant::now() + Duration::from_secs(5);
+        while app.goto_matches.pending() {
+            frame(&ctx, &mut app, vec![]);
+            assert!(Instant::now() < until);
+            thread::sleep(Duration::from_millis(1));
+        }
+        let start = Instant::now();
+        for _ in 0..20 {
+            frame(&ctx, &mut app, vec![]);
+        }
+        eprintln!(
+            "Go to Anything {query}, {} bytes: {:.2} ms/frame (20 unchanged frames)",
+            source.len(),
+            start.elapsed().as_secs_f64() * 1000.0 / 20.0
+        );
+    }
+}
+
+#[test]
+fn file_symbol_navigation_reads_decoded_utf16_documents() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("symbols.rs");
+    let source = "fn start() {}\n\n// unicode 🦀\nfn pick_me() {}\n";
+    let bytes: Vec<_> = [0xff, 0xfe]
+        .into_iter()
+        .chain(source.encode_utf16().flat_map(u16::to_le_bytes))
+        .collect();
+    std::fs::write(&path, bytes).unwrap();
+    let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    app.go_to_target(
+        &ctx,
+        Some(path.to_string_lossy().into_owned()),
+        Target::Symbol("pick_me".into()),
+    );
+    finish_app_job(&mut app, &ctx);
+    assert_eq!(app.active().page.text, source);
+    assert_eq!(app.active().page.info.encoding, "UTF-16LE");
+    assert_eq!(line_of(&app), 4);
+}

@@ -28,7 +28,7 @@ type Reply = mpsc::SyncSender<Result<Response, String>>;
 enum Work {
     Call(Request, Reply),
     Edit(Request, String),
-    Barrier(mpsc::SyncSender<Result<(), String>>),
+    Barrier(Vec<(u64, u64)>, mpsc::SyncSender<Result<(), String>>),
     Reconnect(Reply),
 }
 #[derive(Clone, Debug)]
@@ -64,6 +64,29 @@ pub struct Connection {
     prefix: String,
     state: Arc<Mutex<State>>,
     tx: mpsc::SyncSender<Work>,
+}
+fn edit_identity(request: &Request) -> Option<(u64, u64)> {
+    match request {
+        Request::Apply {
+            document, sequence, ..
+        } => Some((*document, *sequence)),
+        _ => None,
+    }
+}
+fn barrier_result(state: &State, through: &[(u64, u64)]) -> Result<(), String> {
+    if state.connected
+        && !state
+            .pending
+            .iter()
+            .any(|(request, _)| edit_identity(request).is_some_and(|id| through.contains(&id)))
+    {
+        Ok(())
+    } else {
+        Err(state
+            .error
+            .clone()
+            .unwrap_or_else(|| "Remote edits are awaiting a durable host receipt.".into()))
+    }
 }
 fn rpc(client: &mut Client, request: Request) -> Result<Response, String> {
     client
@@ -230,15 +253,8 @@ impl Connection {
                             }
                         }
                     }
-                    Work::Barrier(reply) => {
-                        let s = shared.lock().unwrap();
-                        let result = if s.connected && s.pending.is_empty() {
-                            Ok(())
-                        } else {
-                            Err(s.error.clone().unwrap_or_else(|| {
-                                "Remote edits are awaiting a durable host receipt.".into()
-                            }))
-                        };
+                    Work::Barrier(through, reply) => {
+                        let result = barrier_result(&shared.lock().unwrap(), &through);
                         let _ = reply.send(result);
                     }
                     Work::Reconnect(reply) => {
@@ -374,11 +390,23 @@ impl Connection {
         rx.recv_timeout(Duration::from_secs(30))
             .map_err(|_| "Remote request timed out; its outcome may be uncertain.")?
     }
+    /// Confirm edits submitted before this call. New edits can remain queued
+    /// behind the barrier without turning a successful earlier flush into an error.
     pub fn flush(&self) -> Result<(), String> {
         let (tx, rx) = mpsc::sync_channel(1);
-        self.tx
-            .try_send(Work::Barrier(tx))
-            .map_err(|_| "Remote request queue is full.")?;
+        {
+            // action() queues its work while holding this same lock, making
+            // the captured frontier and the barrier's queue position atomic.
+            let state = self.state.lock().unwrap();
+            let through = state
+                .pending
+                .iter()
+                .filter_map(|(request, _)| edit_identity(request))
+                .collect();
+            self.tx
+                .try_send(Work::Barrier(through, tx))
+                .map_err(|_| "Remote request queue is full.")?;
+        }
         rx.recv_timeout(Duration::from_secs(30))
             .map_err(|_| "Host durability confirmation timed out.")?
     }
@@ -465,7 +493,13 @@ impl Connection {
         else {
             return Err("Invalid remote document content.".into());
         };
-        if current.revision != info.revision || text.len() > hedit_remote::protocol::MAX_DOCUMENT {
+        if current.document != info.document
+            || current.path != info.path
+            || current.revision != info.revision
+            || current.encoding != info.encoding
+            || current.bom != info.bom
+            || text.len() > hedit_remote::protocol::MAX_DOCUMENT
+        {
             return Err("Remote document changed during read.".into());
         }
         Ok(RemoteBuffer {
@@ -479,11 +513,18 @@ impl Connection {
     fn hydrate(&self, id: u64, info: DocumentInfo) -> Result<crate::document::Document, String> {
         let path = self.uri(&info.path);
         let buffer = self.read(info.clone())?;
-        self.state
-            .lock()
-            .unwrap()
+        let mut state = self.state.lock().unwrap();
+        let entry = state
             .infos
-            .insert(path.to_string_lossy().into_owned(), info.clone());
+            .entry(path.to_string_lossy().into_owned())
+            .or_insert_with(|| info.clone());
+        // Host document IDs are never reused within a recovery session. A path
+        // reused after a move must prefer the new identity, even at revision 0.
+        // Equal revisions keep metadata already refreshed by a concurrent save.
+        if (info.document, info.revision) > (entry.document, entry.revision) {
+            *entry = info.clone();
+        }
+        drop(state);
         crate::document::Document::remote_memory(
             id,
             path,
@@ -1057,6 +1098,77 @@ mod tests {
             })),
         }
     }
+    #[test]
+    fn a_read_rejects_a_moved_document_even_when_its_revision_did_not_change() {
+        let mut remote = disconnected();
+        let (tx, rx) = mpsc::sync_channel(128);
+        remote.tx = tx;
+        let info = DocumentInfo {
+            document: 1,
+            revision: 1,
+            bytes: 1,
+            path: b"file".to_vec(),
+            saved_revision: 1,
+            encoding: "UTF-8".into(),
+            bom: false,
+            dirty: false,
+        };
+        let mut moved = info.clone();
+        moved.path = b"moved".to_vec();
+        let read = std::thread::spawn(move || remote.read(info));
+        let Work::Call(Request::Content { document: 1 }, reply) =
+            rx.recv_timeout(Duration::from_secs(5)).unwrap()
+        else {
+            panic!("expected content read")
+        };
+        reply
+            .send(Ok(Response::Buffer {
+                info: moved,
+                text: "x".into(),
+            }))
+            .unwrap();
+        assert!(read.join().unwrap().is_err());
+    }
+
+    #[test]
+    fn a_flush_confirms_its_frontier_without_requiring_newer_edits_to_be_durable() {
+        let mut remote = disconnected();
+        remote.state.lock().unwrap().connected = true;
+        let (tx, rx) = mpsc::sync_channel(128);
+        remote.tx = tx;
+        let state = remote.state.clone();
+        let flush = std::thread::spawn(move || remote.flush());
+        let Work::Barrier(through, reply) = rx.recv_timeout(Duration::from_secs(5)).unwrap() else {
+            panic!("expected barrier")
+        };
+        assert!(through.is_empty());
+        let edit = Request::Apply {
+            session: "test".into(),
+            epoch: 0,
+            document: 1,
+            sequence: 1,
+            base_revision: 0,
+            action: Action::Edit {
+                start: 0,
+                end: 0,
+                text: "newer".into(),
+            },
+        };
+        let mut state = state.lock().unwrap();
+        state.pending.push((edit, "path".into()));
+        assert!(
+            barrier_result(&state, &[(1, 1)]).is_err(),
+            "an earlier unacknowledged edit cannot pass"
+        );
+        assert!(
+            barrier_result(&state, &[(2, 1)]).is_ok(),
+            "frontiers distinguish documents"
+        );
+        reply.send(barrier_result(&state, &through)).unwrap();
+        drop(state);
+        flush.join().unwrap().unwrap();
+    }
+
     #[test]
     fn ui_notifications_run_outside_the_transport_state_lock() {
         let remote = disconnected();

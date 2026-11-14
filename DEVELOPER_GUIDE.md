@@ -125,6 +125,27 @@ not include native event delivery, GPU presentation, or SSH durability latency;
 use a separate temporary session for native interaction and crash recovery tests.
 Do not treat CPU timings as input-to-screen measurements or hard CI thresholds.
 
+File opens use two background readers with a shared limit of sixteen pending
+requests. They clone existing documents under a short lock before reading pages;
+closed-file reopening uses those snapshots too. Results wait while a mutation is
+active and check document revisions and paths before replacing a view. Duplicate
+opens reuse the live document. Only the latest request can take focus, and typing,
+scrolling or switching away keeps the result in a background tab. Closing or
+cancelling invalidates pending results; a blocked OS read may finish later. A
+cancelled SSH read may still have created a baseline in host recovery. When a
+saved workspace view exists, unlisted clean baselines recover into Closed Files;
+unlisted unsaved drafts always reopen. No recovery history is deleted, and the
+read never writes document recovery to the client. IPC acknowledgements and terminal waits
+include the read queue. SSH flush barriers capture the edits submitted before
+that call under the queue lock; later edits cannot invalidate an already queued
+barrier. Saves still wait for all edits submitted before saving.
+
+Go to Anything caches current-file matches by document, revision, page and query.
+Symbol indexes survive query changes. Scans over 64 KiB run on one worker, and
+stale results cannot populate a newer query. The picker lays out visible result
+rows only. The ignored `profile_goto_navigation` profile measures warm picker
+frames for symbol and text searches over an approximately 800 KiB source buffer.
+
 Folder searches own immutable open-file snapshots and a separate cancellation
 token; they never acquire the editor's mutation lock. Completion cannot clear a
 save's busy state. Replacement previews require unchanged open-file revisions,

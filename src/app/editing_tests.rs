@@ -1290,7 +1290,7 @@ fn undo_replacements_leaves_files_edited_since_alone() {
     app.set_selections(vec![hedit::advanced::Selection::caret(0)]);
     type_text(&ctx, &mut app, "x");
     app.undo_folder_replacements(&ctx);
-    while app.busy {
+    while app.busy || app.opens.pending() {
         app.receive(&ctx);
         thread::sleep(Duration::from_millis(5));
     }

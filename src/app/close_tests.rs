@@ -125,6 +125,7 @@ fn save_button_writes_before_closing_and_reopen_is_clean() {
     assert!(!app.workspace.open.iter().any(|b| b.view.id == id));
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "edited\n");
     app.execute(&ctx, Command::Reopen);
+    finish_app_job(&mut app, &ctx);
     assert_eq!(app.active().page.text, "edited\n");
     assert!(!app.active().page.info.dirty);
 }
@@ -139,6 +140,7 @@ fn dont_save_discards_from_shelf_undo_and_recovery_without_writing() {
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "original\n");
     assert!(!app.workspace.open.iter().any(|b| b.view.id == id));
     app.execute(&ctx, Command::Reopen);
+    finish_app_job(&mut app, &ctx);
     assert_eq!(app.active().page.text, "original\n");
     assert!(!app.active().page.info.dirty);
     app.execute(&ctx, Command::Undo);
@@ -256,7 +258,7 @@ fn failed_save_aborts_close_and_retains_edits() {
     app.execute(&ctx, Command::Close);
     app.choose_close(&ctx, Choice::Save);
     let started = Instant::now();
-    while app.busy {
+    while app.busy || app.opens.pending() {
         assert!(started.elapsed() < Duration::from_secs(5));
         app.receive(&ctx);
         thread::sleep(Duration::from_millis(5));
@@ -484,6 +486,7 @@ fn nonempty_closed_notes_appear_in_closed_files_and_reopen_after_restart() {
         .iter()
         .any(|s| text_rect(&s.shape, "recover these notes").is_some()));
     click_label(&ctx, &mut app, "Reopen");
+    finish_app_job(&mut app, &ctx);
     assert_eq!(app.active().page.text, text);
     assert!(app.active().page.info.path.is_none());
     assert!(app.workspace.closed.is_empty());
@@ -517,6 +520,7 @@ fn cancelling_save_as_cancels_close_and_a_chosen_path_saves_then_shelves_the_not
     assert!(!app.workspace.open.iter().any(|b| b.view.id == id));
     assert!(app.workspace.closed.iter().any(|b| b.id == id));
     app.execute(&ctx, Command::Reopen);
+    finish_app_job(&mut app, &ctx);
     assert_eq!(app.active().page.text, "keep these notes\n");
     assert!(!app.active().page.info.dirty);
 }
@@ -647,4 +651,36 @@ fn dont_save_closes_untitled_tabs_when_the_shelf_is_full_without_losing_notes() 
         workspace.reopen_at(index).unwrap();
         assert_eq!(workspace.open[workspace.active].page.text, text);
     }
+}
+
+#[test]
+fn consecutive_reopen_shortcuts_reserve_distinct_closed_notes() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+    let first = workspace.open[0].view.id;
+    workspace.open[0].page.text = "first note".into();
+    workspace.edit(0, "").unwrap();
+    workspace.new_buffer().unwrap();
+    let second = workspace.open[1].view.id;
+    workspace.open[1].page.text = "second note".into();
+    workspace.edit(1, "").unwrap();
+    workspace.close(0).unwrap();
+    workspace.close(0).unwrap();
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    app.execute(&ctx, Command::Reopen);
+    app.execute(&ctx, Command::Reopen);
+    finish_app_job(&mut app, &ctx);
+    assert!(app.workspace.closed.is_empty());
+    assert!(app
+        .workspace
+        .open
+        .iter()
+        .any(|b| b.view.id == first && b.page.text == "first note"));
+    assert!(app
+        .workspace
+        .open
+        .iter()
+        .any(|b| b.view.id == second && b.page.text == "second note"));
+    assert_eq!(app.active().view.id, first);
 }

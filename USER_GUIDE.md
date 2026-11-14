@@ -172,8 +172,17 @@ your own. **Ctrl+S** saves to disk, asking for a path the first time.
 Open files with **Ctrl+O**, by dragging them into the window, or from the terminal.
 A dot on a tab marks unsaved changes. Hover over it to reveal the close button.
 
+You can keep editing while files load. A slow open shows **Cancel opening**.
+**Esc** also cancels pending opens after menus and dialogs have been dismissed.
+If you type, scroll, or switch tabs before it finishes, the loaded file opens in
+the background. When several files are requested, the latest request takes focus.
+Cancelling prevents pending results from changing your tabs; an OS or SSH read
+already in progress may finish internally.
+
 - **Ctrl+P** finds open files and files in your folders by letters in order
   (`srcprj` finds `src/project.rs`).
+  Add `@symbol`, `:line`, or `#text` to navigate inside a file. Large current-file
+  symbol and text searches run in the background and refresh as you type.
 - **Ctrl+Tab** goes back to the file you used before; hold Ctrl and press Tab
   again to go further back. **Ctrl+PageDown/PageUp** step through the tabs, and
   **Alt+1–9** pick a tab by position.

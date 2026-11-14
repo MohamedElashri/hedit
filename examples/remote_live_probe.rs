@@ -64,6 +64,60 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
 
+    if args.get(5).is_some_and(|mode| mode == "unlisted_recovery") {
+        let mut draft = remote.scratch(2)?;
+        draft.replace(0, 0, "UNLISTED_PRIVATE_DRAFT".into(), draft.info().revision)?;
+        remote.flush()?;
+        let view = hedit::session::SessionView {
+            open: vec![],
+            closed: vec![],
+            active: None,
+            secondary: None,
+            folder: None,
+            folders: vec![],
+        };
+        remote.metadata(Some(serde_json::to_value(view).map_err(|e| e.to_string())?))?;
+        let directory = tempfile::tempdir().map_err(|e| e.to_string())?;
+        let mut config = remote.config.clone();
+        config.takeover = true;
+        let (workspace, _) =
+            hedit::workspace::Workspace::connect_remote(directory.path().join("client"), config)?;
+        assert!(workspace
+            .open
+            .iter()
+            .any(|b| b.page.text == "UNLISTED_PRIVATE_DRAFT"));
+        assert!(!workspace.open.iter().any(|b| b.page.info.name == "file"));
+        assert!(workspace.closed.iter().any(|v| v.name == "file"));
+        assert!(
+            !directory.path().join("client").exists(),
+            "remote recovery must not create client storage"
+        );
+        println!("UNLISTED_RECOVERY_OK");
+        return Ok(());
+    }
+
+    if args.get(5).is_some_and(|mode| mode == "barrier_frontier") {
+        use std::io::Read;
+        println!("FRONTIER_READY");
+        std::io::stdin()
+            .read_exact(&mut [0u8])
+            .map_err(|e| e.to_string())?;
+        let reader = remote.clone();
+        let metadata = std::thread::spawn(move || reader.metadata(None));
+        std::thread::sleep(Duration::from_millis(100));
+        let reader = remote.clone();
+        let barrier = std::thread::spawn(move || reader.flush());
+        std::thread::sleep(Duration::from_millis(100));
+        doc.replace(0, 0, "FRONTIER_ONCE".into(), doc.info().revision)?;
+        println!("EDIT_QUEUED");
+        barrier.join().map_err(|_| "Barrier worker panicked")??;
+        metadata.join().map_err(|_| "Metadata worker panicked")??;
+        remote.flush()?;
+        doc.save(None)?;
+        println!("BARRIER_FRONTIER_OK");
+        return Ok(());
+    }
+
     // Work receipts wake the UI, while unchanged periodic host checks stay quiet.
     remote.flush()?;
     std::thread::sleep(Duration::from_millis(100));

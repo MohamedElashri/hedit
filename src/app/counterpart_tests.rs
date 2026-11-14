@@ -120,7 +120,7 @@ fn counterpart_removed_after_lookup_does_not_create_an_empty_buffer() {
     let count = app.workspace.open.len();
     app.show_counterparts(&ctx, id, source.canonicalize().unwrap(), found);
     let until = Instant::now() + Duration::from_secs(5);
-    while app.busy {
+    while app.busy || app.opens.pending() {
         assert!(Instant::now() < until);
         app.receive(&ctx);
         thread::sleep(Duration::from_millis(5));

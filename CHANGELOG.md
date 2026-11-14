@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Open files on a bounded background queue while keeping the current editor usable; cancel pending opens and protect newer edits from stale results.
+- Cache Go to Anything matches, scan large buffers in the background, and render only visible picker rows.
+- Correct SSH file-symbol navigation and durability barriers during concurrent typing; keep unlisted clean recovery baselines in Closed Files while reopening unsaved drafts.
+
 - Reuse paragraph layouts and source line indexes while typing, and cache recently used tab layouts within a bounded memory budget.
 - Keep typing available during folder search and reject replacement previews after open buffers or workspace roots change.
 - Compact the tab strip and SSH controls; show host identity, trust and durability state without a permanent connection toolbar or idle repaint loop.
