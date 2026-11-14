@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Use direct ASCII glyph lookups in each font to reduce repeated layout work, while preserving Unicode fallback, kerning and atlas ownership.
+- Allocate each fixed-size lookup table lazily in memory and retain differential checks against the original hash lookup path.
+
 - Reserve glyph storage once per paragraph for large layout jobs, avoiding repeated vector growth while preserving shaping and wrapping.
 - Keep small labels on the existing allocation path and add renderer differential fixtures for formatted Unicode, kerning, elision and fractional scales.
 

@@ -1098,6 +1098,150 @@ mod tests {
     use super::{super::*, *};
 
     #[test]
+    fn direct_glyph_lookup_preserves_full_layout_across_font_and_atlas_changes() {
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            for reverse_fallbacks in [false, true] {
+                let mut definitions = FontDefinitions::default();
+                if reverse_fallbacks {
+                    for fonts in definitions.families.values_mut() {
+                        fonts.reverse();
+                    }
+                }
+                // Independent font systems also check cold atlas allocation
+                // order and ensure no UVs leak from a different font/atlas.
+                let mut direct = FontsImpl::new(scale, 4096, definitions.clone());
+                let mut reference = FontsImpl::new(scale, 4096, definitions);
+                for width in [0.0, 137.5, f32::INFINITY] {
+                    for break_on_newline in [false, true] {
+                        for max_rows in [0, 1, 3, usize::MAX] {
+                            let mut job = LayoutJob::default();
+                            job.wrap.max_width = width;
+                            job.wrap.max_rows = max_rows;
+                            job.break_on_newline = break_on_newline;
+                            job.halign = Align::RIGHT;
+                            job.justify = width.is_finite();
+                            job.first_row_min_height = 25.5;
+                            for (text, font_id) in [
+                                (
+                                    "AVATAR To Wa fi\t\r\n".repeat(150),
+                                    FontId::proportional(17.25),
+                                ),
+                                (
+                                    "αe\u{301}🦀שלום مرحبا\u{10ffff}\n".repeat(80),
+                                    FontId::monospace(14.0),
+                                ),
+                                ("tail AV\n\n".into(), FontId::proportional(23.0)),
+                            ] {
+                                direct.font(&font_id);
+                                reference.font(&font_id).use_hash_glyph_cache();
+                                job.append(
+                                    &text,
+                                    2.25,
+                                    TextFormat {
+                                        font_id,
+                                        extra_letter_spacing: 0.25,
+                                        line_height: Some(29.25),
+                                        italics: true,
+                                        underline: Stroke::new(1.0_f32, Color32::GREEN),
+                                        ..Default::default()
+                                    },
+                                );
+                            }
+                            let job = Arc::new(job);
+                            assert_eq!(
+                                layout(&mut direct, job.clone()),
+                                layout(&mut reference, job)
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "manual optimized paired profile of hash versus direct ASCII glyph lookup"]
+    fn profile_glyph_lookup() {
+        for (label, source, width, font_id) in [
+            (
+                "short label",
+                "AVATAR To file.rs".into(),
+                f32::INFINITY,
+                FontId::proportional(14.0),
+            ),
+            (
+                "165k unwrapped",
+                "abcdefghij ".repeat(15_000),
+                f32::INFINITY,
+                FontId::monospace(14.0),
+            ),
+            (
+                "1M unwrapped",
+                "abcdefghij".repeat(100_000),
+                f32::INFINITY,
+                FontId::monospace(14.0),
+            ),
+            (
+                "165k wrapped",
+                "abcdefghij ".repeat(15_000),
+                900.0,
+                FontId::monospace(14.0),
+            ),
+            (
+                "mixed Unicode",
+                "AV α🦀 e\u{301} שלום مرحبا\t\r\n".repeat(5000),
+                900.0,
+                FontId::proportional(14.0),
+            ),
+            (
+                "Unicode only",
+                "αβγδεζηθ🦀שלוםمرحبا".repeat(10_000),
+                900.0,
+                FontId::proportional(14.0),
+            ),
+        ] {
+            let mut direct = FontsImpl::new(1.0, 4096, FontDefinitions::default());
+            let mut reference = FontsImpl::new(1.0, 4096, FontDefinitions::default());
+            reference.font(&font_id).use_hash_glyph_cache();
+            let mut job = LayoutJob::single_section(
+                source,
+                TextFormat {
+                    font_id,
+                    ..Default::default()
+                },
+            );
+            job.wrap.max_width = width;
+            let warm = Arc::new(job.clone());
+            std::hint::black_box(layout(&mut direct, warm.clone()));
+            std::hint::black_box(layout(&mut reference, warm));
+            let mut samples = [Vec::new(), Vec::new()];
+            for n in 0..20 {
+                job.text.push('x');
+                job.sections[0].byte_range.end = job.text.len();
+                let job = Arc::new(job.clone());
+                for fast in if n % 2 == 0 {
+                    [false, true]
+                } else {
+                    [true, false]
+                } {
+                    let fonts = if fast { &mut direct } else { &mut reference };
+                    let start = std::time::Instant::now();
+                    let g = layout(fonts, job.clone());
+                    samples[usize::from(fast)].push(start.elapsed().as_secs_f64() * 1000.0);
+                    std::hint::black_box(g);
+                }
+            }
+            for sample in &mut samples {
+                sample.sort_by(f64::total_cmp);
+            }
+            eprintln!(
+                "Glyph lookup {label}: hash p50={:.4} p95={:.4}ms; direct p50={:.4} p95={:.4}ms",
+                samples[0][10], samples[0][18], samples[1][10], samples[1][18]
+            );
+        }
+    }
+
+    #[test]
     #[ignore = "manual optimized paired profile of original growth versus paragraph reservation"]
     fn profile_paragraph_allocation() {
         for (label, source, width) in [

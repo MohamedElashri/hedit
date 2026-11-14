@@ -217,6 +217,48 @@ its log, and no native panic was recorded.
 cargo test --locked --release -p epaint --lib profile_paragraph_allocation -- --ignored --nocapture --test-threads=1
 ```
 
+Each sized font also resolves cached ASCII glyphs through a direct 128-entry
+table. The table is allocated lazily on the heap, keeping the font-family map
+small; non-ASCII characters retain the sparse hash cache. Entries include the
+resolved fallback font and original glyph metrics/UVs, so kerning and font
+selection still use the original font implementation. The table belongs to that
+font and atlas, stays in RAM and holds no workspace source text. Recreating the
+font system drops it along with the other glyph caches.
+
+Renderer tests compare cold/warm lookups for every ASCII code point, missing
+glyphs and empty font families. Full-galley comparisons cover mixed Unicode,
+fallback-order changes, kerning, decorations, elision, wrapping and fractional
+scales. The test-only hash path and the direct path use independent atlases with
+identical allocation order; the original lookup switch is absent from normal
+builds. The ignored paired profile alternates both paths with warm fonts and
+identical paragraph reservations:
+
+```sh
+cargo test --locked --release -p epaint --lib profile_glyph_lookup -- --ignored --nocapture --test-threads=1
+```
+
+Three consecutive idle runs on the development Mac, each with 20 alternating
+samples per path, produced these medians of the per-run p50 layout CPU times:
+
+| Fixture | Hash lookup | Direct ASCII lookup |
+| --- | ---: | ---: |
+| Short proportional-font label | 0.0016 ms | 0.0016 ms |
+| 165,000 characters, unwrapped | 6.94 ms | 5.92 ms |
+| 1,000,000 characters, unwrapped | 44.52 ms | 39.64 ms |
+| 165,000 characters, wrapped | 8.03 ms | 6.99 ms |
+| Mixed Unicode | 4.78 ms | 4.47 ms |
+| Unicode-only source plus inline ASCII edits | 9.52 ms | 9.32 ms |
+
+These measurements exclude job construction, IO, native event delivery and GPU
+presentation. Unicode-only samples did not show a consistent regression across
+these idle runs; short-label differences were below a microsecond. They are
+fixture measurements, not hard latency thresholds.
+The optimized native app also passed a Unicode edit/Undo near the millionth
+character and font-size change/reset commands. A separate Unicode/CRLF draft
+recovered after host durability and SIGKILL of the actual SSH client. Saved
+fixtures stayed unchanged, the local session contained only its log, and no
+native panic was recorded.
+
 Large editable pages use paragraph-aligned blocks (about 4 KiB each). An inline
 edit reshapes the affected blocks and shares unchanged rows with the previous
 frame. A single long paragraph can still require a large layout; adding or

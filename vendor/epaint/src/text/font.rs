@@ -323,6 +323,8 @@ impl FontImpl {
 }
 
 type FontIndex = usize;
+type CachedGlyph = (FontIndex, GlyphInfo);
+type AsciiGlyphs = [Option<CachedGlyph>; 128];
 
 // TODO(emilk): rename?
 /// Wrapper over multiple [`FontImpl`] (e.g. a primary + fallbacks for emojis)
@@ -335,7 +337,12 @@ pub struct Font {
     replacement_glyph: (FontIndex, GlyphInfo),
     pixels_per_point: f32,
     row_height: f32,
+    /// Direct lookup for ASCII, scoped to this font and its atlas. Unicode
+    /// glyphs retain the sparse cache; neither cache stores source text.
+    ascii_glyph_info: Option<Box<AsciiGlyphs>>,
     glyph_info_cache: ahash::HashMap<char, (FontIndex, GlyphInfo)>,
+    #[cfg(test)]
+    use_ascii_cache: bool,
 }
 
 impl Font {
@@ -347,7 +354,10 @@ impl Font {
                 replacement_glyph: Default::default(),
                 pixels_per_point: 1.0,
                 row_height: 0.0,
+                ascii_glyph_info: None,
                 glyph_info_cache: Default::default(),
+                #[cfg(test)]
+                use_ascii_cache: true,
             };
         }
 
@@ -360,7 +370,10 @@ impl Font {
             replacement_glyph: Default::default(),
             pixels_per_point,
             row_height,
+            ascii_glyph_info: None,
             glyph_info_cache: Default::default(),
+            #[cfg(test)]
+            use_ascii_cache: true,
         };
 
         const PRIMARY_REPLACEMENT_CHAR: char = '◻'; // white medium square
@@ -425,8 +438,7 @@ impl Font {
     }
 
     pub fn uv_rect(&self, c: char) -> UvRect {
-        self.glyph_info_cache
-            .get(&c)
+        self.cached_glyph_info(c)
             .map(|gi| gi.1.uv_rect)
             .unwrap_or_default()
     }
@@ -448,14 +460,57 @@ impl Font {
 
     /// `\n` will (intentionally) show up as the replacement character.
     fn glyph_info(&mut self, c: char) -> (FontIndex, GlyphInfo) {
-        if let Some(font_index_glyph_info) = self.glyph_info_cache.get(&c) {
-            return *font_index_glyph_info;
+        if let Some(font_index_glyph_info) = self.cached_glyph_info(c) {
+            return font_index_glyph_info;
         }
 
         let font_index_glyph_info = self.glyph_info_no_cache_or_fallback(c);
         let font_index_glyph_info = font_index_glyph_info.unwrap_or(self.replacement_glyph);
-        self.glyph_info_cache.insert(c, font_index_glyph_info);
+        self.cache_glyph_info(c, font_index_glyph_info);
         font_index_glyph_info
+    }
+
+    #[inline]
+    fn direct_ascii(&self, c: char) -> bool {
+        #[cfg(test)]
+        if !self.use_ascii_cache {
+            return false;
+        }
+        c.is_ascii()
+    }
+
+    #[inline]
+    fn cached_glyph_info(&self, c: char) -> Option<(FontIndex, GlyphInfo)> {
+        if self.direct_ascii(c) {
+            self.ascii_glyph_info
+                .as_ref()
+                .and_then(|glyphs| glyphs[c as usize])
+        } else {
+            self.glyph_info_cache.get(&c).copied()
+        }
+    }
+
+    fn cache_glyph_info(&mut self, c: char, value: (FontIndex, GlyphInfo)) {
+        if self.direct_ascii(c) {
+            self.ascii_glyph_info
+                .get_or_insert_with(|| Box::new([None; 128]))[c as usize] = Some(value);
+        } else {
+            self.glyph_info_cache.insert(c, value);
+        }
+    }
+
+    /// Retain the original lookup path for differential tests and paired
+    /// profiles, including entries populated while constructing the font.
+    #[cfg(test)]
+    pub(super) fn use_hash_glyph_cache(&mut self) {
+        if let Some(glyphs) = self.ascii_glyph_info.take() {
+            for (c, &entry) in glyphs.iter().enumerate() {
+                if let Some(value) = entry {
+                    self.glyph_info_cache.insert(c as u8 as char, value);
+                }
+            }
+        }
+        self.use_ascii_cache = false;
     }
 
     #[inline]
@@ -479,7 +534,7 @@ impl Font {
     fn glyph_info_no_cache_or_fallback(&mut self, c: char) -> Option<(FontIndex, GlyphInfo)> {
         for (font_index, font_impl) in self.fonts.iter().enumerate() {
             if let Some(glyph_info) = font_impl.glyph_info(c) {
-                self.glyph_info_cache.insert(c, (font_index, glyph_info));
+                self.cache_glyph_info(c, (font_index, glyph_info));
                 return Some((font_index, glyph_info));
             }
         }
@@ -532,4 +587,58 @@ fn invisible_char(c: char) -> bool {
             | '\u{206F}' // NOMINAL DIGIT SHAPES
             | '\u{FEFF}' // ZERO WIDTH NO-BREAK SPACE
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::text::{FontDefinitions, FontFamily, FontId, FontsImpl};
+
+    #[test]
+    fn direct_ascii_lookup_matches_hash_lookup_cold_warm_and_without_fonts() {
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            for empty in [false, true] {
+                let mut definitions = FontDefinitions::default();
+                if empty {
+                    for fonts in definitions.families.values_mut() {
+                        fonts.clear();
+                    }
+                }
+                let mut direct = FontsImpl::new(scale, 4096, definitions.clone());
+                let mut reference = FontsImpl::new(scale, 4096, definitions);
+                for family in [FontFamily::Monospace, FontFamily::Proportional] {
+                    let id = FontId::new(17.25, family);
+                    let direct = direct.font(&id);
+                    let reference = reference.font(&id);
+                    reference.use_hash_glyph_cache();
+                    let chars: Vec<char> = (0..=127)
+                        .map(|c| c as u8 as char)
+                        .chain("e\u{301}🦀αשלוםمرحبا\u{10ffff}".chars())
+                        .collect();
+                    for _ in 0..3 {
+                        for &c in &chars {
+                            assert_eq!(direct.uv_rect(c), reference.uv_rect(c));
+                            assert_eq!(direct.glyph_info(c), reference.glyph_info(c), "{c:?}");
+                            assert_eq!(direct.uv_rect(c), reference.uv_rect(c));
+                            assert_eq!(direct.glyph_width(c), reference.glyph_width(c));
+                            assert_eq!(direct.has_glyph(c), reference.has_glyph(c));
+                            let (a, glyph_a) = direct.font_impl_and_glyph_info(c);
+                            let (b, glyph_b) = reference.font_impl_and_glyph_info(c);
+                            assert_eq!(
+                                a.map(|f| (&f.name, f.row_height(), f.ascent())),
+                                b.map(|f| (&f.name, f.row_height(), f.ascent()))
+                            );
+                            assert_eq!(glyph_a, glyph_b);
+                        }
+                    }
+                    assert!(direct.glyph_info_cache.keys().all(|c| !c.is_ascii()));
+                    assert!(direct
+                        .ascii_glyph_info
+                        .as_ref()
+                        .unwrap()
+                        .iter()
+                        .all(Option::is_some));
+                }
+            }
+        }
+    }
 }
