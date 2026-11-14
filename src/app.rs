@@ -16,6 +16,8 @@ mod controls;
 mod counterpart;
 #[cfg(test)]
 mod counterpart_tests;
+#[cfg(test)]
+mod cursor_tests;
 mod definitions;
 mod edit_actions;
 #[cfg(test)]
@@ -2449,7 +2451,7 @@ impl HeditApp {
                         if self.settings.draw_indent_guides {
                             for r in visible_rows.clone() {
                                 let row = &output.galley.rows[r];
-                                if row_index.rows[r].first
+                                if row_index.row(r).first
                                     && output.galley_pos.y + row.rect.bottom()
                                         >= ui.clip_rect().top()
                                     && output.galley_pos.y + row.rect.top()
@@ -2587,7 +2589,7 @@ impl HeditApp {
                             let mut source_chars = row_index::SourceChars::new(&old, &source_index);
                             for r in visible_rows.clone() {
                                 let row = &output.galley.rows[r];
-                                let row_start = row_index.rows[r].start;
+                                let row_start = row_index.row(r).start;
                                 for (n, glyph) in row.glyphs.iter().enumerate() {
                                     let position = row_start + n;
                                     let source = projection.source(position);
@@ -2627,8 +2629,8 @@ impl HeditApp {
                             gutter_ui.set_clip_rect(gutter_rect);
                             for r in visible_rows.clone() {
                                 let row = &output.galley.rows[r];
-                                let display_line = row_index.rows[r].line;
-                                if row_index.rows[r].first {
+                                let display_line = row_index.row(r).line;
+                                if row_index.row(r).first {
                                     let position = egui::pos2(
                                         gutter_rect.right() - 12.0,
                                         output.galley_pos.y + row.rect.center().y,

@@ -11,22 +11,28 @@ pub(super) struct Row {
     pub first: bool,
 }
 pub(super) struct Rows {
-    pub rows: Vec<Row>,
+    index: Arc<egui::epaint::text::CursorIndex>,
     pub chars: usize,
 }
 impl Rows {
     fn new(galley: &Galley) -> Self {
-        let mut rows = Vec::with_capacity(galley.rows.len());
-        let (mut start, mut line, mut first) = (0, 0, true);
-        for row in &galley.rows {
-            rows.push(Row { start, line, first });
-            start += row.char_count_including_newline();
-            if row.ends_with_newline {
-                line += 1;
-            }
-            first = row.ends_with_newline;
+        let index = galley.shared_cursor_index();
+        Self {
+            chars: index.end.start,
+            index,
         }
-        Self { rows, chars: start }
+    }
+    pub fn row(&self, row: usize) -> Row {
+        let at = self.index.rows[row];
+        Row {
+            start: at.start,
+            line: at.paragraph,
+            first: row == 0 || self.index.rows[row - 1].paragraph != at.paragraph,
+        }
+    }
+    #[cfg(test)]
+    pub fn len(&self) -> usize {
+        self.index.rows.len()
     }
     pub fn visible(&self, galley: &Galley, origin: egui::Pos2, clip: egui::Rect) -> Range<usize> {
         if !clip.is_positive() {
@@ -41,7 +47,7 @@ impl Rows {
         start..end.max(start)
     }
     pub fn end(&self, row: usize) -> usize {
-        self.rows.get(row + 1).map_or(self.chars, |r| r.start)
+        self.index.rows.get(row + 1).map_or(self.chars, |r| r.start)
     }
 }
 /// Seek across hidden lines without materializing every source character. Within
@@ -161,11 +167,12 @@ mod tests {
                 let mut cache = Cache::default();
                 let rows = cache.get(&galley);
                 assert!(Arc::ptr_eq(&rows, &cache.get(&galley)));
+                assert!(std::ptr::eq(&*rows.index, galley.cursor_index()));
                 let (mut chars, mut line, mut first) = (0, 0, true);
                 for (i, row) in galley.rows.iter().enumerate() {
-                    assert_eq!(rows.rows[i].start, chars);
-                    assert_eq!(rows.rows[i].line, line);
-                    assert_eq!(rows.rows[i].first, first);
+                    assert_eq!(rows.row(i).start, chars);
+                    assert_eq!(rows.row(i).line, line);
+                    assert_eq!(rows.row(i).first, first);
                     chars += row.char_count_including_newline();
                     assert_eq!(rows.end(i), chars);
                     if row.ends_with_newline {
@@ -214,6 +221,65 @@ mod tests {
         let next = layout("new\nlayout", f32::INFINITY, 1.0);
         let fresh = cache.get(&next);
         assert!(!Arc::ptr_eq(&rows, &fresh));
-        assert_eq!(fresh.rows.len(), 2);
+        assert_eq!(fresh.len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod performance {
+    use super::*;
+    #[test]
+    #[ignore = "manual release CPU profile of large-galley cursor lookups"]
+    fn profile_cursor_navigation() {
+        let galley = super::tests::layout(
+            &"    α line with words\n".repeat(40_000),
+            f32::INFINITY,
+            1.0,
+        );
+        let row = galley.rows.len() - 2;
+        let cursor = galley.from_rcursor(egui::epaint::text::cursor::RCursor { row, column: 12 });
+        let point = galley.pos_from_cursor(&cursor).center().to_vec2();
+        for (name, run) in [
+            ("character", 0),
+            ("paragraph", 1),
+            ("row", 2),
+            ("position", 3),
+            ("pointer", 4),
+            ("end", 5),
+        ] {
+            let start = Instant::now();
+            for _ in 0..500 {
+                match run {
+                    0 => {
+                        std::hint::black_box(
+                            galley.from_ccursor(std::hint::black_box(cursor.ccursor)),
+                        );
+                    }
+                    1 => {
+                        std::hint::black_box(
+                            galley.from_pcursor(std::hint::black_box(cursor.pcursor)),
+                        );
+                    }
+                    2 => {
+                        std::hint::black_box(
+                            galley.from_rcursor(std::hint::black_box(cursor.rcursor)),
+                        );
+                    }
+                    3 => {
+                        std::hint::black_box(galley.pos_from_cursor(std::hint::black_box(&cursor)));
+                    }
+                    4 => {
+                        std::hint::black_box(galley.cursor_from_pos(std::hint::black_box(point)));
+                    }
+                    _ => {
+                        std::hint::black_box(galley.end());
+                    }
+                }
+            }
+            eprintln!(
+                "Cursor {name}, 40000 rows: {:.3} us/lookup (500 warm CPU calls)",
+                start.elapsed().as_secs_f64() * 1_000_000.0 / 500.0
+            );
+        }
     }
 }

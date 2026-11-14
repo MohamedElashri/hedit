@@ -106,6 +106,7 @@ fn pad_inline_rows(galley: &mut std::sync::Arc<egui::Galley>, height: f32) -> bo
     }
     galley.rect.max.y += offset;
     galley.mesh_bounds = mesh_bounds;
+    galley.invalidate_cursor_index();
     true
 }
 

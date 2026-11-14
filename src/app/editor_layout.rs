@@ -102,6 +102,7 @@ struct Entry {
 impl Entry {
     fn bytes(&self) -> usize {
         self.galley.job.text.len()
+            + self.galley.cursor_cache.bytes()
             + self.galley.num_vertices * std::mem::size_of::<egui::epaint::Vertex>()
             + self.galley.num_indices * std::mem::size_of::<u32>()
             + self

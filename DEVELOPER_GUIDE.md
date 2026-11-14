@@ -118,6 +118,33 @@ colors, wrapping, RTL, and 125%/150% scaling. The licenses remain in the vendor
 directories and the shipped [MIT notice](assets/licenses/egui-epaint-MIT.txt).
 The Markdown integration also uses copy-on-write when adding line padding.
 
+The renderer also keeps a lazy, thread-safe cursor index on each galley.
+Character/paragraph lookups use binary search; row and end lookups use cached
+offsets. Pointer lookup uses binary search for finite rows with non-overlapping
+interiors, preserving shared-boundary and equal-distance choices. Overlapping
+or irregular geometry retains the original nearest-row walk. Glyph lookup
+within the chosen row is unchanged, so a single very long row can still cost
+more than a short one.
+
+`CursorIndexCache` shares immutable metadata across galley clones. Its contents
+are omitted from serialization and galley equality. The editor's viewport row
+cache shares the same offsets without retaining glyphs or meshes. Initialized
+index storage is counted in the inactive-layout budget. Every layout constructor,
+including incremental block assembly and empty layouts, starts with a fresh
+cache. Call `invalidate_cursor_index` after changing glyph counts, newline flags,
+row order, or vertical geometry. Color-only changes can share the index;
+Markdown line-padding changes explicitly invalidate it.
+
+`app/cursor_tests.rs` retains the pre-index linear routines as independent
+references. Checks compare cursor fields and wrap preferences, including goal
+columns beyond paragraph ends, empty soft rows, elision, RTL, mixed fonts,
+zero-height rows, geometry gaps, incremental edits and fractional scales.
+`profile_cursor_navigation` measures warm conversions near the end of a
+40,000-line fixture. On the development Mac, pointer lookup changed from about
+2.20 ms to 0.1 µs and character lookup from about 55 µs to 0.02 µs. These are
+isolated CPU calls; first use builds the index, and native event/display latency
+is excluded. Run profiles on an otherwise idle machine.
+
 The ignored `profile_typing_positions` benchmark reports p50/p95/p99 CPU frame
 times for 64 inline edits at the start, middle, and end of a 1.46 MB buffer.
 Run profiles serially on an otherwise idle machine. These headless frames do

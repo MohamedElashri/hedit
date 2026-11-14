@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Index text-layout cursor positions for faster caret navigation and pointer placement near the end of large files.
+- Share cursor and viewport offsets within the layout memory budget, preserving wrap preferences, goal columns and RTL positions without persisting derived caches.
+- Add differential cursor tests and preserve pointer tie behavior at shared boundaries and zero-height rows; make the pending-open Escape test independent of thread scheduling.
+
 - Keep current-file Find and selection highlighting responsive with cancellable background scans, shared in-memory snapshots and guarded cursor updates.
 - Reuse Find matches for navigation, count results beyond the 20,000-highlight limit, and preserve repeated next/previous requests during scans.
 - Restrict editor gutters, whitespace, indentation guides and highlight painting to the viewport, with correct zero-width, folded and RTL highlights.

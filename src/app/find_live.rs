@@ -604,7 +604,7 @@ pub(super) fn paint_ranges(
         return;
     };
     let last_row = visible.clone().last().unwrap();
-    let source_start = projection.source(rows.rows[first_row].start);
+    let source_start = projection.source(rows.row(first_row).start);
     let source_end = projection.source(rows.end(last_row));
     let first = ranges.partition_point(|&(a, b)| b < source_start || b == source_start && a != b);
     let shown: Vec<_> = ranges[first..]
@@ -615,7 +615,7 @@ pub(super) fn paint_ranges(
         .collect();
     for r in visible {
         let row = &galley.rows[r];
-        let row_start = rows.rows[r].start;
+        let row_start = rows.row(r).start;
         let row_end = rows.end(r);
         let top = origin.y + row.rect.top();
         let bottom = origin.y + row.rect.bottom();

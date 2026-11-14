@@ -240,6 +240,7 @@ pub(super) fn layout(
     let galley = Galley {
         job: Arc::new(job),
         rows,
+        cursor_cache: Default::default(),
         elided: false,
         rect: Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(width, y.round_ui())),
         mesh_bounds,

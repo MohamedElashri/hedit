@@ -467,6 +467,10 @@ undo step, for up to 1,000 cursors.
 
 ### Selecting
 
+Click to place the caret; **Shift+click** extends the selection from its anchor.
+Caret and pointer navigation remain responsive deep into long pages, including
+with word wrap and Unicode text.
+
 **Ctrl+Shift+Space** grows the selection step by step: word, quotes, brackets,
 line, file. **Ctrl+Shift+M** selects inside brackets, **Ctrl+Shift+J** the lines at
 the same indentation, and **Ctrl+M** jumps between matching brackets. **Ctrl+U**

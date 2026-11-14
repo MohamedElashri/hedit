@@ -298,10 +298,7 @@ fn locate(galley: &Galley, index: usize) -> (usize, usize) {
 
 /// The character index where `row` starts.
 fn row_start(galley: &Galley, row: usize) -> usize {
-    galley.rows[..row]
-        .iter()
-        .map(|row| row.char_count_including_newline())
-        .sum()
+    galley.row_start(row)
 }
 
 /// The caret before character `index`, relative to the galley.
@@ -393,11 +390,7 @@ pub(super) fn glyph_rect(galley: &Galley, index: usize) -> Option<egui::Rect> {
 
 /// The row at height `y`, or the nearest one.
 fn row_at(galley: &Galley, y: f32) -> usize {
-    galley
-        .rows
-        .iter()
-        .position(|r| y < r.max_y())
-        .unwrap_or(galley.rows.len().saturating_sub(1))
+    galley.row_at_y(y)
 }
 
 /// The character index of the caret nearest `pos`, relative to the galley, or
@@ -442,7 +435,7 @@ pub(super) fn visual_step(
         None if dirs.base_rtl && right => Some(start.saturating_sub(1)),
         None if dirs.base_rtl => {
             let end = start + r.char_count_including_newline();
-            Some(end.min(galley.text().chars().count()))
+            Some(end.min(galley.cursor_index().end.start))
         }
         None => None,
     }

@@ -75,6 +75,7 @@ pub fn layout(fonts: &mut FontsImpl, job: Arc<LayoutJob>) -> Galley {
         return Galley {
             job,
             rows: Default::default(),
+            cursor_cache: Default::default(),
             rect: Rect::from_min_max(Pos2::ZERO, Pos2::ZERO),
             mesh_bounds: Rect::NOTHING,
             num_vertices: 0,
@@ -213,7 +214,7 @@ fn rows_from_paragraphs(
 
         if paragraph.glyphs.is_empty() {
             rows.push(Row {
-                    layout_rect: Rect::NOTHING,
+                layout_rect: Rect::NOTHING,
                 section_index_at_start: paragraph.section_index_at_start,
                 glyphs: vec![],
                 visuals: Default::default(),
@@ -338,7 +339,7 @@ fn line_break(paragraph: &Paragraph, job: &LayoutJob, out_rows: &mut Vec<Row>, e
             let paragraph_max_x = glyphs.last().unwrap().max_x();
 
             out_rows.push(Row {
-                    layout_rect: Rect::NOTHING,
+                layout_rect: Rect::NOTHING,
                 section_index_at_start,
                 glyphs,
                 visuals: Default::default(),
@@ -679,6 +680,7 @@ fn galley_from_rows(
     Galley {
         job,
         rows: rows.into_iter().map(Arc::new).collect(),
+        cursor_cache: Default::default(),
         elided,
         rect,
         mesh_bounds,

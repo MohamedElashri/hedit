@@ -347,10 +347,14 @@ fn panels_and_banners_share_one_close_button() {
 fn escape_closes_the_picker_before_cancelling_a_pending_file_open() {
     let (_directory, ctx, mut app) = app_with("keep editing");
     let (tx, rx) = mpsc::channel();
+    let (started_tx, started_rx) = mpsc::channel();
     app.read_open(&ctx, "slow file".into(), move || {
+        started_tx.send(()).unwrap();
         rx.recv().unwrap();
         Ok(Action::Nothing)
     });
+    // Exercise cancellation of a running read, independently of thread scheduling.
+    started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
     app.palette = true;
     escape(&ctx, &mut app);
     assert!(!app.palette);
