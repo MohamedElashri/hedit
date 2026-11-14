@@ -341,11 +341,22 @@ pub(super) fn spans(
 }
 
 /// Rectangles, relative to the galley, covering characters `start..end`.
+#[cfg(test)]
 pub(super) fn range_rects(
     galley: &Galley,
     bidi: &BidiRows,
     start: usize,
     end: usize,
+) -> Vec<egui::Rect> {
+    range_rects_in_rows(galley, bidi, start, end, 0..galley.rows.len())
+}
+
+pub(super) fn range_rects_in_rows(
+    galley: &Galley,
+    bidi: &BidiRows,
+    start: usize,
+    end: usize,
+    rows: Range<usize>,
 ) -> Vec<egui::Rect> {
     if start >= end {
         return Vec::new();
@@ -353,7 +364,7 @@ pub(super) fn range_rects(
     let (first, first_column) = locate(galley, start);
     let (last, last_column) = locate(galley, end);
     let mut rects = Vec::new();
-    for row in first..=last.min(galley.rows.len().saturating_sub(1)) {
+    for row in first.max(rows.start)..last.saturating_add(1).min(galley.rows.len()).min(rows.end) {
         let r = &galley.rows[row];
         let a = if row == first { first_column } else { 0 };
         let b = if row == last {
@@ -406,6 +417,29 @@ pub(super) fn hit(galley: &Galley, bidi: &BidiRows, pos: egui::Vec2) -> Option<u
     Some(row_start(galley, row) + column)
 }
 
+/// Collapse a selection without taking an extra arrow step. Within one visual
+/// row use its left/right edge; across rows retain document-order endpoints.
+pub(super) fn visual_selection_edge(
+    galley: &Galley,
+    bidi: &BidiRows,
+    anchor: usize,
+    head: usize,
+    right: bool,
+) -> usize {
+    if locate(galley, anchor).0 == locate(galley, head).0 {
+        let a = caret_rect(galley, bidi, anchor).left();
+        let h = caret_rect(galley, bidi, head).left();
+        if a != h {
+            return if (a > h) == right { anchor } else { head };
+        }
+    }
+    if right {
+        anchor.max(head)
+    } else {
+        anchor.min(head)
+    }
+}
+
 /// Where the caret at `index` goes with Left or Right in a row with
 /// right-to-left text, moving by what is on screen. `None` leaves the key to
 /// the usual logical movement.
@@ -441,6 +475,36 @@ pub(super) fn visual_step(
     }
 }
 
+/// Correct pure RTL AccessKit runs after TextEdit built its generic LTR nodes.
+/// Positions are measured from the right edge when the run reads right to left.
+#[cfg(target_os = "macos")]
+pub(super) fn accessibility(ctx: &egui::Context, id: egui::Id, galley: &Galley, bidi: &BidiRows) {
+    if ctx.accesskit_node_builder(id, |_| ()).is_none() {
+        return;
+    }
+    for (index, dirs) in bidi.rows.iter().enumerate() {
+        let Some(dirs) = dirs else {
+            continue;
+        };
+        if dirs.rtl.is_empty() || !dirs.rtl.iter().all(|rtl| *rtl) {
+            continue;
+        }
+        let row = &galley.rows[index];
+        let mut positions: Vec<f32> = row
+            .glyphs
+            .iter()
+            .map(|g| row.rect.right() - g.pos.x - g.advance_width)
+            .collect();
+        if row.ends_with_newline {
+            positions.push(row.rect.width());
+        }
+        ctx.accesskit_node_builder(id.with(index), |node| {
+            node.set_text_direction(egui::accesskit::TextDirection::RightToLeft);
+            node.set_character_positions(positions);
+        });
+    }
+}
+
 /// How the editor draws its caret and selection.
 pub(super) struct Look {
     pub caret: egui::Stroke,
@@ -456,6 +520,7 @@ pub(super) fn interact(
     output: &mut egui::text_edit::TextEditOutput,
     bidi: &BidiRows,
     background: egui::layers::ShapeIdx,
+    visible_rows: Range<usize>,
     look: Look,
 ) {
     let galley = Arc::clone(&output.galley);
@@ -494,7 +559,13 @@ pub(super) fn interact(
         return;
     };
     let (head, anchor) = (range.primary.ccursor.index, range.secondary.ccursor.index);
-    let rects = range_rects(&galley, bidi, head.min(anchor), head.max(anchor));
+    let rects = range_rects_in_rows(
+        &galley,
+        bidi,
+        head.min(anchor),
+        head.max(anchor),
+        visible_rows,
+    );
     ui.painter().set(
         background,
         egui::Shape::Vec(
@@ -566,7 +637,8 @@ pub(super) fn field(
             .show(ui);
         let bidi = latest.take();
         if rtl && bidi.any() {
-            interact(ui, &mut output, &bidi, background, look);
+            let rows = 0..output.galley.rows.len();
+            interact(ui, &mut output, &bidi, background, rows, look);
         }
         output.response
     })

@@ -373,7 +373,7 @@ fn quitting_waits_for_inflight_buffers_and_checkpoints_them() {
     let (release, wait) = mpsc::channel();
     app.job(&ctx, move || {
         wait.recv().map_err(|e| e.to_string())?;
-        Ok(Action::Add(doc, page, 0))
+        Ok(Action::Add(Box::new(doc), page, 0))
     });
     app.request_quit();
     app.receive(&ctx);

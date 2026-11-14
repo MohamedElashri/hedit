@@ -6,9 +6,6 @@ pub(super) fn complete_drag(
     output: &mut egui::text_edit::TextEditOutput,
     bidi: &bidi_view::BidiRows,
     previous_anchor: usize,
-    background: egui::layers::ShapeIdx,
-    color: egui::Color32,
-    visible_rows: std::ops::Range<usize>,
 ) -> bool {
     let response = &output.response;
     if !response.enabled()
@@ -77,23 +74,48 @@ pub(super) fn complete_drag(
     output.cursor_range = Some(range);
     output.state.cursor.set_range(Some(range));
     response.request_focus();
-    // TextEdit has already painted a collapsed cursor at the release position.
-    // Fill the selection below its text during this same frame.
-    let visible_start = output.galley.row_start(visible_rows.start);
-    let visible_end = output.galley.row_start(visible_rows.end);
-    ui.painter().set(
-        background,
-        egui::Shape::Vec(
-            bidi_view::range_rects(
-                &output.galley,
-                bidi,
-                anchor.min(head).max(visible_start),
-                anchor.max(head).min(visible_end),
-            )
-            .into_iter()
-            .map(|r| egui::Shape::rect_filled(r.translate(output.galley_pos.to_vec2()), 0.0, color))
-            .collect(),
-        ),
-    );
     true
+}
+
+/// Equivalent to egui's selection rectangles, restricted to visible rows.
+/// The cached galley and its glyph meshes remain shared even for Select All.
+pub(super) fn selection_rects(
+    galley: &egui::Galley,
+    range: &egui::text_selection::CursorRange,
+    rows: std::ops::Range<usize>,
+) -> Vec<egui::Rect> {
+    if range.is_empty() {
+        return vec![];
+    }
+    let [min, max] = range.sorted_cursors();
+    let (min, max) = (min.rcursor, max.rcursor);
+    let end = max
+        .row
+        .saturating_add(1)
+        .min(rows.end)
+        .min(galley.rows.len());
+    (min.row.max(rows.start)..end)
+        .map(|ri| {
+            let row = &galley.rows[ri];
+            let left = if ri == min.row {
+                row.x_offset(min.column)
+            } else {
+                row.rect.left()
+            };
+            let right = if ri == max.row {
+                row.x_offset(max.column)
+            } else {
+                row.rect.right()
+                    + if row.ends_with_newline {
+                        row.height() / 2.0
+                    } else {
+                        0.0
+                    }
+            };
+            egui::Rect::from_min_max(
+                egui::pos2(left, row.min_y()),
+                egui::pos2(right, row.max_y()),
+            )
+        })
+        .collect()
 }

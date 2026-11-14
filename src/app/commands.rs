@@ -228,6 +228,7 @@ pub(super) enum Command {
 }
 impl Command {
     pub(super) const ALL: &'static [Self] = &[
+        Self::Palette,
         Self::ConnectSsh,
         Self::MarkdownSource,
         Self::MarkdownSplit,
@@ -1950,7 +1951,7 @@ impl HeditApp {
                 }
             } else if commands {
                 for &command in Command::ALL {
-                    if let Some(found) = score(command.label()).filter(|_| self.command_enabled(command)) {
+                    if let Some(found) = score(command.label()).filter(|_| command != Command::Palette && self.command_enabled(command)) {
                         scored.push((
                             found,
                             (command.label().to_owned(), command.shortcut(), Item::Command(command)),

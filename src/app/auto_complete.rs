@@ -114,7 +114,7 @@ impl HeditApp {
         let b = self.active();
         let id = egui::Id::new(("editor", b.page.info.id, b.page.start));
         if self.panes.mode != 0 && self.panes.focused > 0 {
-            id.with(self.panes.focused)
+            id.with(("pane", self.panes.focused))
         } else {
             id
         }

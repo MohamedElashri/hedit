@@ -2336,6 +2336,14 @@ impl ContextImpl {
             let state = viewport.this_pass.accesskit_state.take();
             if let Some(state) = state {
                 let root_id = crate::accesskit_root_id().accesskit_id();
+                // Focus may target a widget that appears next pass, or one
+                // omitted by a dynamic/virtualized view. Keep keyboard focus
+                // intact, but expose the window until its node exists.
+                let focus_id = self
+                    .memory
+                    .focused()
+                    .filter(|id| state.nodes.contains_key(id))
+                    .map_or(root_id, |id| id.accesskit_id());
                 let nodes = {
                     state
                         .nodes
@@ -2343,10 +2351,6 @@ impl ContextImpl {
                         .map(|(id, node)| (id.accesskit_id(), node))
                         .collect()
                 };
-                let focus_id = self
-                    .memory
-                    .focused()
-                    .map_or(root_id, |id| id.accesskit_id());
                 platform_output.accesskit_update = Some(accesskit::TreeUpdate {
                     nodes,
                     tree: Some(accesskit::Tree::new(root_id)),

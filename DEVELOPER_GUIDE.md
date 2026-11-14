@@ -4,6 +4,7 @@ Build, test, and release hedit. For using it, see the [user guide](USER_GUIDE.md
 
 - [Build and install](#build-and-install)
 - [Checks](#checks)
+- [Editor quality audit](#editor-quality-audit)
 - [macOS builds](#macos-builds)
 - [Windows builds](#windows-builds)
 - [Code map](#code-map)
@@ -58,8 +59,9 @@ make install DESTDIR=/tmp/stage PREFIX=/usr   # staged, to inspect the layout
 
 Every launch, including `make run`, re-executes itself detached from the
 terminal and returns once the window is up; later errors go to `hedit.log` in the
-session directory. Linux is the validated platform. macOS and Windows have
-native CI build and test jobs; hands-on GUI validation is pending on both.
+session directory. CI defines Linux, macOS, and Windows build/test jobs.
+Targeted native macOS and SSH interaction checks supplement headless tests;
+see the audit below for the platform and feature validation boundaries.
 
 ## Checks
 
@@ -96,6 +98,85 @@ done
 
 # CPU timings for typing, navigation, the folder sidebar and filename search
 cargo test --locked --release --bin hedit profile_ -- --ignored --nocapture
+```
+
+### Editor quality audit
+
+The audit covers the 220-command catalogue and the workflows documented in the
+user guide. It verifies named scenarios; passing tests does not establish that
+every feature is bug-free or every native platform has been exercised.
+
+| Area | Evidence and scope |
+| --- | --- |
+| Startup, files, projects and many tabs | Launcher, opening, recovery and project tests; `app/audit_tests.rs` restores 100 named tabs with unsaved Unicode, reveals keyboard-selected tabs, and checks renamed/pinned/reordered tabs at several window sizes. |
+| Editing, selections, Undo and split groups | Editing, cursor, folding, snippet and clipboard suites; audit tests compare visible selection rectangles against egui's original mesh rectangles, preserve shared glyph layouts during Select All, and replace/Undo Unicode/CRLF text across split groups. |
+| Find, folders and code navigation | Find, folder-search, filename-index, counterpart and file-reference tests; existing profiles cover large folders, current-file Find and asynchronous opens. |
+| Completion, languages and keyboard bindings | Completion, spelling, RTL/IME and settings suites; all commands are listed for key-binding configuration, including the palette, with conflict resolution. The palette itself omits its recursive entry from its own result list. |
+| Git, builds, logs and terminal | Source-control, build, terminal and protocol suites cover these domains. Their presence in the catalogue is not a claim of live validation for every external tool or server. CUDA tools remain Linux-specific and require optional hardware/tools. |
+| Markdown and media | Reader, layout, split-scroll and resource-loader tests cover source/preview behavior, images, math and diagrams. |
+| SSH privacy and recovery | Headless helper and real loopback SSH/crash suites; targeted native editing/Undo and recovery checks. Derived UI caches remain in RAM and remote recovery remains on the SSH host. |
+| Accessibility | Native AccessKit labels/text, focus reachability through split/busy/hidden-editor transitions, tab role/full-name/selected-state tests, descriptive close controls, valid word-length metadata for long ASCII and Unicode identifiers, and right-to-left direction/positions for pure RTL runs. Native screen-reader speech and mixed-script navigation still need dedicated assistive-technology testing. |
+| Packaging and platforms | Local macOS Rust/Clippy/package checks and offline package fixtures. Fresh Linux/Windows CI and live GUI validation of this unpublished stack remain pending; no alternate test host or running Linux container daemon was available. |
+
+The [SSH feature CI run at 78dcf65](https://github.com/MohamedElashri/hedit/actions/runs/43488093934)
+passed Linux, macOS and remote SSH jobs, but Windows Clippy rejected the size of
+`Action::Add`. The document payload is now boxed, removing the platform-dependent
+inline size difference. This is a source fix; a fresh Windows run is still needed.
+Those historical green jobs do not validate later local UI commits.
+
+A live native split-group Undo check exposed a collision between a split editor's
+widget ID and the primary editor's accessibility row ID. Pane IDs now have a
+separate namespace; completion, custom shortcuts and Markdown focus handling use
+the same IDs. The vendored egui bridge also exports window focus when a logical
+focus request targets a widget absent from the current frame. Regression tests
+check text-row roles, unique parentage, focus reachability and successive updates
+through the same AccessKit consumer used by the native macOS adapter. The consumer
+is a macOS test dependency already present in the locked native dependency graph.
+
+The final optimized macOS app was exercised over private loopback SSH with 100
+fixture files, a 40,000-line source file and Unicode/CRLF text. Native checks
+covered keyboard tab reveal, full-file selection/deletion/Undo, the formerly
+crashing split-group replacement/Undo, and pure RTL selection collapse. After
+the host reported durability, the actual client was killed with SIGKILL and
+restarted: its unsaved Unicode draft and CRLF format recovered from the host,
+saved source files were unchanged, and the client session contained logs only.
+This is targeted native coverage, not end-to-end latency or screen-reader speech
+validation.
+
+Confirmed fixes in this pass: split editor identity and accessibility focus;
+visible tab rendering with active-tab reveal; linear MRU membership/pruning;
+primary selection backgrounds painted below shared text meshes; visible-row bounds
+for RTL and secondary selections; full accessible tab identity/state and close
+labels; pure RTL accessibility direction/positions; RTL selection-collapse arrow
+behavior; long accessibility word lengths represented without u8 overflow; palette
+shortcut configuration/conflict handling; and the Windows action-enum lint failure.
+AccessKit's u8 word-length representation splits an oversized identifier into
+representable navigation segments. Accessibility-specific additions retain the
+existing macOS feature guards.
+
+Sampled optimized CPU frames on the development Mac (not native input/display
+latency, GPU presentation, or SSH durability):
+
+| Fixture | Before | After |
+| --- | ---: | ---: |
+| 1,000 open tabs, unchanged frame | 1.79 ms | 0.11 ms |
+| 40,000-line full-file selection | 38.23 ms | 2.30 ms |
+| 165,000-character single-line selection | 4.02 ms | 1.82 ms |
+
+The four-pane 40,000-line fixture measured about 8.2 ms per warm CPU frame.
+Typing in the 165,000-character paragraph sampled p50/p95 of 7.6/9.0 ms at its
+start and 10.8/13.3 ms at its end. These are fixtures, not worst-case guarantees:
+a single larger paragraph still reshapes as a whole after an edit. Keep long-line
+layout, native screen-reader behavior, fresh platform CI and live Linux/Windows
+checks open until separately verified. Parallel macOS recovery tests have also
+occasionally returned `Busy` immediately after a journal is dropped/reopened;
+serial runs corroborate recovery behavior without weakening the production lock.
+
+Reproduce the focused profiles serially on an otherwise idle machine:
+
+```sh
+cargo test --locked --release --bin hedit profile_quality_audit -- --ignored --nocapture --test-threads=1
+cargo test --locked --release --bin hedit profile_long_line_typing_audit -- --ignored --nocapture --test-threads=1
 ```
 
 Large editable pages use paragraph-aligned blocks (about 4 KiB each). An inline

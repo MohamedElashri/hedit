@@ -1779,6 +1779,7 @@ name = "hedit"
 version = "0.4.0"
 dependencies = [
  "ab_glyph",
+ "accesskit_consumer",
  "directories",
  "eframe",
  "egui_commonmark",

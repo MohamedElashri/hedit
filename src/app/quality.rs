@@ -1538,7 +1538,7 @@ impl HeditApp {
             self.job(ctx, move || {
                 let mut doc = Document::from_stdin(editor.id(), &path)?;
                 let page = doc.page(0)?;
-                Ok(Action::Add(doc, page, 0))
+                Ok(Action::Add(Box::new(doc), page, 0))
             });
         }
     }

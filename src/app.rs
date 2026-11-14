@@ -1,6 +1,8 @@
 #[cfg(all(test, target_os = "macos"))]
 mod accessibility_tests;
 mod advanced_edit;
+#[cfg(test)]
+mod audit_tests;
 mod auto_complete;
 mod bidi_view;
 mod build_panel;
@@ -93,6 +95,7 @@ mod settings_tests;
 mod snippet_fields;
 mod source_control;
 mod spell_check;
+mod tab_strip;
 mod tab_switch;
 #[cfg(test)]
 mod tab_tests;
@@ -135,7 +138,7 @@ use std::{
 
 enum Action {
     Quality(Box<quality::Event>),
-    Add(Document, Page, usize),
+    Add(Box<Document>, Page, usize),
     Activate(u64),
     ReopenRead(u64, Page, Option<usize>),
     Folder(hedit::folder::FolderListing),
@@ -246,6 +249,7 @@ pub struct HeditApp {
     /// Selection history for Undo/Redo selection change: (view, cursors).
     soft_history: (Vec<SoftState>, Vec<SoftState>, Option<SoftState>),
     tab_cycle: tab_switch::TabCycle,
+    tab_strip: tab_strip::Cache,
     /// Text copied or cut in hedit, newest first.
     paste_history: Vec<String>,
     /// A list shown in the palette instead of files or commands.
@@ -451,6 +455,7 @@ impl HeditApp {
             chord: None,
             soft_history: Default::default(),
             tab_cycle: Default::default(),
+            tab_strip: Default::default(),
             paste_history: Vec::new(),
             pick_list: None,
             snippet: None,
@@ -741,7 +746,7 @@ impl HeditApp {
                 let offset = doc.location_offset(line, column)?;
                 let page = doc.page(offset.saturating_sub(4096))?;
                 let cursor = page.text[..(offset - page.start) as usize].chars().count();
-                Ok(Action::Add(doc, page, cursor))
+                Ok(Action::Add(Box::new(doc), page, cursor))
             });
             return;
         }
@@ -840,7 +845,7 @@ impl HeditApp {
             let offset = doc.location_offset(line, col)?;
             let page = doc.page(offset.saturating_sub(4096))?;
             let cursor = page.text[..(offset - page.start) as usize].chars().count();
-            Ok(Action::Add(doc, page, cursor))
+            Ok(Action::Add(Box::new(doc), page, cursor))
         };
         self.read_open(ctx, label, move || {
             Ok(open().unwrap_or_else(Action::OpenFailed))
@@ -1156,7 +1161,7 @@ impl HeditApp {
                     }
                 }
                 Ok(Action::Add(doc, page, cursor)) => {
-                    let result = self.workspace.add(doc, page);
+                    let result = self.workspace.add(*doc, page);
                     if result.is_ok() {
                         let buffer = &mut self.workspace.open[self.workspace.active];
                         buffer.view.anchor = cursor;
@@ -1735,14 +1740,7 @@ impl HeditApp {
             }
         }
         // Let single-line search and debugger inputs keep their own undo history.
-        let mut editor_id = egui::Id::new((
-            "editor",
-            self.active().page.info.id,
-            self.active().page.start,
-        ));
-        if self.panes.mode != 0 && self.panes.focused > 0 {
-            editor_id = editor_id.with(self.panes.focused);
-        }
+        let editor_id = self.editor_id();
         if self.focus_editor
             && !self.source_control.open
             && self.panes.mode != 0
@@ -2075,7 +2073,8 @@ impl HeditApp {
         let id = if pane_id == 0 {
             base_id
         } else {
-            base_id.with(pane_id)
+            // TextEdit uses id.with(row_index) for accessibility text rows.
+            base_id.with(("pane", pane_id))
         };
         let source_index = self.projections[pane_id].source_index(&buffer.page.text);
         let count = source_index.chars;
@@ -2119,9 +2118,18 @@ impl HeditApp {
                 })
             });
             if let Some((key, modifiers)) = step.filter(|_| ctx.memory(|m| m.has_focus(id))) {
-                if let Some(next) =
+                let next = if !modifiers.shift && buffer.view.anchor != buffer.view.head {
+                    Some(bidi_view::visual_selection_edge(
+                        galley,
+                        bidi,
+                        projection.display(buffer.view.anchor),
+                        display_head,
+                        key == Key::ArrowRight,
+                    ))
+                } else {
                     bidi_view::visual_step(galley, bidi, display_head, key == Key::ArrowRight)
-                {
+                };
+                if let Some(next) = next {
                     ctx.input_mut(|i| i.consume_key(modifiers, key));
                     buffer.view.head = projection.source(next);
                     if !modifiers.shift {
@@ -2374,12 +2382,13 @@ impl HeditApp {
                         let selection_background = ui.painter().add(egui::Shape::Noop);
                         let caret_color = ui.visuals().text_cursor.stroke.color;
                         let selection_color = ui.visuals().selection.bg_fill;
+                        // Paint selection below the text without copying selected glyph meshes.
+                        ui.visuals_mut().selection.bg_fill = egui::Color32::TRANSPARENT;
                         if rtl_text {
-                            // egui places these by character index; draw them below instead.
                             ui.visuals_mut().text_cursor.stroke.color = egui::Color32::TRANSPARENT;
-                            ui.visuals_mut().selection.bg_fill = egui::Color32::TRANSPARENT;
                         }
                         let mut output = edit.show(ui);
+                        ui.visuals_mut().selection.bg_fill = selection_color;
                         let row_index = self.row_indexes[pane_id].get(&output.galley);
                         let visible_rows =
                             row_index.visible(&output.galley, output.galley_pos, ui.clip_rect());
@@ -2397,16 +2406,16 @@ impl HeditApp {
                             &mut output,
                             &bidi_rows,
                             projection.display(original_selection.anchor),
-                            selection_background,
-                            selection_color,
-                            visible_rows.clone(),
                         );
                         if bidi_rows.any() {
+                            #[cfg(target_os = "macos")]
+                            bidi_view::accessibility(ctx, id, &output.galley, &bidi_rows);
                             bidi_view::interact(
                                 ui,
                                 &mut output,
                                 &bidi_rows,
                                 selection_background,
+                                visible_rows.clone(),
                                 bidi_view::Look {
                                     caret: egui::Stroke::new(
                                         self.settings.caret_width,
@@ -2416,6 +2425,29 @@ impl HeditApp {
                                     selection: selection_color,
                                 },
                             );
+                        }
+                        if !bidi_rows.any() && output.response.has_focus() {
+                            if let Some(range) = &output.cursor_range {
+                                ui.painter().set(
+                                    selection_background,
+                                    egui::Shape::Vec(
+                                        editor_interaction::selection_rects(
+                                            &output.galley,
+                                            range,
+                                            visible_rows.clone(),
+                                        )
+                                        .into_iter()
+                                        .map(|r| {
+                                            egui::Shape::rect_filled(
+                                                r.translate(output.galley_pos.to_vec2()),
+                                                0.0,
+                                                selection_color,
+                                            )
+                                        })
+                                        .collect(),
+                                    ),
+                                );
+                            }
                         }
                         if self.settings.highlight_line {
                             if let Some(range) = &output.cursor_range {
@@ -2589,9 +2621,13 @@ impl HeditApp {
                                     ),
                                 );
                             } else {
-                                for rect in
-                                    bidi_view::range_rects(&output.galley, &bidi_rows, start, end)
-                                {
+                                for rect in bidi_view::range_rects_in_rows(
+                                    &output.galley,
+                                    &bidi_rows,
+                                    start,
+                                    end,
+                                    visible_rows.clone(),
+                                ) {
                                     ui.painter().rect_filled(
                                         rect.translate(offset),
                                         0.0,

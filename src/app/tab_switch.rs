@@ -67,13 +67,17 @@ impl HeditApp {
             self.tab_cycle.step = None;
         }
         let open: Vec<u64> = self.workspace.open.iter().map(|b| b.view.id).collect();
+        let open_ids: std::collections::HashSet<_> = open.iter().copied().collect();
         // Caches for closed files go too.
-        self.fold_cache.retain(|view| open.contains(&view));
-        self.spell.forget_closed(&open);
+        self.fold_cache.retain(|view| open_ids.contains(&view));
+        self.spell.forget_closed(&open_ids);
         let cycle = &mut self.tab_cycle;
-        cycle.recent.retain(|id| open.contains(id));
+        let mut seen = std::collections::HashSet::with_capacity(open.len());
+        cycle
+            .recent
+            .retain(|id| open_ids.contains(id) && seen.insert(*id));
         for id in &open {
-            if !cycle.recent.contains(id) {
+            if seen.insert(*id) {
                 cycle.recent.push(*id);
             }
         }

@@ -69,7 +69,10 @@ pub fn update_accesskit_for_text_widget(
                 for glyph in &row.glyphs {
                     let is_word_char = is_word_char(glyph.chr);
                     if is_word_char && was_at_word_end {
-                        word_lengths.push((character_lengths.len() - last_word_start) as _);
+                        push_word_length(
+                            &mut word_lengths,
+                            character_lengths.len() - last_word_start,
+                        );
                         last_word_start = character_lengths.len();
                     }
                     was_at_word_end = !is_word_char;
@@ -86,7 +89,7 @@ pub fn update_accesskit_for_text_widget(
                     character_positions.push(row.rect.max.x - row.rect.min.x);
                     character_widths.push(0.0);
                 }
-                word_lengths.push((character_lengths.len() - last_word_start) as _);
+                push_word_length(&mut word_lengths, character_lengths.len() - last_word_start);
 
                 builder.set_value(value);
                 builder.set_character_lengths(character_lengths);
@@ -96,4 +99,14 @@ pub fn update_accesskit_for_text_widget(
             });
         }
     });
+}
+
+// AccessKit stores word lengths as u8. Long identifiers must use representable
+// segments rather than wrapping their length and corrupting text navigation.
+fn push_word_length(lengths: &mut Vec<u8>, length: usize) {
+    lengths.extend(std::iter::repeat_n(u8::MAX, length / u8::MAX as usize));
+    let remainder = (length % u8::MAX as usize) as u8;
+    if remainder != 0 || length == 0 {
+        lengths.push(remainder);
+    }
 }

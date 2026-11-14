@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Collapse RTL selections to their visual left/right edge before moving, preserving expected plain-arrow behavior.
+
+- Give split editor IDs a separate namespace from accessibility rows and keep exported focus on a live node during dynamic views and asynchronous work, preventing native split-group Undo crashes.
+
+- Keep large selections responsive by painting visible backgrounds below shared glyph meshes, including RTL and split-group selections.
+- Virtualize the tab strip, reveal keyboard-selected tabs, and make tab-history membership checks linear in the number of open views.
+- Expose full tab names, selected state and descriptive close actions to accessibility tools; prevent word-length overflow for long identifiers and correct pure RTL text-run direction/positions.
+- Include the command palette in key-binding configuration and shortcut conflict resolution.
+- Box open-document action payloads to address the Windows Clippy size failure; add a quality-audit matrix, regression fixtures and measured performance limits to the existing developer guide.
+
 - Keep large-file completion indexing and ranking off the UI thread, with bounded snapshots, word storage and cancellable worker slots.
 - Guard completion results and acceptance against tab, pane, revision, cursor and prefix changes; cancel delayed suggestions on Escape and navigation.
 - Reuse indexed cursor offsets for completion prefixes, preserve highlighted choices during background refreshes, and discard words from closed completion scopes.

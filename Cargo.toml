@@ -76,6 +76,10 @@ windows-sys = { version = "0.61", features = ["Win32_Security", "Win32_Storage_F
 plist = "1"
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+# Exercise successive trees with the same consumer as the native adapter.
+accesskit_consumer = "=0.26.0"
+
 # Native editor row sharing and document layout; see DEVELOPER_GUIDE.md
 # and vendor/egui_commonmark/PATCH.md.
 [patch.crates-io]

@@ -28,7 +28,7 @@ impl HeditApp {
             self.job(ctx, move || {
                 let mut doc = remote.scratch(id)?;
                 let page = doc.page(0)?;
-                Ok(Action::Add(doc, page, 0))
+                Ok(Action::Add(Box::new(doc), page, 0))
             });
         }
     }

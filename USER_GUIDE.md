@@ -169,6 +169,10 @@ your own. **Ctrl+S** saves to disk, asking for a path the first time.
 
 ### Opening and switching
 
+Keyboard tab navigation scrolls the tab strip to the selected file. Assistive
+technology receives full tab names and which tab is active, even when the visual
+label is shortened.
+
 Open files with **Ctrl+O**, by dragging them into the window, or from the terminal.
 A dot on a tab marks unsaved changes. Hover over it to reveal the close button.
 

@@ -132,7 +132,7 @@ impl Cache {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     pub(in crate::app) fn layout(text: &str, width: f32, scale: f32) -> Arc<Galley> {
         let ctx = egui::Context::default();

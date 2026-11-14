@@ -438,7 +438,7 @@ impl HeditApp {
             ctx.memory_mut(|memory| {
                 memory.surrender_focus(base);
                 for pane in 1..panes::MAX_GROUPS {
-                    memory.surrender_focus(base.with(pane));
+                    memory.surrender_focus(base.with(("pane", pane)));
                 }
             });
         }

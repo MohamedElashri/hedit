@@ -388,7 +388,7 @@ mod tests {
     fn added(id: u64) -> Action {
         let mut doc = Document::empty(id);
         let page = doc.page(0).unwrap();
-        Action::Add(doc, page, 0)
+        Action::Add(Box::new(doc), page, 0)
     }
     #[test]
     fn typing_during_a_stalled_open_keeps_focus_and_applies_the_file_in_background() {
@@ -528,7 +528,7 @@ mod tests {
         let mut duplicate = Document::open(app.workspace.editor.id(), &path).unwrap();
         let page = duplicate.page(0).unwrap();
         app.read_open(&ctx, "alias".into(), move || {
-            Ok(Action::Add(duplicate, page, 0))
+            Ok(Action::Add(Box::new(duplicate), page, 0))
         });
         finish_app_job(&mut app, &ctx);
         assert_eq!(app.active().view.id, id);
@@ -578,7 +578,7 @@ mod ordering_tests {
                 rx.recv().unwrap();
                 let mut doc = Document::empty(id);
                 let page = doc.page(0)?;
-                Ok(Action::Add(doc, page, 0))
+                Ok(Action::Add(Box::new(doc), page, 0))
             });
         }
         releases[1].send(()).unwrap();

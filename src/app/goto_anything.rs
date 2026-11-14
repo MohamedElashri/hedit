@@ -213,7 +213,7 @@ impl HeditApp {
             let offset = doc.location_offset(line as u64, column.unwrap_or(1) as u64)?;
             let page = doc.page(offset.saturating_sub(4096))?;
             let cursor = page.text[..(offset - page.start) as usize].chars().count();
-            Ok(Action::Add(doc, page, cursor))
+            Ok(Action::Add(Box::new(doc), page, cursor))
         });
     }
 }

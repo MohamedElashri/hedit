@@ -722,8 +722,9 @@ impl TextEdit<'_> {
 
             let has_focus = ui.memory(|mem| mem.has_focus(id));
 
-            if has_focus {
+            if has_focus && ui.visuals().selection.bg_fill.a() != 0 {
                 if let Some(cursor_range) = state.cursor.range(&galley) {
+                    // Transparent selection lets a caller paint below shared glyph meshes.
                     // Add text selection rectangles to the galley:
                     paint_text_selection(&mut galley, ui.visuals(), &cursor_range, None);
                 }
