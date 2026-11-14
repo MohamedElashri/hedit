@@ -99,7 +99,7 @@ impl egui::TextBuffer for EditorText<'_> {
         let byte = self.byte_index_from_char_index(at);
         if let Some(index) = &mut self.index {
             let at = at.min(index.chars);
-            Arc::make_mut(index).replace(byte, byte, at, at, &text);
+            Arc::make_mut(index).replace(self.text, byte..byte, at..at, &text);
         }
         self.text.insert_str(byte, &text);
         text.chars().count()
@@ -109,7 +109,7 @@ impl egui::TextBuffer for EditorText<'_> {
         let end = self.byte_index_from_char_index(range.end);
         if let Some(index) = &mut self.index {
             let (a, b) = (range.start.min(index.chars), range.end.min(index.chars));
-            Arc::make_mut(index).replace(start, end, a, b, "");
+            Arc::make_mut(index).replace(self.text, start..end, a..b, "");
         }
         self.text.replace_range(start..end, "");
     }

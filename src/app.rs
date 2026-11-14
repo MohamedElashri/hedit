@@ -44,6 +44,8 @@ mod goto_matches;
 mod goto_tests;
 #[cfg(test)]
 mod interaction_tests;
+#[cfg(test)]
+mod long_line_tests;
 mod macros;
 mod markdown;
 #[cfg(test)]

@@ -22,6 +22,7 @@ impl CursorIndexCache {
         self.0.get().map_or(0, |index| {
             std::mem::size_of::<CursorIndex>()
                 + index.rows.capacity() * std::mem::size_of::<CursorRow>()
+                + index.monotonic_x.capacity() * std::mem::size_of::<OnceLock<bool>>()
         })
     }
 }
@@ -37,6 +38,8 @@ pub struct CursorIndex {
     pub end: CursorRow,
     /// Binary pointer lookup is only valid for finite, non-overlapping rows.
     pub(crate) disjoint: bool,
+    /// Long rows whose logical glyph centers allow an ordered horizontal search.
+    monotonic_x: Vec<OnceLock<bool>>,
 }
 impl CursorIndex {
     fn new(rows: &[Arc<Row>]) -> Self {
@@ -48,9 +51,11 @@ impl CursorIndex {
                 offset: 0,
             },
             disjoint: true,
+            monotonic_x: Vec::with_capacity(rows.len()),
         };
         let mut bottom = f32::NEG_INFINITY;
         for row in rows {
+            index.monotonic_x.push(OnceLock::new());
             index.rows.push(index.end);
             index.end.start += row.char_count_including_newline();
             if row.ends_with_newline {
@@ -70,7 +75,7 @@ impl CursorIndex {
 }
 impl Galley {
     /// Cached offsets for the current row topology. Invalidate after changing
-    /// glyph counts, newline flags, row order or vertical row geometry.
+    /// glyph counts, newline flags, row order or glyph/row geometry.
     pub fn cursor_index(&self) -> &CursorIndex {
         let index = self
             .cursor_cache
@@ -94,6 +99,27 @@ impl Galley {
     pub fn row_start(&self, row: usize) -> usize {
         let index = self.cursor_index();
         index.rows.get(row).unwrap_or(&index.end).start
+    }
+    pub(crate) fn column_at(&self, row: usize, x: f32) -> usize {
+        let r = &self.rows[row];
+        if x.is_finite()
+            && r.glyphs.len() >= 128
+            && *self.cursor_index().monotonic_x[row].get_or_init(|| {
+                let mut previous = f32::NEG_INFINITY;
+                r.glyphs.iter().all(|glyph| {
+                    let center = glyph.logical_rect().center().x;
+                    let ordered = center.is_finite() && previous <= center;
+                    previous = center;
+                    ordered
+                })
+            })
+        {
+            // The legacy walk returns the first center strictly greater than x.
+            r.glyphs
+                .partition_point(|glyph| glyph.logical_rect().center().x <= x)
+        } else {
+            r.char_at(x)
+        }
     }
     /// First row ending strictly below `y`, or the last row. Used by Hedit's
     /// RTL hit testing, which intentionally treats shared boundaries differently

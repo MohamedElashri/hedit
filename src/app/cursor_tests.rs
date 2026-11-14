@@ -746,3 +746,122 @@ fn pointer_drag_across_frames_selects_text_and_undo_restores_it_in_a_large_edito
     finish_app_job(&mut app, &ctx);
     assert_eq!(app.active().page.text, source);
 }
+
+#[test]
+fn long_row_pointer_lookup_matches_the_original_walk_at_centers_and_irregular_geometry() {
+    let source = "αe\u{301}🦀 varied-width text ".repeat(12);
+    for scale in [1.0, 1.25, 1.5, 2.0] {
+        for mode in [
+            "ordered", "equal", "reversed", "negative", "nan", "infinite",
+        ] {
+            let mut g = (*layout(&source, f32::INFINITY, scale, usize::MAX)).clone();
+            let row = Arc::make_mut(&mut g.rows[0]);
+            match mode {
+                "equal" => {
+                    let x = row.glyphs[100].pos.x;
+                    for glyph in &mut row.glyphs[100..150] {
+                        glyph.pos.x = x;
+                        glyph.advance_width = 0.0;
+                    }
+                }
+                "reversed" => row.glyphs.reverse(),
+                "negative" => {
+                    row.glyphs[100].advance_width = -500.0;
+                }
+                "nan" => row.glyphs[100].pos.x = f32::NAN,
+                "infinite" => row.glyphs[100].pos.x = f32::INFINITY,
+                _ => {}
+            }
+            g.invalidate_cursor_index();
+            let row = &g.rows[0];
+            let xs = row
+                .glyphs
+                .iter()
+                .flat_map(|glyph| {
+                    let x = glyph.logical_rect().center().x;
+                    [x - 0.001, x, x + 0.001]
+                })
+                .chain([f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -0.0]);
+            for x in xs {
+                let pos = egui::vec2(x, row.rect.center().y);
+                same(g.cursor_from_pos(pos), legacy::cursor_from_pos(&g, pos));
+            }
+        }
+    }
+}
+
+#[test]
+fn warmed_long_row_indexes_are_invalidated_by_rtl_shaping() {
+    for source in ["שלום ".repeat(100), "English שלום 123 ".repeat(100)] {
+        let g = layout(&source, f32::INFINITY, 1.25, usize::MAX);
+        g.cursor_index();
+        let ctx = egui::Context::default();
+        let mut shaped = None;
+        let _ = ctx.run(Default::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                shaped =
+                    Some(ui.fonts(|f| bidi_view::apply(f, g.clone(), bidi_view::Base::Auto).0));
+            });
+        });
+        let shaped = shaped.unwrap();
+        for glyph in &shaped.rows[0].glyphs {
+            let pos = egui::vec2(
+                glyph.logical_rect().center().x,
+                shaped.rows[0].rect.center().y,
+            );
+            same(
+                shaped.cursor_from_pos(pos),
+                legacy::cursor_from_pos(&shaped, pos),
+            );
+        }
+    }
+}
+
+#[test]
+fn vertical_navigation_between_long_rows_keeps_the_original_goal_column() {
+    let g = layout(
+        &format!(
+            "{}\n{}\n{}",
+            "varied width ".repeat(100),
+            "α🦀 ".repeat(300),
+            "last ".repeat(200)
+        ),
+        f32::INFINITY,
+        1.25,
+        usize::MAX,
+    );
+    for row in 0..g.rows.len() {
+        for column in [0, 127, 255, 899, 1200, 2000] {
+            let cursor = g.from_rcursor(RCursor { row, column });
+            for down in [false, true] {
+                let actual = if down {
+                    g.cursor_down_one_row(&cursor)
+                } else {
+                    g.cursor_up_one_row(&cursor)
+                };
+                if (!down && row == 0) || (down && row + 1 == g.rows.len()) {
+                    continue;
+                }
+                let next = if down { row + 1 } else { row - 1 };
+                let x = legacy::pos_from_cursor(&g, &cursor).center().x;
+                let keep_column =
+                    column >= g.rows[row].glyphs.len() || x > g.rows[next].rect.right();
+                let expected_column = if keep_column {
+                    column
+                } else {
+                    g.rows[next].char_at(x)
+                };
+                same(
+                    actual,
+                    legacy::from_rcursor(
+                        &g,
+                        RCursor {
+                            row: next,
+                            column: expected_column,
+                        },
+                    ),
+                );
+            }
+        }
+    }
+}

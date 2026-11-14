@@ -510,7 +510,7 @@ pub struct Galley {
     pub rows: Vec<Arc<Row>>,
 
     /// Derived cursor metadata. Reset with `invalidate_cursor_index` after
-    /// changing row topology or vertical geometry; color-only changes preserve it.
+    /// changing row topology or glyph/row geometry; color-only changes preserve it.
     #[cfg_attr(feature = "serde", serde(skip))]
     pub cursor_cache: super::CursorIndexCache,
 
@@ -831,7 +831,7 @@ impl Galley {
                     }
                 }
                 let row = &self.rows[row_nr];
-                let column = row.char_at(pos.x);
+                let column = self.column_at(row_nr, pos.x);
                 let at = self.cursor_index().rows[row_nr];
                 let prefer_next_row = column < row.char_count_excluding_newline();
                 return Cursor {
@@ -863,7 +863,7 @@ impl Galley {
             let y_dist = (row.min_y() - pos.y).abs().min((row.max_y() - pos.y).abs());
             if is_pos_within_row || y_dist < best_y_dist {
                 best_y_dist = y_dist;
-                let column = row.char_at(pos.x);
+                let column = self.column_at(row_nr, pos.x);
                 let prefer_next_row = column < row.char_count_excluding_newline();
                 cursor = Cursor {
                     ccursor: CCursor {
@@ -1105,7 +1105,7 @@ impl Galley {
                     // beyond the end of this row - keep same column
                     cursor.rcursor.column
                 } else {
-                    self.rows[new_row].char_at(x)
+                    self.column_at(new_row, x)
                 };
                 RCursor {
                     row: new_row,
@@ -1136,7 +1136,7 @@ impl Galley {
                     // beyond the end of the next row - keep same column
                     cursor.rcursor.column
                 } else {
-                    self.rows[new_row].char_at(x)
+                    self.column_at(new_row, x)
                 };
                 RCursor {
                     row: new_row,

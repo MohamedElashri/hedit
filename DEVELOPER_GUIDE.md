@@ -183,8 +183,17 @@ Large editable pages use paragraph-aligned blocks (about 4 KiB each). An inline
 edit reshapes the affected blocks and shares unchanged rows with the previous
 frame. A single long paragraph can still require a large layout; adding or
 removing rows and changing syntax colors can also require copying later rows.
-The source line index updates from UTF-8-safe splices, and an unchanged tab can
-reuse its layout. Each pane keeps at most three inactive layouts within a
+The source coordinate index updates from UTF-8-safe splices. Its balanced chunks
+cover at most 256 Unicode scalars; interior chunks stay at least half full after
+edits. Byte lookup and supported tab-column lookup use a binary search followed
+by at most one chunk's scalar walk. Chunk summaries carry column transforms for
+the editor's tab widths 1–8, including CRLF and newline resets. Other widths retain
+the scalar reference path. Edits rebuild the affected chunks and adjacent
+boundaries, then adjust suffix offsets and column summaries; this metadata update
+still scales with the number of chunks. Large deletions release excess capacity.
+Only offsets and column metadata enter these RAM caches, including in SSH windows.
+Initial indexing, minimal-splice discovery and paragraph shaping still scan text.
+An unchanged tab can reuse its layout. Each pane keeps at most three inactive layouts within a
 64 MiB accounting budget, in addition to its active layout. This is a cache
 budget, not a limit on total editor memory.
 
@@ -203,9 +212,12 @@ The renderer also keeps a lazy, thread-safe cursor index on each galley.
 Character/paragraph lookups use binary search; row and end lookups use cached
 offsets. Pointer lookup uses binary search for finite rows with non-overlapping
 interiors, preserving shared-boundary and equal-distance choices. Overlapping
-or irregular geometry retains the original nearest-row walk. Glyph lookup
-within the chosen row is unchanged, so a single very long row can still cost
-more than a short one.
+or irregular geometry retains the original nearest-row walk. Within rows of at
+least 128 glyphs, the first horizontal lookup lazily checks whether glyph centers
+are finite and nondecreasing. Eligible rows use binary search with the original
+strict midpoint tie rule; irregular, reordered RTL and nonfinite geometry retain
+the linear walk. First validation still visits the row's glyphs. Pointer placement
+and vertical arrow navigation share this lookup.
 
 `CursorIndexCache` shares immutable metadata across galley clones. Its contents
 are omitted from serialization and galley equality. The editor's viewport row
@@ -213,8 +225,8 @@ cache shares the same offsets without retaining glyphs or meshes. Initialized
 index storage is counted in the inactive-layout budget. Every layout constructor,
 including incremental block assembly and empty layouts, starts with a fresh
 cache. Call `invalidate_cursor_index` after changing glyph counts, newline flags,
-row order, or vertical geometry. Color-only changes can share the index;
-Markdown line-padding changes explicitly invalidate it.
+row order, or glyph/row geometry. Color-only changes can share the index;
+RTL shaping and Markdown line-padding changes explicitly invalidate it.
 
 `app/cursor_tests.rs` retains the pre-index linear routines as independent
 references. Checks compare cursor fields and wrap preferences, including goal
@@ -225,6 +237,40 @@ zero-height rows, geometry gaps, incremental edits and fractional scales.
 2.20 ms to 0.1 µs and character lookup from about 55 µs to 0.02 µs. These are
 isolated CPU calls; first use builds the index, and native event/display latency
 is excluded. Run profiles on an otherwise idle machine.
+
+`app/long_line_tests.rs` adds real TextBuffer edit/paste/Undo checks in split
+groups for identity and tab-expanded Unicode/CRLF text. Differential fixtures
+exercise checkpoint boundaries, repeated edits, tab-width changes, snapshot
+isolation, chunk density, midpoint ties, irregular glyph geometry, and warmed
+indexes followed by RTL reshaping.
+
+The ignored `profile_long_line_coordinates` isolates warm coordinate queries near
+the end of 165,000-character, one-million-character and Unicode/tab fixtures. On
+the development Mac, the million-character ASCII line measured approximately:
+
+| Warm query | Before | After |
+| --- | ---: | ---: |
+| Character to UTF-8 byte | 895 µs | 0.2 µs |
+| Logical line/column | 1,386 µs | 1.0 µs |
+| Pointer to cursor | 1,207 µs | 0.1 µs |
+
+The optimized macOS app was also tested over pinned loopback SSH with a
+million-character first line. Native checks reached column 1,000,010, selected
+and replaced its end marker with the mouse, restored it with Undo, and preserved
+the preferred column while moving down to a shorter row and back up. A separate
+long Unicode/tab file accepted an unsaved CRLF draft; after host durability and
+SIGKILL of the actual client, restarting recovered that draft. Saved files stayed
+unchanged and the client session contained only its log.
+
+These are individual CPU queries, excluding cold initialization, rendering,
+native event delivery and SSH durability. Whole-paragraph reshaping and long-row
+rendering remain separate costs; these results are not end-to-end typing latency
+or worst-case guarantees. Reproduce on an otherwise idle machine:
+
+```sh
+cargo test --locked --release --bin hedit profile_long_line_coordinates -- --ignored --nocapture --test-threads=1
+```
+
 
 The editor preserves TextEdit paragraph cursors while the displayed text and
 public selection agree, keeping preferred columns and soft-wrap affinity across
@@ -278,8 +324,8 @@ current snapshot/query identity before publication.
 
 Completion prefixes reuse the source line index and cache unchanged
 view/revision/cursor lookups. Reverse scanning stops after 65 characters, since
-indexed words have at most 64. A single extremely long logical line can still
-make character-to-byte lookup expensive. Acceptance checks view, pane, revision,
+indexed words have at most 64. Sparse source checkpoints bound the final character-to-byte walk, including
+within long logical lines. Acceptance checks view, pane, revision,
 head, start and exact typed prefix. Concurrent text/paste/navigation and accept
 keys cannot apply a choice from the previous editor frame. Escape cancels delayed
 requests too; keyboard-highlighted choices remain stable during index refreshes.

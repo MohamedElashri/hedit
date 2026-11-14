@@ -130,6 +130,7 @@ pub(super) fn apply(fonts: &Fonts, galley: Arc<Galley>, base: Base) -> (Arc<Gall
         .map(|row| row.rect.max.x)
         .fold(galley.rect.max.x, f32::max);
     galley.rect.max.x = right;
+    galley.invalidate_cursor_index();
     (Arc::new(galley), BidiRows { rows: dirs })
 }
 

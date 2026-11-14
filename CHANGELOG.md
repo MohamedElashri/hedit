@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Index long-line byte and tab-column coordinates with balanced, incremental Unicode checkpoints kept in RAM.
+- Speed pointer placement and vertical navigation in long ordered glyph rows with lazy binary lookup; retain existing midpoint and irregular/RTL behavior.
+- Add differential long-line fixtures and split-editor edit/paste/Undo checks for Unicode, tabs and CRLF text.
+
 - Collapse RTL selections to their visual left/right edge before moving, preserving expected plain-arrow behavior.
 
 - Give split editor IDs a separate namespace from accessibility rows and keep exported focus on a live node during dynamic views and asynchronous work, preventing native split-group Undo crashes.
