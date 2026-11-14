@@ -180,7 +180,10 @@ Cancelling prevents pending results from changing your tabs; an OS or SSH read
 already in progress may finish internally.
 
 - **Ctrl+P** finds open files and files in your folders by letters in order
-  (`srcprj` finds `src/project.rs`).
+  (`srcprj` finds `src/project.rs`). Filename searches reuse an in-memory index
+  while you type. Reopening the picker refreshes older results; **Refresh folders**
+  picks up outside changes immediately. Indexing runs in the background, and the
+  picker marks incomplete results or folders it could not read.
   Add `@symbol`, `:line`, or `#text` to navigate inside a file. Large current-file
   symbol and text searches run in the background and refresh as you type.
 - **Ctrl+Tab** goes back to the file you used before; hold Ctrl and press Tab
@@ -226,7 +229,11 @@ a folder to the sidebar; you can have several. Right-click an entry to create,
 rename, move, duplicate, trash, copy the path of, or reveal it; nothing is
 overwritten without asking. **File → Refresh folders** picks up outside changes.
 Folders such as `.git`, `node_modules`, and `target` are hidden from the tree and
-searches; change the list under **Settings → Folders & Search**.
+searches; change the list under **Settings → Folders & Search**. Large expanded
+trees draw only the rows in view. The browser and filename index have size limits;
+a notice appears when a folder or workspace cannot be fully listed. Filename
+indexing skips directory symlinks, and keeps names in memory without writing a
+search cache to disk, including in SSH workspaces.
 Open files appear in the tab bar. The sidebar contains folders and a shortcut
 to closed-file recovery.
 

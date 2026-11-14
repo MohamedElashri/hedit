@@ -1745,6 +1745,9 @@ impl HeditApp {
             }
             Command::Switcher | Command::Palette => {
                 self.cancel_theme_palette(ctx);
+                if command == Command::Switcher {
+                    self.project.begin_search();
+                }
                 self.palette = true;
                 self.pick_list = None;
                 self.commands_only = command == Command::Palette;
@@ -2013,6 +2016,17 @@ impl HeditApp {
             }
             items.extend(scored.into_iter().map(|(_, item)| item));
             if !commands && !paste && !here && !self.workspace.folders.is_empty() {
+                ui.horizontal(|ui| {
+                    if self.project.indexing() {
+                        targets_pending = true;
+                        ui.spinner();
+                        ui.weak("Indexing filenames…");
+                    }
+                    if ui.small_button("Refresh folders").clicked() {
+                        self.project.refresh_search();
+                        ctx.request_repaint();
+                    }
+                });
                 match &self.project.search {
                     Some(Ok(results)) => {
                         for entry in &results.entries {
@@ -2040,10 +2054,9 @@ impl HeditApp {
                     }
                     None => {
                         targets_pending = true;
-                        ui.horizontal(|ui| {
-                            ui.spinner();
-                            ui.weak("Searching folders…");
-                        });
+                        if !self.project.indexing() {
+                            ui.horizontal(|ui| { ui.spinner(); ui.weak("Finding files…"); });
+                        }
                     }
                 }
             }

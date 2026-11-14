@@ -94,7 +94,7 @@ for theme in dark light; do
     python3 scripts/ppm-to-png.py /tmp/shots/screenshot-$theme.ppm docs/images/screenshot-$theme.png
 done
 
-# CPU timings for the syntax menu and for typing with completions on
+# CPU timings for typing, navigation, the folder sidebar and filename search
 cargo test --locked --release --bin hedit profile_ -- --ignored --nocapture
 ```
 
@@ -145,6 +145,36 @@ Symbol indexes survive query changes. Scans over 64 KiB run on one worker, and
 stale results cannot populate a newer query. The picker lays out visible result
 rows only. The ignored `profile_goto_navigation` profile measures warm picker
 frames for symbol and text searches over an approximately 800 KiB source buffer.
+
+The folder sidebar caches a flattened expanded hierarchy and creates widgets
+only for visible rows. Row identities include the root and path, including for
+overlapping roots. Reveal scrolls to the cached row before rendering it. The tree
+has accounting limits of 50,000 rows and 8 MiB; directory listings have a separate
+256-directory / 16 MiB budget. Collapsed subtrees release unused listings. At
+most four listing readers run, including stale reads from before a refresh;
+an OS or SSH call already running can finish after cancellation.
+
+Filename search has one coalescing worker and a single response mailbox. Its
+metadata catalogue survives query changes, so warm queries perform no directory
+reads. Roots, refreshes and exclusion changes invalidate it; request tickets
+reject older query results. Reopening a completed picker after two seconds
+refreshes the catalogue once. The picker also offers **Refresh folders**.
+Automatic traversal never follows directory symlinks and uses backend-returned
+paths verbatim, including encoded SSH URIs. Only filenames and metadata enter
+the RAM cache; nothing is persisted on the client. Traversal stops at 50,000
+entries, an 8 MiB accounting budget, or five seconds between directory reads.
+One directory read may exceed that time; the existing backend timeout still
+applies. Each listing includes at most 2,000 entries. Partial scans and unreadable
+directories remain visible in the picker. These are accounting budgets, not
+hard process-memory limits.
+
+The ignored `profile_large_folder_sidebar` measures warm frames with 10,000
+expanded files. `profile_filename_scan_and_index` compares repeated directory
+walks with warm filtering over the same 10,000-file fixture;
+`profile_warm_filename_index` isolates the filter. On the development Mac, the
+sidebar changed from 5.16 ms to 0.06–0.08 ms per CPU frame, and filename queries
+from about 13.5–13.9 ms per walk to 0.9 ms from the cache. These measurements exclude
+native input delivery and display latency and are not CI timing thresholds.
 
 Folder searches own immutable open-file snapshots and a separate cancellation
 token; they never acquire the editor's mutation lock. Completion cannot clear a

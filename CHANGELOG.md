@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Render only visible folder rows, cache expanded hierarchies, and bound directory metadata and concurrent reads across refreshes.
+- Reuse an in-memory filename index across Go to Anything queries, coalesce background work, and reject stale results after query, root or exclusion changes.
+- Add filename-index progress and refresh controls, with explicit incomplete-result notices and no directory-symlink traversal or disk cache.
+
 - Open files on a bounded background queue while keeping the current editor usable; cancel pending opens and protect newer edits from stale results.
 - Cache Go to Anything matches, scan large buffers in the background, and render only visible picker rows.
 - Correct SSH file-symbol navigation and durability barriers during concurrent typing; keep unlisted clean recovery baselines in Closed Files while reopening unsaved drafts.
