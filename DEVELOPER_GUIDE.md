@@ -74,7 +74,7 @@ smoke-tests a Linux release package.
 | --- | --- |
 | `make static` | Formatting, policy, docs, and script checks; no compiling |
 | `make lint` | `make static`, then Clippy |
-| `make test` | Rust tests plus numeric trace, Zig setup, release metadata, installer, macOS, and Windows package tests |
+| `make test` | Rust tests plus numeric trace, SSH fixture setup, Zig setup, release metadata, installer, macOS, and Windows package tests |
 | `make test-macos` | The tests that apply on macOS (the CI macOS job) |
 | `make test-remote` | Headless SSH workspace and host recovery tests |
 | `make test-remote-live` | Disposable loopback SSH server, real client/worker crash tests, and latency sampling; requires `sshd` |
@@ -116,16 +116,27 @@ every feature is bug-free or every native platform has been exercised.
 | Markdown and media | Reader, layout, split-scroll and resource-loader tests cover source/preview behavior, images, math and diagrams. |
 | SSH privacy and recovery | Headless helper and real loopback SSH/crash suites; targeted native editing/Undo and recovery checks. Derived UI caches remain in RAM and remote recovery remains on the SSH host. |
 | Native frame processing | Opt-in numeric CPU/GPU tracing, core-only query dispatch and privacy/backpressure regressions, plus live macOS SSH typing/scroll samples. Large-file native CPU spikes remain; physical input/display latency is unmeasured. See [native frame diagnostics](#native-frame-diagnostics). |
-| Accessibility | Native AccessKit labels/text, focus reachability through split/busy/hidden-editor transitions, tab role/full-name/selected-state tests, descriptive close controls, valid word-length metadata for long ASCII and Unicode identifiers, and right-to-left direction/positions for pure RTL runs. Native screen-reader speech and mixed-script navigation still need dedicated assistive-technology testing. |
+| Accessibility | Native AccessKit labels/text, focus reachability through split/busy/hidden-editor transitions, tab role/full-name/selected-state tests, descriptive close controls, valid word-length metadata for long ASCII and Unicode identifiers, and right-to-left direction/positions for pure RTL runs. Extended macOS VoiceOver testing is deferred by project scope; existing regressions remain enabled. |
 | Packaging and platforms | Local macOS Rust/Clippy/package checks and offline package fixtures. The [validation branch CI](https://github.com/MohamedElashri/hedit/actions/workflows/ci.yml?query=branch%3Afeature%2Fcross-platform-validation) runs Linux/macOS checks, Windows checks/packaging and live loopback SSH crash tests. Inspect the run's commit and conclusions; CI does not establish interactive GUI behavior on Linux or Windows. |
 
-The dedicated VoiceOver/mixed-script pass remains open. The optimized SSH fixture
-started successfully, but the native automation service failed to start its pipe
-even after a runtime reset, before any accessibility actions could run. No
-VoiceOver settings were changed. Existing AccessKit consumer and bidi regression
-tests still pass; these do not substitute for native speech or navigation testing.
-Rex host discovery found only this Mac and no connected Linux or Windows host,
-so interactive GUI checks on those platforms also remain unavailable.
+Extended macOS VoiceOver testing is deferred and does not block the Linux
+handoff. Ordinary mixed-script editing, selection, clipboard and Undo remain in
+the Linux functional review. Keep existing AccessKit consumer and bidi tests;
+they do not establish native speech behavior. Linux desktop interaction and
+performance are the next validation targets; no interactive Linux or Windows
+host was available during the Mac work.
+
+The [validation run at a82de2d](https://github.com/MohamedElashri/hedit/actions/runs/43630098320)
+passed Linux, macOS, Windows checks/packaging and live SSH crash tests. For a Linux
+checkout, use `feature/cross-platform-validation`, then run `make ci`,
+`cargo test --locked --no-default-features` and `make test-remote-live`. Run these
+before native desktop measurements, on a local filesystem supported by recovery.
+Manual CI dispatch also accepts `validation_only=true` to run all check jobs
+without rebuilding Windows release packages; ordinary pushes retain packaging.
+Use a fresh `--session-dir` and temporary XDG config/data/cache/state roots for
+GUI fixtures. Measure the optimized binary on the actual desktop; headless CI
+and package smoke checks do not establish Wayland/X11 interaction or display
+latency. See [native frame diagnostics](#native-frame-diagnostics) for tracing.
 
 The [SSH feature CI run at 78dcf65](https://github.com/MohamedElashri/hedit/actions/runs/43488093934)
 passed Linux, macOS and remote SSH jobs, but Windows Clippy rejected the size of
@@ -180,9 +191,10 @@ latency, GPU presentation, or SSH durability):
 The four-pane 40,000-line fixture measured about 8.2 ms per warm CPU frame.
 Typing in the 165,000-character paragraph sampled p50/p95 of 7.6/9.0 ms at its
 start and 10.8/13.3 ms at its end. These are fixtures, not worst-case guarantees:
-a single larger paragraph still reshapes as a whole after an edit. Keep long-line
-layout, native screen-reader behavior, fresh platform CI and live Linux/Windows
-checks open until separately verified. Parallel macOS recovery tests have also
+a larger paragraph still reshapes as a whole for unsupported edits; compatible
+long unwrapped appends reuse their prefix as described below. Native large-file
+CPU spikes and interactive Linux/Windows checks remain open; extended macOS
+screen-reader work is deferred. Parallel macOS recovery tests have also
 occasionally returned `Busy` immediately after a journal is dropped/reopened;
 serial runs corroborate recovery behavior without weakening the production lock.
 
@@ -965,6 +977,24 @@ cases cover both sides of edit commit, source publication and compaction, plus
 reconnecting the production client after losing a committed edit's receipt.
 The editor backend probe exercises files, search, Git, builds, PTYs, scratchpads,
 stale views, large reads/uploads, host-only view metadata and reload previews.
+
+Fixtures default to private temporary children under `target/rl` on the
+checkout's filesystem. This avoids assuming `/tmp` is durable: many Linux
+desktops mount it as tmpfs, which recovery correctly rejects. Select another
+supported local filesystem with `HEDIT_REMOTE_LIVE_DIR` or the script's
+`--work-dir` option, for example:
+
+```sh
+HEDIT_REMOTE_LIVE_DIR="$HOME/.local/state/hedit-live-tests" make test-remote-live
+```
+
+The harness creates the parent if needed and removes only its own temporary
+child. Use a short path to leave room for worker Unix sockets, without `%`,
+`${...}` or control characters that OpenSSH could interpret. Paths containing
+spaces and quotes are quoted in generated client/server configs. Run the tests
+as your normal account; they need the `sshd` executable, not changes to an
+existing system SSH service. Fixture placement does not relax the production
+filesystem, ownership, permission or SSH policy checks.
 
 The fault-enabled helper is built separately and cannot be built in release
 mode. Avoid logging document contents, patches, input, terminal output, tokens or

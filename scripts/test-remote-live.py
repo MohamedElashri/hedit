@@ -47,9 +47,25 @@ def available_port():
         return s.getsockname()[1]
 
 
+def config_value(value):
+    """Quote one OpenSSH config argument, rather than a shell argument."""
+    text = str(value)
+    if any(c in text for c in ('\n', '\r', '\0', '%', '${')):
+        raise ValueError('SSH fixture paths cannot contain control characters or OpenSSH expansion tokens; choose another --work-dir')
+    return '"' + text.replace('\\', '\\\\').replace('"', '\\"') + '"'
+
+
 class Lab:
     def __init__(self):
-        self.temp = tempfile.TemporaryDirectory(prefix="hedit-ssh-", dir="/tmp")
+        # /tmp is commonly tmpfs on Linux, which the recovery engine correctly
+        # rejects. Prefer the checkout's filesystem; allow a different durable
+        # filesystem without changing production recovery validation.
+        work_dir = getattr(ARGS, "work_dir", None) or ROOT / "target/rl"
+        work_dir = Path(work_dir).resolve()
+        config_value(work_dir)
+        work_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
+        # Short names leave room for the worker's Unix socket path.
+        self.temp = tempfile.TemporaryDirectory(prefix="ssh-", dir=work_dir)
         self.base = Path(self.temp.name).resolve()
         self.host_key = self.base / "host-key"
         self.client_key = self.base / "client-key"
@@ -75,15 +91,15 @@ class Lab:
     HostName 127.0.0.1
     User {getpass.getuser()}
     Port {self.port}
-    IdentityFile {self.client_key}
+    IdentityFile {config_value(self.client_key)}
     IdentitiesOnly yes
     IdentityAgent none
-    UserKnownHostsFile {self.known}
+    UserKnownHostsFile {config_value(self.known)}
     GlobalKnownHostsFile /dev/null
     StrictHostKeyChecking yes
     BatchMode yes
     PermitLocalCommand yes
-    LocalCommand touch {self.sentinel}
+    LocalCommand touch {shlex.quote(str(self.sentinel))}
     LocalForward 127.0.0.1:{self.forward_port} 127.0.0.1:1
 """)
         config = self.base / "sshd.conf"
@@ -91,17 +107,17 @@ class Lab:
         remote_home.mkdir(mode=0o700)
         config.write_text(f"""Port {self.port}
 ListenAddress 127.0.0.1
-HostKey {self.host_key}
-AuthorizedKeysFile {authorized}
-PidFile {self.base / 'sshd.pid'}
+HostKey {config_value(self.host_key)}
+AuthorizedKeysFile {config_value(authorized)}
+PidFile {config_value(self.base / 'sshd.pid')}
 PasswordAuthentication no
 KbdInteractiveAuthentication no
 PubkeyAuthentication yes
 UsePAM no
 PermitUserRC no
 PermitUserEnvironment no
-SetEnv HOME={remote_home} ZDOTDIR={remote_home} ENV=/dev/null BASH_ENV=/dev/null
-# Test-only: authorized_keys lives under sticky /tmp, outside a login home.
+SetEnv {config_value('HOME=' + str(remote_home))} {config_value('ZDOTDIR=' + str(remote_home))} ENV=/dev/null BASH_ENV=/dev/null
+# Test-only: authorized_keys lives in this fixture, outside a login home.
 # Its containing directory is private and all keys are generated for this run.
 StrictModes no
 PermitRootLogin prohibit-password
@@ -622,14 +638,21 @@ class LiveTests(unittest.TestCase):
         self.assertLess(timings[98], 2000, "local commit stalled; inspect storage/transport")
 
 
-def main():
-    global ARGS, LAB
+def parse_args(arguments=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=ROOT / "target/debug/hedit-remote")
     parser.add_argument("--fault-binary", type=Path, required=True)
     parser.add_argument("--test", help="Run one named LiveTests method")
     parser.add_argument("--debug-server", action="store_true", help="Bounded diagnostics from the disposable server")
-    ARGS = parser.parse_args()
+    parser.add_argument("--work-dir", type=Path,
+                        default=os.environ.get("HEDIT_REMOTE_LIVE_DIR") or None,
+                        help="Fixture parent on a supported local filesystem (env: HEDIT_REMOTE_LIVE_DIR; default: target/rl)")
+    return parser.parse_args(arguments)
+
+
+def main():
+    global ARGS, LAB
+    ARGS = parse_args()
     ARGS.binary = ARGS.binary.resolve(strict=True)
     ARGS.fault_binary = ARGS.fault_binary.resolve(strict=True)
     LAB = Lab()

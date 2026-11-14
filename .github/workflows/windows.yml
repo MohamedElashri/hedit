@@ -48,6 +48,8 @@ jobs:
         run: cargo test --locked --workspace --no-fail-fast
       - name: Numeric native trace tests
         run: python scripts/test-native-trace.py
+      - name: SSH test fixture setup tests
+        run: python scripts/test-remote-live-setup.py
       - name: Release metadata tests
         run: python scripts/test-release.py
       - name: Compiler setup tests

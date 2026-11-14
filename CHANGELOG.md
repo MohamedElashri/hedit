@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Keep disposable SSH tests off `/tmp` by default and allow a disk-backed fixture directory for Linux validation, preserving recovery filesystem checks.
+
 - Add opt-in local numeric native CPU/GPU frame traces with bounded output and asynchronous GPU polling.
 - Keep diagnostic input values and document contents out of traces; distinguish processing timings from display latency.
 - Skip Cocoa state restoration in macOS SSH children using process-only defaults so crash restart can reach host recovery.
