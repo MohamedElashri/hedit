@@ -74,7 +74,7 @@ smoke-tests a Linux release package.
 | --- | --- |
 | `make static` | Formatting, policy, docs, and script checks; no compiling |
 | `make lint` | `make static`, then Clippy |
-| `make test` | Rust tests plus Zig setup, release metadata, installer, macOS, and Windows package tests |
+| `make test` | Rust tests plus numeric trace, Zig setup, release metadata, installer, macOS, and Windows package tests |
 | `make test-macos` | The tests that apply on macOS (the CI macOS job) |
 | `make test-remote` | Headless SSH workspace and host recovery tests |
 | `make test-remote-live` | Disposable loopback SSH server, real client/worker crash tests, and latency sampling; requires `sshd` |
@@ -118,6 +118,14 @@ every feature is bug-free or every native platform has been exercised.
 | Native frame processing | Opt-in numeric CPU/GPU tracing, core-only query dispatch and privacy/backpressure regressions, plus live macOS SSH typing/scroll samples. Large-file native CPU spikes remain; physical input/display latency is unmeasured. See [native frame diagnostics](#native-frame-diagnostics). |
 | Accessibility | Native AccessKit labels/text, focus reachability through split/busy/hidden-editor transitions, tab role/full-name/selected-state tests, descriptive close controls, valid word-length metadata for long ASCII and Unicode identifiers, and right-to-left direction/positions for pure RTL runs. Native screen-reader speech and mixed-script navigation still need dedicated assistive-technology testing. |
 | Packaging and platforms | Local macOS Rust/Clippy/package checks and offline package fixtures. Fresh Linux/Windows CI and live GUI validation of this unpublished stack remain pending; no alternate test host or running Linux container daemon was available. |
+
+The dedicated VoiceOver/mixed-script pass remains open. The optimized SSH fixture
+started successfully, but the native automation service failed to start its pipe
+even after a runtime reset, before any accessibility actions could run. No
+VoiceOver settings were changed. Existing AccessKit consumer and bidi regression
+tests still pass; these do not substitute for native speech or navigation testing.
+Rex host discovery found only this Mac and no connected Linux or Windows host,
+so interactive GUI checks on those platforms also remain unavailable.
 
 The [SSH feature CI run at 78dcf65](https://github.com/MohamedElashri/hedit/actions/runs/43488093934)
 passed Linux, macOS and remote SSH jobs, but Windows Clippy rejected the size of
