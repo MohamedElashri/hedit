@@ -179,6 +179,44 @@ cargo test --locked --release --bin hedit profile_quality_audit -- --ignored --n
 cargo test --locked --release --bin hedit profile_long_line_typing_audit -- --ignored --nocapture --test-threads=1
 ```
 
+For layout jobs of at least 4 KiB, the vendored renderer counts Unicode scalars
+in the actual formatted sections before shaping, then reserves glyph storage once
+per paragraph and sizes the paragraph collection. It handles formatting splits,
+CRLF, empty sections, gaps/overlaps and newline-disabled jobs. Small labels and
+zero-row jobs skip this planning pass. The counts are temporary; they retain no
+text, add no persistent cache and stay local to layout, including over SSH.
+Glyph placement, font fallback, pair kerning, wrapping and bidi shaping retain
+their existing behavior. Full paragraph shaping still scales with text length.
+
+`cargo test --locked -p epaint --lib` includes differential checks against the
+original geometric-growth path across fonts, formatting, Unicode, wrapping,
+alignment, justification, elision and fractional display scales. The ignored
+`profile_paragraph_allocation` compares reservation and the original growth path
+in alternating order in one process with warm fonts, measuring full layout CPU
+time and retained glyph-vector capacity after inline edits.
+It excludes job construction, IO, GPU submission and native input delivery;
+capacity bytes are not total process memory or measured resident memory.
+A paired sample on the development Mac measured:
+
+| Fixture | Original/planned p50 layout | Original/planned retained glyph capacity |
+| --- | ---: | ---: |
+| 165,000 characters, unwrapped | 7.72 / 6.93 ms | 16,777,216 / 10,560,512 bytes |
+| 1,000,000 characters, unwrapped | 53.86 / 47.40 ms | 67,108,864 / 64,000,512 bytes |
+| 165,000 characters, wrapped | 8.79 / 8.28 ms | 10,560,512 / 10,560,512 bytes |
+
+These samples are not native latency measurements or hard timing thresholds.
+
+The optimized macOS app was tested over pinned loopback SSH: a Unicode edit near
+the millionth character laid out and returned to the clean original with Undo.
+A long tab-expanded Unicode/CRLF file accepted an unsaved draft; after host
+durability and SIGKILL of the actual client, restarting recovered its text and
+CRLF format. Saved fixtures stayed unchanged, the local session contained only
+its log, and no native panic was recorded.
+
+```sh
+cargo test --locked --release -p epaint --lib profile_paragraph_allocation -- --ignored --nocapture --test-threads=1
+```
+
 Large editable pages use paragraph-aligned blocks (about 4 KiB each). An inline
 edit reshapes the affected blocks and shares unchanged rows with the previous
 frame. A single long paragraph can still require a large layout; adding or

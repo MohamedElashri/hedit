@@ -55,11 +55,11 @@ struct Paragraph {
 }
 
 impl Paragraph {
-    pub fn from_section_index(section_index_at_start: u32) -> Self {
+    pub fn from_section_index(section_index_at_start: u32, capacity: usize) -> Self {
         Self {
             cursor_x: 0.0,
             section_index_at_start,
-            glyphs: vec![],
+            glyphs: Vec::with_capacity(capacity),
             empty_paragraph_height: 0.0,
         }
     }
@@ -70,6 +70,36 @@ impl Paragraph {
 /// In most cases you should use [`crate::Fonts::layout_job`] instead
 /// since that memoizes the input, making subsequent layouting of the same text much faster.
 pub fn layout(fonts: &mut FontsImpl, job: Arc<LayoutJob>) -> Galley {
+    let capacities = paragraph_capacities(&job);
+    layout_with_capacities(fonts, job, &capacities)
+}
+
+// Reserve large jobs once per paragraph, including paragraphs split across
+// format sections. Count the actual shaped sections, not unused job text.
+// Small labels keep the original path without an allocation-planning pass.
+fn paragraph_capacities(job: &LayoutJob) -> Vec<usize> {
+    if job.wrap.max_rows == 0 || job.text.len() < 4096 {
+        return Vec::new();
+    }
+    let mut counts = vec![0];
+    for section in &job.sections {
+        let text = &job.text[section.byte_range.clone()];
+        if job.break_on_newline {
+            let mut lines = text.split('\n');
+            *counts.last_mut().unwrap() += lines.next().unwrap().chars().count();
+            counts.extend(lines.map(|line| line.chars().count()));
+        } else {
+            counts[0] += text.chars().count();
+        }
+    }
+    counts
+}
+
+fn layout_with_capacities(
+    fonts: &mut FontsImpl,
+    job: Arc<LayoutJob>,
+    capacities: &[usize],
+) -> Galley {
     if job.wrap.max_rows == 0 {
         // Early-out: no text
         return Galley {
@@ -87,9 +117,20 @@ pub fn layout(fonts: &mut FontsImpl, job: Arc<LayoutJob>) -> Galley {
 
     // For most of this we ignore the y coordinate:
 
-    let mut paragraphs = vec![Paragraph::from_section_index(0)];
+    let mut paragraphs = Vec::with_capacity(capacities.len().max(1));
+    paragraphs.push(Paragraph::from_section_index(
+        0,
+        capacities.first().copied().unwrap_or(0),
+    ));
     for (section_index, section) in job.sections.iter().enumerate() {
-        layout_section(fonts, &job, section_index as u32, section, &mut paragraphs);
+        layout_section(
+            fonts,
+            &job,
+            section_index as u32,
+            section,
+            &mut paragraphs,
+            capacities,
+        );
     }
 
     let point_scale = PointScale::new(fonts.pixels_per_point());
@@ -133,6 +174,7 @@ fn layout_section(
     section_index: u32,
     section: &LayoutSection,
     out_paragraphs: &mut Vec<Paragraph>,
+    capacities: &[usize],
 ) {
     let LayoutSection {
         leading_space,
@@ -157,7 +199,8 @@ fn layout_section(
 
     for chr in job.text[byte_range.clone()].chars() {
         if job.break_on_newline && chr == '\n' {
-            out_paragraphs.push(Paragraph::from_section_index(section_index));
+            let capacity = capacities.get(out_paragraphs.len()).copied().unwrap_or(0);
+            out_paragraphs.push(Paragraph::from_section_index(section_index, capacity));
             paragraph = out_paragraphs.last_mut().unwrap();
             paragraph.empty_paragraph_height = line_height; // TODO(emilk): replace this hack with actually including `\n` in the glyphs?
         } else {
@@ -1053,6 +1096,164 @@ fn is_cjk_break_allowed(c: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{super::*, *};
+
+    #[test]
+    #[ignore = "manual optimized paired profile of original growth versus paragraph reservation"]
+    fn profile_paragraph_allocation() {
+        for (label, source, width) in [
+            (
+                "165k unwrapped",
+                "abcdefghij ".repeat(15_000),
+                f32::INFINITY,
+            ),
+            ("1M unwrapped", "abcdefghij".repeat(100_000), f32::INFINITY),
+            ("165k wrapped", "abcdefghij ".repeat(15_000), 900.0),
+        ] {
+            let mut fonts = FontsImpl::new(1.0, 4096, FontDefinitions::default());
+            let mut job = LayoutJob::single_section(
+                source,
+                TextFormat {
+                    font_id: FontId::monospace(14.0),
+                    ..Default::default()
+                },
+            );
+            job.wrap.max_width = width;
+            std::hint::black_box(layout_with_capacities(
+                &mut fonts,
+                Arc::new(job.clone()),
+                &[],
+            ));
+            let mut original_times = Vec::new();
+            let mut planned_times = Vec::new();
+            let mut bytes = [0; 2];
+            for n in 0..8 {
+                job.text.push('x');
+                job.sections[0].byte_range.end = job.text.len();
+                let job = Arc::new(job.clone());
+                for planned in if n % 2 == 0 {
+                    [false, true]
+                } else {
+                    [true, false]
+                } {
+                    let start = std::time::Instant::now();
+                    let g = if planned {
+                        layout(&mut fonts, job.clone())
+                    } else {
+                        layout_with_capacities(&mut fonts, job.clone(), &[])
+                    };
+                    let ms = start.elapsed().as_secs_f64() * 1000.0;
+                    if planned {
+                        planned_times.push(ms);
+                    } else {
+                        original_times.push(ms);
+                    }
+                    bytes[usize::from(planned)] = g
+                        .rows
+                        .iter()
+                        .map(|r| r.glyphs.capacity() * std::mem::size_of::<Glyph>())
+                        .sum::<usize>();
+                    std::hint::black_box(g);
+                }
+            }
+            original_times.sort_by(f64::total_cmp);
+            planned_times.sort_by(f64::total_cmp);
+            eprintln!("Paragraph {label}: original p50={:.3} p95={:.3}ms capacity={}B; planned p50={:.3} p95={:.3}ms capacity={}B", original_times[4], original_times[7], bytes[0], planned_times[4], planned_times[7], bytes[1]);
+        }
+    }
+
+    #[test]
+    fn planned_paragraph_storage_matches_original_geometry_and_wrapping() {
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            let mut original_fonts = FontsImpl::new(scale, 4096, FontDefinitions::default());
+            let mut planned_fonts = FontsImpl::new(scale, 4096, FontDefinitions::default());
+            for width in [0.0, 87.5, f32::INFINITY] {
+                for break_on_newline in [false, true] {
+                    for max_rows in [0, 1, 3, usize::MAX] {
+                        for (align, justify) in [
+                            (Align::LEFT, false),
+                            (Align::Center, false),
+                            (Align::RIGHT, true),
+                        ] {
+                            let mut job = LayoutJob::default();
+                            job.wrap.max_width = width;
+                            job.wrap.max_rows = max_rows;
+                            job.wrap.break_anywhere = max_rows % 2 == 1;
+                            job.break_on_newline = break_on_newline;
+                            job.halign = align;
+                            job.justify = justify;
+                            job.first_row_min_height = 27.25;
+                            for (text, size, leading, height) in [
+                                ("AVATAR To e\u{301}🦀\r\n".repeat(150), 14.0, 3.25, 18.0),
+                                ("مرحبا שלום\t\n\n".repeat(120), 19.0, 0.0, 25.5),
+                                (String::new(), 12.0, 5.0, 16.0),
+                                ("tail text ".repeat(300), 12.0, 0.0, 16.0),
+                            ] {
+                                job.append(
+                                    &text,
+                                    leading,
+                                    TextFormat {
+                                        font_id: FontId::proportional(size),
+                                        line_height: Some(height),
+                                        italics: true,
+                                        background: Color32::DARK_BLUE,
+                                        underline: Stroke::new(1.0_f32, Color32::GREEN),
+                                        ..Default::default()
+                                    },
+                                );
+                            }
+                            let job = Arc::new(job);
+                            let original =
+                                layout_with_capacities(&mut original_fonts, job.clone(), &[]);
+                            let planned = layout(&mut planned_fonts, job);
+                            assert_eq!(planned, original, "reservation must not change glyphs, rows, UVs, colors, kerning or wrapping");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn capacity_planning_counts_formatted_sections_including_gaps_and_overlaps() {
+        let mut fonts = FontsImpl::new(1.25, 4096, FontDefinitions::default());
+        let mut job = LayoutJob::default();
+        job.text = format!("{}A\nB", "unused".repeat(1000));
+        let end = job.text.len();
+        for range in [end - 3..end, end - 3..end - 2] {
+            job.sections.push(LayoutSection {
+                leading_space: 0.0,
+                byte_range: range,
+                format: TextFormat::default(),
+            });
+        }
+        let g = layout(&mut fonts, Arc::new(job));
+        assert_eq!(
+            g.rows.iter().map(|row| row.text()).collect::<Vec<_>>(),
+            vec!["A", "BA"]
+        );
+        assert!(
+            g.rows.iter().map(|r| r.glyphs.capacity()).sum::<usize>() <= 3,
+            "unused job text must not reserve glyph storage"
+        );
+    }
+
+    #[test]
+    fn large_unwrapped_paragraphs_do_not_retain_geometric_growth_slack() {
+        let mut fonts = FontsImpl::new(1.0, 4096, FontDefinitions::default());
+        let mut job = LayoutJob::default();
+        for _ in 0..1000 {
+            job.append("word ", 0.0, TextFormat::default());
+        }
+        job.wrap.max_width = f32::INFINITY;
+        let g = layout(&mut fonts, Arc::new(job));
+        assert_eq!(g.rows.len(), 1);
+        assert_eq!(g.rows[0].glyphs.len(), 5000);
+        assert_eq!(
+            g.rows[0].glyphs.capacity(),
+            5000,
+            "format changes must not trigger repeated exact reservations"
+        );
+    }
 
     #[test]
     fn test_zero_max_width() {

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Reserve glyph storage once per paragraph for large layout jobs, avoiding repeated vector growth while preserving shaping and wrapping.
+- Keep small labels on the existing allocation path and add renderer differential fixtures for formatted Unicode, kerning, elision and fractional scales.
+
 - Cull offscreen triangle blocks in long text rows and reserve only submitted mesh geometry, reducing per-frame copying and output allocations.
 - Keep text meshes shared during pure translation and invalidate derived bounds after selection, scaling, RTL shaping and incremental row movement.
 - Add rendering parity checks for triangle attributes/order, decorations, fractional scales, clipping edges and cache lifecycle; document measured costs in the existing developer guide.
