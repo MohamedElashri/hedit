@@ -50,6 +50,7 @@ lint: static clippy ## Run all static checks: quick checks first, then clippy
 
 test: ## Run Rust tests and offline release-installer tests
 	$(CARGO) test --locked --workspace
+	$(PYTHON) scripts/test-native-trace.py
 	$(PYTHON) scripts/test-zig-setup.py
 	$(PYTHON) scripts/test-run-zig.py
 	$(PYTHON) scripts/test-release.py
@@ -59,6 +60,7 @@ test: ## Run Rust tests and offline release-installer tests
 
 test-macos: ## Run the tests that apply on macOS (Rust tests and the app bundle checks)
 	$(CARGO) test --locked --workspace --no-fail-fast
+	$(PYTHON) scripts/test-native-trace.py
 	$(PYTHON) scripts/test-zig-setup.py
 	$(PYTHON) scripts/test-run-zig.py
 	$(PYTHON) scripts/test-release.py

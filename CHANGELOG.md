@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add opt-in local numeric native CPU/GPU frame traces with bounded output and asynchronous GPU polling.
+- Keep diagnostic input values and document contents out of traces; distinguish processing timings from display latency.
+- Skip Cocoa state restoration in macOS SSH children using process-only defaults so crash restart can reach host recovery.
+
 - Share unchanged row meshes when inserting lines, moving cached paragraphs, renumbering syntax sections or padding Markdown rows.
 - Preserve clipping indexes across mesh translations and materialize geometry for selection, scaling, bidi changes or fractional-baseline corrections.
 

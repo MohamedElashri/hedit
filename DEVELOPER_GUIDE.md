@@ -115,6 +115,7 @@ every feature is bug-free or every native platform has been exercised.
 | Git, builds, logs and terminal | Source-control, build, terminal and protocol suites cover these domains. Their presence in the catalogue is not a claim of live validation for every external tool or server. CUDA tools remain Linux-specific and require optional hardware/tools. |
 | Markdown and media | Reader, layout, split-scroll and resource-loader tests cover source/preview behavior, images, math and diagrams. |
 | SSH privacy and recovery | Headless helper and real loopback SSH/crash suites; targeted native editing/Undo and recovery checks. Derived UI caches remain in RAM and remote recovery remains on the SSH host. |
+| Native frame processing | Opt-in numeric CPU/GPU tracing, core-only query dispatch and privacy/backpressure regressions, plus live macOS SSH typing/scroll samples. Large-file native CPU spikes remain; physical input/display latency is unmeasured. See [native frame diagnostics](#native-frame-diagnostics). |
 | Accessibility | Native AccessKit labels/text, focus reachability through split/busy/hidden-editor transitions, tab role/full-name/selected-state tests, descriptive close controls, valid word-length metadata for long ASCII and Unicode identifiers, and right-to-left direction/positions for pure RTL runs. Native screen-reader speech and mixed-script navigation still need dedicated assistive-technology testing. |
 | Packaging and platforms | Local macOS Rust/Clippy/package checks and offline package fixtures. Fresh Linux/Windows CI and live GUI validation of this unpublished stack remain pending; no alternate test host or running Linux container daemon was available. |
 
@@ -429,6 +430,41 @@ or worst-case guarantees. Reproduce on an otherwise idle machine:
 cargo test --locked --release --bin hedit profile_long_line_coordinates -- --ignored --nocapture --test-threads=1
 ```
 
+
+#### Native frame diagnostics
+
+Native frame diagnostics are explicitly opt-in. Set `HEDIT_NATIVE_TRACE_FILE`
+to a new file path when launching the optimized native app, then run
+`python3 scripts/summarize-native-trace.py PATH` after closing it. The trace
+contains only event counts, sequence numbers and CPU/GPU timings, never key
+values, source text, paths, titles or pointer coordinates. Unix files are created
+with mode 0600; existing files and symlinks are refused. A 128-record queue drops
+samples rather than waiting for disk, and output stops at 16 MiB. GPU queries
+are bounded to 32 pending frames and polled asynchronously without `glFinish`
+or a forced repaint loop. Unsupported query APIs retain CPU-only measurements.
+
+CPU time runs from the native raw-input hook through the final paint callback;
+GPU time covers the OpenGL draw interval. Neither includes OS event queue time,
+swap/vsync, window-server composition or physical display presentation. These
+are processing measurements, not end-to-end input-to-screen latency. Grouping
+uses input batches, so a frame containing several event kinds belongs to one
+group; `no_input` includes startup and asynchronous work, not just idle frames.
+Use `--after-sequence` and `--through-sequence` to isolate fixture phases. The
+reader tolerates an incomplete final record after a crash and reports numeric
+schema violations without echoing record contents.
+
+An optimized macOS loopback-SSH run with native accessibility active captured
+49,208 frames without queue drops. Twelve individual small-file keystrokes had
+CPU p50/p95 of 2.84/5.02 ms and GPU 1.78/2.40 ms. Twelve appends at the end of a
+million-character unwrapped row had CPU 67.69/103.62 ms and GPU 0.99/1.03 ms.
+Six scroll batches in the 40,000-line fixture had CPU 87.47/282.02 ms and GPU
+0.97/1.06 ms. These small samples expose remaining native CPU costs; they are
+neither a baseline comparison nor evidence that large-file interaction meets a
+frame budget. Native automation queried the accessibility tree between phases;
+its attachment and snapshot delays are separate from these processing spans.
+The run used SIGKILL after confirming a Unicode draft in the host journal;
+restart recovered it without a Cocoa restoration prompt, and saved files stayed
+unchanged. The trace remained numeric and the SSH client session held only its log.
 
 #### Viewport text mesh submission
 
@@ -830,6 +866,14 @@ and both local session capture and document snapshots reject remote documents.
 Remote windows disable egui memory and window persistence, recent-file/project
 writes, and Git draft persistence. Changing a document's name or save target must
 not remove its remote identity.
+
+Before AppKit starts, macOS SSH children override `ApplePersistenceIgnoreState`
+and `NSQuitAlwaysKeepsWindows` in the process-only `NSArgumentDomain`, preserving
+other launch arguments. This bypasses Cocoa's crash-restoration prompt so the
+window can reach host recovery, without writing the user's persistent defaults.
+Local editor processes retain their existing restoration behavior. The native
+crash/restart fixture supplements the defaults-isolation regression test; this
+does not promise control over OS swap, screenshots or other system facilities.
 
 The backend registry routes remote URIs explicitly and fails closed when a
 provider disappears. Validate every host-provided filesystem path against the

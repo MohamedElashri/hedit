@@ -73,6 +73,8 @@ features = ["accesskit"]
 windows-sys = { version = "0.61", features = ["Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Threading"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.5"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSDictionary", "NSValue", "NSObject", "NSString", "NSUserDefaults"] }
 plist = "1"
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 

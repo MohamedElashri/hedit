@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod app;
 mod launcher;
+#[cfg(target_os = "macos")]
+mod macos_privacy;
 #[cfg(test)]
 mod preview;
 
@@ -55,6 +57,10 @@ fn run(
             args.push(directory.clone().into_os_string());
         }
         return launcher::launch(&args, &directory, options.stdin, options.wait);
+    }
+    #[cfg(target_os = "macos")]
+    if remote_window {
+        macos_privacy::disable_cocoa_restoration();
     }
     let wait = std::env::var_os(launcher::WAIT_VARIABLE).map(std::path::PathBuf::from);
     let activation = hedit::activation::Launch::take_from_env();

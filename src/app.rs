@@ -65,6 +65,7 @@ mod markup_selection;
 #[cfg(test)]
 mod markup_selection_tests;
 mod minimap;
+mod native_perf;
 mod opening;
 #[cfg(test)]
 mod overlay_tests;
@@ -205,6 +206,7 @@ impl Drop for RequestWatch {
 }
 
 pub struct HeditApp {
+    native_perf: Option<native_perf::Trace>,
     remote_ui: remote::RemoteUi,
     activation: hedit::activation::Window,
     _requests: RequestWatch,
@@ -363,6 +365,7 @@ impl HeditApp {
         restart_requested: Arc<AtomicBool>,
     ) -> Self {
         let mut app = Self::from_context(&cc.egui_ctx, cc.storage, workspace, errors, paths);
+        app.native_perf = native_perf::Trace::from_env(cc);
         app.restart_requested = restart_requested;
         // SAFETY: the app owns this value and releases it in on_exit, before
         // eframe destroys the root window and its display connection.
@@ -415,6 +418,7 @@ impl HeditApp {
             .unwrap_or_default();
         panes.normalize();
         let mut app = Self {
+            native_perf: None,
             remote_ui: Default::default(),
             activation: Default::default(),
             _requests: RequestWatch::start(ctx, workspace.store.directory().to_owned()),
@@ -3632,11 +3636,19 @@ impl HeditApp {
     }
 }
 impl eframe::App for HeditApp {
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
+        if let Some(trace) = &self.native_perf {
+            trace.input(raw);
+        }
+    }
     fn persist_egui_memory(&self) -> bool {
         self.workspace.remote.is_none()
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if let Some(trace) = &self.native_perf {
+            trace.begin_frame(ctx);
+        }
         self.note_open_input(ctx);
         self.remote_controls(ctx);
         self.opening_bar(ctx);
@@ -3745,6 +3757,9 @@ impl eframe::App for HeditApp {
         if let Some(after) = self.next_wake(ctx) {
             ctx.request_repaint_after(after);
         }
+        if let Some(trace) = &self.native_perf {
+            trace.end_frame(ctx);
+        }
     }
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         if self.workspace.remote.is_some() {
@@ -3769,7 +3784,10 @@ impl eframe::App for HeditApp {
     fn auto_save_interval(&self) -> Duration {
         Duration::from_secs(2)
     }
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+    fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {
+        if let Some(trace) = &mut self.native_perf {
+            trace.close(gl);
+        }
         if self.workspace.remote.is_some() {
             self.cancel_build();
             #[cfg(feature = "terminal")]
