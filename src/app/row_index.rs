@@ -87,9 +87,36 @@ impl<'a> SourceChars<'a> {
 #[derive(Default)]
 pub(super) struct Cache {
     galley: Weak<Galley>,
+    job: Weak<egui::text::LayoutJob>,
     index: Option<Arc<Rows>>,
+    checked_text: Option<CheckedText>,
+}
+struct CheckedText {
+    job: Weak<egui::text::LayoutJob>,
+    projection: Weak<hedit::advanced::Projection>,
+    matches: bool,
 }
 impl Cache {
+    pub fn text_matches(&mut self, projection: &Arc<hedit::advanced::Projection>) -> bool {
+        let identity = Arc::downgrade(projection);
+        if let Some(checked) = &self.checked_text {
+            if checked.job.ptr_eq(&self.job) && checked.projection.ptr_eq(&identity) {
+                return checked.matches;
+            }
+        }
+        // Compare once per layout/projection pair, never rescan unchanged text
+        // merely because the selection recolored a copy-on-write galley.
+        let matches = self
+            .job
+            .upgrade()
+            .is_some_and(|job| job.text == projection.text);
+        self.checked_text = Some(CheckedText {
+            job: self.job.clone(),
+            projection: identity,
+            matches,
+        });
+        matches
+    }
     pub fn get(&mut self, galley: &Arc<Galley>) -> Arc<Rows> {
         if self
             .galley
@@ -97,6 +124,7 @@ impl Cache {
             .is_none_or(|cached| !Arc::ptr_eq(&cached, galley))
         {
             self.galley = Arc::downgrade(galley);
+            self.job = Arc::downgrade(&galley.job);
             self.index = Some(Arc::new(Rows::new(galley)));
         }
         self.index.as_ref().unwrap().clone()
@@ -209,6 +237,30 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn cursor_text_guard_reuses_weak_identities_and_rechecks_changed_layouts() {
+        let mut cache = Cache::default();
+        let text = "abc\ndef\n";
+        let projection = Arc::new(hedit::advanced::Projection::new(text, 4, &[]));
+        let galley = layout(text, f32::INFINITY, 1.0);
+        cache.get(&galley);
+        assert!(cache.text_matches(&projection));
+        assert!(cache.text_matches(&projection));
+        let changed = Arc::new(hedit::advanced::Projection::new("abc def\n", 4, &[]));
+        assert!(!cache.text_matches(&changed));
+        assert!(!cache.text_matches(&changed));
+        let next = layout(&changed.text, f32::INFINITY, 1.0);
+        cache.get(&next);
+        assert!(cache.text_matches(&changed));
+        assert!(!cache.text_matches(&projection));
+        let weak_job = Arc::downgrade(&next.job);
+        let weak_projection = Arc::downgrade(&projection);
+        drop(next);
+        drop(projection);
+        assert!(weak_job.upgrade().is_none());
+        assert!(weak_projection.upgrade().is_none());
+    }
+
     #[test]
     fn replaced_layouts_invalidate_offsets_and_large_views_only_visit_visible_rows() {
         let mut cache = Cache::default();

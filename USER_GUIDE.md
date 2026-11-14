@@ -432,6 +432,10 @@ you copied in hedit to paste one again.
 
 ### Lines and text
 
+Up and Down remember your preferred column when passing through shorter or empty
+lines. Shift extends the selection from its existing anchor. Mouse drags retain
+their starting position even when movement arrives between two screen updates.
+
 | Shortcut | Action |
 | --- | --- |
 | Ctrl+L | Select the line (again to add the next) |

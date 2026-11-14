@@ -145,6 +145,32 @@ zero-height rows, geometry gaps, incremental edits and fractional scales.
 isolated CPU calls; first use builds the index, and native event/display latency
 is excluded. Run profiles on an otherwise idle machine.
 
+The editor preserves TextEdit paragraph cursors while the displayed text and
+public selection agree, keeping preferred columns and soft-wrap affinity across
+repaints. Explicit cursor navigation resets the goal even when its numeric
+position is unchanged. Weak layout-job and projection identities cache the text
+comparison without retaining another document copy or rescanning unchanged
+frames; same-length external text changes cannot reuse stale paragraph
+coordinates.
+
+Native input can deliver a full drag in one frame. `app/editor_interaction.rs`
+recovers its press anchor for a single primary-button gesture, using RTL-aware
+hit testing and the configured click-distance threshold. Disabled editors,
+other layers, word/line clicks and Alt/Control/Command gestures retain their
+existing handling. Selection painting is restricted to visible rows.
+
+The minimap caches at most 4,096 two-byte samples per pane, keyed by a weak
+projection reference and sample count. It samples projected logical lines,
+including tabs and folds, and bounds work within a sampled long line. New text,
+folds, tab width or sample count invalidate it; scroll and color changes reuse
+it. These derived caches remain in RAM, including in SSH workspaces.
+`profile_minimap_interaction` compares warm CPU frames with the minimap enabled
+and disabled on a 1.62 MB, 40,000-line fixture. On the development Mac, a
+baseline sample measured 3.03 ms disabled and 3.46 ms enabled; three final runs
+had medians of 3.02 ms disabled and 2.98 ms enabled. The remaining difference
+is within measurement noise. These are CPU frame times, excluding native
+input, GPU presentation and SSH durability.
+
 The ignored `profile_typing_positions` benchmark reports p50/p95/p99 CPU frame
 times for 64 inline edits at the start, middle, and end of a 1.46 MB buffer.
 Run profiles serially on an otherwise idle machine. These headless frames do

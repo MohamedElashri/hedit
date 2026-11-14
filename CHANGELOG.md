@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Preserve preferred caret columns and soft-wrap affinity across frames; reset stale cursor coordinates after text changes and explicit navigation.
+- Keep fast mouse drags anchored when press, movement and release arrive in one frame, including Shift extension and RTL selection.
+- Cache bounded minimap samples in memory and avoid rescanning unchanged documents while scrolling or repainting.
+
 - Index text-layout cursor positions for faster caret navigation and pointer placement near the end of large files.
 - Share cursor and viewport offsets within the layout memory budget, preserving wrap preferences, goal columns and RTL positions without persisting derived caches.
 - Add differential cursor tests and preserve pointer tie behavior at shared boundaries and zero-height rows; make the pending-open Escape test independent of thread scheduling.

@@ -22,6 +22,7 @@ mod definitions;
 mod edit_actions;
 #[cfg(test)]
 mod editing_tests;
+mod editor_interaction;
 mod editor_layout;
 mod file_reference;
 #[cfg(test)]
@@ -39,6 +40,8 @@ mod goto_anything;
 mod goto_matches;
 #[cfg(test)]
 mod goto_tests;
+#[cfg(test)]
+mod interaction_tests;
 mod macros;
 mod markdown;
 #[cfg(test)]
@@ -57,6 +60,7 @@ mod markdown_tests;
 mod markup_selection;
 #[cfg(test)]
 mod markup_selection_tests;
+mod minimap;
 mod opening;
 #[cfg(test)]
 mod overlay_tests;
@@ -271,6 +275,7 @@ pub struct HeditApp {
     line_cursor_goal: Option<(Vec<hedit::advanced::Selection>, usize)>,
     live_find: find_live::LiveFind,
     row_indexes: [row_index::Cache; panes::MAX_GROUPS],
+    minimaps: [minimap::Cache; panes::MAX_GROUPS],
     markdown: markdown::Markdown,
     /// Where the cursor was before Go to Anything previewed a result.
     goto_origin: Option<goto_anything::Origin>,
@@ -466,6 +471,7 @@ impl HeditApp {
             line_cursor_goal: None,
             live_find: Default::default(),
             row_indexes: Default::default(),
+            minimaps: Default::default(),
             markdown: Default::default(),
             goto_origin: None,
             font_applied: String::new(),
@@ -2128,12 +2134,23 @@ impl HeditApp {
         {
             let mut state = egui::TextEdit::load_state(ctx, id).unwrap_or_default();
             state.clear_undoer();
-            state
-                .cursor
-                .set_char_range(Some(egui::text::CCursorRange::two(
-                    egui::text::CCursor::new(projection.display(buffer.view.anchor)),
-                    egui::text::CCursor::new(projection.display(buffer.view.head)),
-                )));
+            let anchor = projection.display(buffer.view.anchor);
+            let head = projection.display(buffer.view.head);
+            // Keep egui's preferred column and soft-wrap affinity across repaints.
+            // Explicit navigation and changed display text must discard that state.
+            if buffer.reveal_cursor
+                || !self.row_indexes[pane_id].text_matches(&projection)
+                || state.cursor.char_range().is_none_or(|range| {
+                    range.primary.index != head || range.secondary.index != anchor
+                })
+            {
+                state
+                    .cursor
+                    .set_char_range(Some(egui::text::CCursorRange::two(
+                        egui::text::CCursor::new(anchor),
+                        egui::text::CCursor::new(head),
+                    )));
+            }
             state.store(ctx, id);
         }
         if !ctx.input(|i| i.pointer.primary_down()) {
@@ -2375,6 +2392,15 @@ impl HeditApp {
                         }
 
                         let bidi_rows: Arc<bidi_view::BidiRows> = latest_bidi.take();
+                        let completed_drag = editor_interaction::complete_drag(
+                            ui,
+                            &mut output,
+                            &bidi_rows,
+                            projection.display(original_selection.anchor),
+                            selection_background,
+                            selection_color,
+                            visible_rows.clone(),
+                        );
                         if bidi_rows.any() {
                             bidi_view::interact(
                                 ui,
@@ -2843,7 +2869,10 @@ impl HeditApp {
                                 buffer.view.anchor = projection.source(selection.anchor);
                                 buffer.view.head = projection.source(selection.head);
                             }
-                            if output.response.clicked() || output.response.dragged() {
+                            if completed_drag
+                                || output.response.clicked()
+                                || output.response.dragged()
+                            {
                                 let modifiers = ctx.input(|i| i.modifiers);
                                 if modifiers.alt && !buffer.page.info.paged {
                                     let head = buffer.view.head;
@@ -3043,20 +3072,12 @@ impl HeditApp {
                 map_area.max,
             );
             ui.painter().rect_filled(map, 0.0, self.theme.panel.color());
-            let lines: Vec<_> = projection.text.lines().collect();
-            let rows = lines.len().max(1);
-            let samples = (map.height() as usize).min(rows).max(1);
-            for n in 0..samples {
-                let line = lines.get(n * rows / samples).copied().unwrap_or("");
-                let y = map.top() + n as f32 * (map.height() / samples as f32).min(2.0);
-                let leading = line
-                    .chars()
-                    .take_while(|c| c.is_whitespace())
-                    .count()
-                    .min(100);
-                let width = line.chars().count().min(120);
+            let samples = self.minimaps[pane_id].get(&projection, map.height());
+            for (n, sample) in samples.iter().enumerate() {
+                let y = map.top() + n as f32 * (map.height() / samples.len() as f32).min(2.0);
                 ui.painter().hline(
-                    (map.left() + leading as f32 * 0.45)..=(map.left() + width as f32 * 0.45),
+                    (map.left() + sample.leading as f32 * 0.45)
+                        ..=(map.left() + sample.width as f32 * 0.45),
                     y,
                     egui::Stroke::new(0.7_f32, self.theme.muted.color().gamma_multiply(0.5)),
                 );
