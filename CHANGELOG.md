@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Cull offscreen triangle blocks in long text rows and reserve only submitted mesh geometry, reducing per-frame copying and output allocations.
+- Keep text meshes shared during pure translation and invalidate derived bounds after selection, scaling, RTL shaping and incremental row movement.
+- Add rendering parity checks for triangle attributes/order, decorations, fractional scales, clipping edges and cache lifecycle; document measured costs in the existing developer guide.
+
 - Index long-line byte and tab-column coordinates with balanced, incremental Unicode checkpoints kept in RAM.
 - Speed pointer placement and vertical navigation in long ordered glyph rows with lazy binary lookup; retain existing midpoint and irregular/RTL behavior.
 - Add differential long-line fixtures and split-editor edit/paste/Undo checks for Unicode, tabs and CRLF text.

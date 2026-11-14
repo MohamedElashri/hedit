@@ -272,6 +272,62 @@ cargo test --locked --release --bin hedit profile_long_line_coordinates -- --ign
 ```
 
 
+#### Viewport text mesh submission
+
+Large, partly clipped, unrotated text rows use a lazy triangle-bounds hierarchy
+in `vendor/epaint/src/text/mesh_index.rs`. Each leaf covers 256 consecutive
+triangles, normally 128 glyph quads. Traversal skips disjoint bounds and preserves
+original triangle order, texture coordinates and color handling. Bounds use the
+same rounded origin addition as emitted vertices, avoiding inverse-clip rounding
+at large horizontal offsets. A physical-pixel guard preserves backend scissor
+rounding at block edges. Scattered selection/background indices duplicate
+only their referenced triangle vertices instead of copying a large unused span.
+Small rows, rotated text, nonfinite geometry and unsupported index topology keep
+the original whole-row path. Disabling coarse culling also keeps that path.
+Overlapping geometry can still require broad blocks; this is conservative
+culling, not a hard vertex-count limit.
+
+The tessellator reserves only submitted geometry, rather than the entire galley.
+Pure TextShape translation retains shared glyph meshes. Scaling, selection-mesh
+insertion, RTL reshaping and incremental row movement invalidate affected bounds;
+color/UV changes preserve them. The derived cache contains only bounds and index
+ranges, stays in RAM, is omitted from serialization/equality, and is counted in
+the editor's inactive-layout accounting budget. It does not retain text or create
+an SSH client recovery cache. Source layout meshes remain allocated separately.
+
+`app/render_tests.rs` compares potentially visible triangle positions, UVs, colors
+and paint order against unculled output, including clipping edges, multiple
+scales, italics, backgrounds, underline/strikethrough, opacity, color overrides,
+RTL, selections, batching offsets, sparse indices and geometry mutations. It also
+checks bounded submission for ordinary long rows, shared initialization, pure
+translation and serialization behavior.
+
+The optimized CPU fixture `profile_viewport_text_rendering` measured a
+million-character ASCII row at the start, middle and end of a 1,200-point viewport.
+Warm mesh preparation changed from about 5.2–5.4 ms to 0.002–0.004 ms; submitted
+mesh data changed from 104,000,000 bytes to roughly 20,000–27,000 bytes. The
+40,000-line fixture still submitted about 91 KB, while reserved output capacity
+changed from about 96 MB to 153 KB. These are CPU mesh samples, not measured GPU
+transfer times, native input latency, total process memory or hard CI thresholds.
+First clipped use builds the hierarchy by scanning triangles (about 9 ms in the
+million-character fixture); full paragraph shaping and source-mesh construction
+remain separate costs.
+
+The final optimized macOS app was exercised over pinned loopback SSH with a
+million-character unwrapped row. Native checks inspected its clipped end,
+replaced selected text with Unicode in a split editor, and restored it with Undo.
+A long Arabic/Hebrew/English line also rendered in a clipped, unwrapped viewport.
+After an unsaved Unicode/CRLF draft became durable on the host, SIGKILL of the
+actual client and restart recovered it; saved fixtures stayed unchanged, the
+client session contained only its log, and no native panic was recorded. These
+checks do not establish screen-reader speech or end-to-end input/display latency.
+
+Reproduce the CPU fixture serially on an otherwise idle machine:
+
+```sh
+cargo test --locked --release --bin hedit profile_viewport_text_rendering -- --ignored --nocapture --test-threads=1
+```
+
 The editor preserves TextEdit paragraph cursors while the displayed text and
 public selection agree, keeping preferred columns and soft-wrap affinity across
 repaints. Explicit cursor navigation resets the goal even when its numeric

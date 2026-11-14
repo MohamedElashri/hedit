@@ -80,6 +80,7 @@ pub fn paint_text_selection(
             .clone_from_slice(&selection_triangles);
 
         row.visuals.mesh_bounds = mesh.calc_bounds();
+        row.visuals.mesh_cache.invalidate();
 
         if let Some(new_vertex_indices) = &mut new_vertex_indices {
             new_vertex_indices.push(RowVertexIndices {

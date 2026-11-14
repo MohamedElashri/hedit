@@ -752,6 +752,7 @@ fn tessellate_row(
     let mesh_bounds = mesh.calc_bounds();
 
     RowVisuals {
+        mesh_cache: Default::default(),
         mesh,
         mesh_bounds,
         glyph_index_start,

@@ -575,6 +575,9 @@ pub struct Row {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 pub struct RowVisuals {
+    /// Derived triangle bounds. Invalidate after mesh geometry/index changes.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub mesh_cache: super::TextMeshCache,
     /// The tessellated text, using non-normalized (texel) UV coordinates.
     /// That is, you need to divide the uv coordinates by the texture size.
     pub mesh: Mesh,
@@ -598,6 +601,7 @@ pub struct RowVisuals {
 impl Default for RowVisuals {
     fn default() -> Self {
         Self {
+            mesh_cache: Default::default(),
             mesh: Default::default(),
             mesh_bounds: Rect::NOTHING,
             glyph_index_start: 0,

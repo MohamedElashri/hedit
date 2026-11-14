@@ -231,6 +231,7 @@ fn retessellate(
         }
     }
     row.visuals.mesh_bounds = mesh.calc_bounds();
+    row.visuals.mesh_cache.invalidate();
 }
 
 /// The x of a caret before character `column` of `row`, relative to the

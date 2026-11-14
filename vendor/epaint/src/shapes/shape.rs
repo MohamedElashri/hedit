@@ -458,18 +458,22 @@ impl Shape {
             Self::Text(text_shape) => {
                 text_shape.pos = transform * text_shape.pos;
 
-                // Scale text:
-                let galley = Arc::make_mut(&mut text_shape.galley);
-                for row in &mut galley.rows {
-                    let row = Arc::make_mut(row);
-                    row.visuals.mesh_bounds = transform.scaling * row.visuals.mesh_bounds;
-                    for v in &mut row.visuals.mesh.vertices {
-                        v.pos = Pos2::new(transform.scaling * v.pos.x, transform.scaling * v.pos.y);
+                // A pure translation only moves the TextShape origin. Keep
+                // its shared glyph meshes and local bounds index intact.
+                if transform.scaling != 1.0 {
+                    let galley = Arc::make_mut(&mut text_shape.galley);
+                    for row in &mut galley.rows {
+                        let row = Arc::make_mut(row);
+                        row.visuals.mesh_bounds = transform.scaling * row.visuals.mesh_bounds;
+                        for v in &mut row.visuals.mesh.vertices {
+                            v.pos =
+                                Pos2::new(transform.scaling * v.pos.x, transform.scaling * v.pos.y);
+                        }
+                        row.visuals.mesh_cache.invalidate();
                     }
+                    galley.mesh_bounds = transform.scaling * galley.mesh_bounds;
+                    galley.rect = transform.scaling * galley.rect;
                 }
-
-                galley.mesh_bounds = transform.scaling * galley.mesh_bounds;
-                galley.rect = transform.scaling * galley.rect;
             }
             Self::Mesh(mesh) => {
                 Arc::make_mut(mesh).transform(transform);

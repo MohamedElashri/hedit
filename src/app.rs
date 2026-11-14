@@ -85,6 +85,8 @@ mod recovery_tests;
 #[cfg(test)]
 mod redesign_tests;
 mod remote;
+#[cfg(test)]
+mod render_tests;
 mod row_index;
 #[cfg(test)]
 mod rtl_tests;

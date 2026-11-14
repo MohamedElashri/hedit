@@ -4,6 +4,7 @@ pub mod cursor;
 mod cursor_index;
 mod font;
 mod fonts;
+mod mesh_index;
 mod text_layout;
 mod text_layout_types;
 
@@ -16,6 +17,7 @@ pub use {
         FontData, FontDefinitions, FontFamily, FontId, FontInsert, FontPriority, FontTweak, Fonts,
         FontsImpl, InsertFontFamily,
     },
+    mesh_index::TextMeshCache,
     text_layout::layout,
     text_layout_types::*,
 };

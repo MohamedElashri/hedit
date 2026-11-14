@@ -149,6 +149,7 @@ fn place(row: &mut Arc<Row>, dy: f32, old: &[usize], new: &[usize], job: &Layout
             }
         }
         row.visuals.mesh_bounds = row.visuals.mesh.calc_bounds();
+        row.visuals.mesh_cache.invalidate();
     }
 }
 pub(super) fn layout(

@@ -2021,9 +2021,6 @@ impl Tessellator {
             println!("{warn}");
         }
 
-        out.vertices.reserve(galley.num_vertices);
-        out.indices.reserve(galley.num_indices);
-
         // The contents of the galley are already snapped to pixel coordinates,
         // but we need to make sure the galley ends up on the start of a physical pixel:
         let galley_pos = if self.options.round_text_to_pixels {
@@ -2056,53 +2053,72 @@ impl Tessellator {
                 continue;
             }
 
-            let index_offset = out.vertices.len() as u32;
-
-            out.indices.extend(
-                row.visuals
-                    .mesh
-                    .indices
-                    .iter()
-                    .map(|index| index + index_offset),
-            );
-
-            out.vertices.extend(
-                row.visuals
-                    .mesh
-                    .vertices
-                    .iter()
-                    .enumerate()
-                    .map(|(i, vertex)| {
-                        let Vertex { pos, uv, mut color } = *vertex;
-
-                        if let Some(override_text_color) = override_text_color {
-                            // Only override the glyph color (not background color, strike-through color, etc)
-                            if row.visuals.glyph_vertex_range.contains(&i) {
-                                color = *override_text_color;
-                            }
-                        } else if color == Color32::PLACEHOLDER {
-                            color = *fallback_color;
-                        }
-
-                        if *opacity_factor < 1.0 {
-                            color = color.gamma_multiply(*opacity_factor);
-                        }
-
-                        debug_assert!(color != Color32::PLACEHOLDER, "A placeholder color made it to the tessellator. You forgot to set a fallback color.");
-
-                        let offset = if *angle == 0.0 {
-                            pos.to_vec2()
-                        } else {
-                            rotator * pos.to_vec2()
-                        };
-
-                        Vertex {
-                            pos: galley_pos + offset,
-                            uv: (uv.to_vec2() * uv_normalizer).to_pos2(),
-                            color,
-                        }
-                    }),
-            );
+            let mesh = &row.visuals.mesh;
+            let vertex = |i: usize| {
+                let Vertex { pos, uv, mut color } = mesh.vertices[i];
+                if let Some(override_text_color) = override_text_color {
+                    if row.visuals.glyph_vertex_range.contains(&i) {
+                        color = *override_text_color;
+                    }
+                } else if color == Color32::PLACEHOLDER {
+                    color = *fallback_color;
+                }
+                if *opacity_factor < 1.0 {
+                    color = color.gamma_multiply(*opacity_factor);
+                }
+                debug_assert!(color != Color32::PLACEHOLDER, "A placeholder color made it to the tessellator. You forgot to set a fallback color.");
+                let offset = if *angle == 0.0 {
+                    pos.to_vec2()
+                } else {
+                    rotator * pos.to_vec2()
+                };
+                Vertex {
+                    pos: galley_pos + offset,
+                    uv: (uv.to_vec2() * uv_normalizer).to_pos2(),
+                    color,
+                }
+            };
+            let append = |indices: &[u32], vertices: std::ops::Range<usize>, out: &mut Mesh| {
+                let offset = out.vertices.len() as u32;
+                // Selection/background indices can reference vertices appended
+                // far from glyphs. Duplicate those few triangle vertices rather
+                // than copying a huge, mostly unreferenced contiguous span.
+                if vertices.len() > indices.len().saturating_mul(2) {
+                    out.vertices.reserve(indices.len());
+                    out.indices.reserve(indices.len());
+                    for (n, &i) in indices.iter().enumerate() {
+                        out.vertices.push(vertex(i as usize));
+                        out.indices.push(offset + n as u32);
+                    }
+                } else {
+                    out.vertices.reserve(vertices.len());
+                    out.indices.reserve(indices.len());
+                    out.indices
+                        .extend(indices.iter().map(|i| i - vertices.start as u32 + offset));
+                    out.vertices.extend(vertices.map(vertex));
+                }
+            };
+            if self.options.coarse_tessellation_culling
+                && *angle == 0.0
+                && !self.clip_rect.contains_rect(row_rect)
+            {
+                if let Some(index) = row.visuals.mesh_cache.get(mesh) {
+                    // Backends round logical clip bounds to physical scissor
+                    // pixels. Retain a pixel around the clip at block edges.
+                    let clip = self.clip_rect.expand(1.0 / self.pixels_per_point);
+                    index.visit(clip, galley_pos.to_vec2(), |leaf| {
+                        append(
+                            &mesh.indices[leaf.indices.clone()],
+                            leaf.vertices.clone(),
+                            out,
+                        )
+                    });
+                } else {
+                    append(&mesh.indices, 0..mesh.vertices.len(), out);
+                }
+            } else {
+                append(&mesh.indices, 0..mesh.vertices.len(), out);
+            }
 
             if *underline != Stroke::NONE {
                 self.tessellate_line_segment(

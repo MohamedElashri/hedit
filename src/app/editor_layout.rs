@@ -111,6 +111,7 @@ impl Entry {
                 .iter()
                 .map(|row| {
                     std::mem::size_of::<egui::epaint::text::Row>()
+                        + row.visuals.mesh_cache.bytes()
                         + row.glyphs.len() * std::mem::size_of::<egui::epaint::text::Glyph>()
                 })
                 .sum::<usize>()
