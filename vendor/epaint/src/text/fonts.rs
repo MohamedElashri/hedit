@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, Weak},
+};
 
 use crate::{
     mutex::{Mutex, MutexGuard},
@@ -728,6 +731,9 @@ struct GalleyCache {
     /// Frame counter used to do garbage collection on the cache
     generation: u32,
     cache: nohash_hasher::IntMap<u64, CachedGalley>,
+    /// A candidate from this font system only. Does not retain source text or
+    /// meshes after their existing owners release them, or survive atlas resets.
+    previous_long: Weak<Galley>,
 }
 
 impl GalleyCache {
@@ -759,14 +765,23 @@ impl GalleyCache {
 
         let hash = crate::util::hash(&job); // TODO(emilk): even faster hasher?
 
-        match self.cache.entry(hash) {
+        let previous = (job.text.len() >= super::text_layout::LONG_PARAGRAPH_BYTES)
+            .then(|| self.previous_long.upgrade())
+            .flatten();
+        let galley = match self.cache.entry(hash) {
             std::collections::hash_map::Entry::Occupied(entry) => {
                 let cached = entry.into_mut();
                 cached.last_used = self.generation;
                 cached.galley.clone()
             }
             std::collections::hash_map::Entry::Vacant(entry) => {
-                let galley = super::layout(fonts, job.into());
+                let job = Arc::new(job);
+                let galley = previous
+                    .as_ref()
+                    .and_then(|previous| {
+                        super::text_layout::append_layout(fonts, job.clone(), previous)
+                    })
+                    .unwrap_or_else(|| super::layout(fonts, job));
                 let galley = Arc::new(galley);
                 entry.insert(CachedGalley {
                     last_used: self.generation,
@@ -774,7 +789,15 @@ impl GalleyCache {
                 });
                 galley
             }
+        };
+        if galley.job.text.len() >= super::text_layout::LONG_PARAGRAPH_BYTES
+            && galley.rows.len() == 1
+            && !galley.elided
+            && galley.job.wrap.max_width == f32::INFINITY
+        {
+            self.previous_long = Arc::downgrade(&galley);
         }
+        galley
     }
 
     pub fn num_galleys_in_cache(&self) -> usize {

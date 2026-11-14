@@ -74,6 +74,100 @@ pub fn layout(fonts: &mut FontsImpl, job: Arc<LayoutJob>) -> Galley {
     layout_with_capacities(fonts, job, &capacities)
 }
 
+pub(super) const LONG_PARAGRAPH_BYTES: usize = 64 * 1024;
+
+/// Continue the final section of a long, unwrapped paragraph. The caller must
+/// obtain `previous` from the same font system's raw galley cache: edited,
+/// translated, bidi-shaped or foreign-atlas galleys are not candidates.
+pub(super) fn append_layout(
+    fonts: &mut FontsImpl,
+    job: Arc<LayoutJob>,
+    previous: &Galley,
+) -> Option<Galley> {
+    let old = &previous.job;
+    if old.text.len() < LONG_PARAGRAPH_BYTES
+        || job.text.len() <= old.text.len()
+        || previous.elided
+        || previous.rows.len() != 1
+        || previous.rows[0].ends_with_newline
+        || !previous.rows[0].layout_rect.is_finite()
+        || job.wrap.max_width != f32::INFINITY
+        || old.wrap != job.wrap
+        || old.break_on_newline != job.break_on_newline
+        || old.first_row_min_height != job.first_row_min_height
+        || old.halign != job.halign
+        || old.justify != job.justify
+        || old.round_output_to_gui != job.round_output_to_gui
+        || job.halign != Align::LEFT
+        || job.justify
+        || previous.pixels_per_point != fonts.pixels_per_point()
+        || job.sections.is_empty()
+        || old.sections.len() != job.sections.len()
+        || !job.text.starts_with(&old.text)
+    {
+        return None;
+    }
+    let suffix = &job.text[old.text.len()..];
+    if job.break_on_newline && suffix.contains('\n') {
+        return None;
+    }
+    let last_section = job.sections.len() - 1;
+    let mut end = 0;
+    for (i, (a, b)) in old.sections.iter().zip(&job.sections).enumerate() {
+        if a.byte_range.start != end
+            || b.byte_range.start != end
+            || a.leading_space != b.leading_space
+            || a.format != b.format
+            || (i != last_section && a.byte_range != b.byte_range)
+            || a.format.background != Color32::TRANSPARENT
+            || a.format.underline != Stroke::NONE
+            || a.format.strikethrough != Stroke::NONE
+        {
+            return None;
+        }
+        end = a.byte_range.end;
+    }
+    if end != old.text.len() || job.sections[last_section].byte_range.end != job.text.len() {
+        return None;
+    }
+    let row = &previous.rows[0];
+    let last = row.glyphs.last()?;
+    if last.section_index as usize != last_section {
+        return None;
+    }
+    let mut continuation = job.sections[last_section].clone();
+    continuation.byte_range.start = old.text.len();
+    continuation.leading_space = 0.0; // already applied before the cached prefix
+    let font = fonts.font(&continuation.format.font_id);
+    let cursor_x = font.round_to_pixel(last.max_x());
+    let last_id = font.font_impl_and_glyph_info(last.chr).1.id;
+    let mut paragraph = Paragraph::from_section_index(
+        row.section_index_at_start,
+        row.glyphs.len() + suffix.chars().count(),
+    );
+    paragraph.cursor_x = cursor_x;
+    paragraph.glyphs.extend_from_slice(&row.glyphs);
+    let mut paragraphs = vec![paragraph];
+    layout_section(
+        fonts,
+        &job,
+        last_section as u32,
+        &continuation,
+        &mut paragraphs,
+        &[],
+        Some(last_id),
+    );
+    let mut elided = false;
+    let rows = rows_from_paragraphs(paragraphs, &job, &mut elided);
+    Some(galley_from_rows(
+        PointScale::new(fonts.pixels_per_point()),
+        job,
+        rows,
+        elided,
+        Some(row),
+    ))
+}
+
 // Reserve large jobs once per paragraph, including paragraphs split across
 // format sections. Count the actual shaped sections, not unused job text.
 // Small labels keep the original path without an allocation-planning pass.
@@ -130,6 +224,7 @@ fn layout_with_capacities(
             section,
             &mut paragraphs,
             capacities,
+            None,
         );
     }
 
@@ -164,7 +259,7 @@ fn layout_with_capacities(
     }
 
     // Calculate the Y positions and tessellate the text:
-    galley_from_rows(point_scale, job, rows, elided)
+    galley_from_rows(point_scale, job, rows, elided, None)
 }
 
 // Ignores the Y coordinate.
@@ -175,6 +270,7 @@ fn layout_section(
     section: &LayoutSection,
     out_paragraphs: &mut Vec<Paragraph>,
     capacities: &[usize],
+    mut last_glyph_id: Option<ab_glyph::GlyphId>,
 ) {
     let LayoutSection {
         leading_space,
@@ -194,8 +290,6 @@ fn layout_section(
     }
 
     paragraph.cursor_x += leading_space;
-
-    let mut last_glyph_id = None;
 
     for chr in job.text[byte_range.clone()].chars() {
         if job.break_on_newline && chr == '\n' {
@@ -643,21 +737,27 @@ fn galley_from_rows(
     job: Arc<LayoutJob>,
     mut rows: Vec<Row>,
     elided: bool,
+    prefix: Option<&Row>,
 ) -> Galley {
     let mut first_row_min_height = job.first_row_min_height;
     let mut cursor_y = 0.0;
     let mut min_x: f32 = 0.0;
     let mut max_x: f32 = 0.0;
-    for row in &mut rows {
+    for (i, row) in rows.iter_mut().enumerate() {
+        let prefix = prefix.filter(|_| i == 0);
+        let prefix_len = prefix.map_or(0, |row| row.glyphs.len());
         let mut max_row_height = first_row_min_height.max(row.rect.height());
+        if let Some(prefix) = prefix {
+            max_row_height = max_row_height.max(prefix.layout_rect.height());
+        }
         first_row_min_height = 0.0;
-        for glyph in &row.glyphs {
+        for glyph in &row.glyphs[prefix_len..] {
             max_row_height = max_row_height.max(glyph.line_height);
         }
         max_row_height = point_scale.round_to_pixel(max_row_height);
 
         // Now position each glyph vertically:
-        for glyph in &mut row.glyphs {
+        for glyph in &mut row.glyphs[prefix_len..] {
             let format = &job.sections[glyph.section_index as usize].format;
 
             glyph.pos.y = cursor_y
@@ -689,8 +789,14 @@ fn galley_from_rows(
     let mut num_vertices = 0;
     let mut num_indices = 0;
 
-    for row in &mut rows {
-        row.visuals = tessellate_row(point_scale, &job, &format_summary, row);
+    for (i, row) in rows.iter_mut().enumerate() {
+        row.visuals = tessellate_row(
+            point_scale,
+            &job,
+            &format_summary,
+            row,
+            prefix.filter(|_| i == 0),
+        );
         mesh_bounds = mesh_bounds.union(row.visuals.mesh_bounds);
         num_vertices += row.visuals.mesh.vertices.len();
         num_indices += row.visuals.mesh.indices.len();
@@ -755,6 +861,7 @@ fn tessellate_row(
     job: &LayoutJob,
     format_summary: &FormatSummary,
     row: &Row,
+    prefix: Option<&Row>,
 ) -> RowVisuals {
     if row.glyphs.is_empty() {
         return Default::default();
@@ -771,7 +878,19 @@ fn tessellate_row(
 
     let glyph_index_start = mesh.indices.len();
     let glyph_vertex_start = mesh.vertices.len();
-    tessellate_glyphs(point_scale, job, row, &mut mesh);
+    let prefix_len = prefix.map_or(0, |row| row.glyphs.len());
+    if let Some(prefix) = prefix {
+        debug_assert!(
+            !format_summary.any_background
+                && !format_summary.any_underline
+                && !format_summary.any_strikethrough
+        );
+        mesh.vertices
+            .extend_from_slice(&prefix.visuals.mesh.vertices);
+        mesh.indices.extend_from_slice(&prefix.visuals.mesh.indices);
+    }
+    let new_vertex_start = mesh.vertices.len();
+    tessellate_glyphs(point_scale, job, &row.glyphs[prefix_len..], &mut mesh);
     let glyph_vertex_end = mesh.vertices.len();
 
     if format_summary.any_underline {
@@ -792,7 +911,15 @@ fn tessellate_row(
         });
     }
 
-    let mesh_bounds = mesh.calc_bounds();
+    let mesh_bounds = if let Some(prefix) = prefix {
+        let mut bounds = prefix.visuals.mesh_bounds;
+        for vertex in &mesh.vertices[new_vertex_start..] {
+            bounds.extend_with(vertex.pos);
+        }
+        bounds
+    } else {
+        mesh.calc_bounds()
+    };
 
     RowVisuals {
         mesh_cache: Default::default(),
@@ -848,8 +975,8 @@ fn add_row_backgrounds(job: &LayoutJob, row: &Row, mesh: &mut Mesh) {
     end_run(run_start.take(), last_rect.right());
 }
 
-fn tessellate_glyphs(point_scale: PointScale, job: &LayoutJob, row: &Row, mesh: &mut Mesh) {
-    for glyph in &row.glyphs {
+fn tessellate_glyphs(point_scale: PointScale, job: &LayoutJob, glyphs: &[Glyph], mesh: &mut Mesh) {
+    for glyph in glyphs {
         let uv_rect = glyph.uv_rect;
         if !uv_rect.is_nothing() {
             let mut left_top = glyph.pos + uv_rect.offset;
@@ -1096,6 +1223,173 @@ fn is_cjk_break_allowed(c: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{super::*, *};
+
+    #[test]
+    fn appended_long_paragraphs_match_full_layout_and_preserve_previous_frames() {
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            for family in [FontFamily::Monospace, FontFamily::Proportional] {
+                let mut fonts = FontsImpl::new(scale, 4096, FontDefinitions::default());
+                let mut reference = FontsImpl::new(scale, 4096, FontDefinitions::default());
+                let mut job = LayoutJob::default();
+                job.first_row_min_height = 37.25;
+                for (text, size, leading, height) in [
+                    ("AVATAR To fi ".repeat(6000), 14.0, 2.25, 20.25),
+                    ("αe\u{301}🦀שלום مرحبا\t\r".into(), 19.25, 3.5, 29.5),
+                ] {
+                    job.append(
+                        &text,
+                        leading,
+                        TextFormat {
+                            font_id: FontId::new(size, family.clone()),
+                            line_height: Some(height),
+                            color: Color32::LIGHT_BLUE,
+                            italics: true,
+                            extra_letter_spacing: 0.25,
+                            ..Default::default()
+                        },
+                    );
+                }
+                let mut previous = layout(&mut fonts, Arc::new(job.clone()));
+                let _ = layout(&mut reference, Arc::new(job.clone()));
+                for suffix in ["x", "AV", "e\u{301}α🦀", "\t\r", "\u{200d}", "שלום مرحبا"]
+                {
+                    let saved = previous.clone();
+                    let _ = previous.cursor_index();
+                    job.text.push_str(suffix);
+                    job.sections.last_mut().unwrap().byte_range.end = job.text.len();
+                    let job = Arc::new(job.clone());
+                    let actual = append_layout(&mut fonts, job.clone(), &previous).unwrap();
+                    let expected = layout(&mut reference, job);
+                    assert_eq!(actual, expected, "scale={scale} suffix={suffix:?}");
+                    assert_eq!(
+                        previous, saved,
+                        "a live previous frame must remain immutable"
+                    );
+                    assert_eq!(
+                        &actual.rows[0].visuals.mesh.vertices[..previous.num_vertices],
+                        previous.rows[0].visuals.mesh.vertices
+                    );
+                    previous = actual;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn append_layout_falls_back_for_other_edits_styles_wrapping_and_elision() {
+        let mut fonts = FontsImpl::new(1.25, 4096, FontDefinitions::default());
+        let original = LayoutJob::single_section("AVATAR ".repeat(10_000), TextFormat::default());
+        let previous = layout(&mut fonts, Arc::new(original.clone()));
+        for variant in 0..12 {
+            let mut job = original.clone();
+            job.text.push('x');
+            job.sections[0].byte_range.end = job.text.len();
+            match variant {
+                0 => job.text.insert(0, 'x'),
+                1 => job.text.push('\n'),
+                2 => job.wrap.max_width = 900.0,
+                3 => job.halign = Align::RIGHT,
+                4 => job.justify = true,
+                5 => job.sections[0].format.color = Color32::RED,
+                6 => job.sections[0].format.background = Color32::RED,
+                7 => job.sections[0].format.underline = Stroke::new(1.0_f32, Color32::RED),
+                8 => job.wrap.max_rows = 0,
+                9 => job.sections[0].byte_range.start = 1,
+                10 => job.first_row_min_height = 99.0,
+                11 => job.sections[0].leading_space = 5.0,
+                _ => unreachable!(),
+            }
+            assert!(
+                append_layout(&mut fonts, Arc::new(job), &previous).is_none(),
+                "variant={variant}"
+            );
+        }
+    }
+
+    #[test]
+    fn cached_append_candidates_do_not_outlive_font_resets_or_extend_retention() {
+        let fonts = Fonts::new(1.0, 4096, FontDefinitions::default());
+        let mut job = LayoutJob::single_section("AVATAR ".repeat(10_000), TextFormat::default());
+        let previous = fonts.layout_job(job.clone());
+        let weak = Arc::downgrade(&previous);
+        // The application retains the active raw galley, even after the
+        // renderer's ordinary per-frame cache has forgotten its job.
+        fonts.begin_pass(1.0, 4096);
+        fonts.begin_pass(1.0, 4096);
+        job.text.push_str("α🦀");
+        job.sections[0].byte_range.end = job.text.len();
+        let actual = fonts.layout_job(job.clone());
+        let mut reference = FontsImpl::new(1.0, 4096, FontDefinitions::default());
+        let _ = layout(&mut reference, previous.job.clone());
+        assert_eq!(*actual, layout(&mut reference, Arc::new(job.clone())));
+        fonts.begin_pass(1.5, 2048);
+        let mut reference = FontsImpl::new(1.5, 2048, FontDefinitions::default());
+        assert_eq!(
+            *fonts.layout_job(job),
+            layout(&mut reference, actual.job.clone())
+        );
+        drop(previous);
+        drop(actual);
+        assert!(
+            weak.upgrade().is_none(),
+            "the candidate must be weak, not a text-retaining cache"
+        );
+    }
+
+    #[test]
+    #[ignore = "manual optimized paired profile of full versus appended long-paragraph layout"]
+    fn profile_long_paragraph_appends() {
+        for (label, text) in [
+            ("165k ASCII", "abcdefghij ".repeat(15_000)),
+            ("1M ASCII", "abcdefghij".repeat(100_000)),
+            ("Unicode", "αe\u{301}🦀 שלום مرحبا ".repeat(6000)),
+        ] {
+            let mut full_fonts = FontsImpl::new(1.0, 4096, FontDefinitions::default());
+            let mut incremental_fonts = FontsImpl::new(1.0, 4096, FontDefinitions::default());
+            let mut job = LayoutJob::single_section(
+                text,
+                TextFormat {
+                    font_id: FontId::monospace(14.0),
+                    ..Default::default()
+                },
+            );
+            let mut previous = layout(&mut incremental_fonts, Arc::new(job.clone()));
+            let _ = layout(&mut full_fonts, Arc::new(job.clone()));
+            let mut times = [Vec::new(), Vec::new()];
+            for n in 0..20 {
+                job.text.push('x');
+                job.sections[0].byte_range.end = job.text.len();
+                let job = Arc::new(job.clone());
+                let mut next = None;
+                for incremental in if n % 2 == 0 {
+                    [false, true]
+                } else {
+                    [true, false]
+                } {
+                    let start = std::time::Instant::now();
+                    let galley = if incremental {
+                        append_layout(&mut incremental_fonts, job.clone(), &previous).unwrap()
+                    } else {
+                        layout(&mut full_fonts, job.clone())
+                    };
+                    times[usize::from(incremental)].push(start.elapsed().as_secs_f64() * 1000.0);
+                    if incremental {
+                        next = Some(galley);
+                    } else {
+                        std::hint::black_box(galley);
+                    }
+                }
+                previous = next.unwrap();
+            }
+            for samples in &mut times {
+                samples.sort_by(f64::total_cmp);
+            }
+            eprintln!(
+                "Append {label}: full p50={:.3} p95={:.3}ms; incremental p50={:.3} p95={:.3}ms",
+                times[0][10], times[0][18], times[1][10], times[1][18]
+            );
+        }
+    }
 
     #[test]
     fn direct_glyph_lookup_preserves_full_layout_across_font_and_atlas_changes() {

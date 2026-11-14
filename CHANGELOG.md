@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Reuse the unchanged glyph and mesh prefix when appending to compatible long unwrapped paragraphs, including after idle frames.
+- Keep append candidates weak and scoped to their font atlas; retain full layout for other edits, wrapping, decorations and changed formatting.
+
 - Use direct ASCII glyph lookups in each font to reduce repeated layout work, while preserving Unicode fallback, kerning and atlas ownership.
 - Allocate each fixed-size lookup table lazily in memory and retain differential checks against the original hash lookup path.
 

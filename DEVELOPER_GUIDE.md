@@ -259,6 +259,43 @@ recovered after host durability and SIGKILL of the actual SSH client. Saved
 fixtures stayed unchanged, the local session contained only its log, and no
 native panic was recorded.
 
+The font cache also keeps one weak candidate for appends to unwrapped paragraphs
+of at least 64 KiB. With identical wrapping/alignment, contiguous formatting
+sections and unchanged styles, it copies the existing glyph/mesh prefix and
+shapes only the appended part of the final section, carrying the exact rounded
+pen position and preceding glyph ID for kerning. Existing vertical placement and
+mesh bounds are reused; the new cursor and mesh indexes start fresh. Single-block
+editor pages keep the raw galley alive, so idle-frame cache eviction does not
+prevent the next append from reusing it. The weak candidate adds no source-text
+retention and disappears when the font system/atlas is reset.
+
+Insertions elsewhere, deletions, new sections or changed styles, line breaks,
+wrapping, alignment/justification and decorated runs use full layout. Existing
+prefix buffers are still copied, so appends retain a cost proportional to their
+size; this optimization removes repeated shaping and tessellation of that prefix,
+not every linear operation. Differential tests cover full geometry/UV/color
+equality, mixed fonts, fallback glyphs, combining marks, invisible characters,
+kerning, fractional scales, live previous frames and idle/atlas-reset lifetimes.
+
+```sh
+cargo test --locked --release -p epaint --lib profile_long_paragraph_appends -- --ignored --nocapture --test-threads=1
+```
+
+Two idle paired runs on the development Mac (20 alternating samples per path)
+measured these p50 full-layout/append-layout CPU times:
+
+| Fixture | First run | Second run |
+| --- | ---: | ---: |
+| 165,000 ASCII characters | 5.55 / 0.85 ms | 5.55 / 0.80 ms |
+| 1,000,000 ASCII characters | 35.82 / 5.99 ms | 35.62 / 6.26 ms |
+| Unicode paragraph | 3.47 / 0.36 ms | 3.49 / 0.41 ms |
+
+Job construction, IO and native input/display latency are excluded. The native
+optimized SSH app separately accepted a Unicode append after an idle pause at
+the end of a million-character paragraph, restored the clean original with
+Undo, edited after a font-size change, and exercised the wrapping fallback.
+Saved fixtures remained unchanged and no native panic was recorded.
+
 Large editable pages use paragraph-aligned blocks (about 4 KiB each). An inline
 edit reshapes the affected blocks and shares unchanged rows with the previous
 frame. A single long paragraph can still require a large layout; adding or

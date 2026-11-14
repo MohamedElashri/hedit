@@ -164,6 +164,20 @@ pub(super) fn layout(
     let mut y = 0.0;
     let mut width: f32 = 0.0;
     let ranges = pieces(&job.text, old);
+    if ranges.len() == 1 {
+        // Keep the font system's raw galley alive while this page is active.
+        // A second assembled galley would duplicate the job and leave the
+        // renderer's weak append candidate dead after its frame cache expires.
+        let (galley, bidi) = super::super::bidi_view::apply(fonts, fonts.layout_job(job), base);
+        let block = Block {
+            bytes: 0..galley.job.text.len(),
+            rows: 0..galley.rows.len(),
+            styles: galley.job.sections.clone(),
+            sections: (0..galley.job.sections.len()).collect(),
+            width: galley.rect.width(),
+        };
+        return (galley, bidi, vec![block]);
+    }
     for (index, (bytes, previous)) in ranges.iter().enumerate() {
         let (styles, sections) = styles(&job, bytes);
         let before = rows.len();
@@ -259,6 +273,49 @@ pub(super) fn layout(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn single_block_retains_the_raw_galley_through_idle_frames_and_appends() {
+        let fonts = Fonts::new(1.25, 4096, egui::FontDefinitions::default());
+        let source = "AVATAR α🦀 value ".repeat(5000);
+        let font = Font {
+            size: 14.0,
+            line_height: Some(21.25),
+        };
+        let job = code_job(
+            &source,
+            Language::PlainText,
+            font,
+            f32::INFINITY,
+            &Theme::default(),
+            None,
+        );
+        let base = super::super::super::bidi_view::Base::Auto;
+        let first = layout(&fonts, job.clone(), base, None);
+        assert!(Arc::ptr_eq(&first.0, &fonts.layout_job(job)));
+        fonts.begin_pass(1.25, 4096);
+        fonts.begin_pass(1.25, 4096);
+        let next = format!("{source} append e\u{301}🦀");
+        let job = code_job(
+            &next,
+            Language::PlainText,
+            font,
+            f32::INFINITY,
+            &Theme::default(),
+            None,
+        );
+        let second = layout(
+            &fonts,
+            job.clone(),
+            base,
+            Some((&first.0, &first.1, &first.2)),
+        );
+        let expected = egui::epaint::text::layout(&mut fonts.lock().fonts, Arc::new(job));
+        compare(&second.0, &expected);
+        assert_eq!(first.0.job.text, source);
+        assert_eq!(second.2.len(), 1);
+        assert_eq!(second.2[0].bytes, 0..next.len());
+    }
+
     #[track_caller]
     fn close(a: f32, b: f32) {
         assert!((a - b).abs() < 0.04, "{a} != {b}");
