@@ -117,7 +117,7 @@ every feature is bug-free or every native platform has been exercised.
 | SSH privacy and recovery | Headless helper and real loopback SSH/crash suites; targeted native editing/Undo and recovery checks. Derived UI caches remain in RAM and remote recovery remains on the SSH host. |
 | Native frame processing | Opt-in numeric CPU/GPU tracing, core-only query dispatch and privacy/backpressure regressions, plus live macOS SSH typing/scroll samples. Large-file native CPU spikes remain; physical input/display latency is unmeasured. See [native frame diagnostics](#native-frame-diagnostics). |
 | Accessibility | Native AccessKit labels/text, focus reachability through split/busy/hidden-editor transitions, tab role/full-name/selected-state tests, descriptive close controls, valid word-length metadata for long ASCII and Unicode identifiers, and right-to-left direction/positions for pure RTL runs. Native screen-reader speech and mixed-script navigation still need dedicated assistive-technology testing. |
-| Packaging and platforms | Local macOS Rust/Clippy/package checks and offline package fixtures. Fresh Linux/Windows CI and live GUI validation of this unpublished stack remain pending; no alternate test host or running Linux container daemon was available. |
+| Packaging and platforms | Local macOS Rust/Clippy/package checks and offline package fixtures. The [validation branch CI](https://github.com/MohamedElashri/hedit/actions/workflows/ci.yml?query=branch%3Afeature%2Fcross-platform-validation) runs Linux/macOS checks, Windows checks/packaging and live loopback SSH crash tests. Inspect the run's commit and conclusions; CI does not establish interactive GUI behavior on Linux or Windows. |
 
 The dedicated VoiceOver/mixed-script pass remains open. The optimized SSH fixture
 started successfully, but the native automation service failed to start its pipe
@@ -130,8 +130,13 @@ so interactive GUI checks on those platforms also remain unavailable.
 The [SSH feature CI run at 78dcf65](https://github.com/MohamedElashri/hedit/actions/runs/43488093934)
 passed Linux, macOS and remote SSH jobs, but Windows Clippy rejected the size of
 `Action::Add`. The document payload is now boxed, removing the platform-dependent
-inline size difference. This is a source fix; a fresh Windows run is still needed.
-Those historical green jobs do not validate later local UI commits.
+inline size difference. The validation branch above checks this fix and the later
+UI changes; those historical green jobs do not validate the current stack.
+
+Fresh cross-platform validation also caught an ungated sidebar accessibility
+fixture: Linux and Windows do not enable the native AccessKit feature. The
+tree-specific fixture now has the same macOS guard as the other accessibility
+tests; general project/sidebar tests remain cross-platform.
 
 A live native split-group Undo check exposed a collision between a split editor's
 widget ID and the primary editor's accessibility row ID. Pane IDs now have a

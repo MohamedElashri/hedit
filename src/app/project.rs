@@ -632,6 +632,8 @@ mod tests {
     }
 
     #[test]
+    // The native AccessKit bridge is enabled only in the macOS build.
+    #[cfg(target_os = "macos")]
     fn sidebar_only_registers_visible_rows_and_can_reveal_the_last_file() {
         let directory = tempfile::tempdir().unwrap();
         let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
