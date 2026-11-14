@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Keep large-file completion indexing and ranking off the UI thread, with bounded snapshots, word storage and cancellable worker slots.
+- Guard completion results and acceptance against tab, pane, revision, cursor and prefix changes; cancel delayed suggestions on Escape and navigation.
+- Reuse indexed cursor offsets for completion prefixes, preserve highlighted choices during background refreshes, and discard words from closed completion scopes.
+
 - Preserve preferred caret columns and soft-wrap affinity across frames; reset stale cursor coordinates after text changes and explicit navigation.
 - Keep fast mouse drags anchored when press, movement and release arrive in one frame, including Shift extension and RTL selection.
 - Cache bounded minimap samples in memory and avoid rescanning unchanged documents while scrolling or repainting.

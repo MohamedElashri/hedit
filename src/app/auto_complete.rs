@@ -1,64 +1,115 @@
-//! Completions offered while typing, in a list at the cursor. Words come from
-//! an index of the open files, built on another thread a moment after edits
-//! stop, so typing never waits for it.
+//! Bounded completion indexing and ranking, with guarded background results.
 use super::*;
 use hedit::completion::{self, Word};
 use std::sync::mpsc;
-
-/// Rows shown in the list.
 const SHOWN: usize = 12;
-/// Index the open files again this long after the last edit.
 const REINDEX_AFTER: Duration = Duration::from_millis(750);
-/// Letters typed before the list opens by itself.
 const MIN_TYPED: usize = 2;
-
+const INLINE_TEXT: usize = 64 * 1024;
+const INLINE_WORDS: usize = 4096;
+const SNAPSHOT_BYTES: usize = 8 * 1024 * 1024;
+const SNAPSHOT_FILES: usize = 32;
 #[derive(Clone, Debug)]
 pub(super) enum Choice {
     Word(String),
     Snippet(hedit::intelligence::Snippet),
 }
-
-pub(super) struct Popup {
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Query {
     view: u64,
-    /// Where the typed word starts, as a character index.
+    revision: u64,
+    pane: usize,
     start: usize,
+    head: usize,
     typed: String,
+}
+pub(super) struct Popup {
+    query: Query,
+    version: u64,
+    locked: bool,
     pub(super) choices: Vec<Choice>,
     pub(super) selected: usize,
 }
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Source {
+    id: u64,
+    revision: u64,
+    start: u64,
+    end: usize,
+}
+type IndexKey = Vec<Source>;
+#[derive(Clone, Copy)]
+struct Scheduled {
+    at: Instant,
+    view: u64,
+    pane: usize,
+    revision: u64,
+    head: usize,
+}
 
-/// The files and revisions indexed, the merged words, and each changed
-/// file's own words.
-type Built = (Vec<(u64, u64)>, Vec<Word>, Vec<(u64, u64, Arc<Vec<Word>>)>);
-
+pub(super) struct Job<T> {
+    cancel: Arc<AtomicBool>,
+    rx: mpsc::Receiver<T>,
+}
+impl<T> Drop for Job<T> {
+    fn drop(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+}
+pub(super) struct Build {
+    key: IndexKey,
+    words: Option<completion::Indexed>,
+}
+struct Ranked {
+    query: Query,
+    version: u64,
+    words: Option<Vec<String>>,
+}
+struct WordCache {
+    view: u64,
+    revision: u64,
+    head: usize,
+    prefix: Option<(usize, String)>,
+}
 #[derive(Default)]
 pub(super) struct AutoComplete {
     words: Arc<Vec<Word>>,
-    /// Each file's words by file ID, with the revision they came from, so only
-    /// changed files are indexed again.
-    files: std::collections::HashMap<u64, (u64, Arc<Vec<Word>>)>,
-    /// The open files and revisions `words` came from.
-    indexed: Vec<(u64, u64)>,
-    /// The files and revisions seen last, and when they last changed.
-    seen: (Vec<(u64, u64)>, Option<Instant>),
-    pub(super) building: Option<mpsc::Receiver<Built>>,
-    /// Open the list at this time, after a word character was typed.
-    due: Option<Instant>,
-    /// Words were typed, so the index is worth keeping; nothing is indexed
-    /// before that.
+    indexed: Option<IndexKey>,
+    seen: Option<(IndexKey, Instant)>,
+    pub(super) building: Option<Job<Build>>,
+    building_key: IndexKey,
+    ranking: Option<Job<Ranked>>,
+    ranking_key: Option<(Query, u64)>,
+    version: u64,
+    due: Option<Scheduled>,
+    intent: Option<Query>,
+    word: Option<WordCache>,
     pub(super) wanted: bool,
     pub(super) popup: Option<Popup>,
+    limited: bool,
+    started: bool,
 }
-
 impl AutoComplete {
     #[cfg(test)]
     pub(super) fn words_len(&self) -> usize {
         self.words.len()
     }
+    pub(super) fn active(&self) -> bool {
+        self.visible() || self.due.is_some()
+    }
+    pub(super) fn visible(&self) -> bool {
+        self.popup.is_some() || self.intent.is_some()
+    }
+    pub(super) fn dismiss(&mut self) {
+        self.popup = None;
+        self.intent = None;
+        self.due = None;
+        if let Some(job) = &self.ranking {
+            job.cancel.store(true, Ordering::Relaxed);
+        }
+    }
 }
-
 impl HeditApp {
-    /// The focused pane's editor widget.
     pub(super) fn editor_id(&self) -> egui::Id {
         let b = self.active();
         let id = egui::Id::new(("editor", b.page.info.id, b.page.start));
@@ -68,105 +119,161 @@ impl HeditApp {
             id
         }
     }
-    fn completion_key(&self) -> Vec<(u64, u64)> {
-        self.workspace
-            .open
-            .iter()
-            .filter(|b| !b.page.info.paged)
-            .map(|b| (b.page.info.id, b.page.info.revision))
+    fn completion_available(&self) -> bool {
+        !self.busy
+            && !self.closing
+            && !self.source_control.open
+            && !self.palette
+            && !self.preferences_open
+            && !self.goto_open
+            && !self.about_open
+            && !self.guide.open
+            && self.rename_target.is_none()
+            && !self.shelf_open
+            && !self.bookmarks_open
+            && !self.updates.open
+            && self.project.create.is_none()
+            && self.quality.file_action.is_none()
+            && self.workspace.remote.as_ref().is_none_or(|r| r.writable())
+    }
+    /// Active file first, with one global snapshot budget across all open files.
+    fn completion_key(&self) -> IndexKey {
+        let active = self.active().view.id;
+        let mut left = SNAPSHOT_BYTES;
+        std::iter::once(self.active())
+            .chain(self.workspace.open.iter().filter(|b| b.view.id != active))
+            .filter(|b| !b.page.info.paged && !b.follow)
+            .take(SNAPSHOT_FILES)
+            .filter_map(|b| {
+                if left == 0 {
+                    return None;
+                }
+                let mut end = b.page.text.len().min(completion::MAX_TEXT).min(left);
+                while !b.page.text.is_char_boundary(end) {
+                    end -= 1;
+                }
+                left -= end;
+                Some(Source {
+                    id: b.view.id,
+                    revision: b.page.info.revision,
+                    start: b.page.start,
+                    end,
+                })
+            })
             .collect()
     }
-    /// Index changed files on another thread and merge them with the rest,
-    /// the current file first.
-    fn build_index(&mut self, ctx: &egui::Context, key: Vec<(u64, u64)>) {
-        let active = self.active().page.info.id;
-        let mut order = vec![];
-        let mut changed = vec![];
-        for b in std::iter::once(self.active()).chain(
-            self.workspace
+    fn publish_index(&mut self, key: IndexKey, index: completion::Indexed) {
+        self.auto.limited |= index.limited;
+        self.auto.words = Arc::new(index.words);
+        self.auto.indexed = Some(key);
+        self.auto.version = self.auto.version.wrapping_add(1);
+    }
+    fn build_index(&mut self, ctx: &egui::Context, key: IndexKey) {
+        self.auto.started = true;
+        let snapshots: Vec<String> = key
+            .iter()
+            .filter_map(|source| {
+                self.workspace
+                    .open
+                    .iter()
+                    .find(|b| b.view.id == source.id)
+                    .map(|b| b.page.text[..source.end].to_owned())
+            })
+            .collect();
+        self.auto.limited = key.len()
+            < self
+                .workspace
                 .open
                 .iter()
-                .filter(|b| b.page.info.id != active),
-        ) {
-            let (id, revision) = (b.page.info.id, b.page.info.revision);
-            if b.page.info.paged {
-                continue;
-            }
-            order.push(id);
-            if self
-                .auto
-                .files
-                .get(&id)
-                .is_some_and(|(r, _)| *r == revision)
-            {
-                continue;
-            }
-            let mut end = b.page.text.len().min(completion::MAX_TEXT);
-            while !b.page.text.is_char_boundary(end) {
-                end -= 1;
-            }
-            changed.push((id, revision, b.page.text[..end].to_owned()));
+                .filter(|b| !b.page.info.paged && !b.follow)
+                .count()
+            || key.iter().any(|s| {
+                self.workspace
+                    .open
+                    .iter()
+                    .any(|b| b.view.id == s.id && b.page.text.len() > s.end)
+            });
+        if snapshots.iter().map(String::len).sum::<usize>() <= INLINE_TEXT {
+            self.publish_index(
+                key,
+                completion::index_cancellable(&snapshots, || false).unwrap(),
+            );
+            return;
         }
-        self.auto.files.retain(|id, _| order.contains(id));
-        let known = self.auto.files.clone();
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::sync_channel(1);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let stop = Arc::clone(&cancel);
         let ctx = ctx.clone();
+        self.auto.building_key = key.clone();
         thread::spawn(move || {
-            let fresh: Vec<(u64, u64, Arc<Vec<Word>>)> = changed
-                .into_iter()
-                .map(|(id, revision, text)| (id, revision, Arc::new(completion::index(&[text]))))
-                .collect();
-            let lists: Vec<&[Word]> = order
-                .iter()
-                .filter_map(|id| {
-                    fresh
-                        .iter()
-                        .find(|(f, _, _)| f == id)
-                        .map(|(_, _, words)| words.as_slice())
-                        .or_else(|| known.get(id).map(|(_, words)| words.as_slice()))
-                })
-                .collect();
-            let merged = completion::merge(&lists);
-            let _ = tx.send((key, merged, fresh));
+            let words = completion::index_cancellable(&snapshots, || stop.load(Ordering::Relaxed));
+            let _ = tx.send(Build { key, words });
             ctx.request_repaint();
         });
-        self.auto.building = Some(rx);
+        self.auto.building = Some(Job { cancel, rx });
     }
-    /// Keep the word index current: rebuild it a moment after edits stop.
-    fn maintain_index(&mut self, ctx: &egui::Context) {
-        if let Some(rx) = &self.auto.building {
-            match rx.try_recv() {
-                Ok((key, words, fresh)) => {
-                    self.auto.words = Arc::new(words);
-                    self.auto.indexed = key;
+    fn maintain_index(&mut self, ctx: &egui::Context, force: bool) {
+        let key = self.completion_key();
+        let first = !self.auto.started;
+        if self.auto.seen.as_ref().is_none_or(|(old, _)| old != &key) {
+            let scope_changed = self.auto.seen.as_ref().is_some_and(|(old, _)| {
+                old.iter()
+                    .map(|s| (s.id, s.start))
+                    .ne(key.iter().map(|s| (s.id, s.start)))
+            });
+            if scope_changed {
+                self.auto.words = Arc::default();
+                self.auto.indexed = None;
+                self.auto.word = None;
+                self.auto.version = self.auto.version.wrapping_add(1);
+                self.auto.popup = None;
+            }
+            self.auto.seen = Some((key.clone(), Instant::now()));
+        }
+        let enabled =
+            (self.settings.auto_complete && self.auto.wanted) || self.auto.intent.is_some();
+        if let Some(job) = &self.auto.building {
+            if !enabled || self.auto.building_key != key {
+                job.cancel.store(true, Ordering::Relaxed);
+            }
+            match job.rx.try_recv() {
+                Ok(built) => {
+                    let cancelled = job.cancel.load(Ordering::Relaxed);
                     self.auto.building = None;
-                    for (id, revision, words) in fresh {
-                        self.auto.files.insert(id, (revision, words));
+                    if enabled && !cancelled && built.key == key {
+                        if let Some(words) = built.words {
+                            self.publish_index(built.key, words);
+                        }
                     }
                 }
                 Err(mpsc::TryRecvError::Disconnected) => self.auto.building = None,
                 Err(mpsc::TryRecvError::Empty) => {}
             }
         }
-        if !self.settings.auto_complete || !self.auto.wanted {
+        if !enabled {
+            if self.auto.indexed.is_some() || !self.auto.words.is_empty() {
+                self.auto.words = Arc::default();
+                self.auto.indexed = None;
+                self.auto.word = None;
+                self.auto.version = self.auto.version.wrapping_add(1);
+            }
             return;
         }
-        let key = self.completion_key();
-        if key != self.auto.seen.0 {
-            self.auto.seen = (key.clone(), Some(Instant::now()));
-        }
-        if key == self.auto.indexed || self.auto.building.is_some() {
+        if self.auto.indexed.as_ref() == Some(&key) || self.auto.building.is_some() {
             return;
         }
-        let since = self.auto.seen.1.map_or(REINDEX_AFTER, |at| at.elapsed());
-        if since >= REINDEX_AFTER || self.auto.indexed.is_empty() {
+        let since = self
+            .auto
+            .seen
+            .as_ref()
+            .map_or(REINDEX_AFTER, |(_, at)| at.elapsed());
+        if force || first || since >= REINDEX_AFTER {
             self.build_index(ctx, key);
         } else {
             ctx.request_repaint_after(REINDEX_AFTER - since);
         }
     }
-    /// Snippets whose trigger starts with the typed word, then indexed words.
-    fn completion_choices(&self, typed: &str) -> Vec<Choice> {
+    fn completion_choices(&self, typed: &str, words: Vec<String>) -> Vec<Choice> {
         let language = self.active().language().id();
         let lower = typed.to_lowercase();
         let mut choices: Vec<Choice> = self
@@ -183,16 +290,11 @@ impl HeditApp {
             .cloned()
             .map(Choice::Snippet)
             .collect();
-        choices.extend(
-            completion::rank(&self.auto.words, typed, SHOWN)
-                .into_iter()
-                .map(|w| Choice::Word(w.to_owned())),
-        );
+        choices.extend(words.into_iter().map(Choice::Word));
         choices.truncate(SHOWN);
         choices
     }
-    /// The typed word at the only cursor, or None where completion does not apply.
-    fn completion_word(&self) -> Option<(usize, String)> {
+    fn completion_word(&mut self) -> Option<(usize, String)> {
         let b = self.active();
         if b.page.info.paged
             || b.follow
@@ -201,128 +303,370 @@ impl HeditApp {
         {
             return None;
         }
-        Some(completion::typed_word(&b.page.text, b.view.head))
-    }
-    /// Open the list now, as Complete word (Ctrl+Space) does.
-    pub(super) fn open_completion(&mut self, ctx: &egui::Context) {
-        self.auto.wanted = true;
-        if self.auto.words.is_empty() {
-            // Nothing indexed yet: index the current file right away.
-            let b = self.active();
-            let mut end = b.page.text.len().min(completion::MAX_TEXT);
-            while !b.page.text.is_char_boundary(end) {
-                end -= 1;
+        let key = (b.view.id, b.page.info.revision, b.view.head);
+        if let Some(cached) = &self.auto.word {
+            if (cached.view, cached.revision, cached.head) == key {
+                return cached.prefix.clone();
             }
-            self.auto.words = Arc::new(completion::index(&[&b.page.text[..end]]));
         }
-        if !self.show_completion(1) {
+        let i = self.workspace.active;
+        let b = &self.workspace.open[i];
+        let pane = if self.panes.mode == 0 {
+            0
+        } else {
+            self.panes.focused
+        };
+        let index = self.projections[pane].source_index(&b.page.text);
+        let head = b.view.head.min(index.chars);
+        let word = completion::typed_word_at(&b.page.text, index.byte(&b.page.text, head), head);
+        self.auto.word = Some(WordCache {
+            view: key.0,
+            revision: key.1,
+            head: key.2,
+            prefix: word.clone(),
+        });
+        word
+    }
+    fn completion_query(&mut self) -> Option<Query> {
+        if !self.completion_available() {
+            return None;
+        }
+        let (start, typed) = self.completion_word()?;
+        if typed.is_empty() {
+            return None;
+        }
+        let b = self.active();
+        Some(Query {
+            view: b.view.id,
+            revision: b.page.info.revision,
+            pane: if self.panes.mode == 0 {
+                0
+            } else {
+                self.panes.focused
+            },
+            start,
+            head: b.view.head,
+            typed,
+        })
+    }
+    fn publish_choices(&mut self, query: Query, words: Vec<String>) {
+        if self
+            .auto
+            .popup
+            .as_ref()
+            .is_some_and(|p| p.query == query && p.locked)
+        {
+            return;
+        }
+        let choices = self.completion_choices(&query.typed, words);
+        if choices.is_empty() {
+            self.auto.popup = None;
+            self.auto.intent = None;
+        } else {
+            self.auto.popup = Some(Popup {
+                query,
+                version: self.auto.version,
+                choices,
+                selected: 0,
+                locked: false,
+            });
+        }
+    }
+    fn refresh_choices(&mut self, ctx: &egui::Context) {
+        if let Some(job) = &self.auto.ranking {
+            let current = self.auto.ranking_key.as_ref().is_some_and(|(q, v)| {
+                self.auto.intent.as_ref() == Some(q) && *v == self.auto.version
+            });
+            if !current {
+                job.cancel.store(true, Ordering::Relaxed);
+            }
+            match job.rx.try_recv() {
+                Ok(ranked) => {
+                    let cancelled = job.cancel.load(Ordering::Relaxed);
+                    self.auto.ranking = None;
+                    self.auto.ranking_key = None;
+                    if current
+                        && !cancelled
+                        && ranked.version == self.auto.version
+                        && self.auto.intent.as_ref() == Some(&ranked.query)
+                    {
+                        if let Some(words) = ranked.words {
+                            self.publish_choices(ranked.query, words);
+                        }
+                    }
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.auto.ranking = None;
+                    self.auto.ranking_key = None;
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
+        let Some(query) = self.auto.intent.clone() else {
+            return;
+        };
+        if self
+            .auto
+            .popup
+            .as_ref()
+            .is_some_and(|p| p.query == query && (p.version == self.auto.version || p.locked))
+        {
+            return;
+        }
+        if self.auto.indexed.is_none() {
+            // Snippets are immediately available even while word indexing runs.
+            let choices = self.completion_choices(&query.typed, vec![]);
+            if !choices.is_empty() && self.auto.popup.is_none() {
+                self.auto.popup = Some(Popup {
+                    query,
+                    version: self.auto.version.wrapping_sub(1),
+                    choices,
+                    selected: 0,
+                    locked: false,
+                });
+            }
+            return;
+        }
+        if self.auto.words.len() <= INLINE_WORDS {
+            let words = completion::rank(&self.auto.words, &query.typed, SHOWN)
+                .into_iter()
+                .map(str::to_owned)
+                .collect();
+            self.publish_choices(query, words);
+        } else if self.auto.ranking.is_none() {
+            let words = Arc::clone(&self.auto.words);
+            let version = self.auto.version;
+            let cancel = Arc::new(AtomicBool::new(false));
+            let stop = Arc::clone(&cancel);
+            let (tx, rx) = mpsc::sync_channel(1);
+            let ctx = ctx.clone();
+            self.auto.ranking_key = Some((query.clone(), version));
+            thread::spawn(move || {
+                let words = completion::rank_cancellable(&words, &query.typed, SHOWN, || {
+                    stop.load(Ordering::Relaxed)
+                })
+                .map(|words| words.into_iter().map(str::to_owned).collect());
+                let _ = tx.send(Ranked {
+                    query,
+                    version,
+                    words,
+                });
+                ctx.request_repaint();
+            });
+            self.auto.ranking = Some(Job { cancel, rx });
+        }
+    }
+    #[cfg(test)]
+    pub(super) fn prepare_completion_index(&mut self, ctx: &egui::Context) {
+        self.auto.wanted = true;
+        self.maintain_index(ctx, true);
+    }
+    pub(super) fn open_completion(&mut self, ctx: &egui::Context) {
+        self.auto.dismiss();
+        let Some(query) = self.completion_query() else {
+            self.notice = "No completions here.".into();
+            return;
+        };
+        // Menus and the command palette run after the editor. Transfer focus
+        // now so the next frame preserves this explicit completion request.
+        let id = self.editor_id();
+        if !ctx.memory(|m| m.has_focus(id)) {
+            ctx.memory_mut(|m| m.request_focus(id));
+        }
+        self.focus_editor = true;
+        self.auto.wanted = true;
+        self.auto.intent = Some(query);
+        self.maintain_index(ctx, true);
+        self.refresh_choices(ctx);
+        if !self.auto.visible() {
             self.notice = "No completions here.".into();
         }
         ctx.request_repaint();
     }
-    /// Show the list for the typed word, when there is anything to offer.
-    fn show_completion(&mut self, min_typed: usize) -> bool {
-        self.auto.due = None;
-        let Some((start, typed)) = self.completion_word() else {
-            return false;
-        };
-        if typed.chars().count() < min_typed {
-            return false;
-        }
-        let choices = self.completion_choices(&typed);
-        if choices.is_empty() {
-            self.auto.popup = None;
-            return false;
-        }
-        self.auto.popup = Some(Popup {
-            view: self.active().view.id,
-            start,
-            typed,
-            choices,
-            selected: 0,
-        });
-        true
-    }
-    /// Each frame, before the editor: follow edits made last frame and note
-    /// what is typed now.
     pub(super) fn update_completion(&mut self, ctx: &egui::Context) {
-        self.maintain_index(ctx);
-        if let Some(popup) = &self.auto.popup {
-            let (view, start, typed) = (popup.view, popup.start, popup.typed.clone());
-            match self.completion_word() {
-                Some((now, word))
-                    if view == self.active().view.id && now == start && !word.is_empty() =>
+        let focused = ctx.memory(|m| m.has_focus(self.editor_id()));
+        let popup_rect =
+            egui::AreaState::load(ctx, egui::Id::new("completion-popup")).map(|area| area.rect());
+        // A pressed choice temporarily owns focus until its release commits it.
+        let choosing = self.auto.visible()
+            && ctx.input(|i| {
+                (i.pointer.primary_down() || i.pointer.primary_released())
+                    && i.pointer
+                        .interact_pos()
+                        .is_some_and(|pos| popup_rect.is_some_and(|rect| rect.contains(pos)))
+            });
+        if (!focused && !choosing)
+            || !self.completion_available()
+            || !self.macros.playing.is_empty()
+        {
+            self.auto.dismiss();
+        }
+        let navigating = ctx.input(|i| {
+            i.events.iter().any(|e| match e {
+                egui::Event::PointerButton {
+                    pos, pressed: true, ..
+                } => popup_rect.is_none_or(|area| !area.contains(*pos)),
+                egui::Event::Key {
+                    key,
+                    modifiers,
+                    pressed: true,
+                    ..
+                } => {
+                    matches!(
+                        key,
+                        Key::ArrowLeft
+                            | Key::ArrowRight
+                            | Key::Home
+                            | Key::End
+                            | Key::PageUp
+                            | Key::PageDown
+                    ) || (matches!(key, Key::ArrowUp | Key::ArrowDown)
+                        && *modifiers != Modifiers::NONE)
+                        || (self.auto.popup.is_none()
+                            && matches!(key, Key::ArrowUp | Key::ArrowDown | Key::Tab | Key::Enter))
+                }
+                _ => false,
+            })
+        });
+        if navigating {
+            self.auto.dismiss();
+        }
+        if let Some(previous) = self.auto.intent.clone() {
+            match self.completion_query() {
+                Some(now)
+                    if now.view == previous.view
+                        && now.pane == previous.pane
+                        && now.start == previous.start
+                        && (now.revision != previous.revision || now.head == previous.head) =>
                 {
-                    if word != typed {
-                        let choices = self.completion_choices(&word);
-                        if choices.is_empty() {
-                            self.auto.popup = None;
-                        } else if let Some(popup) = &mut self.auto.popup {
-                            popup.typed = word;
-                            popup.choices = choices;
-                            popup.selected = 0;
-                        }
+                    if now != previous {
+                        self.auto.popup = None;
+                        self.auto.intent = Some(now);
                     }
                 }
-                _ => self.auto.popup = None,
+                _ => self.auto.dismiss(),
             }
         }
-        if let Some(due) = self.auto.due {
-            if Instant::now() >= due {
-                self.show_completion(MIN_TYPED);
+        self.maintain_index(ctx, false);
+        if let Some(mut due) = self.auto.due {
+            let b = self.active();
+            let pane = if self.panes.mode == 0 {
+                0
             } else {
-                ctx.request_repaint_after(due - Instant::now());
+                self.panes.focused
+            };
+            if due.view != b.view.id
+                || due.pane != pane
+                || (due.revision == b.page.info.revision && due.head != b.view.head)
+            {
+                self.auto.dismiss();
+            } else {
+                due.revision = b.page.info.revision;
+                due.head = b.view.head;
+                self.auto.due = Some(due);
+                if Instant::now() >= due.at {
+                    self.auto.due = None;
+                    self.auto.intent = self
+                        .completion_query()
+                        .filter(|q| q.typed.chars().count() >= MIN_TYPED);
+                } else {
+                    ctx.request_repaint_after(due.at - Instant::now());
+                }
             }
         }
-        // Only typing in the editor counts, not in Find or other fields.
-        // Nor does a macro playing back.
+        self.refresh_choices(ctx);
         if !self.settings.auto_complete
+            || !focused
+            || !self.completion_available()
             || !self.macros.playing.is_empty()
-            || !ctx.memory(|m| m.has_focus(self.editor_id()))
         {
             return;
         }
-        // Typing a word character schedules the list; anything else closes it.
-        let typed: Vec<String> = ctx.input(|i| {
-            i.events
-                .iter()
-                .filter_map(|e| match e {
-                    egui::Event::Text(t) | egui::Event::Ime(egui::ImeEvent::Commit(t)) => {
-                        Some(t.clone())
-                    }
-                    _ => None,
-                })
-                .collect()
-        });
-        if typed.is_empty() {
-            return;
-        }
-        if typed
-            .iter()
-            .all(|t| t.chars().all(completion::is_word_char))
-        {
-            self.auto.wanted = true;
-            if self.auto.popup.is_none() {
-                let delay = Duration::from_millis(self.settings.auto_complete_delay.into());
-                self.auto.due = Some(Instant::now() + delay);
-                ctx.request_repaint_after(delay);
+        let typed = ctx.input(|i| {
+            let mut any = false;
+            let mut word = true;
+            for event in &i.events {
+                if let egui::Event::Text(t) | egui::Event::Ime(egui::ImeEvent::Commit(t)) = event {
+                    any = true;
+                    word &= t.chars().all(completion::is_word_char);
+                }
             }
-        } else {
-            self.auto.popup = None;
-            self.auto.due = None;
+            any.then_some(word)
+        });
+        match typed {
+            Some(true) => {
+                self.auto.wanted = true;
+                if self.auto.intent.is_none() {
+                    let delay = Duration::from_millis(self.settings.auto_complete_delay.into());
+                    let b = self.active();
+                    self.auto.due = Some(Scheduled {
+                        at: Instant::now() + delay,
+                        view: b.view.id,
+                        pane: if self.panes.mode == 0 {
+                            0
+                        } else {
+                            self.panes.focused
+                        },
+                        revision: b.page.info.revision,
+                        head: b.view.head,
+                    });
+                    ctx.request_repaint_after(delay);
+                }
+            }
+            Some(false) => self.auto.dismiss(),
+            None => {}
         }
     }
-    /// Keys for the open list; they are taken before the editor sees them.
     pub(super) fn completion_keys(&mut self, ctx: &egui::Context) {
+        // A choice describes the previous editor frame. Let TextEdit handle
+        // concurrent text, paste, pointer and navigation events in their order.
+        let changing = ctx.input(|i| {
+            i.events.iter().any(|event| match event {
+                egui::Event::Text(_)
+                | egui::Event::Paste(_)
+                | egui::Event::Cut
+                | egui::Event::Ime(egui::ImeEvent::Commit(_))
+                | egui::Event::PointerButton { pressed: true, .. } => true,
+                egui::Event::Key {
+                    key,
+                    modifiers,
+                    pressed: true,
+                    ..
+                } => {
+                    matches!(
+                        key,
+                        Key::ArrowLeft
+                            | Key::ArrowRight
+                            | Key::Home
+                            | Key::End
+                            | Key::PageUp
+                            | Key::PageDown
+                            | Key::Backspace
+                            | Key::Delete
+                    ) || (matches!(key, Key::ArrowUp | Key::ArrowDown)
+                        && *modifiers != Modifiers::NONE)
+                }
+                _ => false,
+            })
+        });
+        if changing && ctx.input(|i| i.key_pressed(Key::Tab) || i.key_pressed(Key::Enter)) {
+            self.auto.dismiss();
+            return;
+        }
         let Some(popup) = &mut self.auto.popup else {
             return;
         };
         let count = popup.choices.len();
+        if count == 0 {
+            return;
+        }
         if tab_switch::take_exact(ctx, Modifiers::NONE, Key::ArrowDown) {
             popup.selected = (popup.selected + 1) % count;
+            popup.locked = true;
         }
         if tab_switch::take_exact(ctx, Modifiers::NONE, Key::ArrowUp) {
             popup.selected = (popup.selected + count - 1) % count;
+            popup.locked = true;
         }
         let enter = !self.settings.auto_complete_commit_on_tab
             && tab_switch::take_exact(ctx, Modifiers::NONE, Key::Enter);
@@ -332,43 +676,45 @@ impl HeditApp {
         } else if self.settings.auto_complete_commit_on_tab
             && ctx.input(|i| i.key_pressed(Key::Enter))
         {
-            self.auto.popup = None;
+            self.auto.dismiss();
         }
     }
-    /// Replace the typed word with a choice from the list.
     pub(super) fn commit_choice(&mut self, index: usize) {
         let Some(popup) = self.auto.popup.take() else {
             return;
         };
-        self.auto.due = None;
+        self.auto.dismiss();
         let Some(choice) = popup.choices.get(index).cloned() else {
             return;
         };
-        if self.completion_word().map(|(start, _)| start) != Some(popup.start) {
+        if self.completion_query().as_ref() != Some(&popup.query) {
             return;
         }
         match choice {
             Choice::Word(word) => {
-                let head = self.active().view.head;
                 let batch = hedit::advanced::replace(
                     &self.active().page.text,
                     &[hedit::advanced::Selection {
-                        anchor: popup.start,
-                        head,
+                        anchor: popup.query.start,
+                        head: popup.query.head,
                     }],
                     &word,
                 );
                 self.batch(batch);
             }
-            Choice::Snippet(snippet) => self.insert_snippet(snippet, popup.typed.len()),
+            Choice::Snippet(snippet) => self.insert_snippet(snippet, popup.query.typed.len()),
         }
         self.focus_editor = true;
     }
     /// Draw the list below the cursor, or above it near the bottom.
     pub(super) fn completion_popup(&mut self, ctx: &egui::Context) {
-        let (Some(popup), Some(caret)) = (&self.auto.popup, self.caret_screen) else {
+        let Some(caret) = self.caret_screen else {
             return;
         };
+        if !self.auto.visible() {
+            return;
+        }
+        let popup = self.auto.popup.as_ref();
         let below = caret.bottom() < ctx.screen_rect().height() * 0.6;
         let (pivot, at) = if below {
             (
@@ -396,7 +742,19 @@ impl HeditApp {
                         ui.set_width(280.0_f32.min((ctx.screen_rect().width() - 24.0).max(100.0)));
                         ui.spacing_mut().item_spacing.y = 0.0;
                         ui.visuals_mut().selection.stroke.width = 0.0;
-                        for (index, choice) in popup.choices.iter().enumerate() {
+                        if popup.is_none() {
+                            ui.horizontal(|ui| {
+                                ui.spinner();
+                                ui.weak(if self.auto.indexed.is_none() {
+                                    "Indexing open files…"
+                                } else {
+                                    "Finding completions…"
+                                });
+                            });
+                        }
+                        for (index, choice) in
+                            popup.into_iter().flat_map(|p| p.choices.iter()).enumerate()
+                        {
                             let (label, detail) = match choice {
                                 Choice::Word(word) => (word.as_str(), ""),
                                 Choice::Snippet(s) => (s.trigger.as_str(), s.description.as_str()),
@@ -411,7 +769,7 @@ impl HeditApp {
                             );
                             let response = ui.add(
                                 egui::Button::new(RichText::new(label).font(font.clone()))
-                                    .selected(index == popup.selected)
+                                    .selected(popup.is_some_and(|p| index == p.selected))
                                     .shortcut_text(detail_galley)
                                     .frame(false)
                                     .truncate()
@@ -423,6 +781,9 @@ impl HeditApp {
                             if !detail.is_empty() {
                                 response.on_hover_text(detail);
                             }
+                        }
+                        if self.auto.limited {
+                            ui.weak("Some open-file words are outside the completion limit.");
                         }
                     });
             });
@@ -451,10 +812,17 @@ mod redesign_tests {
         let word = "format_with_a_long_identifier".repeat(20);
         app.settings.font_size = 28.0;
         app.auto.popup = Some(Popup {
-            view: app.active().view.id,
-            start: 0,
-            typed: "for".into(),
+            query: Query {
+                view: app.active().view.id,
+                revision: app.active().page.info.revision,
+                pane: 0,
+                start: 0,
+                head: 3,
+                typed: "for".into(),
+            },
+            version: 0,
             selected: 0,
+            locked: false,
             choices: vec![
                 Choice::Snippet(hedit::intelligence::Snippet {
                     trigger: "for".into(),
@@ -517,3 +885,7 @@ mod redesign_tests {
         assert_eq!(app.active().page.text, "for");
     }
 }
+
+#[cfg(test)]
+#[path = "completion_tests.rs"]
+mod tests;

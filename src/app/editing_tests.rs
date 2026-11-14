@@ -765,7 +765,7 @@ fn escape_keeps_typing_in_the_editor() {
 /// Run frames until the background word index is ready.
 fn wait_for_index(ctx: &egui::Context, app: &mut HeditApp) {
     let started = Instant::now();
-    app.auto.wanted = true;
+    app.prepare_completion_index(ctx);
     frame(ctx, app, vec![]);
     while app.auto.building.is_some() {
         assert!(started.elapsed() < Duration::from_secs(5));
@@ -852,6 +852,9 @@ fn profile_completion_typing() {
     wait_for_index(&ctx, &mut app);
     for (label, auto) in [("off", false), ("on", true)] {
         app.settings.auto_complete = auto;
+        if auto {
+            wait_for_index(&ctx, &mut app);
+        }
         let start = Instant::now();
         for c in "value_12".chars() {
             frame(&ctx, &mut app, vec![egui::Event::Text(c.into())]);

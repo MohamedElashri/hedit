@@ -178,6 +178,34 @@ not include native event delivery, GPU presentation, or SSH durability latency;
 use a separate temporary session for native interaction and crash recovery tests.
 Do not treat CPU timings as input-to-screen measurements or hard CI thresholds.
 
+Completion indexing snapshots at most 32 open, fully loaded, non-followed buffers,
+active first, within 8 MiB total and 4 MiB per buffer. UTF-8 boundaries are
+preserved. A merged index replaces the former unbounded per-file caches, keeping
+at most 100,000 words and 8 MiB of accounted word/string storage; allocator and
+transient build capacity add overhead. These caches and snapshots stay in RAM.
+Scope changes discard the old merged index, including when suggestions are
+disabled. No files are read or execution services contacted to build it.
+
+At most one index job and one ranking job run per window. Cancellation retains
+the job slot until completion is received, so new input cannot create a backlog
+of readers or snapshots. Indexing checks cancellation every 2,048 characters,
+including within a long token; ranking checks every 256 words and retains only
+the best 12 candidates. Snapshots up to 64 KiB and indexes up to 4,096 words may
+run inline. Edits debounce rebuilds for 750 ms; manual completion forces a request
+without putting large scans on the UI thread. Worker results must match the
+current snapshot/query identity before publication.
+
+Completion prefixes reuse the source line index and cache unchanged
+view/revision/cursor lookups. Reverse scanning stops after 65 characters, since
+indexed words have at most 64. A single extremely long logical line can still
+make character-to-byte lookup expensive. Acceptance checks view, pane, revision,
+head, start and exact typed prefix. Concurrent text/paste/navigation and accept
+keys cannot apply a choice from the previous editor frame. Escape cancels delayed
+requests too; keyboard-highlighted choices remain stable during index refreshes.
+`profile_completion_prefix` compares the old linear prefix lookup with indexed
+lookup. `profile_completion_typing` measures full CPU typing frames with and
+without a populated completion index; both exclude native input/display latency.
+
 File opens use two background readers with a shared limit of sixteen pending
 requests. They clone existing documents under a short lock before reading pages;
 closed-file reopening uses those snapshots too. Results wait while a mutation is

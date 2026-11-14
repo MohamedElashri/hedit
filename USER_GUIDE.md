@@ -638,6 +638,16 @@ matching snippets. **Up/Down** choose, **Tab** or **Enter** accepts, and a space
 `auto_complete`, or set `auto_complete_commit_on_tab` so Enter always starts a new
 line.
 
+Large completion indexes are prepared in the background while editing stays
+available. The list shows progress until choices are ready. Escape cancels both
+the visible list and a suggestion waiting for its delay; moving the cursor or
+switching tabs or editor groups cancels the pending suggestion too. A choice you
+highlight with the arrow keys stays selected when background results arrive.
+Suggestions use words from a bounded set of open, fully loaded files, with the
+active file first. The list notes when some words are outside that limit. The
+completion index stays in memory, including in SSH workspaces.
+
+
 ### Snippets
 
 Type a snippet's trigger and press **Tab**, or choose **Tools → Insert snippet…**.
