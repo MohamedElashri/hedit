@@ -146,6 +146,35 @@ stale results cannot populate a newer query. The picker lays out visible result
 rows only. The ignored `profile_goto_navigation` profile measures warm picker
 frames for symbol and text searches over an approximately 800 KiB source buffer.
 
+Current-file Find and selected-word highlights cache matches by document ID,
+revision, page, path, query, options and byte scope. Scans over 64 KiB, or with
+queries longer than 256 bytes, use one cancellable worker per editor group
+(at most four). Repeated queries share a RAM-only document snapshot; a group
+retains one outstanding task rather than queueing source copies. Cancellation
+is checked between regex matches, so an individual regex call can finish later.
+No search snapshot or match cache is written to disk, including for SSH buffers.
+
+Find navigation over fully loaded files reuses complete cached ranges and never
+enters the document mutation lane. It counts all matches while retaining only
+20,000 highlight ranges and a requested navigation answer beyond that prefix.
+Repeated next/previous requests retain their order in a bounded queue. Incoming
+editor input invalidates pending cursor movement before results are consumed;
+revision, path, scope, selection and editor-group checks protect later results.
+Paged-file navigation retains the existing whole-file backend search path.
+
+Editor gutters, indentation guides, whitespace markers and Find highlights
+visit visible rows. A weak galley identity keys cached row/line/character offsets,
+so the cache does not retain layouts outside the existing layout budget.
+Whitespace iteration restarts at indexed line boundaries to skip folded source
+without materializing a full-document character vector. Highlight geometry is
+compared with a full traversal for wrapping, tabs, folds, RTL and fractional
+scales, including zero-width matches on empty lines and at EOF.
+The ignored `profile_live_find` measures unchanged frames with highlights and
+whitespace enabled over 1.70 MB, and the UI cost of submitting changed queries;
+that submission timing excludes background completion. The development Mac
+measured about 5.42/7.44 ms at the start/end before this change and 3.51/5.76 ms
+afterward. These are headless CPU frame timings, not input-to-screen latency.
+
 The folder sidebar caches a flattened expanded hierarchy and creates widgets
 only for visible rows. Row identities include the root and path, including for
 overlapping roots. Reveal scrolls to the cached row before rendering it. The tree

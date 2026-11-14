@@ -75,6 +75,7 @@ mod recovery_tests;
 #[cfg(test)]
 mod redesign_tests;
 mod remote;
+mod row_index;
 #[cfg(test)]
 mod rtl_tests;
 #[cfg(test)]
@@ -267,6 +268,7 @@ pub struct HeditApp {
     /// Cursors made by Add cursor above/below and the column they keep.
     line_cursor_goal: Option<(Vec<hedit::advanced::Selection>, usize)>,
     live_find: find_live::LiveFind,
+    row_indexes: [row_index::Cache; panes::MAX_GROUPS],
     markdown: markdown::Markdown,
     /// Where the cursor was before Go to Anything previewed a result.
     goto_origin: Option<goto_anything::Origin>,
@@ -461,6 +463,7 @@ impl HeditApp {
                 .unwrap_or_default(),
             line_cursor_goal: None,
             live_find: Default::default(),
+            row_indexes: Default::default(),
             markdown: Default::default(),
             goto_origin: None,
             font_applied: String::new(),
@@ -1959,8 +1962,8 @@ impl HeditApp {
         let theme = self.theme.clone();
         let markdown_split = self.markdown_available()
             && self.active().view.markdown_view == hedit::session::MarkdownView::Split;
-        let find_matches = self.find_highlights();
-        let word_matches = self.selection_highlights();
+        let find_matches = self.find_highlights_in(ctx, pane_id);
+        let word_matches = self.selection_highlights_in(ctx, pane_id);
 
         if self.active().external {
             ui.horizontal_wrapped(|ui| {
@@ -2358,6 +2361,9 @@ impl HeditApp {
                             ui.visuals_mut().selection.bg_fill = egui::Color32::TRANSPARENT;
                         }
                         let mut output = edit.show(ui);
+                        let row_index = self.row_indexes[pane_id].get(&output.galley);
+                        let visible_rows =
+                            row_index.visible(&output.galley, output.galley_pos, ui.clip_rect());
                         if markdown_split {
                             markdown_layout = Some((
                                 Arc::clone(&output.galley),
@@ -2441,9 +2447,9 @@ impl HeditApp {
                             }
                         }
                         if self.settings.draw_indent_guides {
-                            let mut first = true;
-                            for row in &output.galley.rows {
-                                if first
+                            for r in visible_rows.clone() {
+                                let row = &output.galley.rows[r];
+                                if row_index.rows[r].first
                                     && output.galley_pos.y + row.rect.bottom()
                                         >= ui.clip_rect().top()
                                     && output.galley_pos.y + row.rect.top()
@@ -2468,7 +2474,6 @@ impl HeditApp {
                                         );
                                     }
                                 }
-                                first = row.ends_with_newline;
                             }
                         }
                         // egui paints the main selection only while the editor has
@@ -2501,20 +2506,20 @@ impl HeditApp {
                             ),
                         ] {
                             if let Some(ranges) = ranges {
-                                let shown: Vec<(usize, usize)> = ranges
-                                    .iter()
-                                    .filter(|&&(a, _)| {
-                                        projection.source(projection.display(a)) == a
-                                    })
-                                    .map(|&(a, b)| (projection.display(a), projection.display(b)))
-                                    .collect();
+                                if output.response.changed() {
+                                    continue;
+                                }
                                 find_live::paint_ranges(
                                     ui.painter(),
-                                    &output.galley,
+                                    find_live::View {
+                                        galley: &output.galley,
+                                        rows: &row_index,
+                                        projection: &projection,
+                                    },
                                     &bidi_rows,
                                     output.galley_pos,
                                     ui.clip_rect(),
-                                    &shown,
+                                    ranges,
                                     (fill, stroke),
                                 );
                             }
@@ -2579,44 +2584,38 @@ impl HeditApp {
                             );
                         }
                         if self.settings.draw_white_space {
-                            let source_chars: Vec<_> = old.chars().collect();
-                            let mut row_start = 0;
-                            for row in &output.galley.rows {
-                                let top = output.galley_pos.y + row.rect.top();
-                                if top + row.rect.height() >= ui.clip_rect().top()
-                                    && top <= ui.clip_rect().bottom()
-                                {
-                                    for (n, glyph) in row.glyphs.iter().enumerate() {
-                                        let position = row_start + n;
-                                        let source = projection.source(position);
-                                        let mut center = output.galley_pos
-                                            + glyph.pos.to_vec2()
-                                            + egui::vec2(glyph.advance_width / 2.0, -3.0);
-                                        if source_chars.get(source) == Some(&'\t') {
-                                            if projection.display(source) == position {
-                                                let width =
-                                                    projection.display(source + 1) - position;
-                                                center.x += glyph.advance_width
-                                                    * (width.saturating_sub(1)) as f32
-                                                    / 2.0;
-                                                ui.painter().text(
-                                                    center,
-                                                    egui::Align2::CENTER_CENTER,
-                                                    "→",
-                                                    FontId::monospace(font_size - 2.0),
-                                                    self.theme.muted.color(),
-                                                );
-                                            }
-                                        } else if glyph.chr == ' ' {
-                                            ui.painter().circle_filled(
+                            let mut source_chars = row_index::SourceChars::new(&old, &source_index);
+                            for r in visible_rows.clone() {
+                                let row = &output.galley.rows[r];
+                                let row_start = row_index.rows[r].start;
+                                for (n, glyph) in row.glyphs.iter().enumerate() {
+                                    let position = row_start + n;
+                                    let source = projection.source(position);
+                                    let mut center = output.galley_pos
+                                        + glyph.pos.to_vec2()
+                                        + egui::vec2(glyph.advance_width / 2.0, -3.0);
+                                    if source_chars.get(source) == Some('\t') {
+                                        if projection.display(source) == position {
+                                            let width = projection.display(source + 1) - position;
+                                            center.x += glyph.advance_width
+                                                * (width.saturating_sub(1)) as f32
+                                                / 2.0;
+                                            ui.painter().text(
                                                 center,
-                                                0.8,
-                                                self.theme.muted.color().gamma_multiply(0.65),
+                                                egui::Align2::CENTER_CENTER,
+                                                "→",
+                                                FontId::monospace(font_size - 2.0),
+                                                self.theme.muted.color(),
                                             );
                                         }
+                                    } else if glyph.chr == ' ' {
+                                        ui.painter().circle_filled(
+                                            center,
+                                            0.8,
+                                            self.theme.muted.color().gamma_multiply(0.65),
+                                        );
                                     }
                                 }
-                                row_start += row.glyphs.len() + usize::from(row.ends_with_newline);
                             }
                         }
                         if gutter > 0.0 {
@@ -2626,10 +2625,10 @@ impl HeditApp {
                             let mut gutter_ui =
                                 ui.new_child(egui::UiBuilder::new().max_rect(gutter_rect));
                             gutter_ui.set_clip_rect(gutter_rect);
-                            let mut display_line = 0;
-                            let mut first_row = true;
-                            for row in &output.galley.rows {
-                                if first_row {
+                            for r in visible_rows.clone() {
+                                let row = &output.galley.rows[r];
+                                let display_line = row_index.rows[r].line;
+                                if row_index.rows[r].first {
                                     let position = egui::pos2(
                                         gutter_rect.right() - 12.0,
                                         output.galley_pos.y + row.rect.center().y,
@@ -2744,10 +2743,6 @@ impl HeditApp {
                                             },
                                         );
                                     }
-                                }
-                                first_row = row.ends_with_newline;
-                                if row.ends_with_newline {
-                                    display_line += 1;
                                 }
                             }
                         }
@@ -5349,7 +5344,7 @@ mod tests {
                 key(Key::Enter, Modifiers::NONE),
             ],
         );
-        assert!(app.busy, "Find should submit on Enter");
+        assert!(!app.busy, "Find navigation must keep the editor available");
         finish_job(&mut app, &ctx);
         assert_eq!(
             app.active()

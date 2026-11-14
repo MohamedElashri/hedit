@@ -182,7 +182,7 @@ fn find_selects_matches_while_typing_and_highlights_them_all() {
     assert_eq!(selected(&app), (14, 17), "“two” after the cursor");
     assert_eq!(app.quality.match_status, "2 of 2");
     assert_eq!(
-        app.find_highlights().unwrap().as_slice(),
+        app.find_highlights(&ctx).unwrap().as_slice(),
         [(4, 7), (14, 17)]
     );
     frame(&ctx, &mut app, vec![egui::Event::Text("x".into())]);
@@ -193,14 +193,14 @@ fn find_selects_matches_while_typing_and_highlights_them_all() {
     frame(&ctx, &mut app, vec![key(Key::Escape, Modifiers::NONE)]);
     app.set_selections(vec![hedit::advanced::Selection { anchor: 4, head: 7 }]);
     assert_eq!(
-        app.selection_highlights().unwrap().as_slice(),
+        app.selection_highlights(&ctx).unwrap().as_slice(),
         [(4, 7), (14, 17)]
     );
     app.set_selections(vec![hedit::advanced::Selection { anchor: 4, head: 6 }]);
-    assert!(app.selection_highlights().is_none(), "only whole words");
+    assert!(app.selection_highlights(&ctx).is_none(), "only whole words");
     app.settings.match_selection = false;
     app.set_selections(vec![hedit::advanced::Selection { anchor: 4, head: 7 }]);
-    assert!(app.selection_highlights().is_none());
+    assert!(app.selection_highlights(&ctx).is_none());
 }
 
 #[test]
@@ -311,13 +311,13 @@ fn live_find_respects_selection_only_and_updates_when_toggled() {
     frame(&ctx, &mut app, vec![]);
     frame(&ctx, &mut app, vec![key(Key::F, Modifiers::COMMAND)]);
     frame(&ctx, &mut app, vec![egui::Event::Text("hit".into())]);
-    assert_eq!(app.find_highlights().unwrap().len(), 3);
+    assert_eq!(app.find_highlights(&ctx).unwrap().len(), 3);
     click_label(&ctx, &mut app, "Selection only");
     assert_eq!(app.quality.match_status, "1 of 1");
-    assert_eq!(app.find_highlights().unwrap().as_slice(), [(6, 9)]);
+    assert_eq!(app.find_highlights(&ctx).unwrap().as_slice(), [(6, 9)]);
     // Narrowing the query must not jump to a match outside the scope.
     app.query = "hit β hit".into();
-    app.find_as_you_type();
+    app.find_as_you_type(&ctx);
     assert_eq!(app.quality.match_status, "No matches");
     assert_eq!((app.active().view.anchor, app.active().view.head), (4, 4));
     click_label(&ctx, &mut app, "Selection only");

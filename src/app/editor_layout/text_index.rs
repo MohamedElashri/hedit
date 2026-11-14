@@ -40,15 +40,19 @@ impl TextIndex {
     }
     pub fn byte(&self, text: &str, cursor: usize) -> usize {
         let cursor = cursor.min(self.chars);
-        let line = self
-            .lines
-            .partition_point(|line| line.1 <= cursor)
-            .saturating_sub(1);
-        let (byte, chars) = self.lines[line];
+        let (byte, chars) = self.checkpoint(cursor);
         byte + text[byte..]
             .char_indices()
             .nth(cursor - chars)
             .map_or(text.len() - byte, |(at, _)| at)
+    }
+    /// A line boundary before a character, suitable for restarting a UTF-8 iterator.
+    pub fn checkpoint(&self, cursor: usize) -> (usize, usize) {
+        let line = self
+            .lines
+            .partition_point(|line| line.1 <= cursor.min(self.chars))
+            .saturating_sub(1);
+        self.lines[line]
     }
     pub fn replace(
         &mut self,

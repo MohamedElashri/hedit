@@ -527,10 +527,15 @@ boxes). This works with any editor font you choose.
 ### Find and replace
 
 **Ctrl+F** opens the search panel: the first match after the cursor is selected
-as you type, and every match is highlighted. **Enter** and **Shift+Enter** go to
-the next and previous match. **Ctrl+H** adds Replace; **Replace all** is one undo
-step. Options are Regex (with `${1}` groups in replacements), Case sensitive,
-Whole words, and Selection only.
+as you type. **Enter** and **Shift+Enter** go to the next and previous match.
+Large searches run in the background, and newer typing, scrolling, or navigation
+takes priority over pending cursor jumps. Find reuses matches while the file and
+query stay unchanged. It counts every match and highlights up to the first
+20,000; navigation continues beyond that limit. **Ctrl+H** adds Replace;
+**Replace all** is one undo step. Options are Regex (with `${1}` groups in replacements), Case sensitive,
+Whole words, and Selection only. Hover **Invalid pattern** for the error details.
+Replacement and select-all operations still require at most 20,000 matches;
+narrow the query when they exceed that limit.
 
 - **Alt+Enter** puts a cursor on every match.
 - **Ctrl+E** / **Ctrl+Shift+E** use the selection as the Find / Replace text.

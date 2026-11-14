@@ -6,7 +6,7 @@ use hedit::{
 };
 use std::sync::{mpsc, Arc, Weak};
 mod blocks;
-mod text_index;
+pub(super) mod text_index;
 pub(super) use text_index::TextIndex;
 
 /// Re-highlighting more than this many bytes runs on a background thread,

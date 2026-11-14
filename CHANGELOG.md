@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Keep current-file Find and selection highlighting responsive with cancellable background scans, shared in-memory snapshots and guarded cursor updates.
+- Reuse Find matches for navigation, count results beyond the 20,000-highlight limit, and preserve repeated next/previous requests during scans.
+- Restrict editor gutters, whitespace, indentation guides and highlight painting to the viewport, with correct zero-width, folded and RTL highlights.
+
 - Render only visible folder rows, cache expanded hierarchies, and bound directory metadata and concurrent reads across refreshes.
 - Reuse an in-memory filename index across Go to Anything queries, coalesce background work, and reject stale results after query, root or exclusion changes.
 - Add filename-index progress and refresh controls, with explicit incomplete-result notices and no directory-symlink traversal or disk cache.

@@ -114,6 +114,14 @@ pub(super) struct LastFind {
     end: usize,
 }
 impl LastFind {
+    pub(super) fn matches(&self, buffer: &Buffer, query: &str, options: &search::Options) -> bool {
+        self.id == buffer.view.id
+            && self.revision == buffer.page.info.revision
+            && self.query == query
+            && self.options == *options
+            && self.start == self.end
+            && self.start == buffer.cursor_offset() as usize
+    }
     pub(super) fn at(
         buffer: &hedit::workspace::Buffer,
         query: &str,
@@ -629,6 +637,10 @@ impl HeditApp {
         true
     }
     pub(super) fn find_advanced(&mut self, ctx: &egui::Context, previous: bool) {
+        if !self.active().page.info.paged {
+            self.navigate_find(ctx, previous);
+            return;
+        }
         let id = self.active().view.id;
         let query = self.query.clone();
         let options = self.quality.options.clone();

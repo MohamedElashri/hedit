@@ -265,6 +265,7 @@ impl HeditApp {
     /// Record intent before applying worker results, so a read completing in
     /// the same frame as a keystroke cannot redirect that keystroke.
     pub(super) fn note_open_input(&mut self, ctx: &egui::Context) {
+        self.note_find_input(ctx);
         if self.opens.pending()
             && ctx.input(|input| {
                 input.events.iter().any(|event| {

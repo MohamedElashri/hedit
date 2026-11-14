@@ -834,6 +834,7 @@ impl HeditApp {
             });
     }
     pub(super) fn search_panel(&mut self, ctx: &egui::Context) {
+        self.poll_live_find(ctx);
         if !self.find_open {
             return;
         }
@@ -860,7 +861,7 @@ impl HeditApp {
                             .hint_text("Search text or regular expression")
                     });
                     if response.changed() {
-                        self.find_as_you_type();
+                        self.find_as_you_type(ctx);
                     }
                     if self.find_focus {
                         response.request_focus();
@@ -887,14 +888,14 @@ impl HeditApp {
                         ui.checkbox(&mut self.quality.options.whole_word, "Whole words"),
                     ];
                     if options.iter().any(|r| r.changed()) {
-                        self.find_as_you_type();
+                        self.find_as_you_type(ctx);
                     }
                     let selection_changed = ui.add_enabled_ui(self.quality.scope.is_some(), |ui| {
                         ui.checkbox(&mut self.quality.selection_only, "Selection only")
                             .changed()
                     });
                     if selection_changed.inner {
-                        self.find_as_you_type();
+                        self.find_as_you_type(ctx);
                     }
                     if ui
                         .add_enabled(!self.busy, egui::Button::new("Previous"))
@@ -902,7 +903,10 @@ impl HeditApp {
                     {
                         self.find_advanced(ctx, true);
                     }
-                    ui.label(&self.quality.match_status);
+                    let status = ui.label(&self.quality.match_status);
+                    if let Some(error) = &self.live_find.error {
+                        status.on_hover_text(error);
+                    }
                 });
                 if self.replace_open {
                     ui.horizontal_wrapped(|ui| {
