@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 from pathlib import Path
 import plistlib
+import shutil
 import subprocess
 import tempfile
 import tomllib
@@ -36,6 +37,16 @@ class MacPackage(unittest.TestCase):
             intel = root / 'intel'
             arm.write_bytes(b'arm fixture')
             intel.write_bytes(b'intel fixture')
+            project = root / 'source'
+            project.mkdir()
+            for filename in ['Cargo.toml', 'README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md', 'CHANGELOG.md', 'LICENSE']:
+                shutil.copy2(packager.ROOT / filename, project / filename)
+            for directory in ['assets', 'themes', 'docs/images', 'examples/cuda']:
+                shutil.copytree(packager.ROOT / directory, project / directory)
+            for relative in ['vendor/egui_commonmark/PATCH.md', 'vendor/libghostty-vt-sys/PATCH.md']:
+                (project / relative).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(packager.ROOT / relative, project / relative)
+            (project / 'examples/development_probe.rs').write_text('not a release resource')
             calls = []
             def run(arguments, **kwargs):
                 calls.append(arguments)
@@ -53,7 +64,7 @@ class MacPackage(unittest.TestCase):
                                 output.write(path, path.relative_to(app.parent))
                 version = tomllib.loads((packager.ROOT / 'Cargo.toml').read_text())['package']['version']
                 return subprocess.CompletedProcess(arguments, 0, stdout=f'hedit {version}\n')
-            with patch.object(packager.sys, 'platform', 'darwin'), patch.object(packager.subprocess, 'run', side_effect=run):
+            with patch.object(packager, 'ROOT', project), patch.object(packager.sys, 'platform', 'darwin'), patch.object(packager.subprocess, 'run', side_effect=run):
                 archive = packager.package(arm, intel, root / 'out')
             with zipfile.ZipFile(archive) as bundle:
                 info = plistlib.loads(bundle.read('hedit.app/Contents/Info.plist'))
@@ -64,7 +75,13 @@ class MacPackage(unittest.TestCase):
                 self.assertIn('hedit.app/Contents/Resources/Documentation/LICENSE', bundle.namelist())
                 self.assertEqual(bundle.read('hedit.app/Contents/Resources/Documentation/assets/licenses/egui_commonmark-MIT.txt'),
                                  (packager.ROOT / 'assets/licenses/egui_commonmark-MIT.txt').read_bytes())
+                for relative in ['CHANGELOG.md', 'vendor/egui_commonmark/PATCH.md', 'vendor/libghostty-vt-sys/PATCH.md'] + [path.relative_to(packager.ROOT).as_posix() for path in (packager.ROOT / 'docs/images').glob('*') if path.is_file()]:
+                    self.assertEqual(bundle.read('hedit.app/Contents/Resources/Documentation/' + relative),
+                                     (packager.ROOT / relative).read_bytes())
                 self.assertIn('hedit.app/Contents/Resources/themes/hedit-ink.json', bundle.namelist())
+                examples = {name for name in bundle.namelist()
+                            if name.startswith('hedit.app/Contents/Resources/examples/')}
+                self.assertEqual(examples, {'hedit.app/Contents/Resources/examples/cuda/vector_add.cu'})
             digest = hashlib.sha256(archive.read_bytes()).hexdigest()
             self.assertEqual(archive.with_name(archive.name + '.sha256').read_text(), f'{digest}  {archive.name}\n')
             self.assertIn(['lipo', str(arm), '-verify_arch', 'arm64'], calls)

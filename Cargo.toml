@@ -1,9 +1,9 @@
 [package]
 name = "hedit"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 rust-version = "1.99"
-description = "A native text and log editor with durable unsaved files and CUDA debugging"
+description = "A native text editor with durable recovery, Git, and private SSH workspaces"
 license = "MIT"
 
 [workspace]
@@ -11,6 +11,10 @@ members = ["crates/hedit-remote", "crates/hedit-core"]
 default-members = ["."]
 exclude = ["vendor/egui", "vendor/epaint"]
 resolver = "2"
+
+[[example]]
+name = "remote_workspace_probe"
+path = "tests/support/remote_workspace_probe.rs"
 
 [features]
 default = ["terminal"]
@@ -34,10 +38,8 @@ semver = "1"
 sha2 = "0.11"
 regex = "1.13.1"
 encoding_rs = "0.8.42"
-ignore = "0.4.33"
 trash = "5.2.9"
 similar = "3.2.1"
-globset = "0.4.20"
 syntect = { version = "5.3.0", default-features = false, features = ["default-onig"] }
 two-face = { version = "0.5.2", default-features = false, features = ["syntect-default-onig"] }
 unicode-bidi = "0.3"
@@ -51,7 +53,7 @@ percent-encoding = "2"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 latex-rust = "3.0.1"
 mermaid-rs-renderer = { version = "0.3.1", default-features = false }
-resvg = { version = "0.45", default-features = false, features = ["text", "system-fonts"] }
+resvg = { version = "0.49", default-features = false, features = ["text", "system-fonts"] }
 
 [target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
 rustix = { version = "1", features = ["fs", "process"] }

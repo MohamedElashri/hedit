@@ -85,7 +85,10 @@ pub(super) fn finish_media(
         }
         assert!(
             started.elapsed() < Duration::from_secs(15),
-            "media did not finish rendering"
+            "media did not finish rendering: pending={}, rendered={}, expected={expected}, view={:?}",
+            app.markdown.media.pending(),
+            app.markdown.media.rendered_count(),
+            app.active().view.markdown_view,
         );
         thread::sleep(Duration::from_millis(5));
     }

@@ -360,6 +360,12 @@ impl Workspace {
         if !self.can_close(index) {
             return Ok(());
         }
+        if self.remote.is_some() && self.open.len() == 1 {
+            return Err(
+                "Keep one remote tab open. Create another remote file before closing this tab."
+                    .into(),
+            );
+        }
         let buffer = &self.open[index];
         if buffer.page.info.path.is_none()
             && !buffer.page.info.paged
@@ -392,12 +398,6 @@ impl Workspace {
                 }
             }
         }
-        if self.remote.is_some() && self.open.len() == 1 {
-            return Err(
-                "Keep one remote tab open. Create another remote file before closing this tab."
-                    .into(),
-            );
-        }
         let buffer = self.open.remove(index);
         self.closed.push(buffer.view);
         self.after_close(index)
@@ -407,13 +407,13 @@ impl Workspace {
         let Some(buffer) = self.open.get(index) else {
             return Ok(());
         };
-        self.editor.remove(buffer.view.id)?;
         if self.remote.is_some() && self.open.len() == 1 {
             return Err(
                 "Keep one remote tab open. Create another remote file before discarding this tab."
                     .into(),
             );
         }
+        self.editor.remove(buffer.view.id)?;
         self.open.remove(index);
         self.after_close(index)
     }

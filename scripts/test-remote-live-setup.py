@@ -75,6 +75,27 @@ class FixtureLocationTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 live.config_value(value)
 
+    @unittest.skipUnless(os.name == 'posix', 'Unix recovery permission policy')
+    def test_group_writable_ancestor_is_explained_before_server_start(self):
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory) / 'shared'
+            parent.mkdir(mode=0o700)
+            child = parent / 'private'
+            child.mkdir(mode=0o700)
+            parent.chmod(0o770)
+            with self.assertRaisesRegex(ValueError, r'group/other-writable: .*shared.*--work-dir'):
+                live.validate_fixture_ancestors(child)
+
+    @unittest.skipUnless(os.name == 'posix', 'Unix recovery permission policy')
+    def test_private_and_sticky_ancestors_are_accepted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory) / 'sticky'
+            parent.mkdir(mode=0o700)
+            child = parent / 'private'
+            child.mkdir(mode=0o700)
+            parent.chmod(0o1777)
+            live.validate_fixture_ancestors(child)
+
 
 if __name__ == '__main__':
     unittest.main()

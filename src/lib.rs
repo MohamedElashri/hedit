@@ -1,23 +1,17 @@
 pub mod activation;
 pub mod bidi;
 pub mod brand;
-pub mod build;
 pub mod cli;
 pub mod completion;
 pub mod counterpart;
 pub mod debugger;
-pub mod document;
 pub mod editing;
-mod file_io;
 pub mod file_reference;
-pub mod folder;
 pub mod fonts;
-pub mod git;
 pub mod intelligence;
 pub mod ipc;
 pub mod markup;
 pub mod projects;
-pub mod search;
 pub mod session;
 pub mod settings;
 pub mod spelling;
@@ -25,11 +19,13 @@ pub mod syntax;
 #[cfg(feature = "terminal")]
 pub mod terminal;
 pub mod text_commands;
-pub mod text_encoding;
 pub mod theme;
 pub mod update;
 pub mod windows;
 pub mod workspace;
+
+use hedit_core::file_io;
+pub use hedit_core::{build, document, folder, git, search, text_encoding};
 
 use document::Document;
 use std::{

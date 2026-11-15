@@ -2,6 +2,98 @@
 use super::tests::{frame, key};
 use super::*;
 
+#[test]
+#[cfg(not(target_os = "macos"))]
+fn shifted_alt_layout_shortcuts_never_insert_their_native_text() {
+    let directory = tempfile::tempdir().unwrap();
+    let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![egui::Event::Text("keep ب🦀".into())]);
+    for (key, text, mode) in [
+        (Key::Num2, "@", 1),
+        (Key::Num2, "\"", 1),
+        (Key::Num3, "#", 3),
+        (Key::Num4, "$", 4),
+        (Key::Num5, "%", 6),
+        (Key::Num8, "*", 2),
+        (Key::Num9, "(", 5),
+        (Key::Num1, "!", 0),
+    ] {
+        app.execute(&ctx, Command::SelectAll);
+        for repeats in [1, 2] {
+            let events = (0..repeats)
+                .flat_map(|_| {
+                    [
+                        super::tests::key(
+                            key,
+                            Modifiers {
+                                alt: true,
+                                shift: true,
+                                ..Modifiers::NONE
+                            },
+                        ),
+                        egui::Event::Text(text.into()),
+                    ]
+                })
+                .collect();
+            frame(&ctx, &mut app, events);
+            assert_eq!(app.panes.mode, mode);
+            assert_eq!(app.active().page.text, "keep ب🦀", "native text {text:?}");
+        }
+    }
+}
+
+#[test]
+fn consuming_an_alt_shortcut_preserves_other_text_in_the_input_batch() {
+    let ctx = egui::Context::default();
+    let _ = ctx.run(
+        egui::RawInput {
+            events: vec![
+                egui::Event::Text("2".into()),
+                super::tests::key(Key::Num2, Modifiers::ALT),
+                egui::Event::Text("٢".into()),
+                super::tests::key(Key::Num2, Modifiers::ALT),
+                egui::Event::Text("٢".into()),
+                super::tests::key(Key::A, Modifiers::NONE),
+                egui::Event::Text("a".into()),
+                egui::Event::Text("2".into()),
+            ],
+            ..Default::default()
+        },
+        |ctx| {
+            assert!(tab_switch::take_exact(ctx, Modifiers::ALT, Key::Num2));
+            assert_eq!(
+                ctx.input(|i| i
+                    .events
+                    .iter()
+                    .filter(|event| matches!(
+                        event,
+                        egui::Event::Key {
+                            key: Key::Num2,
+                            pressed: true,
+                            ..
+                        }
+                    ))
+                    .count()),
+                1,
+                "taking one shortcut must retain the next key press"
+            );
+            let remaining = ctx.input(|i| {
+                i.events
+                    .iter()
+                    .filter_map(|event| match event {
+                        egui::Event::Text(text) => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<String>()
+            });
+            assert_eq!(remaining, "2a2");
+        },
+    );
+}
+
 fn app_with_tabs(count: usize) -> (tempfile::TempDir, egui::Context, HeditApp) {
     let directory = tempfile::tempdir().unwrap();
     let (mut workspace, _) = Workspace::restore(directory.path().into()).unwrap();

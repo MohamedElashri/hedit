@@ -1139,9 +1139,15 @@ fn fault_gate(stage: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
 
     fn setup() -> (tempfile::TempDir, Journal, u64) {
-        let temp = tempfile::tempdir().unwrap();
+        // Recovery rejects group-writable ancestors, including test fixtures
+        // created under a developer's shared-directory umask.
+        let temp = tempfile::Builder::new()
+            .permissions(std::fs::Permissions::from_mode(0o700))
+            .tempdir()
+            .unwrap();
         let path = temp.path().canonicalize().unwrap();
         let root = path.join("project");
         std::fs::create_dir(&root).unwrap();

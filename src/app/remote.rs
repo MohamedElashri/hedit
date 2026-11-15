@@ -62,7 +62,7 @@ impl HeditApp {
             }
             if connect {
                 let result = (|| {
-                    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+                    let exe = hedit::windows::executable().map_err(|e| e.to_string())?;
                     let port = if self.remote_ui.port.is_empty() {
                         "22"
                     } else {
@@ -285,4 +285,68 @@ fn wait_for_window(mut child: std::process::Child) -> Result<(), String> {
         "Cannot open SSH window: {}",
         String::from_utf8_lossy(&bytes)
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires the disposable SSH fixture from make test-remote-live"]
+    fn checkpoint_defers_remote_view_while_a_document_job_is_busy() {
+        let fixture: serde_json::Value = serde_json::from_str(
+            &std::env::var("HEDIT_REMOTE_TEST_CONFIG").expect("missing disposable SSH fixture"),
+        )
+        .unwrap();
+        let config = hedit::remote::Config {
+            target: hedit_remote::client::SshTarget {
+                host: "lab".into(),
+                user: None,
+                port: fixture["port"].as_u64().unwrap() as u16,
+                config: Some(fixture["config"].as_str().unwrap().into()),
+                helper: fixture["helper"].as_str().unwrap().into(),
+                state: fixture["state"].as_str().unwrap().into(),
+            },
+            root: fixture["root"].as_str().unwrap().into(),
+            takeover: false,
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let (workspace, errors) =
+            Workspace::connect_remote(directory.path().join("client"), config).unwrap();
+        assert!(errors.is_empty());
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        let document = app.workspace.editor.get(app.active().view.id).unwrap();
+        let (ready, started) = mpsc::channel();
+        let (release, wait) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            let _document = document.lock().unwrap();
+            ready.send(()).unwrap();
+            // A bounded hold makes the unfixed UI block observable without
+            // leaving a deadlocked test worker behind after failure.
+            let _ = wait.recv_timeout(Duration::from_secs(2));
+        });
+        started.recv_timeout(Duration::from_secs(5)).unwrap();
+        app.busy = true;
+        let before = Instant::now();
+        app.checkpoint(&ctx);
+        let elapsed = before.elapsed();
+        let _ = release.send(());
+        worker.join().unwrap();
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "remote checkpoint blocked the UI for {elapsed:?} while a document job held its lock"
+        );
+        assert!(!app.checkpoint_pending);
+        app.busy = false;
+        app.checkpoint(&ctx);
+        let before = Instant::now();
+        while app.checkpoint_pending {
+            assert!(before.elapsed() < Duration::from_secs(10));
+            app.receive(&ctx);
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(app.error.is_none(), "{:?}", app.error);
+        assert!(!directory.path().join("client").exists());
+    }
 }

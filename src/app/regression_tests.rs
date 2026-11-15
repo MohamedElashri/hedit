@@ -1,4 +1,4 @@
-//! Focused audit fixtures: keep setup outside CPU samples and preserve real input paths.
+//! Workspace regressions and opt-in interaction profiles using real input paths.
 use super::*;
 use crate::app::tests::{frame, frame_size, text_rect};
 fn app(text: &str, tabs: usize) -> (tempfile::TempDir, egui::Context, HeditApp) {
@@ -42,7 +42,7 @@ fn keyboard_tab_selection_reveals_the_active_tab_in_a_large_workspace() {
 }
 #[test]
 #[ignore = "manual release CPU audit of tabs, selections, split panes, and long lines"]
-fn profile_quality_audit() {
+fn profile_workspace_interaction() {
     for count in [1, 100, 1000] {
         let (_dir, ctx, mut app) = app("", count);
         let start = Instant::now();
@@ -302,7 +302,7 @@ fn a_large_workspace_restores_names_active_tab_and_unsaved_unicode() {
 }
 #[test]
 #[ignore = "manual release audit of typing within a single long paragraph"]
-fn profile_long_line_typing_audit() {
+fn profile_long_line_typing() {
     let source = "abcdefghij ".repeat(15_000);
     for position in [0, source.len()] {
         let (_dir, ctx, mut app) = app(&source, 1);

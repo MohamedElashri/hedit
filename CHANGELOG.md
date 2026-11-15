@@ -1,73 +1,16 @@
 # Changelog
 
-## Unreleased
+## [0.5.0] - 2026-11-15
 
-- Keep disposable SSH tests off `/tmp` by default and allow a disk-backed fixture directory for Linux validation, preserving recovery filesystem checks.
-
-- Add opt-in local numeric native CPU/GPU frame traces with bounded output and asynchronous GPU polling.
-- Keep diagnostic input values and document contents out of traces; distinguish processing timings from display latency.
-- Skip Cocoa state restoration in macOS SSH children using process-only defaults so crash restart can reach host recovery.
-
-- Share unchanged row meshes when inserting lines, moving cached paragraphs, renumbering syntax sections or padding Markdown rows.
-- Preserve clipping indexes across mesh translations and materialize geometry for selection, scaling, bidi changes or fractional-baseline corrections.
-
-- Reuse the unchanged glyph and mesh prefix when appending to compatible long unwrapped paragraphs, including after idle frames.
-- Keep append candidates weak and scoped to their font atlas; retain full layout for other edits, wrapping, decorations and changed formatting.
-
-- Use direct ASCII glyph lookups in each font to reduce repeated layout work, while preserving Unicode fallback, kerning and atlas ownership.
-- Allocate each fixed-size lookup table lazily in memory and retain differential checks against the original hash lookup path.
-
-- Reserve glyph storage once per paragraph for large layout jobs, avoiding repeated vector growth while preserving shaping and wrapping.
-- Keep small labels on the existing allocation path and add renderer differential fixtures for formatted Unicode, kerning, elision and fractional scales.
-
-- Cull offscreen triangle blocks in long text rows and reserve only submitted mesh geometry, reducing per-frame copying and output allocations.
-- Keep text meshes shared during pure translation and invalidate derived bounds after selection, scaling, RTL shaping and incremental row movement.
-- Add rendering parity checks for triangle attributes/order, decorations, fractional scales, clipping edges and cache lifecycle; document measured costs in the existing developer guide.
-
-- Index long-line byte and tab-column coordinates with balanced, incremental Unicode checkpoints kept in RAM.
-- Speed pointer placement and vertical navigation in long ordered glyph rows with lazy binary lookup; retain existing midpoint and irregular/RTL behavior.
-- Add differential long-line fixtures and split-editor edit/paste/Undo checks for Unicode, tabs and CRLF text.
-
-- Collapse RTL selections to their visual left/right edge before moving, preserving expected plain-arrow behavior.
-
-- Give split editor IDs a separate namespace from accessibility rows and keep exported focus on a live node during dynamic views and asynchronous work, preventing native split-group Undo crashes.
-
-- Keep large selections responsive by painting visible backgrounds below shared glyph meshes, including RTL and split-group selections.
-- Virtualize the tab strip, reveal keyboard-selected tabs, and make tab-history membership checks linear in the number of open views.
-- Expose full tab names, selected state and descriptive close actions to accessibility tools; prevent word-length overflow for long identifiers and correct pure RTL text-run direction/positions.
-- Include the command palette in key-binding configuration and shortcut conflict resolution.
-- Box open-document action payloads to address the Windows Clippy size failure; add a quality-audit matrix, regression fixtures and measured performance limits to the existing developer guide.
-
-- Keep large-file completion indexing and ranking off the UI thread, with bounded snapshots, word storage and cancellable worker slots.
-- Guard completion results and acceptance against tab, pane, revision, cursor and prefix changes; cancel delayed suggestions on Escape and navigation.
-- Reuse indexed cursor offsets for completion prefixes, preserve highlighted choices during background refreshes, and discard words from closed completion scopes.
-
-- Preserve preferred caret columns and soft-wrap affinity across frames; reset stale cursor coordinates after text changes and explicit navigation.
-- Keep fast mouse drags anchored when press, movement and release arrive in one frame, including Shift extension and RTL selection.
-- Cache bounded minimap samples in memory and avoid rescanning unchanged documents while scrolling or repainting.
-
-- Index text-layout cursor positions for faster caret navigation and pointer placement near the end of large files.
-- Share cursor and viewport offsets within the layout memory budget, preserving wrap preferences, goal columns and RTL positions without persisting derived caches.
-- Add differential cursor tests and preserve pointer tie behavior at shared boundaries and zero-height rows; make the pending-open Escape test independent of thread scheduling.
-
-- Keep current-file Find and selection highlighting responsive with cancellable background scans, shared in-memory snapshots and guarded cursor updates.
-- Reuse Find matches for navigation, count results beyond the 20,000-highlight limit, and preserve repeated next/previous requests during scans.
-- Restrict editor gutters, whitespace, indentation guides and highlight painting to the viewport, with correct zero-width, folded and RTL highlights.
-
-- Render only visible folder rows, cache expanded hierarchies, and bound directory metadata and concurrent reads across refreshes.
-- Reuse an in-memory filename index across Go to Anything queries, coalesce background work, and reject stale results after query, root or exclusion changes.
-- Add filename-index progress and refresh controls, with explicit incomplete-result notices and no directory-symlink traversal or disk cache.
-
-- Open files on a bounded background queue while keeping the current editor usable; cancel pending opens and protect newer edits from stale results.
-- Cache Go to Anything matches, scan large buffers in the background, and render only visible picker rows.
-- Correct SSH file-symbol navigation and durability barriers during concurrent typing; keep unlisted clean recovery baselines in Closed Files while reopening unsaved drafts.
-
-- Reuse paragraph layouts and source line indexes while typing, and cache recently used tab layouts within a bounded memory budget.
-- Keep typing available during folder search and reject replacement previews after open buffers or workspace roots change.
-- Compact the tab strip and SSH controls; show host identity, trust and durability state without a permanent connection toolbar or idle repaint loop.
-
-- Add private SSH workspaces for remote files, search, Git, builds and terminals, with host-only recovery and explicit execution trust.
-- Add fenced writers, bounded edit queues, crash-safe save/reconnect handling, strict path isolation and live SSH crash tests.
+- Add experimental SSH workspaces with remote files, search, Git, builds, terminals, and host-only recovery. Connections use pinned host keys, writer fencing, and explicit execution trust.
+- Keep file opening, project browsing, Find, Go to Anything, and completions responsive with bounded background work and cancellation.
+- Speed up large-file editing, long-line navigation, scrolling, selections, and workspaces with many tabs.
+- Preserve caret position, Unicode/RTL selections, and split-pane focus across edits and Undo.
+- Fix lost keyboard focus after saving and prevent layout shortcuts from inserting text into the document.
+- Add opt-in, bounded numeric CPU/GPU frame diagnostics without recording document or input contents.
+- Consolidate offline help and refresh the README with a native screenshot gallery.
+- Update SVG rendering, glob matching, filesystem, and trash dependencies.
+- Publish DEB, RPM, and AppImage packages for Linux x86-64 and ARM64, with checksums and installation checks.
 
 ## [0.4.0] - 2026-11-13
 

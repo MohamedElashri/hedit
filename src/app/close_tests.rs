@@ -11,6 +11,15 @@ fn disk_app() -> (tempfile::TempDir, egui::Context, HeditApp, PathBuf, u64) {
     let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
     app.open(&ctx, Some(path.clone()));
     finish_app_job(&mut app, &ctx);
+    // Finish startup recovery before the edit under test. Quit's deadline
+    // measures the final checkpoint, independently of this setup write.
+    while app.checkpoint_pending || app.generation != app.persisted {
+        app.checkpoint(&ctx);
+        assert!(app.error.is_none(), "{:?}", app.error);
+        app.checkpoint_worker.take().unwrap().join().unwrap();
+        app.receive(&ctx);
+        assert!(app.error.is_none(), "{:?}", app.error);
+    }
     let id = app.active().view.id;
     edit(&mut app, "edited\n");
     (directory, ctx, app, path, id)
@@ -215,7 +224,13 @@ fn quit_preserves_all_unsaved_buffers_without_prompting_across_restarts() {
 fn finish_quit(app: &mut HeditApp, ctx: &egui::Context) {
     let started = Instant::now();
     while !app.exit_ready {
-        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "quit stalled: closing={}, busy={}, checkpoint_pending={}, worker_finished={:?}, generation={}, persisted={}, close_flow={}, installing={}",
+            app.closing, app.busy, app.checkpoint_pending,
+            app.checkpoint_worker.as_ref().map(|worker| worker.is_finished()),
+            app.generation, app.persisted, app.close_flow.is_some(), app.updates.installing(),
+        );
         app.receive(ctx);
         assert!(app.error.is_none(), "{:?}", app.error);
         thread::sleep(Duration::from_millis(5));

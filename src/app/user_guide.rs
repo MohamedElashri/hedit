@@ -10,6 +10,7 @@ macro_rules! documents {
 documents! {
     "USER_GUIDE.md", "DEVELOPER_GUIDE.md", "CHANGELOG.md", "LICENSE",
     "assets/licenses/theme-palettes.md", "vendor/egui_commonmark/PATCH.md",
+    "vendor/libghostty-vt-sys/PATCH.md",
     "assets/dictionaries/en_US-LICENSE.txt",
     "assets/licenses/STIX-Two-Math-OFL.txt", "assets/licenses/latex-rust-NOTICE.txt",
     "assets/licenses/latex-rust-MIT.txt", "assets/licenses/latex-rust-dvipsnames.tsv",

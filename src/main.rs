@@ -112,7 +112,7 @@ fn run(
     };
     // Reopen the extra windows that were open with the main window last time.
     if let Some(exe) = (!remote_window)
-        .then(std::env::current_exe)
+        .then(hedit::windows::executable)
         .and_then(Result::ok)
     {
         for session in hedit::windows::to_restore(&directory) {
@@ -148,7 +148,7 @@ fn run(
     } else {
         options.files.clone()
     };
-    let executable = std::env::current_exe()?;
+    let executable = hedit::windows::executable()?;
     let restart_directory = if directory.is_absolute() {
         directory.clone()
     } else {

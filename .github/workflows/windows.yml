@@ -46,6 +46,8 @@ jobs:
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Rust tests
         run: cargo test --locked --workspace --no-fail-fast
+      - name: Patched renderer tests
+        run: cargo test --locked -p egui -p epaint --lib
       - name: Numeric native trace tests
         run: python scripts/test-native-trace.py
       - name: SSH test fixture setup tests

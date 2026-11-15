@@ -12,22 +12,35 @@ pub(super) struct TabCycle {
 
 /// Take one key press whose modifiers match exactly, so Ctrl+Shift+Tab is not
 /// taken for Ctrl+Tab. Some keyboard layouts also type the key's character
-/// with Alt, as in Alt+1 or Alt+Q; that text is dropped too.
+/// with Alt, as in Alt+1 or Alt+Q; that key's paired text is dropped too.
 pub(super) fn take_exact(ctx: &egui::Context, modifiers: Modifiers, key: Key) -> bool {
     ctx.input_mut(|i| {
-        let found = i.events.iter().position(|e| {
+        let matches = |e: &egui::Event| {
             matches!(e, egui::Event::Key { key: k, pressed: true, modifiers: m, .. } if *k == key && m.matches_exact(modifiers))
-        });
+        };
+        let found = i.events.iter().position(matches);
         let Some(n) = found else {
             return false;
         };
-        i.events.remove(n);
-        let name = key.name();
-        if modifiers.alt && name.chars().count() == 1 {
-            i.events.retain(
-                |e| !matches!(e, egui::Event::Text(t) if t.eq_ignore_ascii_case(name)),
-            );
+        // Winit emits a key's text immediately after its Key event. Shift or
+        // the keyboard layout can change it (e.g. Alt+Shift+2 produces '@').
+        // Suppress paired text for coalesced repeats too, while taking only one
+        // key press. Never remove unrelated typing elsewhere in the batch.
+        if modifiers.alt
+            && !modifiers.ctrl
+            && !modifiers.command
+            && !modifiers.mac_cmd
+            && key.name().chars().count() == 1
+        {
+            for index in (n..i.events.len().saturating_sub(1)).rev() {
+                if matches(&i.events[index])
+                    && matches!(i.events.get(index + 1), Some(egui::Event::Text(_)))
+                {
+                    i.events.remove(index + 1);
+                }
+            }
         }
+        i.events.remove(n);
         true
     })
 }

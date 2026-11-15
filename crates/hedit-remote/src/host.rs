@@ -1,4 +1,4 @@
-//! Descriptor-relative filesystem access for the initial strict no-symlink mode.
+//! Descriptor-relative filesystem access with strict no-symlink validation.
 use crate::protocol::{Error, Result, MAX_DOCUMENT};
 use rustix::fs::{self as sys, Mode, OFlags};
 use std::{

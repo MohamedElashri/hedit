@@ -8,7 +8,7 @@ workflows:
         - 'actions/setup-python@v7.1.0'
         - 'dtolnay/rust-toolchain@1.99.1'
         - 'swatinem/rust-cache@v2.9.3'
-    '.github/workflows/macos-probe.yml':
+    '.github/workflows/macos.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-python@v7.1.0'
         - 'actions/upload-artifact@v7.0.2'

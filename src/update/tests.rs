@@ -276,6 +276,16 @@ fn install_failure_rolls_back_files_and_directories() {
         .exists());
 }
 #[test]
+fn package_manager_and_appimage_installations_never_update_in_place() {
+    let fixture = Fixture::new();
+    fs::write(fixture.root.join("share/hedit/package-managed"), "managed").unwrap();
+    let error = Installation::for_executable(&fixture.root.join("bin/hedit")).unwrap_err();
+    assert!(error.contains("package manager"));
+    assert!(error.contains("AppImage"));
+    assert!(!fixture.root.join(".hedit-update.lock").exists());
+}
+
+#[test]
 fn portable_installation_updates_and_source_layout_is_refused() {
     let fixture = Fixture::new();
     let portable = Installation::for_executable(&fixture.package.join("hedit")).unwrap();

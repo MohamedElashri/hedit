@@ -67,6 +67,15 @@ fn document_symlinks_still_save_to_the_target() {
 
 #[cfg(unix)]
 fn fifo_fixture(read: impl FnOnce(&Path) -> bool + Send + 'static, document: bool) {
+    fifo_fixture_with_setup(|_| {}, read, document);
+}
+
+#[cfg(unix)]
+fn fifo_fixture_with_setup(
+    prepare: impl FnOnce(&Path),
+    read: impl FnOnce(&Path) -> bool + Send + 'static,
+    document: bool,
+) {
     use std::{
         io::Write, os::unix::fs::OpenOptionsExt, process::Command, sync::mpsc, thread,
         time::Duration,
@@ -78,6 +87,9 @@ fn fifo_fixture(read: impl FnOnce(&Path) -> bool + Send + 'static, document: boo
         .status()
         .unwrap()
         .success());
+    // Durable fixture setup can take seconds under concurrent filesystem load.
+    // The deadline measures only the read that must reject a FIFO promptly.
+    prepare(&path);
     let input = path.clone();
     let (tx, rx) = mpsc::channel();
     let worker = thread::spawn(move || tx.send(read(&input)).unwrap());
@@ -147,7 +159,7 @@ fn document_fifo_is_rejected_without_waiting() {
 #[cfg(unix)]
 #[test]
 fn recovery_fifo_reports_an_error_without_blocking_startup() {
-    fifo_fixture(
+    fifo_fixture_with_setup(
         |path| {
             use hedit::workspace::Workspace;
             let session = path.parent().unwrap().join("session");
@@ -161,6 +173,10 @@ fn recovery_fifo_reports_an_error_without_blocking_startup() {
             let buffer = session.join(manifest["open"][0]["document"]["buffer"].as_str().unwrap());
             fs::remove_file(&buffer).unwrap();
             std::os::unix::fs::symlink(path, &buffer).unwrap();
+        },
+        |path| {
+            use hedit::workspace::Workspace;
+            let session = path.parent().unwrap().join("session");
             let (_, errors) = Workspace::restore(session).unwrap();
             !errors.is_empty()
         },

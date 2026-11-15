@@ -1,8 +1,6 @@
 #[cfg(all(test, target_os = "macos"))]
 mod accessibility_tests;
 mod advanced_edit;
-#[cfg(test)]
-mod audit_tests;
 mod auto_complete;
 mod bidi_view;
 mod build_panel;
@@ -85,6 +83,8 @@ mod quality_windows;
 mod recovery_tests;
 #[cfg(test)]
 mod redesign_tests;
+#[cfg(test)]
+mod regression_tests;
 mod remote;
 #[cfg(test)]
 mod render_tests;
@@ -339,6 +339,7 @@ pub struct HeditApp {
     sanitizer: String,
     poll_at: Instant,
     focus_editor: bool,
+    job_editor_focus: Option<egui::Id>,
     theme: Theme,
     preferences_open: bool,
     appearance: themes::Appearance,
@@ -526,6 +527,7 @@ impl HeditApp {
             sanitizer: "memcheck".into(),
             poll_at: Instant::now(),
             focus_editor: true,
+            job_editor_focus: None,
             syntax_query: String::new(),
             syntax_focus: true,
             syntax_matches: syntax::Language::ALL.to_vec(),
@@ -592,6 +594,8 @@ impl HeditApp {
         if self.busy {
             return;
         }
+        let editor_id = self.editor_id();
+        self.job_editor_focus = ctx.memory(|m| m.has_focus(editor_id)).then_some(editor_id);
         self.busy = true;
         self.opens.interrupt_focus();
         self.cancel.store(false, Ordering::Relaxed);
@@ -604,6 +608,12 @@ impl HeditApp {
     }
     fn checkpoint(&mut self, ctx: &egui::Context) {
         if self.checkpoint_pending {
+            return;
+        }
+        // A save/reload job can hold a remote document lock while waiting for
+        // SSH. Its host journal already owns content recovery; defer view
+        // metadata until the job finishes instead of waiting on the UI thread.
+        if self.busy && self.workspace.remote.is_some() {
             return;
         }
         self.checkpoint_at = Instant::now();
@@ -1130,9 +1140,12 @@ impl HeditApp {
                     Ok(Action::Font(..) | Action::FallbackFonts | Action::FontFamilies(_)) => true,
                     _ => false,
                 };
-            if !side {
+            let restore_focus = if !side {
                 self.busy = false;
-            }
+                self.job_editor_focus.take()
+            } else {
+                None
+            };
             let reloaded = matches!(&event, Ok(Action::Reloaded(..)));
             match event {
                 Ok(Action::Quality(event)) => self.quality_event(ctx, *event),
@@ -1370,6 +1383,16 @@ impl HeditApp {
                     self.workspace.active = index;
                 }
                 self.focus_editor = focus;
+            }
+            if let Some(id) = restore_focus {
+                // Disabling TextEdit during a slow job drops keyboard focus.
+                // Restore only the same pane, and leave any newly focused
+                // search/dialog input alone. Save-as can start a second job.
+                if self.busy {
+                    self.job_editor_focus = self.job_editor_focus.or(Some(id));
+                } else if self.editor_id() == id && ctx.memory(|m| m.focused().is_none()) {
+                    ctx.memory_mut(|m| m.request_focus(id));
+                }
             }
         }
         while let Ok(checkpoint) = self.checkpoint_rx.try_recv() {
@@ -1610,14 +1633,9 @@ impl HeditApp {
                 Command::Rows3,
             ),
         ] {
-            // Exact modifiers, so Alt+Shift+2 is not taken for Alt+2.
-            let pressed = ctx.input_mut(|i| {
-                let found = i.events.iter().position(|e| {
-                    matches!(e, egui::Event::Key { key: k, pressed: true, modifiers: m, .. } if *k == key && m.matches_exact(modifiers))
-                });
-                found.map(|n| i.events.remove(n)).is_some()
-            });
-            if pressed && !self.overridden(command) {
+            // Consume native text paired with each accepted key too, including
+            // shifted symbols and repeated presses coalesced into one frame.
+            while !self.overridden(command) && take(modifiers, key) {
                 self.execute(ctx, command);
             }
         }
@@ -4687,6 +4705,60 @@ mod tests {
         assert!(errors.is_empty());
         assert_eq!(restored.open[restored.active].page.info.eol, "CRLF");
         assert_eq!(restored.open[restored.active].page.text, "α\r\nβ\r\n\r\n");
+    }
+
+    #[test]
+    fn saving_across_a_busy_frame_restores_editor_focus_without_stealing_it() {
+        for split in [false, true] {
+            for redirect in [false, true] {
+                let directory = tempfile::tempdir().unwrap();
+                let file = directory.path().join("file.txt");
+                std::fs::write(&file, "").unwrap();
+                let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+                let ctx = egui::Context::default();
+                let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+                app.open(&ctx, Some(file.clone()));
+                finish_app_job(&mut app, &ctx);
+                if split {
+                    app.execute(&ctx, Command::SplitColumns);
+                    app.execute(&ctx, Command::FocusGroup2);
+                }
+                frame(&ctx, &mut app, vec![]);
+                frame(&ctx, &mut app, vec![egui::Event::Text("before".into())]);
+                assert_eq!(app.active().page.text, "before");
+                let editor_id = app.editor_id();
+                assert!(ctx.memory(|m| m.has_focus(editor_id)));
+                let document = app.workspace.editor.get(app.active().view.id).unwrap();
+                let guard = document.lock().unwrap();
+                app.execute(&ctx, Command::Save);
+                // A slow disk or SSH round trip disables the editor for at
+                // least one frame; instant saves can hide the lost focus.
+                frame(&ctx, &mut app, vec![]);
+                assert!(app.busy);
+                if redirect {
+                    app.goto_open = true;
+                    app.goto_focus = true;
+                    app.focus_editor = false;
+                    frame(&ctx, &mut app, vec![]);
+                    assert!(app.goto_open);
+                    assert!(!ctx.memory(|m| m.has_focus(editor_id)));
+                }
+                let other_focus = ctx.memory(|m| m.focused());
+                if redirect {
+                    assert!(other_focus.is_some());
+                }
+                drop(guard);
+                finish_app_job(&mut app, &ctx);
+                assert_eq!(std::fs::read_to_string(&file).unwrap(), "before");
+                frame(&ctx, &mut app, vec![]);
+                if redirect {
+                    assert_eq!(ctx.memory(|m| m.focused()), other_focus);
+                } else {
+                    frame(&ctx, &mut app, vec![egui::Event::Text("after".into())]);
+                    assert_eq!(app.active().page.text, "beforeafter", "split={split}");
+                }
+            }
+        }
     }
 
     #[test]

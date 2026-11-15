@@ -15,8 +15,10 @@ import shlex
 import shutil
 import signal
 import socket
+import stat
 import struct
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -55,6 +57,21 @@ def config_value(value):
     return '"' + text.replace('\\', '\\\\').replace('"', '\\"') + '"'
 
 
+def validate_fixture_ancestors(path):
+    """Explain unsafe fixture placement before the recovery worker rejects it."""
+    if os.name != 'posix':
+        return
+    path = Path(path).resolve()
+    for directory in (*reversed(path.parents), path):
+        info = directory.stat()
+        if info.st_mode & 0o022 and not info.st_mode & stat.S_ISVTX:
+            raise ValueError(
+                f'SSH fixture ancestor is group/other-writable: {directory}. '
+                'Choose --work-dir (or HEDIT_REMOTE_LIVE_DIR) beneath private ancestors '
+                'on a supported local filesystem; recovery requires this too. '
+                'Do not change shared checkout permissions just for this test.')
+
+
 class Lab:
     def __init__(self):
         # /tmp is commonly tmpfs on Linux, which the recovery engine correctly
@@ -77,6 +94,7 @@ class Lab:
         self.count = 0
 
     def start(self):
+        validate_fixture_ancestors(self.base)
         for key in [self.host_key, self.client_key, self.wrong_key]:
             run("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key))
         authorized = self.base / "authorized_keys"
@@ -555,7 +573,7 @@ class LiveTests(unittest.TestCase):
     def test_editor_reconnect_replays_lost_receipt_once(self):
         _, marker = self.worker("after_commit")
         self.root.joinpath("file").write_text("base")
-        probe = ROOT / "target/debug/examples/remote_live_probe"
+        probe = ROOT / "target/debug/examples/remote_workspace_probe"
         process = subprocess.Popen([str(probe), str(LAB.client_config), str(ARGS.binary),
                                     str(self.state), str(self.root), str(LAB.port), "recover_pending"],
                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -578,7 +596,7 @@ class LiveTests(unittest.TestCase):
     def test_editor_flush_frontier_allows_later_edits_behind_a_delayed_read(self):
         worker, _ = self.worker()
         self.root.joinpath("file").write_text("base")
-        probe = ROOT / "target/debug/examples/remote_live_probe"
+        probe = ROOT / "target/debug/examples/remote_workspace_probe"
         process = subprocess.Popen([str(probe), str(LAB.client_config), str(ARGS.binary),
                                     str(self.state), str(self.root), str(LAB.port), "barrier_frontier"],
                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -601,7 +619,7 @@ class LiveTests(unittest.TestCase):
 
     def test_unlisted_clean_baselines_stay_closed_and_unsaved_drafts_reopen(self):
         self.root.joinpath("file").write_text("baseline")
-        probe = ROOT / "target/debug/examples/remote_live_probe"
+        probe = ROOT / "target/debug/examples/remote_workspace_probe"
         result = subprocess.run([str(probe), str(LAB.client_config), str(ARGS.binary),
                                  str(self.state), str(self.root), str(LAB.port), "unlisted_recovery"],
                                 capture_output=True, text=True, timeout=40)
@@ -614,13 +632,43 @@ class LiveTests(unittest.TestCase):
         run("git", "init", "-q", str(self.root))
         run("git", "-C", str(self.root), "config", "user.email", "lab@example.invalid")
         run("git", "-C", str(self.root), "config", "user.name", "SSH Test")
-        probe = ROOT / "target/debug/examples/remote_live_probe"
+        probe = ROOT / "target/debug/examples/remote_workspace_probe"
         result = subprocess.run([str(probe), str(LAB.client_config), str(ARGS.binary), str(self.state), str(self.root), str(LAB.port)], capture_output=True, text=True, timeout=90)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("EDITOR_REMOTE_OK", result.stdout)
         self.assertIn("ب🦀", self.root.joinpath("file").read_text())
         self.assertEqual(self.root.joinpath("scratch-saved.txt").read_text(), "SCRATCH_HOST_ONLY")
         self.assertFalse(LAB.sentinel.exists())
+
+    def test_refusing_last_tab_close_and_discard_preserves_documents(self):
+        self.root.joinpath("file").write_text("base")
+        for n in range(50):
+            self.root.joinpath(f"shelf-{n}.txt").write_text("saved")
+        probe = ROOT / "target/debug/examples/remote_workspace_probe"
+        result = subprocess.run([str(probe), str(LAB.client_config), str(ARGS.binary),
+                                 str(self.state), str(self.root), str(LAB.port), "last_tab_refusal"],
+                                capture_output=True, text=True, timeout=90)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("LAST_TAB_REFUSAL_OK", result.stdout)
+        self.assertEqual(self.root.joinpath("file").read_text(), "LAST_TAB_ALIVEbase")
+
+    def test_busy_document_job_cannot_block_remote_checkpoint_on_ui_thread(self):
+        artifacts = [json.loads(line) for line in ARGS.editor_test_artifacts.read_text().splitlines()]
+        binaries = [row["executable"] for row in artifacts
+                    if row.get("reason") == "compiler-artifact" and row.get("executable")
+                    and row.get("profile", {}).get("test")
+                    and row.get("target", {}).get("name") == "hedit"
+                    and row["target"]["kind"] == ["bin"]]
+        self.assertEqual(len(binaries), 1, "build editor tests with Cargo JSON artifacts first")
+        fixture = dict(port=LAB.port, config=str(LAB.client_config), helper=str(ARGS.binary),
+                       state=str(self.state), root=str(self.root))
+        result = subprocess.run([binaries[0], "--ignored", "--exact",
+            "app::remote::tests::checkpoint_defers_remote_view_while_a_document_job_is_busy",
+            "--nocapture", "--test-threads=1"],
+            env=dict(os.environ, HEDIT_REMOTE_TEST_CONFIG=json.dumps(fixture)),
+            capture_output=True, text=True, timeout=40)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("1 passed", result.stdout)
 
     def test_live_commit_latency_distribution(self):
         self.worker()
@@ -642,6 +690,9 @@ def parse_args(arguments=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=ROOT / "target/debug/hedit-remote")
     parser.add_argument("--fault-binary", type=Path, required=True)
+    parser.add_argument("--editor-test-artifacts", type=Path,
+                        default=ROOT / "target/remote-editor-tests.jsonl",
+                        help="Cargo JSON artifacts for the editor test binary (built by make test-remote-live)")
     parser.add_argument("--test", help="Run one named LiveTests method")
     parser.add_argument("--debug-server", action="store_true", help="Bounded diagnostics from the disposable server")
     parser.add_argument("--work-dir", type=Path,
@@ -664,6 +715,9 @@ def main():
         if not result.wasSuccessful():
             print("Isolated sshd diagnostics:", (LAB.base / "sshd.log").read_text()[-4096:])
         return 0 if result.wasSuccessful() else 1
+    except ValueError as error:
+        print(f"Cannot prepare isolated SSH fixture: {error}", file=sys.stderr)
+        return 2
     finally:
         LAB.close()
 

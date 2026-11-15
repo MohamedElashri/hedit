@@ -1599,7 +1599,7 @@ impl HeditApp {
             Command::Open => self.open(ctx, None),
             Command::NewWindow => {
                 let session = hedit::windows::new_session(self.workspace.store.directory());
-                let result = std::env::current_exe()
+                let result = hedit::windows::executable()
                     .map_err(|e| e.to_string())
                     .and_then(|exe| hedit::windows::spawn(&exe, &session, true));
                 self.report(result);

@@ -1,4 +1,4 @@
-//! Integration driver run by scripts/test-remote-live.py against disposable SSH.
+//! Production workspace regression driver for the disposable SSH harness.
 use hedit::{
     document::Document,
     remote::{Config, Connection},
@@ -45,6 +45,55 @@ fn run() -> Result<(), String> {
     assert!(doc.is_ephemeral());
     assert!(doc.info().name == "file");
     let original = doc.text(10 * 1024 * 1024)?;
+    if args.get(5).is_some_and(|mode| mode == "last_tab_refusal") {
+        let directory = tempfile::tempdir().map_err(|e| e.to_string())?;
+        let mut config = remote.config.clone();
+        config.takeover = true;
+        let (mut workspace, errors) =
+            hedit::workspace::Workspace::connect_remote(directory.path().join("client"), config)?;
+        assert!(errors.is_empty());
+        assert_eq!(workspace.open.len(), 1);
+        let owner = workspace.remote.as_ref().unwrap().clone();
+        for n in 0..50 {
+            let path = owner.path(&format!("shelf-{n}.txt"))?;
+            let mut document = owner.open(workspace.editor.id(), &path)?;
+            let page = document.page(0)?;
+            workspace.add(document, page)?;
+            workspace.close(1)?;
+        }
+        let ids: Vec<_> = workspace.closed.iter().map(|view| view.id).collect();
+        assert!(workspace.close(0).is_err());
+        assert_eq!(
+            workspace
+                .closed
+                .iter()
+                .map(|view| view.id)
+                .collect::<Vec<_>>(),
+            ids,
+            "refusing the last tab must not evict shelf history"
+        );
+        for id in ids {
+            assert!(workspace.editor.get(id).is_ok());
+        }
+        let id = workspace.open[0].view.id;
+        assert!(workspace.forget(0).is_err());
+        assert!(
+            workspace.editor.get(id).is_ok(),
+            "refusing discard must retain the live document"
+        );
+        workspace.open[0].page.text = format!("LAST_TAB_ALIVE{original}");
+        workspace.edit(0, &original)?;
+        owner.flush()?;
+        workspace
+            .editor
+            .get(id)?
+            .lock()
+            .map_err(|e| e.to_string())?
+            .save(None)?;
+        assert!(!directory.path().join("client").exists());
+        println!("LAST_TAB_REFUSAL_OK");
+        return Ok(());
+    }
     if args.get(5).is_some_and(|mode| mode == "recover_pending") {
         doc.replace(0, 0, "PENDING_ONCE".into(), doc.info().revision)?;
         let deadline = Instant::now() + Duration::from_secs(20);

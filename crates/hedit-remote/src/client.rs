@@ -60,7 +60,7 @@ impl SshTarget {
         command.current_dir("/");
         #[cfg(windows)]
         command.current_dir(std::env::temp_dir());
-        // Batch authentication only in this prototype; no ad hoc password UI.
+        // Use keys or an existing agent; there is no password-prompt UI.
         for option in [
             "BatchMode=yes",
             "StrictHostKeyChecking=yes",
@@ -82,7 +82,7 @@ impl SshTarget {
             "ConnectTimeout=10",
             "ConnectionAttempts=1",
             "UpdateHostKeys=no",
-            // Hop-by-hop policy is not implemented by this direct-SSH prototype.
+            // Direct SSH only; proxy hops need their own trust policy.
             "ProxyJump=none",
             "ProxyCommand=none",
             "LogLevel=ERROR",

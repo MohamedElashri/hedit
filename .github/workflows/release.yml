@@ -37,6 +37,7 @@ jobs:
           - runner: ubuntu-24.04-arm
             arch: aarch64
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Install Python for packaging
@@ -62,18 +63,25 @@ jobs:
         run: make clippy
       - name: Tests
         run: make test
-      - name: Package and verify installation
-        run: make package smoke
+      - name: Install Linux packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm dpkg-dev desktop-file-utils cpio file xvfb xauth xdotool libxkbcommon-x11-0 libxcursor1 libxi6 libxrandr2 libwayland-client0 libwayland-cursor0 libwayland-egl1 libegl1 libgl1
+          python3 scripts/setup-appimage.py
+      - name: Package and verify every Linux format
+        run: make linux-packages smoke smoke-linux-packages
+      - name: Verify AppImage detached windows without FUSE
+        run: xvfb-run -a python3 scripts/test-appimage.py dist/hedit-*-linux-${{ matrix.arch }}.AppImage
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: hedit-linux-${{ matrix.arch }}
-          path: dist/hedit-*-linux-${{ matrix.arch }}.tar.gz*
+          path: dist/hedit-*-linux-${{ matrix.arch }}.*
           if-no-files-found: error
 
   macos:
     name: Build universal macOS app
     needs: [validate]
-    uses: ./.github/workflows/macos-probe.yml
+    uses: ./.github/workflows/macos.yml
 
   windows:
     name: Build Windows portable app
@@ -94,6 +102,8 @@ jobs:
           pattern: hedit-*
           merge-multiple: true
           path: dist
+      - name: Verify the complete release asset set
+        run: python3 scripts/check-release-assets.py dist
       - name: Prepare release notes from the changelog
         env:
           RELEASE_TAG: ${{ github.ref_name }}
@@ -111,10 +121,10 @@ jobs:
               echo 'This release is already published. Use a new version tag for changes.' >&2
               exit 1
             fi
-            gh release upload "$RELEASE_TAG" dist/*.tar.gz dist/*.zip dist/*.sha256 --clobber
+            gh release upload "$RELEASE_TAG" dist/*.tar.gz dist/*.deb dist/*.rpm dist/*.AppImage dist/*.zip dist/*.sha256 --clobber
             gh release edit "$RELEASE_TAG" --notes-file release-notes.md --title "hedit $RELEASE_TAG"
           else
-            gh release create "$RELEASE_TAG" dist/*.tar.gz dist/*.zip dist/*.sha256 \
+            gh release create "$RELEASE_TAG" dist/*.tar.gz dist/*.deb dist/*.rpm dist/*.AppImage dist/*.zip dist/*.sha256 \
               --verify-tag --draft --notes-file release-notes.md --title "hedit $RELEASE_TAG"
           fi
           if [[ "$RELEASE_TAG" == *-* ]]; then

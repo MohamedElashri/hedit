@@ -59,6 +59,9 @@ impl Installation {
                 .ok_or("Cannot locate the installation directory.")?;
             let (root, kind) = if parent.file_name().and_then(|s| s.to_str()) == Some("bin") {
                 let prefix = parent.parent().ok_or("Cannot locate the install prefix.")?;
+                if prefix.join("share/hedit/package-managed").exists() {
+                    return Err("Update this installation using your package manager, or download and replace the AppImage.".into());
+                }
                 if !prefix.join("share/doc/hedit/LICENSE").is_file()
                     || !prefix.join("share/applications/hedit.desktop").is_file()
                 {
