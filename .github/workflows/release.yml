@@ -51,8 +51,9 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: make release-check
-      - uses: dtolnay/rust-toolchain@1.99.1
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.99.1
           components: rustfmt, clippy
       - name: Format, documentation, policy, and script checks
         run: make static
