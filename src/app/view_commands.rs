@@ -8,6 +8,9 @@ const RECENT: usize = 20;
 impl HeditApp {
     /// Note the active file as the most recently used.
     pub(super) fn track_recent_file(&mut self) {
+        if self.workspace.remote.is_some() {
+            return;
+        }
         let Some(path) = self.active().page.info.path.as_ref() else {
             return;
         };

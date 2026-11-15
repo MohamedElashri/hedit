@@ -1,6 +1,16 @@
 # Changelog
 
-## Unreleased
+## [0.5.0] - 2026-11-15
+
+- Add experimental SSH workspaces with remote files, search, Git, builds, terminals, and host-only recovery. Connections use pinned host keys, writer fencing, and explicit execution trust.
+- Keep file opening, project browsing, Find, Go to Anything, and completions responsive with bounded background work and cancellation.
+- Speed up large-file editing, long-line navigation, scrolling, selections, and workspaces with many tabs.
+- Preserve caret position, Unicode/RTL selections, and split-pane focus across edits and Undo.
+- Fix lost keyboard focus after saving and prevent layout shortcuts from inserting text into the document.
+- Add opt-in, bounded numeric CPU/GPU frame diagnostics without recording document or input contents.
+- Consolidate offline help and refresh the README with a native screenshot gallery.
+- Update SVG rendering, glob matching, filesystem, and trash dependencies.
+- Publish DEB, RPM, and AppImage packages for Linux x86-64 and ARM64, with checksums and installation checks.
 
 ## [0.4.0] - 2026-11-13
 

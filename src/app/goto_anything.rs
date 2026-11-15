@@ -138,6 +138,7 @@ impl HeditApp {
             });
         }
         self.jump_to_line(ctx, line, column);
+        ctx.request_repaint();
     }
     /// Put the cursor back after a cancelled preview.
     pub(super) fn cancel_goto_preview(&mut self) {
@@ -193,11 +194,26 @@ impl HeditApp {
                 .push_back(PathBuf::from(format!("{path}:{line}{suffix}")));
             return;
         }
-        self.job(ctx, move || {
+        let label = Path::new(&path)
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        let remote = self.workspace.remote.clone();
+        let editor = self.workspace.editor.clone();
+        self.read_open(ctx, label, move || {
             let file = PathBuf::from(&path);
-            let text = hedit::projects::read_text(&file, 32 * 1024 * 1024).unwrap_or_default();
-            let line = resolve(&text, &file, &target).map_or(1, |(line, _)| line);
-            Ok(Action::OpenAt(PathBuf::from(format!("{path}:{line}"))))
+            let mut doc = if let Some(remote) = remote {
+                remote.open(editor.id(), &file)?
+            } else {
+                Document::open_or_new(editor.id(), &file)?
+            };
+            let text = doc.text(32 * 1024 * 1024).unwrap_or_default();
+            let (line, column) = resolve(&text, &file, &target).unwrap_or((1, None));
+            let offset = doc.location_offset(line as u64, column.unwrap_or(1) as u64)?;
+            let page = doc.page(offset.saturating_sub(4096))?;
+            let cursor = page.text[..(offset - page.start) as usize].chars().count();
+            Ok(Action::Add(Box::new(doc), page, cursor))
         });
     }
 }

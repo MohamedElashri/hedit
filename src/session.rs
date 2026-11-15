@@ -56,7 +56,7 @@ pub struct Bookmark {
     pub offset: u64,
     pub label: String,
 }
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionView {
     pub open: Vec<TabView>,
@@ -141,12 +141,20 @@ pub struct SessionSnapshot {
 }
 impl SessionSnapshot {
     pub fn capture(editor: &Editor, view: SessionView) -> Result<Self, String> {
-        let documents = view
+        let documents: std::collections::HashMap<u64, SharedDocument> = view
             .open
             .iter()
             .chain(&view.closed)
             .map(|tab| Ok((tab.id, editor.get(tab.id)?)))
             .collect::<Result<_, String>>()?;
+        if view
+            .open
+            .iter()
+            .chain(&view.closed)
+            .any(|tab| editor.is_ephemeral(tab.id))
+        {
+            return Err("Remote workspace content cannot be saved to local recovery.".into());
+        }
         Ok(Self { view, documents })
     }
 }

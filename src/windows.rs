@@ -4,6 +4,37 @@ use std::path::{Path, PathBuf};
 
 const WINDOWS: &str = "windows";
 
+/// The package launcher gives each detached AppImage window its own runtime.
+pub fn executable() -> std::io::Result<PathBuf> {
+    let executable = std::env::current_exe()?;
+    #[cfg(target_os = "linux")]
+    if let (Some(directory), Some(image)) =
+        (std::env::var_os("APPDIR"), std::env::var_os("APPIMAGE"))
+    {
+        return Ok(appimage_executable(
+            &executable,
+            Path::new(&directory),
+            Path::new(&image),
+        ));
+    }
+    Ok(executable)
+}
+
+#[cfg(target_os = "linux")]
+fn appimage_executable(executable: &Path, directory: &Path, image: &Path) -> PathBuf {
+    let launcher = directory.join("usr/bin/hedit-appimage-launch");
+    if directory.is_absolute()
+        && executable.starts_with(directory)
+        && image.is_absolute()
+        && image.is_file()
+        && launcher.is_file()
+    {
+        launcher
+    } else {
+        executable.to_path_buf()
+    }
+}
+
 /// The folder holding extra windows' sessions, for any window's session.
 pub fn windows_dir(session: &Path) -> PathBuf {
     match session.parent() {
@@ -70,4 +101,32 @@ pub fn spawn(executable: &Path, session: &Path, new_buffer: bool) -> Result<(), 
         let _ = child.wait();
     });
     Ok(())
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod appimage_tests {
+    use super::*;
+
+    #[test]
+    fn detached_windows_use_the_package_launcher_only_from_its_appdir() {
+        let work = tempfile::tempdir().unwrap();
+        let image = work.path().join("Hedit image.AppImage");
+        std::fs::write(&image, "runtime").unwrap();
+        let directory = work.path().join("mounted image");
+        let payload = directory.join("usr/bin/hedit");
+        std::fs::create_dir_all(payload.parent().unwrap()).unwrap();
+        let launcher = directory.join("usr/bin/hedit-appimage-launch");
+        std::fs::write(&launcher, "launcher").unwrap();
+        assert_eq!(appimage_executable(&payload, &directory, &image), launcher);
+        let system = Path::new("/usr/bin/hedit");
+        assert_eq!(appimage_executable(system, &directory, &image), system);
+        assert_eq!(
+            appimage_executable(&payload, Path::new("."), &image),
+            payload
+        );
+        assert_eq!(
+            appimage_executable(&payload, &directory, &work.path().join("missing")),
+            payload
+        );
+    }
 }

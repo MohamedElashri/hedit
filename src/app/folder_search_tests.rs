@@ -203,3 +203,84 @@ fn export_folder_search_previews() {
         }
     }
 }
+
+#[test]
+fn pending_folder_search_keeps_typing_and_other_job_errors_independent() {
+    let (_directory, ctx, mut app) = fixture(2);
+    app.quality.folders_open = false;
+    app.focus_editor = true;
+    frame_size(&ctx, &mut app, vec![], egui::vec2(900.0, 700.0));
+    app.folder_search(&ctx, true);
+    assert!(!app.busy);
+    // Hold a result channel open to model a slow disk or SSH host deterministically.
+    let (_tx, rx) = mpsc::channel();
+    app.quality.folder_task = Some(folder_search::Task {
+        cancel: Arc::new(AtomicBool::new(false)),
+        rx,
+    });
+    frame_size(
+        &ctx,
+        &mut app,
+        vec![egui::Event::Text("typed while searching".into())],
+        egui::vec2(900.0, 700.0),
+    );
+    assert_eq!(app.active().page.text, "typed while searching");
+    assert!(!app.folder_preview_valid());
+    app.busy = true;
+    app.tx.send(Err("Unrelated save failed".into())).unwrap();
+    app.receive(&ctx);
+    assert_eq!(app.error.as_deref(), Some("Unrelated save failed"));
+    assert!(matches!(
+        app.quality.folder_state,
+        folder_search::State::Searching
+    ));
+}
+
+#[test]
+fn search_completion_cannot_unlock_a_mutation_and_cancel_is_scoped() {
+    let (_directory, ctx, mut app) = fixture(2);
+    let (tx, rx) = mpsc::channel();
+    let cancel = Arc::new(AtomicBool::new(false));
+    app.quality.folder_task = Some(folder_search::Task {
+        cancel: cancel.clone(),
+        rx,
+    });
+    app.quality.folder_state = folder_search::State::Searching;
+    app.busy = true;
+    cancel.store(true, Ordering::Relaxed);
+    tx.send(Ok(Default::default())).unwrap();
+    app.receive(&ctx);
+    assert!(
+        app.busy,
+        "a search receipt cannot release another operation's lock"
+    );
+    assert!(
+        !app.cancel.load(Ordering::Relaxed),
+        "search cancellation is independent"
+    );
+    assert!(matches!(
+        app.quality.folder_state,
+        folder_search::State::Cancelled
+    ));
+}
+
+#[test]
+fn changed_open_buffers_and_roots_invalidate_replacement_snapshots() {
+    let (_directory, ctx, mut app) = fixture(2);
+    app.folder_search(&ctx, true);
+    finish_app_job(&mut app, &ctx);
+    assert!(app.folder_preview_valid());
+    let old = app.active().page.text.clone();
+    let index = app.workspace.active;
+    app.workspace.open[index]
+        .page
+        .text
+        .push_str("new unsaved text");
+    app.workspace.edit(index, &old).unwrap();
+    assert!(!app.folder_preview_valid());
+    app.folder_search(&ctx, true);
+    finish_app_job(&mut app, &ctx);
+    assert!(app.folder_preview_valid());
+    app.workspace.folders.clear();
+    assert!(!app.folder_preview_valid());
+}

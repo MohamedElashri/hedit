@@ -69,7 +69,7 @@ pub(super) struct SpellCheck {
 
 impl SpellCheck {
     /// Drop results for files that were closed; each holds a copy of its text.
-    pub(super) fn forget_closed(&mut self, open: &[u64]) {
+    pub(super) fn forget_closed(&mut self, open: &HashSet<u64>) {
         self.results.retain(|view, _| open.contains(view));
     }
 }

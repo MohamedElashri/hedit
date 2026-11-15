@@ -3,6 +3,7 @@ use super::*;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum Command {
+    ConnectSsh,
     MarkdownSource,
     MarkdownSplit,
     MarkdownPreview,
@@ -227,6 +228,8 @@ pub(super) enum Command {
 }
 impl Command {
     pub(super) const ALL: &'static [Self] = &[
+        Self::Palette,
+        Self::ConnectSsh,
         Self::MarkdownSource,
         Self::MarkdownSplit,
         Self::MarkdownPreview,
@@ -450,7 +453,8 @@ impl Command {
     fn opens_window(self) -> bool {
         matches!(
             self,
-            Self::Switcher
+            Self::ConnectSsh
+                | Self::Switcher
                 | Self::Palette
                 | Self::Appearance
                 | Self::Goto
@@ -483,6 +487,7 @@ impl Command {
     }
     pub(super) fn label(self) -> &'static str {
         match self {
+            Self::ConnectSsh => "Connect via SSH…",
             Self::MarkdownSource => "Markdown: show source",
             Self::MarkdownSplit => "Markdown: split source and preview",
             Self::MarkdownPreview => "Markdown: render preview",
@@ -845,6 +850,7 @@ impl Command {
             Self::MovePane => "Ctrl+Alt+Shift+Right",
             Self::Fold => "Ctrl+Shift+[",
             Self::Unfold => "Ctrl+Shift+]",
+            Self::ConnectSsh => "",
             Self::New => "Ctrl+N",
             Self::NewWindow => "Ctrl+Shift+N",
             Self::Open => "Ctrl+O",
@@ -1148,6 +1154,7 @@ impl HeditApp {
                 .path
                 .as_ref()
                 .is_some_and(|p| hedit::counterpart::supported(std::path::Path::new(p))),
+            Command::ConnectSsh => self.workspace.remote.is_none(),
             Command::OpenRecent => !self.recent_files.is_empty(),
             Command::SelectBookmarks => {
                 !self.active().view.bookmarks.is_empty() && !self.active().page.info.paged
@@ -1164,7 +1171,11 @@ impl HeditApp {
                     && !self.active().follow
                     && self.quality.git_base.contains_key(&self.active().view.id)
             }
-            Command::Reopen => !self.workspace.closed.is_empty(),
+            Command::Reopen => self
+                .workspace
+                .closed
+                .iter()
+                .any(|v| !self.opens.reopening(v.id)),
             Command::Follow => {
                 self.active().page.info.path.is_some() && !self.active().page.info.dirty
             }
@@ -1243,6 +1254,39 @@ impl HeditApp {
         }
     }
     pub(super) fn execute(&mut self, ctx: &egui::Context, command: Command) {
+        if self.workspace.remote.is_some() {
+            match command {
+                Command::New => {
+                    self.remote_new(ctx);
+                    return;
+                }
+                Command::OpenFolder => {
+                    self.remote_ui.picker = Some(remote::Picker::Folder);
+                    self.remote_ui.path.clear();
+                    return;
+                }
+                Command::OpenProject
+                | Command::SaveProject
+                | Command::SaveProjectAs
+                | Command::RecentProjects
+                | Command::SaveMacro
+                | Command::MarkdownSplit
+                | Command::MarkdownPreview
+                | Command::MarkdownRefresh
+                | Command::GotoDefinition
+                | Command::GotoReferences
+                | Command::SwitchCounterpart
+                | Command::OpenFileReference
+                | Command::CompareDisk
+                | Command::GitDiff
+                | Command::Gpu
+                | Command::ToolSettings => {
+                    self.error = Some("This tool is not available in SSH workspaces yet.".into());
+                    return;
+                }
+                _ => (),
+            }
+        }
         if !self.command_enabled(command) {
             return;
         }
@@ -1551,10 +1595,11 @@ impl HeditApp {
                 }
                 self.report(r);
             }
+            Command::ConnectSsh => self.remote_ui.dialog = true,
             Command::Open => self.open(ctx, None),
             Command::NewWindow => {
                 let session = hedit::windows::new_session(self.workspace.store.directory());
-                let result = std::env::current_exe()
+                let result = hedit::windows::executable()
                     .map_err(|e| e.to_string())
                     .and_then(|exe| hedit::windows::spawn(&exe, &session, true));
                 self.report(result);
@@ -1568,8 +1613,14 @@ impl HeditApp {
                 self.request_close(vec![self.active().view.id]);
             }
             Command::Reopen => {
-                let r = self.workspace.reopen();
-                self.report(r);
+                if let Some(index) = self
+                    .workspace
+                    .closed
+                    .iter()
+                    .rposition(|view| !self.opens.reopening(view.id))
+                {
+                    self.reopen_closed(ctx, index);
+                }
             }
             Command::Shelf => self.shelf_open = true,
             Command::Rename => self.open_unsaved_file_name(),
@@ -1695,6 +1746,9 @@ impl HeditApp {
             }
             Command::Switcher | Command::Palette => {
                 self.cancel_theme_palette(ctx);
+                if command == Command::Switcher {
+                    self.project.begin_search();
+                }
                 self.palette = true;
                 self.pick_list = None;
                 self.commands_only = command == Command::Palette;
@@ -1826,6 +1880,8 @@ impl HeditApp {
         let commands = !paste && (self.commands_only || self.palette_query.starts_with('>'));
         let mut target: Option<goto_anything::Target> = None;
         let mut preview = None;
+        let mut targets_ready = false;
+        let mut targets_pending = false;
         let down = ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowDown));
         let up = ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowUp));
         let enter = ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter));
@@ -1895,7 +1951,7 @@ impl HeditApp {
                 }
             } else if commands {
                 for &command in Command::ALL {
-                    if let Some(found) = score(command.label()).filter(|_| self.command_enabled(command)) {
+                    if let Some(found) = score(command.label()).filter(|_| command != Command::Palette && self.command_enabled(command)) {
                         scored.push((
                             found,
                             (command.label().to_owned(), command.shortcut(), Item::Command(command)),
@@ -1929,16 +1985,13 @@ impl HeditApp {
                 }
             } else if here {
                 // Targets in the current file, previewed as you move.
-                let b = self.active();
-                let path = b.page.info.path.clone().map(PathBuf::from).unwrap_or_default();
                 match goto.clone().unwrap() {
-                    goto_anything::Target::Symbol(query) => {
-                        for (name, line) in goto_anything::symbol_matches(&b.page.text, &path, &query)
-                            .into_iter()
-                            .take(500)
-                        {
-                            items.push((name, format!("line {line}"), Item::Line(line, None)));
-                        }
+                    target @ (goto_anything::Target::Symbol(_) | goto_anything::Target::Text(_)) => {
+                        let buffer = &self.workspace.open[self.workspace.active];
+                        if let Some((matches, ready)) = self.goto_matches.get(ctx, buffer, &target) {
+                            targets_ready = ready;
+                            for (name, line) in matches.iter() { items.push((name.clone(), format!("line {line}"), Item::Line(*line, None))); }
+                        } else { targets_pending = true; ui.horizontal(|ui| { ui.spinner(); ui.weak("Finding matches…"); }); }
                     }
                     goto_anything::Target::Line(line, column) => {
                         if let Some(line) = line {
@@ -1947,11 +2000,6 @@ impl HeditApp {
                                 None => format!("Go to line {line}"),
                             };
                             items.push((label, String::new(), Item::Line(line, column)));
-                        }
-                    }
-                    goto_anything::Target::Text(query) => {
-                        for (text, line) in goto_anything::text_matches(&b.page.text, &query, 500) {
-                            items.push((text, format!("line {line}"), Item::Line(line, None)));
                         }
                     }
                 }
@@ -1969,6 +2017,17 @@ impl HeditApp {
             }
             items.extend(scored.into_iter().map(|(_, item)| item));
             if !commands && !paste && !here && !self.workspace.folders.is_empty() {
+                ui.horizontal(|ui| {
+                    if self.project.indexing() {
+                        targets_pending = true;
+                        ui.spinner();
+                        ui.weak("Indexing filenames…");
+                    }
+                    if ui.small_button("Refresh folders").clicked() {
+                        self.project.refresh_search();
+                        ctx.request_repaint();
+                    }
+                });
                 match &self.project.search {
                     Some(Ok(results)) => {
                         for entry in &results.entries {
@@ -1995,10 +2054,10 @@ impl HeditApp {
                         ui.colored_label(self.theme.warning.color(), error);
                     }
                     None => {
-                        ui.horizontal(|ui| {
-                            ui.spinner();
-                            ui.weak("Searching folders…");
-                        });
+                        targets_pending = true;
+                        if !self.project.indexing() {
+                            ui.horizontal(|ui| { ui.spinner(); ui.weak("Finding files…"); });
+                        }
                     }
                 }
             }
@@ -2010,31 +2069,28 @@ impl HeditApp {
                 self.palette_index = (self.palette_index + items.len() - 1) % items.len();
             }
             let navigate = down || up;
-            if navigate || changed {
+            if navigate || changed || targets_ready {
                 if let Some((_, _, Item::Line(line, column))) = items.get(self.palette_index) {
                     preview = Some((*line, *column));
                 }
             }
             ui.separator();
-            egui::ScrollArea::vertical()
-                .max_height((ctx.screen_rect().height() - 190.0).clamp(120.0, 320.0))
-                .show(ui, |ui| {
-                    for (index, (label, shortcut, item)) in items.iter().enumerate() {
-                        let response = ui.add(
-                            egui::Button::new(highlighted(ui, label, &filter, self.theme.accent.color()))
-                                .selected(index == self.palette_index)
-                                .shortcut_text(shortcut)
-                                .min_size(egui::vec2(ui.available_width(), 28.0)),
-                        );
-                        if navigate && index == self.palette_index {
-                            response.scroll_to_me(None);
-                        }
-                        if response.clicked() {
-                            chosen = Some(item.clone());
-                        }
-                    }
-                });
-            if items.is_empty() {
+            let height = (ctx.screen_rect().height() - 190.0).clamp(120.0, 320.0);
+            let mut scroll = egui::ScrollArea::vertical().id_salt("palette-results").max_height(height);
+            if navigate || changed || targets_ready {
+                let stride = 28.0 + ui.spacing().item_spacing.y;
+                scroll = scroll.vertical_scroll_offset((self.palette_index as f32 * stride - height / 2.0).max(0.0));
+            }
+            scroll.show_rows(ui, 28.0, items.len(), |ui, rows| {
+                for index in rows {
+                    let (label, shortcut, item) = &items[index];
+                    let response = ui.add(egui::Button::new(highlighted(ui, label, &filter, self.theme.accent.color()))
+                        .selected(index == self.palette_index).shortcut_text(shortcut)
+                        .min_size(egui::vec2(ui.available_width(), 28.0)));
+                    if response.clicked() { chosen = Some(item.clone()); }
+                }
+            });
+            if items.is_empty() && !targets_pending {
                 ui.label("No matching results.");
             }
             if enter {

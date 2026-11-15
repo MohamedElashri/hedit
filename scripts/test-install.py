@@ -87,10 +87,13 @@ class ReleaseInstaller(unittest.TestCase):
             binary.chmod(0o755)
             shutil.copy2(ROOT / 'packaging/linux/install.sh', stage / 'install.sh')
             shutil.copy2(ROOT / 'packaging/linux/hedit.desktop', stage / 'hedit.desktop')
-            for filename in ['README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md', 'LICENSE']:
+            for filename in ['README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md', 'CHANGELOG.md', 'LICENSE']:
                 shutil.copy2(ROOT / filename, stage / filename)
-            for directory in ['assets', 'themes']:
+            for directory in ['assets', 'themes', 'docs/images']:
                 shutil.copytree(ROOT / directory, stage / directory)
+            for relative in ['vendor/egui_commonmark/PATCH.md', 'vendor/libghostty-vt-sys/PATCH.md']:
+                (stage / relative).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(ROOT / relative, stage / relative)
             archive = self.fixtures / f'{name}.tar.gz'
             with tarfile.open(archive, 'w:gz') as output:
                 output.add(stage, arcname=name)

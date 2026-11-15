@@ -94,7 +94,7 @@ fn file_reference_picker_selects_project_match_and_removed_targets_do_not_make_b
     let count = app.workspace.open.len();
     app.open_existing(&ctx, found[0].clone());
     let until = Instant::now() + Duration::from_secs(5);
-    while app.busy {
+    while app.busy || app.opens.pending() {
         assert!(Instant::now() < until);
         app.receive(&ctx);
         thread::sleep(Duration::from_millis(5));
@@ -115,7 +115,7 @@ fn file_reference_target_replaced_by_a_directory_does_not_add_a_folder() {
     std::fs::create_dir(&target).unwrap();
     app.open_existing(&ctx, found[0].clone());
     let until = Instant::now() + Duration::from_secs(5);
-    while app.busy {
+    while app.busy || app.opens.pending() {
         assert!(Instant::now() < until);
         app.receive(&ctx);
         thread::sleep(Duration::from_millis(5));

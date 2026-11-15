@@ -79,7 +79,7 @@ impl HeditApp {
             Overlay::Rename => self.rename_target.is_some(),
             Overlay::Create => self.project.create.is_some(),
             Overlay::FileAction => self.quality.file_action.is_some(),
-            Overlay::Completion => self.auto.popup.is_some(),
+            Overlay::Completion => self.auto.active(),
             Overlay::MacroName => self.macros.naming.is_some(),
             Overlay::Snippets => self.quality.snippets_open,
             Overlay::Symbols => self.quality.symbols_open,
@@ -110,7 +110,7 @@ impl HeditApp {
             Overlay::Rename => self.rename_target = None,
             Overlay::Create => self.project.create = None,
             Overlay::FileAction => self.quality.file_action = None,
-            Overlay::Completion => self.auto.popup = None,
+            Overlay::Completion => self.auto.dismiss(),
             Overlay::MacroName => self.macros.naming = None,
             Overlay::Snippets => self.quality.snippets_open = false,
             Overlay::Symbols => self.quality.symbols_open = false,
@@ -170,6 +170,12 @@ impl HeditApp {
             return;
         }
         if self.snippet.take().is_some() {
+            ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));
+            self.focus_editor = true;
+            return;
+        }
+        if self.opens.pending() {
+            self.cancel_opens();
             ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));
             self.focus_editor = true;
             return;

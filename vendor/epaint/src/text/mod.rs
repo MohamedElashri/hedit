@@ -1,0 +1,26 @@
+//! Everything related to text, fonts, text layout, cursors etc.
+
+pub mod cursor;
+mod cursor_index;
+mod font;
+mod fonts;
+mod mesh_index;
+mod text_layout;
+mod text_layout_types;
+
+/// One `\t` character is this many spaces wide.
+pub const TAB_SIZE: usize = 4;
+
+pub use {
+    cursor_index::{CursorIndex, CursorIndexCache, CursorRow},
+    fonts::{
+        FontData, FontDefinitions, FontFamily, FontId, FontInsert, FontPriority, FontTweak, Fonts,
+        FontsImpl, InsertFontFamily,
+    },
+    mesh_index::TextMeshCache,
+    text_layout::layout,
+    text_layout_types::*,
+};
+
+/// Suggested character to use to replace those in password text fields.
+pub const PASSWORD_REPLACEMENT_CHAR: char = '•';

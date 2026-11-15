@@ -66,6 +66,7 @@ impl HeditApp {
                                     Command::Open,
                                     Command::OpenFolder,
                                 ],
+                                vec![Command::ConnectSsh],
                                 vec![Command::RefreshFolder, Command::CloseFolder],
                                 vec![
                                     Command::Save,
@@ -226,6 +227,9 @@ impl HeditApp {
                             }
                         });
                     }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        self.remote_menu(ui)
+                    });
                 });
             });
         if self.open_menu != open_menu {
@@ -258,50 +262,62 @@ impl HeditApp {
                     .inner_margin(egui::Margin {
                         left: 6,
                         right: 6,
-                        top: 5,
+                        top: 2,
                         bottom: 0,
                     }),
             )
             .show(ctx, |ui| {
                 egui::ScrollArea::horizontal()
                     .id_salt("tab-strip")
-                    .show(ui, |ui| {
+                    .show_viewport(ui, |ui, viewport| {
+                        self.tab_strip.sync(ui, &self.workspace);
+                        let visible = self.tab_strip.visible(viewport);
+                        let total = self.tab_strip.width();
+                        let active = self.workspace.active;
+                        let origin = ui.cursor().min;
+                        if self
+                            .tab_strip
+                            .reveal(self.active().view.id, active, viewport.width())
+                        {
+                            ui.scroll_to_rect(
+                                egui::Rect::from_min_max(
+                                    origin + egui::vec2(self.tab_strip.offset(active), 0.0),
+                                    origin
+                                        + egui::vec2(
+                                            self.tab_strip.offset(active + 1),
+                                            self.tab_strip.height(),
+                                        ),
+                                ),
+                                None,
+                            );
+                        }
+                        ui.set_min_size(egui::vec2(total + 28.0, self.tab_strip.height()));
                         ui.spacing_mut().item_spacing.x = 2.0;
                         ui.horizontal(|ui| {
-                            for (index, buffer) in self.workspace.open.iter().enumerate() {
+                            ui.add_space(self.tab_strip.offset(visible.start));
+                            for index in visible.clone() {
+                                let buffer = &self.workspace.open[index];
                                 let active = index == self.workspace.active;
                                 let can_close = self.workspace.can_close(index);
-                                let title: String = hedit::bidi::display(&buffer.view.name)
-                                    .chars()
-                                    .take(30)
-                                    .collect();
-                                let title = if buffer.view.name.chars().count() > 30 {
-                                    format!("{title}…")
-                                } else {
-                                    title
-                                };
-                                let title = if buffer.view.pinned {
-                                    format!("◆ {title}")
-                                } else {
-                                    title
-                                };
-                                egui::Frame::new()
-                                    .fill(if active {
-                                        theme.background.color()
-                                    } else {
-                                        theme.panel.color()
-                                    })
-                                    .corner_radius(egui::CornerRadius {
-                                        nw: 5,
-                                        ne: 5,
-                                        sw: 0,
-                                        se: 0,
-                                    })
-                                    .inner_margin(egui::Margin::symmetric(12, 4))
-                                    .show(ui, |ui| {
-                                        ui.push_id(buffer.page.info.id, |ui| {
-                                            ui.horizontal(|ui| {
-                                                let response = ui
+                                let title = self.tab_strip.title(index).to_owned();
+                                let shown = ui.push_id(buffer.view.id, |ui| {
+                                    egui::Frame::new()
+                                        .fill(if active {
+                                            theme.background.color()
+                                        } else {
+                                            theme.panel.color()
+                                        })
+                                        .corner_radius(egui::CornerRadius {
+                                            nw: 5,
+                                            ne: 5,
+                                            sw: 0,
+                                            se: 0,
+                                        })
+                                        .inner_margin(egui::Margin::symmetric(10, 3))
+                                        .show(ui, |ui| {
+                                            ui.push_id(buffer.page.info.id, |ui| {
+                                                ui.horizontal(|ui| {
+                                                    let response = ui
                                                     .add(
                                                         egui::Button::new(
                                                             (if self.quality.preview
@@ -327,83 +343,144 @@ impl HeditApp {
                                                             "Unsaved file · included in recovery",
                                                         ),
                                                     );
-                                                if response.drag_started() {
-                                                    self.quality.tab_drag = Some(buffer.view.id);
-                                                }
-                                                if response.contains_pointer()
-                                                    && ui.input(|i| i.pointer.any_released())
-                                                {
-                                                    if let Some(id) = self.quality.tab_drag.take() {
-                                                        reorder = Some((id, index));
-                                                    }
-                                                }
-                                                if response.double_clicked() {
-                                                    self.quality.preview = None;
-                                                }
-                                                if response.clicked() {
-                                                    select = Some(index);
-                                                }
-                                                if response.clicked_by(egui::PointerButton::Middle)
-                                                    && can_close
-                                                {
-                                                    close = Some(index);
-                                                }
-                                                response.context_menu(|ui| {
-                                                    for command in [
-                                                        Command::PinTab,
-                                                        Command::CloseOthers,
-                                                        Command::CloseRight,
-                                                        Command::CopyPath,
-                                                        Command::RevealInSidebar,
-                                                    ] {
-                                                        if matches!(
-                                                            command,
-                                                            Command::CopyPath
-                                                                | Command::RevealInSidebar
-                                                        ) && buffer.page.info.path.is_none()
-                                                        {
-                                                            continue;
-                                                        }
-                                                        if ui.button(command.label()).clicked() {
-                                                            select = Some(index);
-                                                            action = Some(command);
-                                                            ui.close_menu();
-                                                        }
-                                                    }
-                                                    if ui
-                                                        .add_enabled(
-                                                            can_close,
-                                                            egui::Button::new("Close tab"),
+                                                    response.widget_info(|| {
+                                                        egui::WidgetInfo::labeled(
+                                                            egui::WidgetType::Button,
+                                                            ui.is_enabled(),
+                                                            &buffer.view.name,
                                                         )
-                                                        .clicked()
+                                                    });
+                                                    #[cfg(target_os = "macos")]
+                                                    ui.ctx().accesskit_node_builder(
+                                                        response.id,
+                                                        |node| {
+                                                            node.set_role(
+                                                                egui::accesskit::Role::Tab,
+                                                            );
+                                                            node.set_selected(active);
+                                                            node.set_label(
+                                                                buffer.view.name.clone(),
+                                                            );
+                                                            if buffer.view.pinned
+                                                                && buffer.page.info.dirty
+                                                            {
+                                                                node.set_description(
+                                                                    "Pinned; unsaved changes",
+                                                                );
+                                                            } else if buffer.view.pinned {
+                                                                node.set_description("Pinned");
+                                                            } else if buffer.page.info.dirty {
+                                                                node.set_description(
+                                                                    "Unsaved changes",
+                                                                );
+                                                            }
+                                                        },
+                                                    );
+                                                    if response.drag_started() {
+                                                        self.quality.tab_drag =
+                                                            Some(buffer.view.id);
+                                                    }
+                                                    if response.contains_pointer()
+                                                        && ui.input(|i| i.pointer.any_released())
+                                                    {
+                                                        if let Some(id) =
+                                                            self.quality.tab_drag.take()
+                                                        {
+                                                            reorder = Some((id, index));
+                                                        }
+                                                    }
+                                                    if response.double_clicked() {
+                                                        self.quality.preview = None;
+                                                    }
+                                                    if response.clicked() {
+                                                        select = Some(index);
+                                                    }
+                                                    if response
+                                                        .clicked_by(egui::PointerButton::Middle)
+                                                        && can_close
                                                     {
                                                         close = Some(index);
-                                                        ui.close_menu();
                                                     }
-                                                    if ui.button("Name unsaved file…").clicked() {
-                                                        select = Some(index);
-                                                        action = Some(Command::Rename);
-                                                        ui.close_menu();
-                                                    }
-                                                    if ui.button("Browse closed files…").clicked()
-                                                    {
-                                                        action = Some(Command::Shelf);
-                                                        ui.close_menu();
+                                                    response.context_menu(|ui| {
+                                                        for command in [
+                                                            Command::PinTab,
+                                                            Command::CloseOthers,
+                                                            Command::CloseRight,
+                                                            Command::CopyPath,
+                                                            Command::RevealInSidebar,
+                                                        ] {
+                                                            if matches!(
+                                                                command,
+                                                                Command::CopyPath
+                                                                    | Command::RevealInSidebar
+                                                            ) && buffer.page.info.path.is_none()
+                                                            {
+                                                                continue;
+                                                            }
+                                                            if ui.button(command.label()).clicked()
+                                                            {
+                                                                select = Some(index);
+                                                                action = Some(command);
+                                                                ui.close_menu();
+                                                            }
+                                                        }
+                                                        if ui
+                                                            .add_enabled(
+                                                                can_close,
+                                                                egui::Button::new("Close tab"),
+                                                            )
+                                                            .clicked()
+                                                        {
+                                                            close = Some(index);
+                                                            ui.close_menu();
+                                                        }
+                                                        if ui.button("Name unsaved file…").clicked()
+                                                        {
+                                                            select = Some(index);
+                                                            action = Some(Command::Rename);
+                                                            ui.close_menu();
+                                                        }
+                                                        if ui
+                                                            .button("Browse closed files…")
+                                                            .clicked()
+                                                        {
+                                                            action = Some(Command::Shelf);
+                                                            ui.close_menu();
+                                                        }
+                                                    });
+                                                    if can_close {
+                                                        let close_response =
+                                                            controls::tab_close_button(
+                                                                ui,
+                                                                buffer.page.info.dirty,
+                                                            )
+                                                            .on_hover_text(format!(
+                                                                "Close {}",
+                                                                buffer.view.name
+                                                            ));
+                                                        close_response.widget_info(|| {
+                                                            egui::WidgetInfo::labeled(
+                                                                egui::WidgetType::Button,
+                                                                ui.is_enabled(),
+                                                                format!(
+                                                                    "Close {}",
+                                                                    buffer.view.name
+                                                                ),
+                                                            )
+                                                        });
+                                                        if close_response.clicked() {
+                                                            close = Some(index);
+                                                        }
                                                     }
                                                 });
-                                                if can_close
-                                                    && controls::tab_close_button(
-                                                        ui,
-                                                        buffer.page.info.dirty,
-                                                    )
-                                                    .clicked()
-                                                {
-                                                    close = Some(index);
-                                                }
                                             });
                                         });
-                                    });
+                                });
+                                if self.tab_strip.measured(index, shown.response.rect.width()) {
+                                    ui.ctx().request_repaint();
+                                }
                             }
+                            ui.add_space(total - self.tab_strip.offset(visible.end));
                             if ui
                                 .add_enabled(
                                     !self.busy && !self.closing,
@@ -461,8 +538,10 @@ impl HeditApp {
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    let buffer = self.active();
-                    let (line, col) = hedit::advanced::line_column(
+                    let buffer = &self.workspace.open[self.workspace.active];
+                    let source_index =
+                        self.projections[self.panes.focused].source_index(&buffer.page.text);
+                    let (line, col) = source_index.line_column(
                         &buffer.page.text,
                         buffer.view.head,
                         buffer.view.tab_size.unwrap_or(4) as usize,
@@ -521,7 +600,19 @@ impl HeditApp {
                         ctx.request_repaint_after(NOTICE_TIME - age);
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let (label, color) = if self.closing {
+                        let remote = self.workspace.remote.as_ref().map(|r| r.status());
+                        let (label, color) = if let Some((connected, _, pending, _)) = &remote {
+                            if !connected {
+                                (
+                                    "Disconnected · pending edits remain in memory",
+                                    theme.warning,
+                                )
+                            } else if *pending > 0 {
+                                ("Waiting for durable SSH host receipts", theme.warning)
+                            } else {
+                                ("Recovery durable on SSH host", theme.muted)
+                            }
+                        } else if self.closing {
                             ("Finishing recovery…", theme.warning)
                         } else if self.checkpoint_pending {
                             ("Checkpointing…", theme.warning)
@@ -816,6 +907,7 @@ impl HeditApp {
             });
     }
     pub(super) fn search_panel(&mut self, ctx: &egui::Context) {
+        self.poll_live_find(ctx);
         if !self.find_open {
             return;
         }
@@ -842,7 +934,7 @@ impl HeditApp {
                             .hint_text("Search text or regular expression")
                     });
                     if response.changed() {
-                        self.find_as_you_type();
+                        self.find_as_you_type(ctx);
                     }
                     if self.find_focus {
                         response.request_focus();
@@ -869,14 +961,14 @@ impl HeditApp {
                         ui.checkbox(&mut self.quality.options.whole_word, "Whole words"),
                     ];
                     if options.iter().any(|r| r.changed()) {
-                        self.find_as_you_type();
+                        self.find_as_you_type(ctx);
                     }
                     let selection_changed = ui.add_enabled_ui(self.quality.scope.is_some(), |ui| {
                         ui.checkbox(&mut self.quality.selection_only, "Selection only")
                             .changed()
                     });
                     if selection_changed.inner {
-                        self.find_as_you_type();
+                        self.find_as_you_type(ctx);
                     }
                     if ui
                         .add_enabled(!self.busy, egui::Button::new("Previous"))
@@ -884,7 +976,10 @@ impl HeditApp {
                     {
                         self.find_advanced(ctx, true);
                     }
-                    ui.label(&self.quality.match_status);
+                    let status = ui.label(&self.quality.match_status);
+                    if let Some(error) = &self.live_find.error {
+                        status.on_hover_text(error);
+                    }
                 });
                 if self.replace_open {
                     ui.horizontal_wrapped(|ui| {

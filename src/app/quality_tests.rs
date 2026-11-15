@@ -62,7 +62,7 @@ fn failed_sidebar_preview_does_not_turn_the_next_explicit_open_into_a_preview() 
     app.quality.preview_request = true;
     app.open(&ctx, Some(binary));
     let started = Instant::now();
-    while app.busy {
+    while app.busy || app.opens.pending() {
         app.receive(&ctx);
         assert!(started.elapsed() < Duration::from_secs(5));
         thread::sleep(Duration::from_millis(5));
@@ -406,15 +406,16 @@ fn project_replacement_edits_open_buffers_unsaved_and_keeps_newer_text() {
     app.workspace.open[index].page.text = "my unsaved text".into();
     app.workspace.edit(index, "changed\n").unwrap();
     app.apply_folder_replacements(&ctx);
-    while app.busy {
+    while app.busy || app.opens.pending() {
         app.receive(&ctx);
         thread::sleep(Duration::from_millis(5));
     }
-    assert!(app
-        .error
-        .as_ref()
-        .unwrap()
-        .contains("changed since the preview"));
+    assert!(app.error.is_none());
+    assert!(app.notice.contains("fresh, complete replacement preview"));
+    assert!(
+        !app.quality.results.plans.is_empty(),
+        "keep the old preview for review"
+    );
     assert_eq!(app.active().page.text, "my unsaved text");
     assert_eq!(std::fs::read_to_string(path).unwrap(), "needle\n");
 }

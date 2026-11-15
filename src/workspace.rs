@@ -135,6 +135,7 @@ impl Buffer {
     }
 }
 pub struct Workspace {
+    pub remote: Option<Arc<crate::remote::Connection>>,
     pub editor: Arc<Editor>,
     pub store: Arc<SessionStore>,
     pub open: Vec<Buffer>,
@@ -143,6 +144,94 @@ pub struct Workspace {
     pub folders: Vec<FolderView>,
 }
 impl Workspace {
+    pub fn connect_remote(
+        directory: PathBuf,
+        config: crate::remote::Config,
+    ) -> Result<(Self, Vec<String>), String> {
+        let remote = crate::remote::Connection::connect(config)?;
+        let editor = Arc::new(Editor::default());
+        let store = Arc::new(SessionStore::new(directory));
+        let mut workspace = Self {
+            remote: Some(remote.clone()),
+            editor,
+            store,
+            open: vec![],
+            closed: vec![],
+            active: 0,
+            folders: vec![FolderView {
+                path: remote.root().to_string_lossy().into_owned(),
+                visible: true,
+                expanded: vec![],
+                collapsed: false,
+            }],
+        };
+        let saved = remote
+            .metadata(None)
+            .ok()
+            .and_then(|v| serde_json::from_value::<SessionView>(v).ok());
+        let mut identities = std::collections::HashMap::new();
+        for info in remote.list()? {
+            let host_id = info.document;
+            let id = workspace.editor.id();
+            identities.insert(host_id, id);
+            let mut document = remote.recover(id, info)?;
+            let page = document.page(0)?;
+            workspace.add(document, page)?;
+        }
+        if let Some(saved) = saved {
+            let mut buffers = std::mem::take(&mut workspace.open);
+            let mut open = vec![];
+            for mut view in saved.open {
+                view.markdown_view = Default::default();
+                if let Some(id) = identities.get(&view.id) {
+                    view.id = *id;
+                    if let Some(n) = buffers.iter().position(|b| b.view.id == *id) {
+                        let mut b = buffers.remove(n);
+                        if let Ok(doc) = workspace.editor.get(*id) {
+                            if let Ok(mut doc) = doc.lock() {
+                                if let Ok(page) = doc.page(view.page_start) {
+                                    b = Buffer::new(page, Some(view));
+                                }
+                            }
+                        }
+                        open.push(b);
+                    }
+                }
+            }
+            for mut view in saved.closed {
+                view.markdown_view = Default::default();
+                if let Some(id) = identities.get(&view.id) {
+                    view.id = *id;
+                    if let Some(n) = buffers.iter().position(|b| b.view.id == *id) {
+                        buffers.remove(n);
+                        workspace.closed.push(view);
+                    }
+                }
+            }
+            // A cancelled read can finish on the host after the view was saved.
+            // Keep its clean baseline recoverable without reopening an unwanted
+            // tab; unlisted drafts must always remain visible after a crash.
+            for buffer in buffers {
+                if buffer.page.info.path.is_some() && !buffer.page.info.dirty {
+                    workspace.closed.push(buffer.view);
+                } else {
+                    open.push(buffer);
+                }
+            }
+            workspace.active = saved
+                .active
+                .and_then(|id| identities.get(&id))
+                .and_then(|id| open.iter().position(|b| b.view.id == *id))
+                .unwrap_or(0);
+            workspace.open = open;
+        }
+        if workspace.open.is_empty() {
+            let mut document = remote.scratch(workspace.editor.id())?;
+            let page = document.page(0)?;
+            workspace.add(document, page)?;
+        }
+        Ok((workspace, vec![]))
+    }
     pub fn restore(directory: PathBuf) -> Result<(Self, Vec<String>), String> {
         let editor = Arc::new(Editor::default());
         let store = Arc::new(SessionStore::new(directory));
@@ -190,6 +279,7 @@ impl Workspace {
             !blank
         });
         let mut workspace = Self {
+            remote: None,
             editor,
             store,
             open,
@@ -213,6 +303,11 @@ impl Workspace {
         Ok(())
     }
     pub fn new_buffer(&mut self) -> Result<(), String> {
+        if self.remote.is_some() {
+            return Err(
+                "Use New remote file in the SSH bar to create a host-backed scratchpad.".into(),
+            );
+        }
         let mut document = Document::empty(self.editor.id());
         let page = document.page(0)?;
         self.add(document, page)
@@ -227,7 +322,27 @@ impl Workspace {
             folders: self.folders.clone(),
         }
     }
+    pub fn remote_view(&self) -> Result<serde_json::Value, String> {
+        let remote = self.remote.as_ref().ok_or("Not an SSH workspace.")?;
+        let mut view = self.view();
+        let mut ids = std::collections::HashMap::new();
+        for tab in view.open.iter_mut().chain(&mut view.closed) {
+            let shared = self.editor.get(tab.id)?;
+            let doc = shared.lock().map_err(|e| e.to_string())?;
+            let path = doc
+                .remote_location()
+                .ok_or("A local buffer cannot enter a remote workspace.")?;
+            let host = remote.identity(path)?;
+            ids.insert(tab.id, host);
+            tab.id = host;
+        }
+        view.active = view.active.and_then(|id| ids.get(&id).copied());
+        serde_json::to_value(view).map_err(|e| e.to_string())
+    }
     pub fn checkpoint(&self) -> Result<(), String> {
+        if let Some(remote) = &self.remote {
+            return remote.metadata(Some(self.remote_view()?)).map(|_| ());
+        }
         self.store.save(&self.editor, self.view())
     }
     /// Keep the last empty, unnamed scratchpad as the editor's blank state.
@@ -244,6 +359,12 @@ impl Workspace {
     pub fn close(&mut self, index: usize) -> Result<(), String> {
         if !self.can_close(index) {
             return Ok(());
+        }
+        if self.remote.is_some() && self.open.len() == 1 {
+            return Err(
+                "Keep one remote tab open. Create another remote file before closing this tab."
+                    .into(),
+            );
         }
         let buffer = &self.open[index];
         if buffer.page.info.path.is_none()
@@ -286,6 +407,12 @@ impl Workspace {
         let Some(buffer) = self.open.get(index) else {
             return Ok(());
         };
+        if self.remote.is_some() && self.open.len() == 1 {
+            return Err(
+                "Keep one remote tab open. Create another remote file before discarding this tab."
+                    .into(),
+            );
+        }
         self.editor.remove(buffer.view.id)?;
         self.open.remove(index);
         self.after_close(index)
@@ -478,20 +605,39 @@ impl Workspace {
 }
 
 pub fn splice<'a>(old: &str, new: &'a str) -> (usize, usize, &'a str) {
-    let mut prefix = old
-        .bytes()
-        .zip(new.bytes())
+    // Comparing blocks lets the compiler use vectorized equality for the
+    // unchanged region; scalar comparison only locates the differing byte.
+    let matched = old
+        .as_bytes()
+        .as_chunks::<64>()
+        .0
+        .iter()
+        .zip(new.as_bytes().as_chunks::<64>().0.iter())
         .take_while(|(a, b)| a == b)
-        .count();
+        .count()
+        * 64;
+    let mut prefix = matched
+        + old.as_bytes()[matched..]
+            .iter()
+            .zip(new.as_bytes()[matched..].iter())
+            .take_while(|(a, b)| a == b)
+            .count();
     while !old.is_char_boundary(prefix) || !new.is_char_boundary(prefix) {
         prefix -= 1;
     }
-    let mut suffix = old[prefix..]
-        .bytes()
-        .rev()
-        .zip(new[prefix..].bytes().rev())
+    let matched = old.as_bytes()[prefix..]
+        .rchunks_exact(64)
+        .zip(new.as_bytes()[prefix..].rchunks_exact(64))
         .take_while(|(a, b)| a == b)
-        .count();
+        .count()
+        * 64;
+    let mut suffix = matched
+        + old.as_bytes()[prefix..old.len() - matched]
+            .iter()
+            .rev()
+            .zip(new.as_bytes()[prefix..new.len() - matched].iter().rev())
+            .take_while(|(a, b)| a == b)
+            .count();
     while !old.is_char_boundary(old.len() - suffix) || !new.is_char_boundary(new.len() - suffix) {
         suffix -= 1;
     }

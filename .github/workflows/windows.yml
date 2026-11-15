@@ -25,8 +25,9 @@ jobs:
       RUSTFLAGS: -C target-feature=+crt-static
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: dtolnay/rust-toolchain@1.99.1
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.99.1
           components: clippy
       - uses: actions/setup-python@v7.1.0
         with:
@@ -43,9 +44,15 @@ jobs:
           key: windows-x86_64
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Clippy
-        run: cargo clippy --locked --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Rust tests
-        run: cargo test --locked --no-fail-fast
+        run: cargo test --locked --workspace --no-fail-fast
+      - name: Patched renderer tests
+        run: cargo test --locked -p egui -p epaint --lib
+      - name: Numeric native trace tests
+        run: python scripts/test-native-trace.py
+      - name: SSH test fixture setup tests
+        run: python scripts/test-remote-live-setup.py
       - name: Release metadata tests
         run: python scripts/test-release.py
       - name: Compiler setup tests

@@ -101,6 +101,17 @@ impl HeditApp {
         } else {
             PathBuf::from(variables.expand(&system.working_dir))
         };
+        let dir = if let Some(remote) = &self.workspace.remote {
+            match remote.path(&dir.to_string_lossy()) {
+                Ok(path) => path,
+                Err(error) => {
+                    self.error = Some(error);
+                    return;
+                }
+            }
+        } else {
+            dir
+        };
         if let Some(previous) = self.build.running.take() {
             previous.cancel();
         }
@@ -155,6 +166,15 @@ impl HeditApp {
             }
         }
         self.build.parse(false);
+        if let Some(remote) = &self.workspace.remote {
+            for location in &mut self.build.locations {
+                if !hedit_core::backend::is_remote(&location.file) {
+                    if let Ok(path) = remote.path(&location.file.to_string_lossy()) {
+                        location.file = path;
+                    }
+                }
+            }
+        }
         if let Some((code, elapsed)) = finished {
             self.build.running = None;
             self.build.parse(true);

@@ -6,7 +6,7 @@ ACTIONLINT ?= actionlint
 PREFIX ?= $(HOME)/.local
 export RELEASE_TAG
 
-.PHONY: help dev build run fmt fmt-check policy docs scripts-check static clippy lint test test-macos check ci smoke package install release-check workflow-lint macos clean
+.PHONY: help dev build run fmt fmt-check policy docs scripts-check static clippy lint test test-renderer test-macos test-remote test-remote-live check ci smoke package install release-check workflow-lint linux-packages smoke-linux-packages macos clean
 
 help: ## Show available commands and configuration
 	@printf 'hedit development commands\n\n'
@@ -44,25 +44,46 @@ scripts-check: ## Check Python and installer shell syntax
 static: fmt-check policy docs scripts-check ## Run the quick checks that need no compiling
 
 clippy: ## Run clippy with warnings denied
-	$(CARGO) clippy --locked --all-targets -- -D warnings
+	$(CARGO) clippy --locked --workspace --all-targets -- -D warnings
 
 lint: static clippy ## Run all static checks: quick checks first, then clippy
 
 test: ## Run Rust tests and offline release-installer tests
-	$(CARGO) test --locked
+	$(CARGO) test --locked --workspace
+	$(MAKE) test-renderer
+	$(PYTHON) scripts/test-native-trace.py
+	$(PYTHON) scripts/test-remote-live-setup.py
 	$(PYTHON) scripts/test-zig-setup.py
 	$(PYTHON) scripts/test-run-zig.py
 	$(PYTHON) scripts/test-release.py
+	$(PYTHON) scripts/test-linux-package.py
 	$(PYTHON) scripts/test-install.py
 	$(PYTHON) scripts/test-macos-package.py
 	$(PYTHON) scripts/test-windows-package.py
 
 test-macos: ## Run the tests that apply on macOS (Rust tests and the app bundle checks)
-	$(CARGO) test --locked --no-fail-fast
+	$(CARGO) test --locked --workspace --no-fail-fast
+	$(MAKE) test-renderer
+	$(PYTHON) scripts/test-native-trace.py
+	$(PYTHON) scripts/test-remote-live-setup.py
 	$(PYTHON) scripts/test-zig-setup.py
 	$(PYTHON) scripts/test-run-zig.py
 	$(PYTHON) scripts/test-release.py
+	$(PYTHON) scripts/test-linux-package.py
 	$(PYTHON) scripts/test-macos-package.py
+
+test-renderer: ## Test the patched native text renderer and widget library
+	$(CARGO) test --locked -p egui -p epaint --lib
+
+test-remote: ## Test the SSH workspace helper and recovery engine
+	$(CARGO) test --locked -p hedit-remote
+
+test-remote-live: ## Test real loopback SSH and deterministic process crashes (requires sshd)
+	$(CARGO) build --locked -p hedit-remote
+	$(CARGO) build --locked --example remote_workspace_probe
+	$(CARGO) test --locked --bin hedit --no-run --message-format=json > target/remote-editor-tests.jsonl
+	$(CARGO) build --locked -p hedit-remote --features test-faults --target-dir target/remote-fault-tests
+	$(PYTHON) scripts/test-remote-live.py --fault-binary target/remote-fault-tests/debug/hedit-remote
 
 check: lint test ## Run static checks and tests without a release build
 
@@ -74,6 +95,12 @@ package: build ## Create the Linux release archive and SHA-256 file in dist/
 smoke: build ## Verify package extraction, installation, checksums, and the executable
 	$(PYTHON) scripts/smoke-package.py
 
+linux-packages: build ## Build Linux tarball, DEB, RPM, and AppImage (requires packaging tools)
+	$(PYTHON) scripts/package-linux.py --formats tar.gz deb rpm appimage
+
+smoke-linux-packages: ## Verify Linux formats and distro installation (requires Docker)
+	$(PYTHON) scripts/smoke-linux-packages.py --containers
+
 install: build ## Install under PREFIX; supports a DESTDIR staging directory
 	install -Dm755 target/release/hedit "$(DESTDIR)$(PREFIX)/bin/hedit"
 	install -Dm644 assets/hedit.svg "$(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/hedit.svg"
@@ -81,8 +108,9 @@ install: build ## Install under PREFIX; supports a DESTDIR staging directory
 	install -d "$(DESTDIR)$(PREFIX)/share/hedit/themes"
 	install -m644 themes/*.json "$(DESTDIR)$(PREFIX)/share/hedit/themes/"
 	install -d "$(DESTDIR)$(PREFIX)/share/doc/hedit"
-	install -m644 README.md USER_GUIDE.md DEVELOPER_GUIDE.md LICENSE "$(DESTDIR)$(PREFIX)/share/doc/hedit/"
-	cp -R assets "$(DESTDIR)$(PREFIX)/share/doc/hedit/"
+	install -m644 README.md USER_GUIDE.md DEVELOPER_GUIDE.md CHANGELOG.md LICENSE "$(DESTDIR)$(PREFIX)/share/doc/hedit/"
+	cp -R assets docs "$(DESTDIR)$(PREFIX)/share/doc/hedit/"
+	for path in vendor/egui_commonmark/PATCH.md vendor/libghostty-vt-sys/PATCH.md; do install -Dm644 "$$path" "$(DESTDIR)$(PREFIX)/share/doc/hedit/$$path"; done
 
 release-check: ## Check RELEASE_TAG=vX.Y.Z against the version in Cargo.toml
 	$(PYTHON) scripts/check-release.py

@@ -168,6 +168,21 @@ impl HeditApp {
     #[cfg(feature = "terminal")]
     fn terminal_directory(&self) -> PathBuf {
         let file = self.active().page.info.path.as_ref().map(PathBuf::from);
+        if let Some(remote) = &self.workspace.remote {
+            return self
+                .workspace
+                .folders
+                .iter()
+                .map(|folder| PathBuf::from(&folder.path))
+                .filter(|path| remote.relative(path).is_ok())
+                .filter(|path| file.as_ref().is_none_or(|file| file.starts_with(path)))
+                .max_by_key(|path| path.components().count())
+                .or_else(|| {
+                    file.and_then(|file| file.parent().map(std::path::Path::to_path_buf))
+                        .filter(|path| remote.relative(path).is_ok())
+                })
+                .unwrap_or_else(|| remote.root());
+        }
         self.workspace
             .folders
             .iter()
@@ -176,7 +191,15 @@ impl HeditApp {
             .or_else(|| self.workspace.folders.first())
             .map(|f| PathBuf::from(&f.path))
             .or_else(|| file.and_then(|p| p.parent().map(std::path::Path::to_path_buf)))
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+            .unwrap_or_else(|| {
+                self.workspace
+                    .remote
+                    .as_ref()
+                    .map(|r| r.root())
+                    .unwrap_or_else(|| {
+                        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+                    })
+            })
     }
 
     pub(super) fn new_terminal(&mut self, ctx: &egui::Context) {

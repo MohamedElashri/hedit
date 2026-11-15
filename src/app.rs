@@ -16,10 +16,13 @@ mod controls;
 mod counterpart;
 #[cfg(test)]
 mod counterpart_tests;
+#[cfg(test)]
+mod cursor_tests;
 mod definitions;
 mod edit_actions;
 #[cfg(test)]
 mod editing_tests;
+mod editor_interaction;
 mod editor_layout;
 mod file_reference;
 #[cfg(test)]
@@ -34,8 +37,13 @@ mod folder_search_tests;
 mod folding_tests;
 mod font_picker;
 mod goto_anything;
+mod goto_matches;
 #[cfg(test)]
 mod goto_tests;
+#[cfg(test)]
+mod interaction_tests;
+#[cfg(test)]
+mod long_line_tests;
 mod macros;
 mod markdown;
 #[cfg(test)]
@@ -54,6 +62,9 @@ mod markdown_tests;
 mod markup_selection;
 #[cfg(test)]
 mod markup_selection_tests;
+mod minimap;
+mod native_perf;
+mod opening;
 #[cfg(test)]
 mod overlay_tests;
 mod overlays;
@@ -73,6 +84,12 @@ mod recovery_tests;
 #[cfg(test)]
 mod redesign_tests;
 #[cfg(test)]
+mod regression_tests;
+mod remote;
+#[cfg(test)]
+mod render_tests;
+mod row_index;
+#[cfg(test)]
 mod rtl_tests;
 #[cfg(test)]
 mod screenshot_tests;
@@ -83,6 +100,7 @@ mod settings_tests;
 mod snippet_fields;
 mod source_control;
 mod spell_check;
+mod tab_strip;
 mod tab_switch;
 #[cfg(test)]
 mod tab_tests;
@@ -125,9 +143,9 @@ use std::{
 
 enum Action {
     Quality(Box<quality::Event>),
-    Add(Document, Page, usize),
+    Add(Box<Document>, Page, usize),
     Activate(u64),
-    Reopen(u64, Option<(Page, usize)>),
+    ReopenRead(u64, Page, Option<usize>),
     Folder(hedit::folder::FolderListing),
     Folders(Vec<hedit::folder::FolderListing>),
     Created(String, bool),
@@ -140,8 +158,6 @@ enum Action {
     Discarded(u64, Option<Page>),
     ThemeImported(Theme),
     DebugProgram(PathBuf),
-    /// Open a `path:line` location.
-    OpenAt(PathBuf),
     OpenFailed(String),
     /// A font loaded for the `font_face` setting.
     /// A font for `font_face`: its name, file bytes, and face index.
@@ -190,6 +206,8 @@ impl Drop for RequestWatch {
 }
 
 pub struct HeditApp {
+    native_perf: Option<native_perf::Trace>,
+    remote_ui: remote::RemoteUi,
     activation: hedit::activation::Window,
     _requests: RequestWatch,
     quality: quality::Quality,
@@ -207,6 +225,8 @@ pub struct HeditApp {
     persisted: u64,
     last_saved: Option<Instant>,
     busy: bool,
+    opens: opening::Opens,
+    goto_matches: goto_matches::TargetCache,
     cancel: Arc<AtomicBool>,
     closing: bool,
     close_flow: Option<close::CloseFlow>,
@@ -235,6 +255,7 @@ pub struct HeditApp {
     /// Selection history for Undo/Redo selection change: (view, cursors).
     soft_history: (Vec<SoftState>, Vec<SoftState>, Option<SoftState>),
     tab_cycle: tab_switch::TabCycle,
+    tab_strip: tab_strip::Cache,
     /// Text copied or cut in hedit, newest first.
     paste_history: Vec<String>,
     /// A list shown in the palette instead of files or commands.
@@ -263,6 +284,8 @@ pub struct HeditApp {
     /// Cursors made by Add cursor above/below and the column they keep.
     line_cursor_goal: Option<(Vec<hedit::advanced::Selection>, usize)>,
     live_find: find_live::LiveFind,
+    row_indexes: [row_index::Cache; panes::MAX_GROUPS],
+    minimaps: [minimap::Cache; panes::MAX_GROUPS],
     markdown: markdown::Markdown,
     /// Where the cursor was before Go to Anything previewed a result.
     goto_origin: Option<goto_anything::Origin>,
@@ -316,6 +339,7 @@ pub struct HeditApp {
     sanitizer: String,
     poll_at: Instant,
     focus_editor: bool,
+    job_editor_focus: Option<egui::Id>,
     theme: Theme,
     preferences_open: bool,
     appearance: themes::Appearance,
@@ -342,6 +366,7 @@ impl HeditApp {
         restart_requested: Arc<AtomicBool>,
     ) -> Self {
         let mut app = Self::from_context(&cc.egui_ctx, cc.storage, workspace, errors, paths);
+        app.native_perf = native_perf::Trace::from_env(cc);
         app.restart_requested = restart_requested;
         // SAFETY: the app owns this value and releases it in on_exit, before
         // eframe destroys the root window and its display connection.
@@ -355,6 +380,15 @@ impl HeditApp {
         errors: Vec<String>,
         paths: Vec<PathBuf>,
     ) -> Self {
+        if let Some(remote) = &workspace.remote {
+            let ctx = ctx.clone();
+            remote.set_wake(Arc::new(move || ctx.request_repaint()));
+        }
+        let storage = if workspace.remote.is_some() {
+            None
+        } else {
+            storage
+        };
         let mut errors = errors;
         let theme = match storage.and_then(|s| s.get_string("theme")) {
             Some(json) => match Theme::from_json(&json) {
@@ -385,6 +419,8 @@ impl HeditApp {
             .unwrap_or_default();
         panes.normalize();
         let mut app = Self {
+            native_perf: None,
+            remote_ui: Default::default(),
             activation: Default::default(),
             _requests: RequestWatch::start(ctx, workspace.store.directory().to_owned()),
             quality: Default::default(),
@@ -402,6 +438,8 @@ impl HeditApp {
             persisted: 0,
             last_saved: None,
             busy: false,
+            opens: Default::default(),
+            goto_matches: Default::default(),
             cancel: Arc::new(AtomicBool::new(false)),
             closing: false,
             close_flow: None,
@@ -426,6 +464,7 @@ impl HeditApp {
             chord: None,
             soft_history: Default::default(),
             tab_cycle: Default::default(),
+            tab_strip: Default::default(),
             paste_history: Vec::new(),
             pick_list: None,
             snippet: None,
@@ -445,6 +484,8 @@ impl HeditApp {
                 .unwrap_or_default(),
             line_cursor_goal: None,
             live_find: Default::default(),
+            row_indexes: Default::default(),
+            minimaps: Default::default(),
             markdown: Default::default(),
             goto_origin: None,
             font_applied: String::new(),
@@ -486,6 +527,7 @@ impl HeditApp {
             sanitizer: "memcheck".into(),
             poll_at: Instant::now(),
             focus_editor: true,
+            job_editor_focus: None,
             syntax_query: String::new(),
             syntax_focus: true,
             syntax_matches: syntax::Language::ALL.to_vec(),
@@ -552,7 +594,10 @@ impl HeditApp {
         if self.busy {
             return;
         }
+        let editor_id = self.editor_id();
+        self.job_editor_focus = ctx.memory(|m| m.has_focus(editor_id)).then_some(editor_id);
         self.busy = true;
+        self.opens.interrupt_focus();
         self.cancel.store(false, Ordering::Relaxed);
         let sender = self.tx.clone();
         let ctx = ctx.clone();
@@ -565,7 +610,32 @@ impl HeditApp {
         if self.checkpoint_pending {
             return;
         }
+        // A save/reload job can hold a remote document lock while waiting for
+        // SSH. Its host journal already owns content recovery; defer view
+        // metadata until the job finishes instead of waiting on the UI thread.
+        if self.busy && self.workspace.remote.is_some() {
+            return;
+        }
         self.checkpoint_at = Instant::now();
+        if let Some(remote) = self.workspace.remote.clone() {
+            let view = match self.workspace.remote_view() {
+                Ok(view) => view,
+                Err(e) => {
+                    self.error = Some(e);
+                    return;
+                }
+            };
+            let generation = self.generation;
+            let sender = self.checkpoint_tx.clone();
+            let ctx = ctx.clone();
+            self.checkpoint_pending = true;
+            self.checkpoint_worker = Some(thread::spawn(move || {
+                let result = remote.metadata(Some(view)).map(|_| ());
+                let _ = sender.send(Checkpoint { generation, result });
+                ctx.request_repaint();
+            }));
+            return;
+        }
         let store: Arc<SessionStore> = Arc::clone(&self.workspace.store);
         let snapshot = match hedit::session::SessionSnapshot::capture(
             &self.workspace.editor,
@@ -612,12 +682,90 @@ impl HeditApp {
         self.open_path(ctx, Some(path), false);
     }
     fn open_path(&mut self, ctx: &egui::Context, path: Option<PathBuf>, allow_new: bool) {
-        if allow_new
+        if self.workspace.remote.is_none()
+            && allow_new
             && path
                 .as_ref()
                 .is_some_and(|p| p.extension().is_some_and(|e| e == "hedit-project"))
         {
             self.load_project(ctx, path);
+            return;
+        }
+        if let Some(remote) = self.workspace.remote.clone() {
+            let Some(path) = path else {
+                self.remote_ui.picker = Some(remote::Picker::Open);
+                self.remote_ui.path.clear();
+                return;
+            };
+            if !hedit_core::backend::is_remote(&path) {
+                self.error =
+                    Some("Open remote files using paths inside this SSH workspace.".into());
+                return;
+            }
+            let (path, location) = opening::remote_location(&path);
+            if let Some(buffer) = self
+                .workspace
+                .open
+                .iter()
+                .find(|b| b.page.info.path.as_deref() == path.to_str())
+            {
+                let id = buffer.view.id;
+                if let Some(index) = self.workspace.open.iter().position(|b| b.view.id == id) {
+                    self.workspace.active = index;
+                    if let Some((line, column)) = location {
+                        self.jump_to_line(ctx, line as usize, Some(column as usize));
+                    }
+                    self.focus_editor = true;
+                }
+                return;
+            }
+            if let Some(view) = self.workspace.closed.iter().find(|view| {
+                self.workspace
+                    .editor
+                    .get(view.id)
+                    .ok()
+                    .and_then(|doc| {
+                        doc.lock()
+                            .ok()
+                            .map(|doc| doc.remote_location() == Some(path.as_path()))
+                    })
+                    .unwrap_or(false)
+            }) {
+                let (id, start) = (view.id, view.page_start);
+                let editor = self.workspace.editor.clone();
+                let label = view.name.clone();
+                self.read_open(ctx, label, move || {
+                    let mut doc = editor.get(id)?.lock().map_err(|e| e.to_string())?.clone();
+                    let offset = if let Some((line, column)) = location {
+                        doc.location_offset(line, column)?.saturating_sub(4096)
+                    } else {
+                        start
+                    };
+                    let page = doc.page(offset)?;
+                    let cursor = if let Some((line, column)) = location {
+                        let at = doc.location_offset(line, column)?;
+                        Some(page.text[..(at - page.start) as usize].chars().count())
+                    } else {
+                        None
+                    };
+                    Ok(Action::ReopenRead(id, page, cursor))
+                });
+                return;
+            }
+            let editor = self.workspace.editor.clone();
+            let label = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            self.read_open(ctx, label, move || {
+                let mut doc = remote.open(editor.id(), &path)?;
+                let (line, column) = location.unwrap_or((1, 1));
+                let offset = doc.location_offset(line, column)?;
+                let page = doc.page(offset.saturating_sub(4096))?;
+                let cursor = page.text[..(offset - page.start) as usize].chars().count();
+                Ok(Action::Add(Box::new(doc), page, cursor))
+            });
             return;
         }
         self.navigation_mark();
@@ -629,7 +777,7 @@ impl HeditApp {
             .filter_map(|view| {
                 let doc = self.workspace.editor.get(view.id).ok()?;
                 let path = doc.lock().ok()?.info().path?;
-                Some((path, view.id))
+                Some((path, view.id, view.page_start))
             })
             .collect();
         let open_paths: Vec<_> = self
@@ -638,6 +786,10 @@ impl HeditApp {
             .iter()
             .map(|b| (b.page.info.path.clone(), b.page.info.id))
             .collect();
+        let label = path.as_ref().and_then(|p| p.file_name()).map_or_else(
+            || "file picker…".into(),
+            |p| p.to_string_lossy().into_owned(),
+        );
         let open = move || -> Result<Action, String> {
             let path = match path {
                 Some(path) => path,
@@ -677,7 +829,7 @@ impl HeditApp {
                     return Ok(Action::Activate(*id));
                 }
                 let shared = editor.get(*id)?;
-                let mut doc = shared.lock().map_err(|e| e.to_string())?;
+                let mut doc = shared.lock().map_err(|e| e.to_string())?.clone();
                 let offset = doc.location_offset(line, col)?;
                 let page = doc.page(offset.saturating_sub(4096))?;
                 let cursor = page.text
@@ -686,18 +838,22 @@ impl HeditApp {
                     .count();
                 return Ok(Action::Page(*id, page, Some((cursor, cursor))));
             }
-            if let Some((_, id)) = closed_paths.iter().find(|(p, _)| p == &canonical) {
-                let location = if plain_path {
+            if let Some((_, id, start)) = closed_paths.iter().find(|(p, _, _)| p == &canonical) {
+                let shared = editor.get(*id)?;
+                let mut doc = shared.lock().map_err(|e| e.to_string())?.clone();
+                let offset = if plain_path {
+                    *start
+                } else {
+                    doc.location_offset(line, col)?.saturating_sub(4096)
+                };
+                let page = doc.page(offset)?;
+                let cursor = if plain_path {
                     None
                 } else {
-                    let shared = editor.get(*id)?;
-                    let mut doc = shared.lock().map_err(|e| e.to_string())?;
                     let offset = doc.location_offset(line, col)?;
-                    let page = doc.page(offset.saturating_sub(4096))?;
-                    let cursor = page.text[..(offset - page.start) as usize].chars().count();
-                    Some((page, cursor))
+                    Some(page.text[..(offset - page.start) as usize].chars().count())
                 };
-                return Ok(Action::Reopen(*id, location));
+                return Ok(Action::ReopenRead(*id, page, cursor));
             }
             let mut doc = if allow_new {
                 Document::open_or_new(editor.id(), &path)?
@@ -707,9 +863,11 @@ impl HeditApp {
             let offset = doc.location_offset(line, col)?;
             let page = doc.page(offset.saturating_sub(4096))?;
             let cursor = page.text[..(offset - page.start) as usize].chars().count();
-            Ok(Action::Add(doc, page, cursor))
+            Ok(Action::Add(Box::new(doc), page, cursor))
         };
-        self.job(ctx, move || Ok(open().unwrap_or_else(Action::OpenFailed)));
+        self.read_open(ctx, label, move || {
+            Ok(open().unwrap_or_else(Action::OpenFailed))
+        });
     }
     fn load_page(&mut self, ctx: &egui::Context, offset: u64, reload: bool) {
         let editor = Arc::clone(&self.workspace.editor);
@@ -748,6 +906,11 @@ impl HeditApp {
     }
     fn save_file(&mut self, ctx: &egui::Context, save_as: bool) {
         let id = self.active().view.id;
+        if self.workspace.remote.is_some() && (save_as || self.active().page.info.path.is_none()) {
+            self.remote_ui.picker = Some(remote::Picker::Save(id));
+            self.remote_ui.path.clear();
+            return;
+        }
         if save_as || self.active().page.info.path.is_none() {
             let name = self
                 .active()
@@ -904,22 +1067,85 @@ impl HeditApp {
         });
     }
     fn receive(&mut self, ctx: &egui::Context) {
-        while let Ok(event) = self.rx.try_recv() {
+        self.receive_folder_search(ctx);
+        self.opens.pump(ctx);
+        loop {
+            let (event, request) = if let Ok(event) = self.rx.try_recv() {
+                (event, None)
+            } else if !self.busy {
+                match self.opens.take() {
+                    Some((request, event)) => (event, Some(request)),
+                    None => break,
+                }
+            } else {
+                break;
+            };
+            let background = request
+                .as_ref()
+                .is_some_and(|request| !self.open_focus(request));
+            let keep_view = background.then(|| (self.active().view.id, self.focus_editor));
+            if request.is_some() {
+                if self.closing {
+                    continue;
+                }
+                if let Ok(Action::Page(id, page, _)) = &event {
+                    if self
+                        .workspace
+                        .open
+                        .iter()
+                        .find(|b| b.view.id == *id)
+                        .is_none_or(|b| {
+                            b.page.info.revision != page.info.revision
+                                || b.page.info.path != page.info.path
+                        })
+                    {
+                        self.notice =
+                            "The file changed while opening. Open the location again.".into();
+                        continue;
+                    }
+                }
+            }
+            let event = if request.is_some() {
+                event.map(|action| self.reconcile_open(action))
+            } else {
+                event
+            };
+            if background && matches!(&event, Ok(Action::Activate(_) | Action::Page(..))) {
+                continue;
+            }
+            if let Some(request) = &request {
+                self.quality.preview_request = request.preview
+                    && !background
+                    && matches!(
+                        &event,
+                        Ok(Action::Add(..)
+                            | Action::Activate(_)
+                            | Action::ReopenRead(..)
+                            | Action::Page(..))
+                    );
+            }
             let opened = matches!(
                 &event,
-                Ok(Action::Add(..) | Action::Activate(..) | Action::Reopen(..) | Action::Page(..))
+                Ok(Action::Add(..)
+                    | Action::Activate(..)
+                    | Action::ReopenRead(..)
+                    | Action::Page(..))
             );
             // Fonts and Git markers load beside jobs, not as them.
-            let side = match &event {
-                Ok(Action::Quality(event)) => {
-                    matches!(&**event, quality::Event::GitMarkers(..))
-                }
-                Ok(Action::Font(..) | Action::FallbackFonts | Action::FontFamilies(_)) => true,
-                _ => false,
-            };
-            if !side {
+            let side = request.is_some()
+                || match &event {
+                    Ok(Action::Quality(event)) => {
+                        matches!(&**event, quality::Event::GitMarkers(..))
+                    }
+                    Ok(Action::Font(..) | Action::FallbackFonts | Action::FontFamilies(_)) => true,
+                    _ => false,
+                };
+            let restore_focus = if !side {
                 self.busy = false;
-            }
+                self.job_editor_focus.take()
+            } else {
+                None
+            };
             let reloaded = matches!(&event, Ok(Action::Reloaded(..)));
             match event {
                 Ok(Action::Quality(event)) => self.quality_event(ctx, *event),
@@ -937,27 +1163,8 @@ impl HeditApp {
                         self.navigation_mark();
                     }
                 }
-                Ok(Action::Reopen(id, location)) => {
-                    if let Some(index) = self.workspace.closed.iter().position(|v| v.id == id) {
-                        let result = self.workspace.reopen_at(index);
-                        if result.is_ok() {
-                            if let Some((page, cursor)) = location {
-                                self.reveal_markdown_source(ctx);
-                                let buffer = &mut self.workspace.open[self.workspace.active];
-                                buffer.set_page(page);
-                                buffer.view.anchor = cursor;
-                                buffer.view.head = cursor;
-                                buffer.reveal_cursor = true;
-                            }
-                            self.finish_preview();
-                            self.navigation_mark();
-                        } else {
-                            self.quality.preview_request = false;
-                        }
-                        self.report(result);
-                    } else {
-                        self.quality.preview_request = false;
-                    }
+                Ok(Action::ReopenRead(id, page, cursor)) => {
+                    self.apply_reopen_read(ctx, id, page, cursor, !background);
                 }
                 Ok(Action::Folder(listing)) => self.set_folder(listing),
                 Ok(Action::Folders(listings)) => {
@@ -975,7 +1182,7 @@ impl HeditApp {
                     }
                 }
                 Ok(Action::Add(doc, page, cursor)) => {
-                    let result = self.workspace.add(doc, page);
+                    let result = self.workspace.add(*doc, page);
                     if result.is_ok() {
                         let buffer = &mut self.workspace.open[self.workspace.active];
                         buffer.view.anchor = cursor;
@@ -984,8 +1191,10 @@ impl HeditApp {
                     }
                     self.report(result);
                     self.apply_format_preferences();
-                    self.finish_preview();
-                    self.navigation_mark();
+                    if !background {
+                        self.finish_preview();
+                        self.navigation_mark();
+                    }
                 }
                 Ok(Action::History(id, page, redo, current)) => {
                     if let Some(index) = self
@@ -1140,7 +1349,6 @@ impl HeditApp {
                 Ok(Action::FallbackFonts) => {
                     settings_store::set_editor_font(ctx, self.editor_font.clone());
                 }
-                Ok(Action::OpenAt(path)) => self.pending_paths.push_back(path),
                 Ok(Action::OpenFailed(error)) => {
                     self.quality.preview_request = false;
                     if self.quality.incoming.is_some() {
@@ -1155,15 +1363,6 @@ impl HeditApp {
                 }
                 Ok(Action::Notice(message)) => self.notice = message,
                 Ok(Action::Nothing) => (),
-                Err(error)
-                    if matches!(self.quality.folder_state, folder_search::State::Searching) =>
-                {
-                    self.quality.folder_state = if error == "Search cancelled." {
-                        folder_search::State::Cancelled
-                    } else {
-                        folder_search::State::Failed(error)
-                    };
-                }
                 Err(error) if ROUTINE.contains(&error.as_str()) => {
                     self.quality.match_status = error.trim_end_matches('.').into();
                     self.notice = error;
@@ -1176,8 +1375,24 @@ impl HeditApp {
                     self.cancel_close();
                 }
             }
-            if !side && !self.busy {
+            if (!side || request.is_some()) && !self.busy && !background {
                 self.finish_markdown_link(ctx, opened);
+            }
+            if let Some((view, focus)) = keep_view {
+                if let Some(index) = self.workspace.open.iter().position(|b| b.view.id == view) {
+                    self.workspace.active = index;
+                }
+                self.focus_editor = focus;
+            }
+            if let Some(id) = restore_focus {
+                // Disabling TextEdit during a slow job drops keyboard focus.
+                // Restore only the same pane, and leave any newly focused
+                // search/dialog input alone. Save-as can start a second job.
+                if self.busy {
+                    self.job_editor_focus = self.job_editor_focus.or(Some(id));
+                } else if self.editor_id() == id && ctx.memory(|m| m.focused().is_none()) {
+                    ctx.memory_mut(|m| m.request_focus(id));
+                }
             }
         }
         while let Ok(checkpoint) = self.checkpoint_rx.try_recv() {
@@ -1198,7 +1413,7 @@ impl HeditApp {
         }
         self.expire_error(Instant::now());
         self.advance_close();
-        if !self.busy && !self.closing {
+        if !self.busy && !self.closing && self.opens.room() {
             if let Some(path) = self.pending_paths.pop_front() {
                 self.open(ctx, Some(path));
             }
@@ -1418,14 +1633,9 @@ impl HeditApp {
                 Command::Rows3,
             ),
         ] {
-            // Exact modifiers, so Alt+Shift+2 is not taken for Alt+2.
-            let pressed = ctx.input_mut(|i| {
-                let found = i.events.iter().position(|e| {
-                    matches!(e, egui::Event::Key { key: k, pressed: true, modifiers: m, .. } if *k == key && m.matches_exact(modifiers))
-                });
-                found.map(|n| i.events.remove(n)).is_some()
-            });
-            if pressed && !self.overridden(command) {
+            // Consume native text paired with each accepted key too, including
+            // shifted symbols and repeated presses coalesced into one frame.
+            while !self.overridden(command) && take(modifiers, key) {
                 self.execute(ctx, command);
             }
         }
@@ -1556,14 +1766,7 @@ impl HeditApp {
             }
         }
         // Let single-line search and debugger inputs keep their own undo history.
-        let mut editor_id = egui::Id::new((
-            "editor",
-            self.active().page.info.id,
-            self.active().page.start,
-        ));
-        if self.panes.mode != 0 && self.panes.focused > 0 {
-            editor_id = editor_id.with(self.panes.focused);
-        }
+        let editor_id = self.editor_id();
         if self.focus_editor
             && !self.source_control.open
             && self.panes.mode != 0
@@ -1791,8 +1994,8 @@ impl HeditApp {
         let theme = self.theme.clone();
         let markdown_split = self.markdown_available()
             && self.active().view.markdown_view == hedit::session::MarkdownView::Split;
-        let find_matches = self.find_highlights();
-        let word_matches = self.selection_highlights();
+        let find_matches = self.find_highlights_in(ctx, pane_id);
+        let word_matches = self.selection_highlights_in(ctx, pane_id);
 
         if self.active().external {
             ui.horizontal_wrapped(|ui| {
@@ -1896,9 +2099,11 @@ impl HeditApp {
         let id = if pane_id == 0 {
             base_id
         } else {
-            base_id.with(pane_id)
+            // TextEdit uses id.with(row_index) for accessibility text rows.
+            base_id.with(("pane", pane_id))
         };
-        let count = buffer.page.text.chars().count();
+        let source_index = self.projections[pane_id].source_index(&buffer.page.text);
+        let count = source_index.chars;
         buffer.view.anchor = buffer.view.anchor.min(count);
         buffer.view.head = buffer.view.head.min(count);
         buffer.view.folds.retain(|f| {
@@ -1939,9 +2144,18 @@ impl HeditApp {
                 })
             });
             if let Some((key, modifiers)) = step.filter(|_| ctx.memory(|m| m.has_focus(id))) {
-                if let Some(next) =
+                let next = if !modifiers.shift && buffer.view.anchor != buffer.view.head {
+                    Some(bidi_view::visual_selection_edge(
+                        galley,
+                        bidi,
+                        projection.display(buffer.view.anchor),
+                        display_head,
+                        key == Key::ArrowRight,
+                    ))
+                } else {
                     bidi_view::visual_step(galley, bidi, display_head, key == Key::ArrowRight)
-                {
+                };
+                if let Some(next) = next {
                     ctx.input_mut(|i| i.consume_key(modifiers, key));
                     buffer.view.head = projection.source(next);
                     if !modifiers.shift {
@@ -1954,12 +2168,23 @@ impl HeditApp {
         {
             let mut state = egui::TextEdit::load_state(ctx, id).unwrap_or_default();
             state.clear_undoer();
-            state
-                .cursor
-                .set_char_range(Some(egui::text::CCursorRange::two(
-                    egui::text::CCursor::new(projection.display(buffer.view.anchor)),
-                    egui::text::CCursor::new(projection.display(buffer.view.head)),
-                )));
+            let anchor = projection.display(buffer.view.anchor);
+            let head = projection.display(buffer.view.head);
+            // Keep egui's preferred column and soft-wrap affinity across repaints.
+            // Explicit navigation and changed display text must discard that state.
+            if buffer.reveal_cursor
+                || !self.row_indexes[pane_id].text_matches(&projection)
+                || state.cursor.char_range().is_none_or(|range| {
+                    range.primary.index != head || range.secondary.index != anchor
+                })
+            {
+                state
+                    .cursor
+                    .set_char_range(Some(egui::text::CCursorRange::two(
+                        egui::text::CCursor::new(anchor),
+                        egui::text::CCursor::new(head),
+                    )));
+            }
             state.store(ctx, id);
         }
         if !ctx.input(|i| i.pointer.primary_down()) {
@@ -1995,12 +2220,13 @@ impl HeditApp {
         } else {
             &mut self.extra_layouts[pane_id - 1]
         };
+        layout_cache.activate((buffer.view.id, buffer.page.start));
         let row_height = ui.fonts(|f| f.row_height(&typography.id()));
         let line_height = typography.line_height;
         // Like Sublime, the last line can scroll up to the top: the editor is a
         // window's height taller than its text, so clicks there place the cursor.
         let rows = if self.settings.scroll_past_end && !buffer.follow {
-            let lines = memchr::memchr_iter(b'\n', buffer.page.text.as_bytes()).count() + 1;
+            let lines = source_index.lines();
             let visible = (ui.available_height() / line_height.unwrap_or(row_height)) as usize;
             lines + visible.saturating_sub(2)
         } else {
@@ -2070,16 +2296,18 @@ impl HeditApp {
         }
         let mut markdown_layout = None;
         let restore = buffer.restore_cursor;
-        let gutter = typography.gutter_width(
-            memchr::memchr_iter(b'\n', buffer.page.text.as_bytes()).count() + 1,
-            self.settings.line_numbers,
-        );
+        let gutter = typography.gutter_width(source_index.lines(), self.settings.line_numbers);
         let gutter_color = self.theme.muted.color();
         let gutter_background = self.theme.background.color();
         let gutter_text = self.theme.text.color();
-        let head_byte = hedit::advanced::byte(&buffer.page.text, buffer.view.head);
-        let current_line =
-            memchr::memchr_iter(b'\n', &buffer.page.text.as_bytes()[..head_byte]).count() + 1;
+        let current_line = source_index
+            .line_column(
+                &buffer.page.text,
+                buffer.view.head,
+                buffer.view.tab_size.unwrap_or(4) as usize,
+            )
+            .0
+            + 1;
         let map_area = ui.available_rect_before_wrap();
         let mut editor_area = map_area;
         if self.settings.show_minimap && !self.distraction_free && map_area.width() > 300.0 {
@@ -2136,6 +2364,7 @@ impl HeditApp {
                         let mut editor_text = clipboard_lines::EditorText {
                             text: &mut display,
                             crlf: buffer.page.info.eol == "CRLF",
+                            index: projection.is_identity().then(|| source_index.clone()),
                         };
                         let mut edit = egui::TextEdit::multiline(&mut editor_text)
                             .id(id)
@@ -2153,6 +2382,7 @@ impl HeditApp {
                             .interactive(
                                 !self.busy
                                     && !self.closing
+                                    && self.workspace.remote.as_ref().is_none_or(|r| r.writable())
                                     && !buffer.follow
                                     && !self.preferences_open
                                     && !self.palette
@@ -2178,12 +2408,16 @@ impl HeditApp {
                         let selection_background = ui.painter().add(egui::Shape::Noop);
                         let caret_color = ui.visuals().text_cursor.stroke.color;
                         let selection_color = ui.visuals().selection.bg_fill;
+                        // Paint selection below the text without copying selected glyph meshes.
+                        ui.visuals_mut().selection.bg_fill = egui::Color32::TRANSPARENT;
                         if rtl_text {
-                            // egui places these by character index; draw them below instead.
                             ui.visuals_mut().text_cursor.stroke.color = egui::Color32::TRANSPARENT;
-                            ui.visuals_mut().selection.bg_fill = egui::Color32::TRANSPARENT;
                         }
                         let mut output = edit.show(ui);
+                        ui.visuals_mut().selection.bg_fill = selection_color;
+                        let row_index = self.row_indexes[pane_id].get(&output.galley);
+                        let visible_rows =
+                            row_index.visible(&output.galley, output.galley_pos, ui.clip_rect());
                         if markdown_split {
                             markdown_layout = Some((
                                 Arc::clone(&output.galley),
@@ -2193,12 +2427,21 @@ impl HeditApp {
                         }
 
                         let bidi_rows: Arc<bidi_view::BidiRows> = latest_bidi.take();
+                        let completed_drag = editor_interaction::complete_drag(
+                            ui,
+                            &mut output,
+                            &bidi_rows,
+                            projection.display(original_selection.anchor),
+                        );
                         if bidi_rows.any() {
+                            #[cfg(target_os = "macos")]
+                            bidi_view::accessibility(ctx, id, &output.galley, &bidi_rows);
                             bidi_view::interact(
                                 ui,
                                 &mut output,
                                 &bidi_rows,
                                 selection_background,
+                                visible_rows.clone(),
                                 bidi_view::Look {
                                     caret: egui::Stroke::new(
                                         self.settings.caret_width,
@@ -2208,6 +2451,29 @@ impl HeditApp {
                                     selection: selection_color,
                                 },
                             );
+                        }
+                        if !bidi_rows.any() && output.response.has_focus() {
+                            if let Some(range) = &output.cursor_range {
+                                ui.painter().set(
+                                    selection_background,
+                                    egui::Shape::Vec(
+                                        editor_interaction::selection_rects(
+                                            &output.galley,
+                                            range,
+                                            visible_rows.clone(),
+                                        )
+                                        .into_iter()
+                                        .map(|r| {
+                                            egui::Shape::rect_filled(
+                                                r.translate(output.galley_pos.to_vec2()),
+                                                0.0,
+                                                selection_color,
+                                            )
+                                        })
+                                        .collect(),
+                                    ),
+                                );
+                            }
                         }
                         if self.settings.highlight_line {
                             if let Some(range) = &output.cursor_range {
@@ -2267,9 +2533,9 @@ impl HeditApp {
                             }
                         }
                         if self.settings.draw_indent_guides {
-                            let mut first = true;
-                            for row in &output.galley.rows {
-                                if first
+                            for r in visible_rows.clone() {
+                                let row = &output.galley.rows[r];
+                                if row_index.row(r).first
                                     && output.galley_pos.y + row.rect.bottom()
                                         >= ui.clip_rect().top()
                                     && output.galley_pos.y + row.rect.top()
@@ -2294,7 +2560,6 @@ impl HeditApp {
                                         );
                                     }
                                 }
-                                first = row.ends_with_newline;
                             }
                         }
                         // egui paints the main selection only while the editor has
@@ -2327,20 +2592,20 @@ impl HeditApp {
                             ),
                         ] {
                             if let Some(ranges) = ranges {
-                                let shown: Vec<(usize, usize)> = ranges
-                                    .iter()
-                                    .filter(|&&(a, _)| {
-                                        projection.source(projection.display(a)) == a
-                                    })
-                                    .map(|&(a, b)| (projection.display(a), projection.display(b)))
-                                    .collect();
+                                if output.response.changed() {
+                                    continue;
+                                }
                                 find_live::paint_ranges(
                                     ui.painter(),
-                                    &output.galley,
+                                    find_live::View {
+                                        galley: &output.galley,
+                                        rows: &row_index,
+                                        projection: &projection,
+                                    },
                                     &bidi_rows,
                                     output.galley_pos,
                                     ui.clip_rect(),
-                                    &shown,
+                                    ranges,
                                     (fill, stroke),
                                 );
                             }
@@ -2382,9 +2647,13 @@ impl HeditApp {
                                     ),
                                 );
                             } else {
-                                for rect in
-                                    bidi_view::range_rects(&output.galley, &bidi_rows, start, end)
-                                {
+                                for rect in bidi_view::range_rects_in_rows(
+                                    &output.galley,
+                                    &bidi_rows,
+                                    start,
+                                    end,
+                                    visible_rows.clone(),
+                                ) {
                                     ui.painter().rect_filled(
                                         rect.translate(offset),
                                         0.0,
@@ -2405,44 +2674,38 @@ impl HeditApp {
                             );
                         }
                         if self.settings.draw_white_space {
-                            let source_chars: Vec<_> = old.chars().collect();
-                            let mut row_start = 0;
-                            for row in &output.galley.rows {
-                                let top = output.galley_pos.y + row.rect.top();
-                                if top + row.rect.height() >= ui.clip_rect().top()
-                                    && top <= ui.clip_rect().bottom()
-                                {
-                                    for (n, glyph) in row.glyphs.iter().enumerate() {
-                                        let position = row_start + n;
-                                        let source = projection.source(position);
-                                        let mut center = output.galley_pos
-                                            + glyph.pos.to_vec2()
-                                            + egui::vec2(glyph.advance_width / 2.0, -3.0);
-                                        if source_chars.get(source) == Some(&'\t') {
-                                            if projection.display(source) == position {
-                                                let width =
-                                                    projection.display(source + 1) - position;
-                                                center.x += glyph.advance_width
-                                                    * (width.saturating_sub(1)) as f32
-                                                    / 2.0;
-                                                ui.painter().text(
-                                                    center,
-                                                    egui::Align2::CENTER_CENTER,
-                                                    "→",
-                                                    FontId::monospace(font_size - 2.0),
-                                                    self.theme.muted.color(),
-                                                );
-                                            }
-                                        } else if glyph.chr == ' ' {
-                                            ui.painter().circle_filled(
+                            let mut source_chars = row_index::SourceChars::new(&old, &source_index);
+                            for r in visible_rows.clone() {
+                                let row = &output.galley.rows[r];
+                                let row_start = row_index.row(r).start;
+                                for (n, glyph) in row.glyphs.iter().enumerate() {
+                                    let position = row_start + n;
+                                    let source = projection.source(position);
+                                    let mut center = output.galley_pos
+                                        + glyph.pos.to_vec2()
+                                        + egui::vec2(glyph.advance_width / 2.0, -3.0);
+                                    if source_chars.get(source) == Some('\t') {
+                                        if projection.display(source) == position {
+                                            let width = projection.display(source + 1) - position;
+                                            center.x += glyph.advance_width
+                                                * (width.saturating_sub(1)) as f32
+                                                / 2.0;
+                                            ui.painter().text(
                                                 center,
-                                                0.8,
-                                                self.theme.muted.color().gamma_multiply(0.65),
+                                                egui::Align2::CENTER_CENTER,
+                                                "→",
+                                                FontId::monospace(font_size - 2.0),
+                                                self.theme.muted.color(),
                                             );
                                         }
+                                    } else if glyph.chr == ' ' {
+                                        ui.painter().circle_filled(
+                                            center,
+                                            0.8,
+                                            self.theme.muted.color().gamma_multiply(0.65),
+                                        );
                                     }
                                 }
-                                row_start += row.glyphs.len() + usize::from(row.ends_with_newline);
                             }
                         }
                         if gutter > 0.0 {
@@ -2452,10 +2715,10 @@ impl HeditApp {
                             let mut gutter_ui =
                                 ui.new_child(egui::UiBuilder::new().max_rect(gutter_rect));
                             gutter_ui.set_clip_rect(gutter_rect);
-                            let mut display_line = 0;
-                            let mut first_row = true;
-                            for row in &output.galley.rows {
-                                if first_row {
+                            for r in visible_rows.clone() {
+                                let row = &output.galley.rows[r];
+                                let display_line = row_index.row(r).line;
+                                if row_index.row(r).first {
                                     let position = egui::pos2(
                                         gutter_rect.right() - 12.0,
                                         output.galley_pos.y + row.rect.center().y,
@@ -2571,10 +2834,6 @@ impl HeditApp {
                                         );
                                     }
                                 }
-                                first_row = row.ends_with_newline;
-                                if row.ends_with_newline {
-                                    display_line += 1;
-                                }
                             }
                         }
                         if self.focus_editor {
@@ -2648,11 +2907,16 @@ impl HeditApp {
                             };
                             if output.response.changed() {
                                 let edited = projection.edited(&old, &display, selection);
-                                let (a, b, _) =
-                                    hedit::workspace::splice(&projection.text, &display);
-                                let a = projection.text[..a].chars().count();
-                                let b = projection.text[..b].chars().count();
-                                let touched = projection.touches_fold(a, b);
+                                let touched = if buffer.view.folds.is_empty() {
+                                    false
+                                } else {
+                                    let (a, b, _) =
+                                        hedit::workspace::splice(&projection.text, &display);
+                                    projection.touches_fold(
+                                        projection.text[..a].chars().count(),
+                                        projection.text[..b].chars().count(),
+                                    )
+                                };
                                 if !(original_selection.anchor == original_selection.head
                                     && touched)
                                 {
@@ -2667,7 +2931,10 @@ impl HeditApp {
                                 buffer.view.anchor = projection.source(selection.anchor);
                                 buffer.view.head = projection.source(selection.head);
                             }
-                            if output.response.clicked() || output.response.dragged() {
+                            if completed_drag
+                                || output.response.clicked()
+                                || output.response.dragged()
+                            {
                                 let modifiers = ctx.input(|i| i.modifiers);
                                 if modifiers.alt && !buffer.page.info.paged {
                                     let head = buffer.view.head;
@@ -2867,20 +3134,12 @@ impl HeditApp {
                 map_area.max,
             );
             ui.painter().rect_filled(map, 0.0, self.theme.panel.color());
-            let lines: Vec<_> = projection.text.lines().collect();
-            let rows = lines.len().max(1);
-            let samples = (map.height() as usize).min(rows).max(1);
-            for n in 0..samples {
-                let line = lines.get(n * rows / samples).copied().unwrap_or("");
-                let y = map.top() + n as f32 * (map.height() / samples as f32).min(2.0);
-                let leading = line
-                    .chars()
-                    .take_while(|c| c.is_whitespace())
-                    .count()
-                    .min(100);
-                let width = line.chars().count().min(120);
+            let samples = self.minimaps[pane_id].get(&projection, map.height());
+            for (n, sample) in samples.iter().enumerate() {
+                let y = map.top() + n as f32 * (map.height() / samples.len() as f32).min(2.0);
                 ui.painter().hline(
-                    (map.left() + leading as f32 * 0.45)..=(map.left() + width as f32 * 0.45),
+                    (map.left() + sample.leading as f32 * 0.45)
+                        ..=(map.left() + sample.width as f32 * 0.45),
                     y,
                     egui::Stroke::new(0.7_f32, self.theme.muted.color().gamma_multiply(0.5)),
                 );
@@ -2943,6 +3202,10 @@ impl HeditApp {
                     // the user's edited view in a new independent unsaved file.
                     let text = self.workspace.open[index].page.text.clone();
                     self.workspace.open[index].page.text = old;
+                    if self.workspace.remote.is_some() {
+                        self.error = Some(error);
+                        return;
+                    }
                     let result = (|| {
                         let mut doc = Document::empty(self.workspace.editor.id());
                         doc.replace(0, 0, text, 0)?;
@@ -3317,11 +3580,9 @@ impl HeditApp {
                 });
             self.shelf_open = open && !overlays::clicked_away(ctx, &shown);
             if let Some(index) = restore {
-                let result = self.workspace.reopen_at(index);
-                if result.is_ok() {
+                if self.reopen_closed(ctx, index) {
                     self.shelf_open = false;
                 }
-                self.report(result);
             }
             if !open {
                 self.focus_editor = true;
@@ -3393,7 +3654,22 @@ impl HeditApp {
     }
 }
 impl eframe::App for HeditApp {
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
+        if let Some(trace) = &self.native_perf {
+            trace.input(raw);
+        }
+    }
+    fn persist_egui_memory(&self) -> bool {
+        self.workspace.remote.is_none()
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if let Some(trace) = &self.native_perf {
+            trace.begin_frame(ctx);
+        }
+        self.note_open_input(ctx);
+        self.remote_controls(ctx);
+        self.opening_bar(ctx);
         self.updates.poll();
         self.receive(ctx);
         self.poll_incoming(ctx);
@@ -3427,24 +3703,41 @@ impl eframe::App for HeditApp {
         }
         self.shortcuts(ctx);
         let title = format!(
-            "{}{}{} — hedit",
+            "{}{}{}{} — hedit",
             self.active().view.name,
             if self.active().page.info.dirty {
                 " •"
             } else {
                 ""
             },
-            match self.workspace.folders.as_slice() {
-                [] => String::new(),
-                [folder] => format!(
+            match (
+                self.workspace.remote.as_ref(),
+                self.workspace.folders.as_slice()
+            ) {
+                (Some(remote), _) => format!(
+                    " — {}",
+                    std::path::Path::new(&remote.config.root)
+                        .file_name()
+                        .unwrap_or_else(|| std::ffi::OsStr::new(&remote.config.root))
+                        .to_string_lossy()
+                ),
+                (None, []) => String::new(),
+                (None, [folder]) => format!(
                     " — {}",
                     std::path::Path::new(&folder.path)
                         .file_name()
                         .unwrap_or_else(|| std::ffi::OsStr::new(&folder.path))
                         .to_string_lossy()
                 ),
-                folders => format!(" — {} folders", folders.len()),
-            }
+                (None, folders) => format!(" — {} folders", folders.len()),
+            },
+            self.workspace
+                .remote
+                .as_ref()
+                .map_or(String::new(), |r| format!(
+                    " [SSH {}]",
+                    r.config.target.host
+                ))
         );
         if self.window_title != title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
@@ -3482,8 +3775,14 @@ impl eframe::App for HeditApp {
         if let Some(after) = self.next_wake(ctx) {
             ctx.request_repaint_after(after);
         }
+        if let Some(trace) = &self.native_perf {
+            trace.end_frame(ctx);
+        }
     }
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        if self.workspace.remote.is_some() {
+            return;
+        }
         self.source_control.save(storage);
         eframe::set_value(storage, "recent_projects", &self.quality.recent);
         eframe::set_value(storage, "recent_files", &self.recent_files);
@@ -3503,7 +3802,17 @@ impl eframe::App for HeditApp {
     fn auto_save_interval(&self) -> Duration {
         Duration::from_secs(2)
     }
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+    fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {
+        if let Some(trace) = &mut self.native_perf {
+            trace.close(gl);
+        }
+        if self.workspace.remote.is_some() {
+            self.cancel_build();
+            #[cfg(feature = "terminal")]
+            for tab in &mut self.terminal.tabs {
+                tab.session.stop();
+            }
+        }
         if !self.exit_ready {
             self.restart_requested.store(false, Ordering::Relaxed);
         }
@@ -3512,6 +3821,9 @@ impl eframe::App for HeditApp {
         if let Err(error) = self.workspace.checkpoint() {
             self.restart_requested.store(false, Ordering::Relaxed);
             eprintln!("hedit: final recovery checkpoint failed: {error}");
+        }
+        if self.workspace.remote.is_some() {
+            return;
         }
         // An extra window closed with nothing in it is not reopened next time.
         let session = self.workspace.store.directory().to_owned();
@@ -3573,6 +3885,7 @@ mod tests {
             ..Default::default()
         };
         let output = ctx.run(input, |ctx| {
+            app.note_open_input(ctx);
             app.poll_source_control(ctx);
             app.shortcuts(ctx);
             app.chrome(ctx);
@@ -3604,7 +3917,11 @@ mod tests {
 
     pub(super) fn finish_app_job(app: &mut HeditApp, ctx: &egui::Context) {
         let started = Instant::now();
-        while app.busy || !app.pending_paths.is_empty() {
+        while app.busy
+            || app.opens.pending()
+            || app.quality.folder_task.is_some()
+            || !app.pending_paths.is_empty()
+        {
             assert!(
                 started.elapsed() < Duration::from_secs(5),
                 "background job timed out"
@@ -4024,6 +4341,7 @@ mod tests {
                 },
             )],
         );
+        finish_app_job(&mut app, &ctx);
         assert_eq!(app.workspace.open.len(), 2);
         assert!(app.workspace.closed.is_empty());
     }
@@ -4387,6 +4705,60 @@ mod tests {
         assert!(errors.is_empty());
         assert_eq!(restored.open[restored.active].page.info.eol, "CRLF");
         assert_eq!(restored.open[restored.active].page.text, "α\r\nβ\r\n\r\n");
+    }
+
+    #[test]
+    fn saving_across_a_busy_frame_restores_editor_focus_without_stealing_it() {
+        for split in [false, true] {
+            for redirect in [false, true] {
+                let directory = tempfile::tempdir().unwrap();
+                let file = directory.path().join("file.txt");
+                std::fs::write(&file, "").unwrap();
+                let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+                let ctx = egui::Context::default();
+                let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+                app.open(&ctx, Some(file.clone()));
+                finish_app_job(&mut app, &ctx);
+                if split {
+                    app.execute(&ctx, Command::SplitColumns);
+                    app.execute(&ctx, Command::FocusGroup2);
+                }
+                frame(&ctx, &mut app, vec![]);
+                frame(&ctx, &mut app, vec![egui::Event::Text("before".into())]);
+                assert_eq!(app.active().page.text, "before");
+                let editor_id = app.editor_id();
+                assert!(ctx.memory(|m| m.has_focus(editor_id)));
+                let document = app.workspace.editor.get(app.active().view.id).unwrap();
+                let guard = document.lock().unwrap();
+                app.execute(&ctx, Command::Save);
+                // A slow disk or SSH round trip disables the editor for at
+                // least one frame; instant saves can hide the lost focus.
+                frame(&ctx, &mut app, vec![]);
+                assert!(app.busy);
+                if redirect {
+                    app.goto_open = true;
+                    app.goto_focus = true;
+                    app.focus_editor = false;
+                    frame(&ctx, &mut app, vec![]);
+                    assert!(app.goto_open);
+                    assert!(!ctx.memory(|m| m.has_focus(editor_id)));
+                }
+                let other_focus = ctx.memory(|m| m.focused());
+                if redirect {
+                    assert!(other_focus.is_some());
+                }
+                drop(guard);
+                finish_app_job(&mut app, &ctx);
+                assert_eq!(std::fs::read_to_string(&file).unwrap(), "before");
+                frame(&ctx, &mut app, vec![]);
+                if redirect {
+                    assert_eq!(ctx.memory(|m| m.focused()), other_focus);
+                } else {
+                    frame(&ctx, &mut app, vec![egui::Event::Text("after".into())]);
+                    assert_eq!(app.active().page.text, "beforeafter", "split={split}");
+                }
+            }
+        }
     }
 
     #[test]
@@ -5125,7 +5497,7 @@ mod tests {
                 key(Key::Enter, Modifiers::NONE),
             ],
         );
-        assert!(app.busy, "Find should submit on Enter");
+        assert!(!app.busy, "Find navigation must keep the editor available");
         finish_job(&mut app, &ctx);
         assert_eq!(
             app.active()

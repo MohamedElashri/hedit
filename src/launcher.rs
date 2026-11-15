@@ -83,7 +83,7 @@ pub fn launch(
     stdin: bool,
     wait: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    launch_executable(&std::env::current_exe()?, args, directory, stdin, wait)
+    launch_executable(&hedit::windows::executable()?, args, directory, stdin, wait)
 }
 
 /// Called after run_native returns and drops the old session owner. Use the

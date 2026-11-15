@@ -89,15 +89,13 @@ fn pad_inline_rows(galley: &mut std::sync::Arc<egui::Galley>, height: f32) -> bo
     let mut offset = 0.0;
     let mut mesh_bounds = egui::Rect::NOTHING;
     for row in &mut galley.rows {
+        let row = std::sync::Arc::make_mut(row);
         let padding = (height - row.rect.height()).max(0.0);
         let shift = egui::vec2(0.0, offset + snap(padding / 2.0));
         for glyph in &mut row.glyphs {
             glyph.pos += shift;
         }
-        for vertex in &mut row.visuals.mesh.vertices {
-            vertex.pos += shift;
-        }
-        row.visuals.mesh_bounds = row.visuals.mesh_bounds.translate(shift);
+        row.visuals.translate_mesh(shift);
         mesh_bounds = mesh_bounds.union(row.visuals.mesh_bounds);
         row.rect = row.rect.translate(egui::vec2(0.0, offset));
         row.rect.max.y += padding;
@@ -105,6 +103,7 @@ fn pad_inline_rows(galley: &mut std::sync::Arc<egui::Galley>, height: f32) -> bo
     }
     galley.rect.max.y += offset;
     galley.mesh_bounds = mesh_bounds;
+    galley.invalidate_cursor_index();
     true
 }
 

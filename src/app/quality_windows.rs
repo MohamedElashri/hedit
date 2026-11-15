@@ -94,11 +94,7 @@ impl HeditApp {
             .any(|b| b.command == command)
     }
     pub(super) fn filter_overridden_clipboard(&mut self, ctx: &egui::Context) {
-        let mut editor_id =
-            egui::Id::new(("editor", self.active().view.id, self.active().page.start));
-        if self.panes.mode != 0 && self.panes.focused > 0 {
-            editor_id = editor_id.with(self.panes.focused);
-        }
+        let editor_id = self.editor_id();
         if !ctx.memory(|m| m.has_focus(editor_id)) {
             return;
         }
@@ -176,10 +172,7 @@ impl HeditApp {
             self.folder_search(ctx, self.quality.folder_replace);
         }
 
-        let mut id = egui::Id::new(("editor", self.active().view.id, self.active().page.start));
-        if self.panes.mode != 0 && self.panes.focused > 0 {
-            id = id.with(self.panes.focused);
-        }
+        let id = self.editor_id();
         let focused = ctx.memory(|m| m.has_focus(id));
         for binding in self.quality.config.keybindings.clone() {
             if binding.editor_only && !focused {
@@ -376,6 +369,7 @@ impl HeditApp {
             ui.label(path.display().to_string());
             let mut enter=false;
             if matches!(operation,FileOperation::Rename|FileOperation::Duplicate){
+                if self.workspace.remote.is_some()&&operation==FileOperation::Move {ui.label("Destination file path relative to the SSH workspace");}
                 let response=ui.text_edit_singleline(&mut self.quality.file_name);
                 enter=response.lost_focus()&&ui.input(|i|i.key_pressed(Key::Enter));
             }
@@ -484,7 +478,7 @@ impl HeditApp {
                 )?;
                 let page = doc.page(0)?;
                 if choose {
-                    Ok(Action::Add(doc, page, 0))
+                    Ok(Action::Add(Box::new(doc), page, 0))
                 } else {
                     *editor.get(id)?.lock().map_err(|e| e.to_string())? = doc;
                     Ok(Action::Page(id, page, None))

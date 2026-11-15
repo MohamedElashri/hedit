@@ -1,0 +1,10 @@
+AppImage type-2 runtime, unmodified release 20251108.
+
+License: AppImage-runtime.txt (including the listed third-party components).
+Source and build instructions:
+https://github.com/AppImage/type2-runtime/tree/20251108
+https://github.com/AppImage/type2-runtime/blob/20251108/BUILD.md
+
+Hedit's setup-appimage.py pins the upstream runtime and its SHA-256 digest.
+AppImages also include bundled display-library copyright notices under
+usr/share/doc/hedit/bundled-libraries/.

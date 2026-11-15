@@ -4,6 +4,25 @@ use hedit::{
     session::FolderView,
 };
 use std::collections::{BTreeSet, HashMap, HashSet};
+mod names;
+mod tree;
+
+fn listing_bytes(listing: &Result<FolderListing, String>) -> usize {
+    match listing {
+        Ok(l) => {
+            l.path.len() * 2
+                + l.name.len()
+                + 256
+                + l.entries
+                    .iter()
+                    .map(|e| {
+                        e.name.len() + e.path.len() + std::mem::size_of::<folder::FolderEntry>()
+                    })
+                    .sum::<usize>()
+        }
+        Err(e) => e.len() + 256,
+    }
+}
 
 struct ListingResult {
     generation: u64,
@@ -11,11 +30,6 @@ struct ListingResult {
     listing: Result<FolderListing, String>,
 }
 
-struct SearchResult {
-    generation: u64,
-    query: String,
-    result: Result<QuickOpen, String>,
-}
 pub(super) struct CreateEntry {
     parent: String,
     directory: bool,
@@ -28,6 +42,9 @@ pub(super) struct ProjectBrowser {
     // Shared so drawing the tree each frame does not copy up to 2,000 entries per folder.
     listings: HashMap<String, std::sync::Arc<Result<FolderListing, String>>>,
     pending: HashSet<String>,
+    active_listings: usize,
+    tree: Option<Arc<tree::Tree>>,
+    listing_limited: bool,
     pub expanded: BTreeSet<String>,
     /// A file row to scroll into view once it is drawn, until a deadline in
     /// case it never is (for example, when it is excluded from the tree).
@@ -35,22 +52,19 @@ pub(super) struct ProjectBrowser {
     generation: u64,
     tx: Sender<ListingResult>,
     rx: Receiver<ListingResult>,
-    search_tx: Sender<SearchResult>,
-    search_rx: Receiver<SearchResult>,
-    search_pending: bool,
-    search_query: Option<String>,
-    search_requested: String,
-    search_changed: Instant,
+    names: names::Names,
     pub search: Option<Result<QuickOpen, String>>,
     pub create: Option<CreateEntry>,
 }
 impl ProjectBrowser {
     pub fn new(views: &[FolderView]) -> Self {
         let (tx, rx) = mpsc::channel();
-        let (search_tx, search_rx) = mpsc::channel();
         Self {
             listings: HashMap::new(),
             pending: HashSet::new(),
+            active_listings: 0,
+            tree: None,
+            listing_limited: false,
             expanded: views
                 .iter()
                 .flat_map(|f| f.expanded.iter().cloned())
@@ -59,47 +73,46 @@ impl ProjectBrowser {
             generation: 0,
             tx,
             rx,
-            search_tx,
-            search_rx,
-            search_pending: false,
-            search_query: None,
-            search_requested: String::new(),
-            search_changed: Instant::now(),
+            names: names::Names::default(),
             search: None,
             create: None,
         }
     }
     pub(super) fn invalidate(&mut self) {
         self.generation = self.generation.wrapping_add(1);
+        self.tree = None;
         self.listings.clear();
+        self.listing_limited = false;
         self.pending.clear();
-        self.search_query = None;
+        self.names.invalidate();
         self.search = None;
     }
     pub fn poll(&mut self) {
         while let Ok(result) = self.rx.try_recv() {
+            self.active_listings = self.active_listings.saturating_sub(1);
+            self.tree = None;
             if result.generation == self.generation {
                 self.pending.remove(&result.path);
-                self.listings
-                    .insert(result.path, std::sync::Arc::new(result.listing));
-            }
-        }
-        while let Ok(result) = self.search_rx.try_recv() {
-            self.search_pending = false;
-            if result.generation == self.generation && result.query == self.search_requested {
-                self.search = Some(result.result);
-            } else {
-                self.search_query = None;
+                let bytes: usize = self.listings.values().map(|l| listing_bytes(l)).sum();
+                if self.listings.len() >= 256
+                    || bytes.saturating_add(listing_bytes(&result.listing)) > 16 * 1024 * 1024
+                {
+                    self.listing_limited = true;
+                } else {
+                    self.listings.insert(result.path, Arc::new(result.listing));
+                }
             }
         }
     }
     fn request_listing(&mut self, ctx: &egui::Context, path: &str) {
-        if self.pending.len() >= 8
+        if self.active_listings >= 4
+            || self.listing_limited
             || self.listings.contains_key(path)
             || !self.pending.insert(path.to_owned())
         {
             return;
         }
+        self.active_listings += 1;
         let path = path.to_owned();
         let tx = self.tx.clone();
         let ctx = ctx.clone();
@@ -114,42 +127,35 @@ impl ProjectBrowser {
             ctx.request_repaint();
         });
     }
+    pub fn refresh_search(&mut self) {
+        self.invalidate();
+    }
+    pub fn begin_search(&mut self) {
+        if self.names.begin() {
+            self.search = None;
+        }
+    }
+    pub fn indexing(&self) -> bool {
+        self.names.indexing
+    }
     pub fn search(&mut self, ctx: &egui::Context, roots: &[PathBuf], query: &str) {
         self.poll();
-        if self.search_requested != query {
-            self.search_requested = query.to_owned();
-            self.search_changed = Instant::now();
+        if !self.names.current(roots, query) {
             self.search = None;
-            self.search_query = None;
         }
-        if self.search_pending || self.search_query.as_deref() == Some(query) {
-            return;
+        if let Some(result) = self.names.search(ctx, roots, query) {
+            self.search = Some(Ok(result));
         }
-        if !query.is_empty() && self.search_changed.elapsed() < Duration::from_millis(120) {
-            ctx.request_repaint_after(Duration::from_millis(120));
-            return;
-        }
-        self.search_pending = true;
-        self.search_query = Some(query.to_owned());
-        let query = query.to_owned();
-        let roots = roots.to_vec();
-        let generation = self.generation;
-        let tx = self.search_tx.clone();
-        let ctx = ctx.clone();
-        thread::spawn(move || {
-            let result = folder::quick_open_roots(&roots, &query);
-            let _ = tx.send(SearchResult {
-                generation,
-                query,
-                result,
-            });
-            ctx.request_repaint();
-        });
     }
 }
 
 impl HeditApp {
     pub(super) fn open_folder(&mut self, ctx: &egui::Context) {
+        if self.workspace.remote.is_some() {
+            self.remote_ui.picker = Some(remote::Picker::Folder);
+            self.remote_ui.path.clear();
+            return;
+        }
         self.job(ctx, || {
             match rfd::FileDialog::new()
                 .set_title("Add folders — hedit")
@@ -314,51 +320,136 @@ impl HeditApp {
             return;
         }
         ui.add_space(6.0);
-        let folders = self.workspace.folders.clone();
-        egui::ScrollArea::vertical()
+        if self
+            .project
+            .tree
+            .as_ref()
+            .is_none_or(|tree| !tree.current(&self.workspace.folders, &self.project.expanded))
+        {
+            self.project.tree = Some(Arc::new(tree::Tree::build(
+                &self.workspace.folders,
+                &self.project.expanded,
+                &self.project.listings,
+                self.workspace.remote.as_deref(),
+                self.project.listing_limited,
+            )));
+            let tree = self.project.tree.as_ref().unwrap();
+            let before = self.project.listings.len();
+            self.project
+                .listings
+                .retain(|path, _| tree.used.contains(path));
+            if self.project.listings.len() < before && self.project.listing_limited {
+                self.project.listing_limited = false;
+                self.project.tree = None;
+                ui.ctx().request_repaint();
+                return;
+            }
+        }
+        let tree = self.project.tree.as_ref().unwrap().clone();
+        for path in &tree.missing {
+            if self.project.active_listings >= 4 {
+                break;
+            }
+            self.project.request_listing(ui.ctx(), path);
+        }
+        if self
+            .project
+            .reveal
+            .as_ref()
+            .is_some_and(|(_, until)| Instant::now() > *until)
+        {
+            self.project.reveal = None;
+        }
+        let reveal = self.project.reveal.as_ref().and_then(|(path, _)| {
+            tree.rows.iter().position(|row| {
+                row.path == *path && !matches!(row.kind, tree::Kind::Message { .. })
+            })
+        });
+        let mut scroll = egui::ScrollArea::vertical()
             .id_salt("folder-tree")
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                for folder in folders {
-                    ui.push_id(("project-root", &folder.path), |ui| {
-                        let path = &folder.path;
-                        let name = std::path::Path::new(path)
-                            .file_name()
-                            .unwrap_or(std::ffi::OsStr::new(path))
-                            .to_string_lossy();
-                        let response = tree_row::show(
+            .auto_shrink([false, false]);
+        if let Some(index) = reveal {
+            let stride = tree::HEIGHT + ui.spacing().item_spacing.y;
+            scroll = scroll.vertical_scroll_offset(
+                (index as f32 * stride - ui.available_height() / 2.0).max(0.0),
+            );
+            self.project.reveal = None;
+        }
+        scroll.show_rows(ui, tree::HEIGHT, tree.rows.len(), |ui, rows| {
+            for index in rows {
+                let node = &tree.rows[index];
+                if let tree::Kind::Message { warning } = node.kind {
+                    let color = if warning {
+                        self.theme.warning
+                    } else {
+                        self.theme.muted
+                    };
+                    ui.add_sized(
+                        [ui.available_width(), tree::HEIGHT],
+                        egui::Label::new(RichText::new(&node.name).color(color.color())).truncate(),
+                    )
+                    .on_hover_text(&node.name);
+                    continue;
+                }
+                let root = matches!(node.kind, tree::Kind::Root);
+                let (directory, symlink) = match node.kind {
+                    tree::Kind::Entry { directory, symlink } => (directory, symlink),
+                    _ => (true, false),
+                };
+                let scope = tree.scopes[tree
+                    .scopes
+                    .partition_point(|(start, _)| *start <= index)
+                    .saturating_sub(1)]
+                .1;
+                let response = ui
+                    .push_id(scope, |ui| {
+                        tree_row::show(
                             ui,
                             &self.theme,
                             tree_row::Row {
-                                name: &name,
-                                path,
-                                directory: true,
-                                expanded: !folder.collapsed,
-                                selected: false,
-                                depth: 0,
-                                symlink: false,
+                                name: &node.name,
+                                path: &node.path,
+                                directory,
+                                expanded: node.expanded,
+                                selected: !directory
+                                    && self.active().page.info.path.as_deref() == Some(&node.path),
+                                depth: node.depth,
+                                symlink,
                             },
-                        );
-                        if response.clicked() {
-                            if let Some(root) =
-                                self.workspace.folders.iter_mut().find(|f| f.path == *path)
-                            {
-                                root.collapsed = !root.collapsed;
-                            }
-                            self.changed();
-                        }
-                        response.context_menu(|ui| self.folder_context_menu(ui, path, true));
-                        if self
+                        )
+                    })
+                    .inner;
+                if response.clicked() {
+                    if root {
+                        if let Some(folder) = self
                             .workspace
                             .folders
-                            .iter()
-                            .any(|f| f.path == *path && !f.collapsed)
+                            .iter_mut()
+                            .find(|f| f.path == node.path)
                         {
-                            self.directory_rows(ui, path, 1);
+                            folder.collapsed = !folder.collapsed;
                         }
-                    });
+                        self.project.tree = None;
+                        self.changed();
+                    } else if directory {
+                        if node.expanded {
+                            self.project.expanded.remove(&node.path);
+                        } else {
+                            self.project.expanded.insert(node.path.clone());
+                        }
+                        self.sync_folder_view();
+                    } else {
+                        self.quality.preview_request = !response.double_clicked();
+                        if response.double_clicked() {
+                            self.quality.preview = None;
+                        }
+                        self.pending_paths.push_back(PathBuf::from(&node.path));
+                    }
+                    ui.ctx().request_repaint();
                 }
-            });
+                response.context_menu(|ui| self.folder_context_menu(ui, &node.path, directory));
+            }
+        });
     }
     fn folder_context_menu(&mut self, ui: &mut egui::Ui, path: &str, directory: bool) {
         if directory {
@@ -426,87 +517,6 @@ impl HeditApp {
         }
     }
 
-    fn directory_rows(&mut self, ui: &mut egui::Ui, path: &str, depth: usize) {
-        // A manually expanded symlink cycle must not overflow the UI stack.
-        if depth >= 32 {
-            ui.weak("Folder nesting limit reached.");
-            return;
-        }
-        self.project.request_listing(ui.ctx(), path);
-        let Some(listing) = self.project.listings.get(path).cloned() else {
-            ui.weak("Loading…");
-            return;
-        };
-        let listing = match listing.as_ref() {
-            Ok(listing) => listing,
-            Err(error) => {
-                ui.colored_label(self.theme.warning.color(), error);
-                return;
-            }
-        };
-        if listing.entries.is_empty() {
-            ui.weak("Empty folder");
-        }
-        for entry in &listing.entries {
-            let expanded = self.project.expanded.contains(&entry.path);
-            let selected = self.active().page.info.path.as_deref() == Some(entry.path.as_str());
-            let response = tree_row::show(
-                ui,
-                &self.theme,
-                tree_row::Row {
-                    name: &entry.name,
-                    path: &entry.path,
-                    directory: entry.is_directory,
-                    expanded,
-                    selected,
-                    depth,
-                    symlink: entry.is_symlink,
-                },
-            );
-            if let Some((_, until)) = &self.project.reveal {
-                if Instant::now() > *until {
-                    self.project.reveal = None;
-                }
-            }
-            if self
-                .project
-                .reveal
-                .as_ref()
-                .is_some_and(|(p, _)| *p == entry.path)
-            {
-                response.scroll_to_me(Some(egui::Align::Center));
-                self.project.reveal = None;
-            }
-            if response.clicked() {
-                if entry.is_directory {
-                    if expanded {
-                        self.project.expanded.remove(&entry.path);
-                    } else {
-                        self.project.expanded.insert(entry.path.clone());
-                    }
-                    self.sync_folder_view();
-                } else {
-                    self.quality.preview_request = !response.double_clicked();
-                    if response.double_clicked() {
-                        self.quality.preview = None;
-                    }
-                    self.pending_paths.push_back(PathBuf::from(&entry.path));
-                }
-            }
-            response.context_menu(|ui| {
-                self.folder_context_menu(ui, &entry.path, entry.is_directory);
-            });
-            if entry.is_directory && self.project.expanded.contains(&entry.path) {
-                self.directory_rows(ui, &entry.path, depth + 1);
-            }
-        }
-        if listing.truncated {
-            ui.weak("Showing up to 2,000 entries in this folder.");
-        }
-        if listing.unsupported_names {
-            ui.weak("Some names cannot be displayed as UTF-8.");
-        }
-    }
     pub(super) fn folder_dialog(&mut self, ctx: &egui::Context) {
         let Some(create) = &mut self.project.create else {
             return;
@@ -568,19 +578,10 @@ mod tests {
                 listing: Ok(listing),
             })
             .unwrap();
-        browser
-            .search_tx
-            .send(SearchResult {
-                generation: 0,
-                query: String::new(),
-                result: folder::quick_open(root.path().into(), ""),
-            })
-            .unwrap();
         browser.invalidate();
         browser.poll();
         assert!(browser.listings.is_empty());
         assert!(browser.search.is_none());
-        assert!(!browser.search_pending);
         browser.request_listing(&egui::Context::default(), &path);
         let started = Instant::now();
         while !browser.pending.is_empty() {
@@ -592,16 +593,128 @@ mod tests {
     }
 
     #[test]
-    fn changing_back_to_a_previous_query_starts_a_fresh_scan() {
-        let root = tempfile::tempdir().unwrap();
+    fn stale_listing_requests_still_count_against_the_physical_worker_limit() {
         let mut browser = ProjectBrowser::new(&[]);
-        browser.search_query = Some("first".into());
-        browser.search_requested = "second".into();
-        browser.search(&egui::Context::default(), &[root.path().into()], "first");
-        assert!(browser.search_query.is_none());
-        browser.search_changed = Instant::now() - Duration::from_secs(1);
-        browser.search(&egui::Context::default(), &[root.path().into()], "first");
-        assert!(browser.search_pending);
+        browser.active_listings = 4;
+        browser.invalidate();
+        browser.request_listing(&egui::Context::default(), "/new");
+        assert!(browser.pending.is_empty());
+        assert_eq!(browser.active_listings, 4);
+        browser
+            .tx
+            .send(ListingResult {
+                generation: 0,
+                path: "/old".into(),
+                listing: Err("cancelled".into()),
+            })
+            .unwrap();
+        browser.poll();
+        assert_eq!(browser.active_listings, 3);
+        assert!(browser.listings.is_empty());
+    }
+
+    #[test]
+    fn directory_cache_rejects_metadata_over_its_budget() {
+        let mut browser = ProjectBrowser::new(&[]);
+        browser
+            .tx
+            .send(ListingResult {
+                generation: 0,
+                path: "/huge".into(),
+                listing: Err("x".repeat(16 * 1024 * 1024)),
+            })
+            .unwrap();
+        browser.poll();
+        assert!(browser.listing_limited);
+        assert!(browser.listings.is_empty());
+        browser.invalidate();
+        assert!(!browser.listing_limited);
+    }
+
+    #[test]
+    // The native AccessKit bridge is enabled only in the macOS build.
+    #[cfg(target_os = "macos")]
+    fn sidebar_only_registers_visible_rows_and_can_reveal_the_last_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        app.settings.show_folders = true;
+        app.workspace.folders.push(FolderView {
+            path: "/root".into(),
+            visible: true,
+            collapsed: false,
+            expanded: vec![],
+        });
+        app.project.listings.insert(
+            "/root".into(),
+            Arc::new(Ok(FolderListing {
+                path: "/root".into(),
+                name: "root".into(),
+                truncated: false,
+                unsupported_names: false,
+                entries: (0..2000)
+                    .map(|i| folder::FolderEntry {
+                        name: format!("source_{i:04}.rs"),
+                        path: format!("/root/source_{i:04}.rs"),
+                        is_directory: false,
+                        is_symlink: false,
+                    })
+                    .collect(),
+            })),
+        );
+        let render = |app: &mut HeditApp| {
+            ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(300.0, 300.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        app.folder_tree(ui);
+                    });
+                },
+            )
+        };
+        render(&mut app);
+        let output = render(&mut app);
+        let nodes = output.platform_output.accesskit_update.unwrap().nodes;
+        let files: Vec<_> = nodes
+            .iter()
+            .filter_map(|(_, n)| n.label())
+            .filter(|n| n.starts_with("source_"))
+            .collect();
+        assert!(files.len() < 20, "registered {} file widgets", files.len());
+        assert!(files.contains(&"source_0000.rs"));
+        assert!(!files.contains(&"source_1999.rs"));
+        app.project.reveal = Some((
+            "/root/source_1999.rs".into(),
+            Instant::now() + Duration::from_secs(2),
+        ));
+        render(&mut app);
+        let output = render(&mut app);
+        assert!(output
+            .platform_output
+            .accesskit_update
+            .unwrap()
+            .nodes
+            .iter()
+            .any(|(_, n)| n.label() == Some("source_1999.rs")));
+        assert!(app.project.reveal.is_none());
+        app.workspace.folders[0].collapsed = true;
+        let output = render(&mut app);
+        assert!(!output
+            .platform_output
+            .accesskit_update
+            .unwrap()
+            .nodes
+            .iter()
+            .any(|(_, n)| n.label().is_some_and(|l| l.starts_with("source_"))));
     }
 
     #[test]
@@ -672,7 +785,7 @@ mod tests {
             }],
         );
         let started = Instant::now();
-        while app.busy || !app.pending_paths.is_empty() {
+        while app.busy || app.opens.pending() || !app.pending_paths.is_empty() {
             app.receive(&ctx);
             assert!(started.elapsed() < Duration::from_secs(5));
             thread::sleep(Duration::from_millis(5));
@@ -684,5 +797,63 @@ mod tests {
             ""
         );
         assert_eq!(app.active().page.text, "");
+    }
+}
+
+#[cfg(test)]
+mod performance {
+    use super::*;
+    use crate::app::tests::frame;
+    #[test]
+    #[ignore = "manual CPU profile for a large expanded folder sidebar"]
+    fn profile_large_folder_sidebar() {
+        let directory = tempfile::tempdir().unwrap();
+        let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        app.settings.show_sidebar = true;
+        app.settings.show_folders = true;
+        for n in 0..5 {
+            let root = directory.path().join(format!("root-{n}"));
+            let path = root.to_string_lossy().into_owned();
+            app.workspace.folders.push(FolderView {
+                path: path.clone(),
+                visible: true,
+                expanded: vec![],
+                collapsed: false,
+            });
+            let entries = (0..2000)
+                .map(|i| folder::FolderEntry {
+                    name: format!("source_{i:04}.rs"),
+                    path: root
+                        .join(format!("source_{i:04}.rs"))
+                        .to_string_lossy()
+                        .into_owned(),
+                    is_directory: false,
+                    is_symlink: false,
+                })
+                .collect();
+            app.project.listings.insert(
+                path.clone(),
+                Arc::new(Ok(FolderListing {
+                    name: format!("root-{n}"),
+                    path,
+                    entries,
+                    truncated: false,
+                    unsupported_names: false,
+                })),
+            );
+        }
+        for _ in 0..3 {
+            frame(&ctx, &mut app, vec![]);
+        }
+        let start = Instant::now();
+        for _ in 0..30 {
+            frame(&ctx, &mut app, vec![]);
+        }
+        eprintln!(
+            "Expanded sidebar with 10000 files: {:.2} ms/frame (30 warm CPU frames)",
+            start.elapsed().as_secs_f64() * 1000.0 / 30.0
+        );
     }
 }

@@ -765,7 +765,7 @@ fn escape_keeps_typing_in_the_editor() {
 /// Run frames until the background word index is ready.
 fn wait_for_index(ctx: &egui::Context, app: &mut HeditApp) {
     let started = Instant::now();
-    app.auto.wanted = true;
+    app.prepare_completion_index(ctx);
     frame(ctx, app, vec![]);
     while app.auto.building.is_some() {
         assert!(started.elapsed() < Duration::from_secs(5));
@@ -852,6 +852,9 @@ fn profile_completion_typing() {
     wait_for_index(&ctx, &mut app);
     for (label, auto) in [("off", false), ("on", true)] {
         app.settings.auto_complete = auto;
+        if auto {
+            wait_for_index(&ctx, &mut app);
+        }
         let start = Instant::now();
         for c in "value_12".chars() {
             frame(&ctx, &mut app, vec![egui::Event::Text(c.into())]);
@@ -1290,7 +1293,7 @@ fn undo_replacements_leaves_files_edited_since_alone() {
     app.set_selections(vec![hedit::advanced::Selection::caret(0)]);
     type_text(&ctx, &mut app, "x");
     app.undo_folder_replacements(&ctx);
-    while app.busy {
+    while app.busy || app.opens.pending() {
         app.receive(&ctx);
         thread::sleep(Duration::from_millis(5));
     }
@@ -2064,5 +2067,34 @@ fn indented_and_history_pastes_preserve_the_target_line_endings_and_undo() {
             finish_app_job(&mut app, &ctx);
             assert_eq!(app.active().page.text, original);
         }
+    }
+}
+
+#[test]
+#[ignore = "manual release CPU frame distribution; not native input-to-screen latency"]
+fn profile_typing_positions() {
+    let source: String = (0..40_000)
+        .map(|i| format!("let value_{i} = compute_{}(item);\n", i % 997))
+        .collect();
+    let (_directory, ctx, mut app) = app_with(&source);
+    app.settings.auto_complete = false;
+    for (label, fraction) in [("start", 0), ("middle", 2), ("end", 1)] {
+        let mut samples = Vec::new();
+        for _ in 0..64 {
+            let length = app.active().page.text.chars().count();
+            let position = length.checked_div(fraction).unwrap_or(0);
+            app.set_selections(vec![hedit::advanced::Selection::caret(position)]);
+            let start = Instant::now();
+            frame(&ctx, &mut app, vec![egui::Event::Text("x".into())]);
+            samples.push(start.elapsed().as_secs_f64() * 1000.0);
+        }
+        samples.sort_by(f64::total_cmp);
+        eprintln!(
+            "Typing at {label} in {} bytes, 64 CPU frames: p50={:.2}ms p95={:.2}ms p99={:.2}ms",
+            source.len(),
+            samples[31],
+            samples[60],
+            samples[63]
+        );
     }
 }

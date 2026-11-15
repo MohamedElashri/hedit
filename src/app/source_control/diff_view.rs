@@ -289,7 +289,7 @@ impl HeditApp {
             .source_control
             .root
             .as_ref()
-            .map(|root| root.join(path));
+            .map(|root| hedit::remote::join(root, path));
         let buffer = absolute.as_deref().and_then(|path| {
             self.workspace
                 .open

@@ -78,13 +78,17 @@ def package(arm64, intel, output, identity='-'):
                 subprocess.run(['sips', '-z', pixels, pixels, str(icon), '--out', str(target)], check=True,
                                stdout=subprocess.DEVNULL)
         subprocess.run(['iconutil', '-c', 'icns', str(iconset), '-o', str(resources / 'hedit.icns')], check=True)
-        for directory in ['themes', 'examples']:
-            shutil.copytree(ROOT / directory, resources / directory)
+        shutil.copytree(ROOT / 'themes', resources / 'themes')
+        shutil.copytree(ROOT / 'examples/cuda', resources / 'examples/cuda')
         docs = resources / 'Documentation'
         docs.mkdir()
-        for filename in ['README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md', 'LICENSE']:
+        for filename in ['README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md', 'CHANGELOG.md', 'LICENSE']:
             shutil.copy2(ROOT / filename, docs / filename)
-        shutil.copytree(ROOT / 'assets', docs / 'assets')
+        for directory in ['assets', 'docs/images']:
+            shutil.copytree(ROOT / directory, docs / directory)
+        for relative in ['vendor/egui_commonmark/PATCH.md', 'vendor/libghostty-vt-sys/PATCH.md']:
+            (docs / relative).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / relative, docs / relative)
         signing = ['codesign', '--force', '--sign', identity]
         if identity != '-':
             signing += ['--options', 'runtime', '--timestamp']

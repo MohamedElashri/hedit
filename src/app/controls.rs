@@ -267,7 +267,8 @@ pub(super) fn tab_close_button(ui: &mut egui::Ui, dirty: bool) -> egui::Response
 fn close_control(ui: &mut egui::Ui, hint: &str, dirty: bool) -> egui::Response {
     let side = 22.0;
     let (rect, response) = ui.allocate_exact_size(egui::vec2(side, side), egui::Sense::click());
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Close"));
+    response
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), hint));
     if ui.is_rect_visible(rect) {
         let visuals = ui.style().interact(&response);
         if response.hovered() || response.has_focus() {

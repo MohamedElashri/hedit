@@ -3,6 +3,7 @@
 import hashlib
 import importlib.util
 from pathlib import Path
+import shutil
 import struct
 import subprocess
 import tempfile
@@ -40,18 +41,34 @@ class WindowsPackage(unittest.TestCase):
             root = Path(work)
             binary = root / 'hedit.exe'
             binary.write_bytes(self.pe())
-            archive = packager.package(binary, root / 'out')
+            project = root / 'source'
+            project.mkdir()
+            for filename in ['Cargo.toml', 'README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md', 'CHANGELOG.md', 'LICENSE']:
+                shutil.copy2(packager.ROOT / filename, project / filename)
+            for directory in ['assets', 'themes', 'docs/images', 'examples/cuda']:
+                shutil.copytree(packager.ROOT / directory, project / directory)
+            for relative in ['vendor/egui_commonmark/PATCH.md', 'vendor/libghostty-vt-sys/PATCH.md']:
+                (project / relative).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(packager.ROOT / relative, project / relative)
+            (project / 'examples/development_probe.rs').write_text('not a release resource')
+            with patch.object(packager, 'ROOT', project):
+                archive = packager.package(binary, root / 'out')
             self.assertEqual(archive.name, f'hedit-{packager.version()}-windows-x86_64.zip')
             prefix = archive.stem + '/'
             with zipfile.ZipFile(archive) as bundle:
                 self.assertEqual(bundle.read(prefix + 'hedit.exe'), binary.read_bytes())
-                for relative in ['README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md', 'LICENSE',
+                for relative in ['README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md', 'CHANGELOG.md', 'LICENSE',
                                  'themes/hedit-ink.json', 'assets/hedit.svg',
                                  'assets/dictionaries/en_US-LICENSE.txt', 'assets/licenses/egui_commonmark-MIT.txt',
                                  'examples/cuda/vector_add.cu']:
                     self.assertEqual(bundle.read(prefix + relative), (packager.ROOT / relative).read_bytes())
+                for relative in ['vendor/egui_commonmark/PATCH.md', 'vendor/libghostty-vt-sys/PATCH.md'] + [path.relative_to(packager.ROOT).as_posix() for path in (packager.ROOT / 'docs/images').glob('*') if path.is_file()]:
+                    self.assertEqual(bundle.read(prefix + relative), (packager.ROOT / relative).read_bytes())
                 self.assertTrue(all(name.startswith(prefix) and '\\' not in name for name in bundle.namelist()))
                 self.assertNotIn(prefix + 'install.sh', bundle.namelist())
+                examples = {name[len(prefix):] for name in bundle.namelist()
+                            if name.startswith(prefix + 'examples/')}
+                self.assertEqual(examples, {'examples/cuda/vector_add.cu'})
             checksum = archive.with_name(archive.name + '.sha256').read_bytes()
             digest = hashlib.sha256(archive.read_bytes()).hexdigest()
             self.assertEqual(checksum, f'{digest}  {archive.name}\n'.encode())

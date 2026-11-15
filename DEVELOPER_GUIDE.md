@@ -1,508 +1,242 @@
 # hedit developer guide
 
-Build, test, and release hedit. For using it, see the [user guide](USER_GUIDE.md).
-
-- [Build and install](#build-and-install)
-- [Checks](#checks)
-- [macOS builds](#macos-builds)
-- [Windows builds](#windows-builds)
-- [Code map](#code-map)
-- [Terminal development](#terminal-development)
-- [Rules to keep](#rules-to-keep)
-- [Themes and branding](#themes-and-branding)
-- [Packaging and releases](#packaging-and-releases)
-- [Provenance and license](#provenance-and-license)
+Build, test, and release hedit. Features and shortcuts live in the
+[user guide](USER_GUIDE.md), which is also bundled as offline help.
 
 ## Build and install
 
-You need Rust 1.99 or newer, GNU Make, a C compiler (for the bundled Oniguruma
-regex engine), and Python 3.11 or newer for the development scripts. CI uses
-Rust 1.99.1 and Python 3.12. X11, Wayland, and OpenGL libraries load at run time,
-so their development packages are not needed. Keep the project free of Node.js,
-npm, and web frontends.
-
-Default builds include the integrated terminal, which remains disabled in user
-settings until enabled. Its pinned Ghostty VT source requires Zig 0.15.2 and Git.
-Cargo and Make builds select the matching compiler automatically. If it is
-absent or the system compiler has a different version, Python with pip installs
-an isolated copy under `target/ghostty-toolchain`; system packages stay unchanged.
-CI prepares the same toolchain with `python scripts/setup-zig.py`.
-On GitHub Actions the compiler lives under `RUNNER_TEMP`, outside Cargo's target
-cache, so restoring that cache cannot prune the Zig executable.
-On macOS, the build also handles SDKs that expose the system library through
-ARM64e entries that Zig 0.15.2 cannot resolve. `scripts/run-zig.py` creates an SDK
-view in Cargo's build directory with Zig's bundled system-library definitions;
-headers and frameworks still come from the selected Apple SDK. This applies only
-to the Zig subprocess and leaves the installed SDK unchanged. The same view
-supplies fallback math macros when the SDK expects a newer Clang header protocol.
-Set `ZIG` to an existing compiler executable of the required version for offline
-builds, or `PYTHON` to select a Python interpreter for automatic setup. An
-explicit `ZIG` with the wrong version fails with an actionable error. Cargo builds
-Ghostty's VT library as a static archive, so users do not need Ghostty or Zig
-installed. The first build downloads the pinned Ghostty source and Zig packages.
-For offline packaging, provide `GHOSTTY_SOURCE_DIR` and
-`GHOSTTY_ZIG_SYSTEM_DIR` as described in the
-[bindings build instructions](https://github.com/Uzaaft/libghostty-rs#building).
-Use `cargo build --locked --no-default-features` for a build without the
-terminal or the Zig dependency. Its settings page explains that terminal support
-is unavailable. Run `cargo test --locked --no-default-features` to check that build.
+Requirements: Rust 1.99+, C compiler, Git, GNU Make, Python 3.11+. CI pins
+Rust 1.99.1 and Python 3.12. Linux needs X11/Wayland and OpenGL at runtime,
+without their development headers. The UI is native Rust; no webview or Node.js.
 
 ```sh
-sudo apt-get install build-essential   # Debian/Ubuntu
-make dev                               # debug build
+make dev
 make run ARGS='--session-dir /tmp/hedit-dev'
-make build                             # release build
-make install                           # into ~/.local; set PREFIX to change it
-make install DESTDIR=/tmp/stage PREFIX=/usr   # staged, to inspect the layout
+make build
+make install                         # ~/.local; override PREFIX or DESTDIR
+cargo build --locked --no-default-features  # omit terminal and Zig
+cargo build --release --locked -p hedit-remote
 ```
 
-Every launch, including `make run`, re-executes itself detached from the
-terminal and returns once the window is up; later errors go to `hedit.log` in the
-session directory. Linux is the validated platform. macOS and Windows have
-native CI build and test jobs; hands-on GUI validation is pending on both.
+Default builds include the opt-in terminal. Ghostty needs Zig 0.15.2; Cargo finds
+it or installs an isolated copy under `target/ghostty-toolchain` (`RUNNER_TEMP` in
+CI). Override with `ZIG` or select the setup interpreter with `PYTHON`. First setup
+needs network access and pip. Offline builds can supply `GHOSTTY_SOURCE_DIR` and
+`GHOSTTY_ZIG_SYSTEM_DIR`; see the [bindings build instructions](https://github.com/Uzaaft/libghostty-rs#building).
+
+Launches detach after window readiness; later errors go to the session's
+`hedit.log`. Isolate GUI tests with a fresh session and temporary XDG
+config/data/cache/state roots.
 
 ## Checks
 
-Run `make ci` before committing. It checks formatting, Clippy with warnings
-denied, the native-only policy, documentation links, script syntax, Rust tests,
-and the offline release, installer, and package tests, then builds and
-smoke-tests a Linux release package.
+Run **`make ci`** before merging: formatting, strict Clippy, docs/native policy,
+Rust/script tests, and Linux release package/install smoke checks.
 
-| Command | Purpose |
+| Command | Scope |
 | --- | --- |
-| `make static` | Formatting, policy, docs, and script checks; no compiling |
-| `make lint` | `make static`, then Clippy |
-| `make test` | Rust tests plus Zig setup, release metadata, installer, macOS, and Windows package tests |
-| `make test-macos` | The tests that apply on macOS (the CI macOS job) |
-| `make check` | Lint and tests, without a release build |
-| `make package` / `make smoke` | Build a release package under `dist/` / install it in a temporary prefix and run it |
-| `make release-check RELEASE_TAG=vX.Y.Z` | Check the tag, package version, and dated changelog entry |
-| `make help` | Every target and variable (`CARGO`, `PYTHON`, `PREFIX`, `DESTDIR`, `ARGS`) |
+| `make static` / `make lint` | Formatting, docs, policy, script syntax; lint adds workspace Clippy |
+| `make test` | Workspace, patched renderer, installer/package tests |
+| `make test-renderer` | Patched egui/epaint tests |
+| `make test-remote` | Headless helper and recovery tests |
+| `make test-remote-live` | Disposable SSH, crashes, reconnects; requires `sshd` |
+| `cargo test --locked --no-default-features` | Without terminal support |
+| `make test-macos` | macOS-applicable tests |
+| `make workflow-lint` | Actions checks; requires `actionlint` |
+| `make help` | Targets and overrides |
 
-Tests run in temporary directories and never touch your session. Some are
-ignored by default because they write files or measure time:
-
-```sh
-# Layout previews as SVG (system fonts stand in for egui's)
-HEDIT_PREVIEW_DIR=/tmp/previews cargo test --locked --bin hedit export_theme_previews -- --ignored
-
-# The README screenshots, rendered in software at 2x
-HEDIT_PREVIEW_DIR=/tmp/shots cargo test --locked --release --bin hedit export_readme_screenshots -- --ignored
-for theme in dark light; do
-    python3 scripts/ppm-to-png.py /tmp/shots/screenshot-$theme.ppm docs/images/screenshot-$theme.png
-done
-
-# CPU timings for the syntax menu and for typing with completions on
-cargo test --locked --release --bin hedit profile_ -- --ignored --nocapture
-```
-
-The offline User Guide renders the repository's Markdown with the same native
-renderer as file previews. Edit the source documents directly; do not keep a
-second copy of their text in UI code. Rebuild the executable after documentation
-changes. Add linked local documents to the bundled allowlist in
-`app/user_guide.rs`; the reader never resolves links against the user's disk.
-Internal links and Contents stay in the modal, and only explicit external-link
-clicks open a browser. Keep Help, About, F1, the command palette, and key bindings
-routed through `Command::UserGuide`.
-
-Markdown preparation retains an owned `PreparedMarkdown` event stream and a
-bounded document tree per revision, using the renderer's re-exported parser types.
-The native layout follows [VS Code's Markdown preview stylesheet](https://github.com/microsoft/vscode/blob/main/extensions/markdown-language-features/media/markdown.css):
-14px body text at the default zoom, 1.6 line spacing, 26px horizontal padding,
-explicit block margins, intrinsic table columns, and simple quote rules.
-`parsers/document.rs` owns block geometry; `parsers/inline.rs` owns continuous
-native text layout, selection, links, and baseline-aware media. Keep these
-responsibilities separate so nested blocks cannot leak state into later content.
-Split-divider ratios are scoped to document, editor group, and orientation in
-native UI session data. Clamp both panes when the window changes size, keep the
-divider keyboard focusable, and preserve source/preview clipping and scroll sync.
-Code fences grow vertically with the document and scroll only horizontally;
-their Copy control overlays the frame on hover or keyboard focus. Index original source
-spans for headings, Contents, and block-level split scrolling; do not insert
-marker HTML or synthetic paragraphs into the source. Large revisions prepare
-on a worker, and stale replies cannot replace a newer revision. Inline math
-must reserve its ascent and descent before drawing text in the same flow.
-Keep the TeX baseline separate from the SVG bounds and the reading font size
-separate from line height. Wide figures use tiled GPU textures at their original
-logical size, since the pixel budget alone does not bound a texture's longest
-side. Review light, dark, and compact output when changing reader layout:
+Ignored tests are profiles, native checks, or preview exports; read their ignore
+reasons. Keep timing runs separate from builds/heavy I/O. Headless frame timings
+are not display latency. To reproduce the CPU profiles for 1/100/1,000 tabs,
+40,000-line documents, long lines, selections, and split panes:
 
 ```sh
-HEDIT_PREVIEW_DIR=/tmp/hedit-reader cargo test --locked --bin hedit export_markdown_reader_previews -- --ignored
-# Inline code, wrapping tables, nested styles, and compact split panes
-HEDIT_PREVIEW_DIR=/tmp/hedit-layout cargo test --locked --bin hedit export_markdown_layout_previews -- --ignored
-# Document typography, tables, alerts, code, and source/preview layouts
-HEDIT_PREVIEW_DIR=/tmp/hedit-document cargo test --locked --bin hedit export_markdown_document_previews -- --ignored
+cargo test --locked --release --bin hedit profile_workspace_interaction -- --ignored --nocapture --test-threads=1
 ```
+
+Record the date, hardware, OS, toolchain, and build alongside results. Report these as warm
+CPU frame measurements; use the native diagnostics below for CPU/GPU traces.
+
+### Screenshots
+
+On Linux/macOS, install OpenSSH server/client/keygen and FFmpeg, then run:
+
+```sh
+python3 scripts/export-readme.py --work-dir /private/disk/hedit-images
+```
+
+Use a private fixture parent on a supported durable filesystem, as for the live
+SSH tests below; `HEDIT_REMOTE_LIVE_DIR` also selects it. `CARGO` can select a
+toolchain, and `--output-dir` previews outside `docs/images/`. The script builds
+the helper and terminal-enabled editor tests, starts a loopback-only SSH server
+with disposable keys, exports the gallery, and removes the SSH fixture.
+
+Images render real app frames from an Atlas sample project. Recovery actually
+drops the app, restores its session, and reopens a closed unsaved note. SSH uses
+host durability receipts and ephemeral documents. Keep these assertions and
+inspect all exported images, the animation, and the README layout. Keep personal
+paths and workspace content out of fixtures.
+
+### Native frame diagnostics
+
+Set `HEDIT_NATIVE_TRACE_FILE` to an absolute private path in an isolated editor;
+`scripts/summarize-native-trace.py FILE` groups the numeric samples by input type.
+Tracing is opt-in, bounded, asynchronous, and excludes keys, text, paths,
+clipboard, terminal output, and SSH diagnostics. GPU drawing excludes presentation
+and display latency. Keep collection/file I/O off the UI thread.
+
+## Code map
+
+| Area | Location |
+| --- | --- |
+| Shared document/filesystem/search/Git/build engine | `crates/hedit-core/` |
+| SSH transport, worker, journal, path isolation | `crates/hedit-remote/` |
+| Sessions, settings, syntax, editing, updates | `src/` |
+| Native frame loop and feature panels | `src/app.rs`, `src/app/` |
+| Integration tests and SSH workspace driver | `tests/`, `tests/support/` |
+| Renderer patches and Ghostty build integration | `vendor/` |
+| Packaging/installers/toolchain setup | `scripts/`, `packaging/` |
+
+The editor re-exports engine modules; the helper does not link the GUI. Commands
+share `Command` in `src/app/commands.rs`: add labels, availability, execution, and
+input dispatch together. Register new dialogs in `opens_window` and `Overlay`
+for consistent focus/Escape. Help resolves only explicitly bundled documents.
+
+## Rules to keep
+
+- **Preserve text.** Test failed saves/checkpoints and recovery; keep corrupt or
+  ambiguous data for inspection. Publish saved state only after durable file
+  replacement and parent-directory sync.
+- Keep storage/scans/process work off the UI thread. Bound queues/caches/snapshots
+  and reject results after relevant document, revision, selection, pane, or
+  project changes. Layout indexes stay in memory.
+- Preserve Unicode, CRLF, RTL selection, wrap affinity, and pane focus. Compare
+  optimized layout/cursor/mesh paths against reference behavior.
+- Terminals stay opt-in; hidden tabs drain output, disabling/quitting ends shells.
+  Shell input wins over editor shortcuts; RTL display preserves logical copying.
+- Keep Markdown native/bounded, with guarded local media, no automatic network
+  loads, source spans, accessible links, and shared selection/layout geometry.
+- Document dependency patches/licenses. Ghostty's wrapper changes only a
+  build-local SDK view, never installed Apple tools. Changes to compiler selection
+  or wrappers require `scripts/test-zig-setup.py` and `scripts/test-run-zig.py`.
+
+## SSH architecture and testing
+
+[User setup and limits](USER_GUIDE.md#ssh-remote-workspaces). Each connection owns
+a native window. Remote documents are memory-backed/ephemeral; local recovery
+rejects them and launch metadata excludes content/tool output. Recovery, undo,
+and workspace metadata belong to the host.
+
+Keep pinned host keys, direct connections, explicit execution trust, and
+reconnect trust reset. No forwarding, multiplexed connection reuse, credentials,
+or workspace-provided SSH configuration. Validate paths with descriptor-relative,
+no-symlink operations; remote identities never grant local filesystem access.
+
+Writer epochs fence old clients; receipts bind session, sequence, and revision.
+Replay deduplicates committed edits. Preserve pending edits across disconnects;
+fail closed on conflicts/quotas. Never blindly retry uncertain saves/mutations.
+UI metadata checkpoints must not wait on a document mutex held by an SSH job.
+
+The live harness uses disposable keys, private state, pinned loopback hosts, and
+`tests/support/remote_workspace_probe.rs`. Test drivers never ship. Fault helpers
+use a separate target directory and refuse release builds.
+
+```sh
+make test-remote-live
+HEDIT_REMOTE_LIVE_DIR=/private/disk/hedit-tests make test-remote-live
+```
+
+Default fixtures use `target/rl`. Choose a short, durable filesystem path:
+ext-family/XFS/btrfs/ZFS on Linux, APFS on macOS; `/tmp` only if disk-backed.
+Mutable ancestors require safe ownership/permissions; writable shared ancestors
+need the sticky bit. A private child cannot fix an unsafe checkout. Do not weaken
+production checks or change shared permissions to make fixtures pass.
+
+Real-host tests use selected non-root accounts, private temporary workspaces,
+pinned keys, and agent authentication. Stop only test-owned jobs; remove their
+state/locks afterwards. Agent approval must complete within startup's 15 seconds.
+Durable-RPC timings include host commits and network trips, not display latency.
+
+## Linux release packages
+
+On Ubuntu 24.04, install `rpm`, `dpkg-dev`, `desktop-file-utils`, `cpio`, `file`, and the
+X11/Wayland client libraries. Run `python3 scripts/setup-appimage.py`, then
+`make linux-packages`. Tools and the AppImage runtime are checksum-pinned; no
+FUSE is required to build. `make package smoke` still checks the tarball alone.
+
+`make smoke-linux-packages` checks metadata, payloads, checksums, AppImage
+extraction/launch, and container install/upgrade/removal on Ubuntu and Fedora
+(requires Docker). Release CI runs this on both native Linux architectures before
+uploading any packages. AppImages bundle display clients and their license notices;
+glibc and GPU drivers come from the host. Managed packages disable in-app replacement.
 
 ## macOS builds
 
-Releases ship one `hedit-X.Y.Z-macos-universal.zip` with an Apple Silicon and
-Intel `hedit.app` (macOS 11 or newer). On a Mac with Xcode's command-line tools:
+Install Xcode command-line tools, then:
 
 ```sh
 rustup target add aarch64-apple-darwin x86_64-apple-darwin
+make test-macos
 make macos
 ```
 
-`scripts/package-macos.py` joins the two builds with `lipo`, writes Info.plist
-and the icon, copies themes and guides, signs, verifies, and zips the app. The
-signature is ad hoc; pass `--identity 'Developer ID Application: …'` to sign
-with a Developer ID. Notarization is not automated.
-
-On macOS, run `make test-macos` instead of `make ci`: Linux packaging checks need
-GNU tools. Native updater tests exercise signed app ZIPs, bundle swaps, and rollback.
-Local CUDA tools are hidden on macOS. Before calling Mac support stable, check
-Open/Save As, the clipboard, Retina rendering, Cmd+Q with recovery, Finder
-document events, external changes, and saves on APFS on a clean Mac.
+The universal app targets macOS 11+. Packaging verifies both slices/resources,
+signs, verifies, and checksums the ZIP. Default signing is ad hoc, not notarized;
+`--identity` on `scripts/package-macos.py` selects a Developer ID. CI checks the
+shipped executable/signature; desktop checks cover clipboard, scaling,
+accessibility, dialogs, and windows.
 
 ## Windows builds
 
-Use the x86-64 MSVC Rust toolchain and Visual Studio Build Tools with **Desktop
-development with C++** and a Windows SDK. Python 3.11 or newer runs the packaging
-scripts; GNU Make is optional. From PowerShell:
+Use x86-64 MSVC Rust and Visual Studio C++ tools for Windows 10+ with OpenGL:
 
 ```powershell
-rustup default stable-x86_64-pc-windows-msvc
-cargo clippy --locked --all-targets -- -D warnings
-cargo test --locked --no-fail-fast
-python scripts/test-release.py
-python scripts/test-windows-package.py
-$env:RUSTFLAGS = '-C target-feature=+crt-static'
 cargo build --release --locked
 python scripts/package-windows.py --smoke
 ```
 
-The ZIP and SHA-256 file appear in `dist/`. The package includes `hedit.exe`,
-guides, license notices, themes, and examples. Static CRT linking keeps the C
-runtime inside the executable. The smoke check extracts to a path containing
-spaces, verifies the checksum and resources, and runs `--version` and `--help`.
-CI uses the same commands on `windows-2025` and publishes a Windows artifact on
-each push. Tagged releases include it alongside the Linux and macOS packages.
-
-Build systems use `cmd.exe /D /S /C` on Windows, with Cancel stopping the process
-tree through `taskkill`; Unix platforms use `sh`. Write custom `shell_cmd` values
-using the platform's shell syntax. The Python build uses `python` on Windows.
-CUDA source editing works, while the local CUDA tool panel remains Linux-only.
-Windows upgrades replace the portable folder; in-app updates support Linux and macOS.
-
-Before calling Windows support stable, validate file dialogs, clipboard,
-high-DPI rendering, window close/recovery, non-ASCII paths, file replacement on
-NTFS, and opening files from Explorer on a clean Windows desktop.
-
-## Code map
-
-The library (`src/*.rs`) holds editing logic with no UI; the app (`src/app/`)
-draws the window and turns input into library calls. Logic that can be tested
-without a window belongs in the library, with tests under `tests/`.
-
-| Area | Files |
-| --- | --- |
-| Documents, sessions, recovery | `document.rs` (piece table, pages, saves, undo), `workspace.rs`, `session.rs`, `text_encoding.rs` |
-| Editing | `advanced.rs` (selections, folding, display projection), `editing.rs`, `text_commands.rs`, `completion.rs`, `intelligence.rs` (symbols, snippets, definitions, Git), `spelling.rs`, `bidi.rs` |
-| Source Control | `git.rs` (bounded Git processes, status/diff/history parsing, index/worktree operations); `app/source_control.rs` (native sidebar, review workspace, background state) |
-| Search and folders | `search.rs` (search, guarded replacement), `folder.rs` (listings, fuzzy matching), `projects.rs` (projects, EditorConfig) |
-| Header/implementation switching | `counterpart.rs` (same-stem matches, sibling priority, project search); `app/counterpart.rs` (background request, stale-reply guard, picker); `tests/counterpart.rs` and `app/counterpart_tests.rs` |
-| File references | `file_reference.rs` (quoted/bare paths and existing-file resolution); `app/file_reference.rs` (background resolution and picker); `tests/file_reference.rs` and `app/file_reference_tests.rs` |
-| HTML/XML selection | `markup.rs` (balanced elements and Unicode selection ranges); `app/markup_selection.rs` (worker request); `tests/markup.rs` and `app/markup_selection_tests.rs`; results require the same view, revision, and selections |
-| Syntax and look | `syntax.rs`, `syntax/` (grammars, lexer, keywords), `theme.rs`, `fonts.rs`, `brand.rs` |
-| Process and updates | `cli.rs`, `launcher.rs`, `ipc.rs`, `windows.rs`, `update.rs`, `update/`, `build.rs`, `debugger.rs` |
-| Window | `app.rs` (frame loop, shortcuts, editor drawing), `app/chrome.rs` (menus, tabs, sidebar, status bar), `app/commands.rs` (every command, the palette) |
-| Launch activation | `activation.rs` (one-shot presentation, Wayland activation tokens and a nonblocking native protocol binding); `main.rs`, `ipc.rs`, `app/quality.rs` (launch and existing-session handoff) |
-| App features | One file each in `src/app/`, named after the feature: `auto_complete.rs`, `definitions.rs`, `spell_check.rs`, `macros.rs`, `snippet_fields.rs`, `find_tools.rs`, `changes.rs`, `fold_gutter.rs`, `font_picker.rs`, and so on |
-| Integrated terminal | `terminal.rs` (Ghostty VT and bounded PTY IO); `app/terminal_panel.rs` (tab lifecycle, onboarding, input focus); `app/terminal_tabs.rs` (compact tab strip, reordering, menus); `app/terminal_text.rs` (bidirectional cells and cached Rustybuzz/ab_glyph output); `app/terminal_tests.rs` (UI regression tests) |
-| Markdown | `app/markdown.rs` (source/preview layout, background preparation, contents, links, local images), `app/markdown_scroll.rs` (bidirectional split scrolling), `app/markdown_style.rs` (shared document padding, fonts, contrast, and cached native code blocks), `app/markdown_media.rs` (equation baselines and cached native math/Mermaid rendering), `app/markdown_tests.rs`, `app/markdown_reader_tests.rs`, `app/markdown_document_tests.rs`, `app/markdown_pane_tests.rs`; per-tab modes are stored in `session.rs` |
-| Offline help | `app/user_guide.rs` embeds `USER_GUIDE.md`, related documentation, and notices with `include_str!`; `app/user_guide/tests.rs` covers links, modal input, and layout |
-| Settings | `settings.rs` (the `settings.json` schema), `app/settings_store.rs`, `app/preferences.rs`, `app/settings_pages.rs` |
-
-Every menu item, shortcut, and palette entry goes through `Command` in
-`app/commands.rs`, so availability and behavior stay the same everywhere. A new
-command needs a variant in `Command::ALL`, a label, an `execute` arm, and a
-`command_enabled` arm when availability depends on state. Add default shortcuts
-to both the displayed binding and input dispatch. New dialogs also need
-`opens_window` and `Overlay` entries so focus, Escape, and transient-window
-replacement behave consistently.
-
-## Terminal development
-
-The Cargo `terminal` feature is enabled in default builds; the user setting
-`terminal_enabled` defaults to `false`. Onboarding and settings only record the
-choice. Spawn a shell only when the user opens the panel or creates a tab.
-Older settings files skip onboarding and remain opted out. Disabling the feature
-or quitting drops every session; hiding the panel keeps sessions alive. Terminal
-tabs and scrollback are not part of editor session recovery.
-
-Each tab owns a Ghostty VT instance on the UI thread and a `portable-pty` shell.
-Reader and writer workers use bounded queues; poll inactive and hidden tabs too,
-so output cannot stall their shells. Keep process termination and reaping off the
-UI thread. Stable tab IDs preserve the active shell when tabs are reordered.
-
-Route focused terminal input before editor shortcuts. Escape, Tab, arrows, and
-interrupt keys belong to the shell; terminal tab shortcuts apply only while it
-has focus. Keep command-palette and settings shortcuts available. IME preedit is
-displayed locally and reaches the PTY only on commit. RTL cell maps and Arabic
-shaping change display, cursor placement, and pointer selection; PTY bytes and
-copied Unicode stay in logical order. Respect the `terminal_bidi` opt-out.
-
-For terminal changes, run the focused checks as well as the usual project checks:
-
-```sh
-cargo test --locked terminal
-cargo test --locked --no-default-features
-python3 scripts/test-zig-setup.py
-python3 scripts/test-run-zig.py
-
-# Render onboarding, tabs, settings, narrow-window, and light-theme previews.
-cargo test --locked --bin hedit export_terminal_previews -- --ignored
-python3 scripts/ppm-to-png.py /tmp/hedit-terminal-panel.ppm /tmp/hedit-terminal-panel.png
-```
-
-The preview exporter writes `/tmp/hedit-terminal-{onboarding,panel,settings,compact,light}.ppm`.
-Review Arabic joining and diacritics, mixed-script selection, the active tab's
-close control in narrow windows, and both themes. The UI tests cover tab
-isolation, focus, drag reordering, middle-click closing, IME, and logical Unicode
-copying; backend tests cover PTY IO, VT replies, resizing, and process cleanup.
-
-The local `vendor/libghostty-vt-sys` patch selects the pinned compiler for raw
-Cargo builds as well as Make; its `PATCH.md` records the scope. Keep it aligned
-with `scripts/setup-zig.py` when upgrading Ghostty. Run
-`python3 scripts/setup-zig.py --print-path` to check compiler selection. If setup
-reports an incomplete cache, remove only `target/ghostty-toolchain` and retry,
-or set `ZIG` to a matching compiler. Automatic installation requires Python with
-pip and network access on the first build.
-
-## Rules to keep
-
-**Never lose text.** Changes to saving, recovery, replacement, or session data
-need tests for the failure paths.
-
-- A checkpoint writes buffer data, then a new manifest, keeping the previous one
-  until the new one is synced. If the newest manifest fails to load, the previous
-  one is used; if both fail, the old data is moved to `preserved-*` before starting
-  fresh. Never delete preserved data automatically.
-- Saves are atomic and refuse to overwrite a file that changed on disk since it
-  was read. Replace in folders writes a file only when its hash still matches the
-  preview, and edits open files as undoable changes instead.
-- New session or settings fields need serde defaults, so older files still load.
-  Retired `settings.json` keys go in `settings::RETIRED` so they load silently.
-
-**Keep the UI thread fast.** Reading files, folder walks, Git, spell checking,
-word indexing, font listing, and highlighting more than 64 KiB of text run on
-worker threads; their results carry a view and revision, and stale ones are
-dropped. Schedule repaints for input, worker results, or pending timed work such
-as cursor blinking, recovery, and log following. An idle window with no such
-work must wait for input instead of continually redrawing.
-
-**Positions are characters.** Editing code uses Unicode scalar (character)
-indices; convert to bytes with `advanced::byte` only at slicing. Test with CRLF
-text, text without a final newline, and non-Latin text.
-
-**Pass arguments explicitly.** Use `Command::arg` for files and tool arguments.
-Build systems deliberately run `shell_cmd` through the platform shell; expand
-file variables with the build runner's quoting rules. Other operations must not
-construct shell commands from file names. Debugger, Git, build, and NVIDIA tool
-output is bounded.
-
-**Git changes saved repository state.** Source Control requires the installed
-Git executable (2.30+); no shell or embedded web UI is involved. Keep commands
-on background workers and serialize repository actions. Clear inherited repository
-location variables, including `GIT_COMMON_DIR`, object directories, namespaces,
-and index/worktree overrides. Preserve the user's normal Git configuration.
-Parse porcelain v2 with
-NUL records so paths containing spaces, newlines, and non-UTF-8 bytes stay intact
-on Unix. Reject embedded NUL bytes before constructing NUL-delimited path input,
-so a single supplied path cannot inject additional stage/unstage selections.
-Pass literal pathspecs only to path-taking commands: applying
-`--literal-pathspecs` globally breaks `stash --include-untracked` cleanup on Git
-2.43. Preserve first-parent semantics for merge-commit file diffs. The history
-graph follows object parents, not display order alone.
-
-Block stage actions for unsaved selected files and worktree mutations for unsaved
-repository buffers; allow index-only unstaging. Never replace dirty buffers with
-Git output. Bind snapshots and operations to an exact canonical repository root,
-so losing a nested repository cannot redirect an operation to its parent.
-Reconcile file comparisons against refreshed status, and guard worker replies
-with the requested selection. A cancelled picker is a separate result that
-preserves the previous view. Partial staging and discard validate the reviewed
-diff; conflict replacement validates working text and all reviewed index sides.
-Include stdout and stderr in failed Git operation messages, since merge conflict
-details may be printed to stdout. Skip symbolic branch aliases such as remote HEAD.
-Derive branch names from their full namespace rather than `refname:short`, which
-adds disambiguating prefixes when names collide. Use full remote refs for tracking,
-reuse existing local upstreams, and disable implicit remote guessing for switches.
-Surface commit detail errors only while that same commit is still selected.
-Clone requests must expose their activity/cancel state. A failed or cancelled
-clone reports its outcome while preserving the previous review, snapshot, and
-commit draft; it must not apply its failed snapshot to the selected repository.
-Cancelled repository workers also preserve the last review, then immediately
-reconcile the repository with a fresh cancellation signal. Commit-history rows
-must expose their selection state to accessibility clients.
-Back up regular files before discard/conflict replacement, then report the
-backup path. Keep existing Git gutter comparison independent of index operations.
-Tests in `tests/git.rs` use disposable repositories and local bare remotes;
-`app/source_control_tests.rs` exercises the native UI and unsaved-buffer guards.
-
-The Git review components stay native: `app/source_control/file_tree.rs` caches
-path-based trees and virtualizes visible rows, and `diff_view.rs` caches bounded
-per-line syntax layouts. Character-change ranges are computed while parsing diffs
-on background workers with a size limit and a shared time budget. Selected-line
-patches are built against the index side, with recomputed hunk ranges and preserved
-line endings; they never write working files. Selection indices refer to the
-reviewed diff and must be cleared when that diff or file selection changes.
-Pierre Diffs/Trees inform the interaction design; their DOM-based packages are
-not dependencies of the native application.
-
-Advanced queries live in `git/inspect.rs` and `app/source_control/inspect.rs`.
-Branch/revision comparisons resolve both tips to immutable commit IDs before
-listing files or generating patches. Merge-base mode changes the diff base, while
-ahead/behind counts still describe the two tips. Comparison diffs are read-only;
-never offer staging controls for them. Drop a selected comparison if a refreshed
-tip moves. Scope and query identities guard background results, and changing
-repositories clears the extra inspection state. File paths in history and blame
-remain literal, including pathspec-like names and non-UTF-8 paths on Unix.
-
-Line history uses committed text, bounds Git output, virtualizes visible rows,
-and caches filtered row indices. Source previews bound individual line layouts
-and share editor font/tab settings. Reflog recovery creates a branch without
-switching the worktree. Undo uses an atomic reference transaction with soft-reset
-semantics and preserves the index, working files, and unsaved buffers; rebase uses
-the normal worktree mutation guard. Tag deletion uses compare-and-delete with the reviewed tag object ID.
-
-Git UX helpers in `app/source_control/ux.rs` keep repository controls compact,
-remember per-view locations, and build a filtered file-review queue. Cache queue
-rows by snapshot/query identity and filters so idle frames do not re-sort large
-repositories. Contextual links offer a return path; root changes clear all cached
-locations. Route commit and previous/next review commands through the catalog so
-palette, buttons, default shortcuts, and custom bindings share availability.
-Background reads keep navigation enabled while mutations remain serialized;
-completion notices describe actions without exposing raw command output.
-Git dialogs focus/select the first input once, advance through URL forms with
-Enter, and reserve explicit action buttons for destructive confirmations. Blame
-validates UTF-8 source lines separately from raw filename metadata. The real-Git
-suite also covers SHA-256 repositories, running-hook cancellation, lock failures,
-remote divergence, and an opt-in test of the actual local-operation timeout.
-
-Editor and Git code views share `editor_layout::Font` and `code_job` for font
-metrics, spacing, gutters, and syntax layout. Git statuses use the active theme's
-success/error/warning roles, and review selections use its selection roles.
-Keep these surfaces tied to editor settings when adding display preferences.
-Syntax highlighting supplies colors only: `code_job` enforces the editor font
-on every section, including unhighlighted fallback text. Typography tests must
-compare resolved glyph metrics after font-family changes, not only FontIds.
-
-**Large files are paged.** Files over 2 MiB load in about 256 KiB pages;
-commands that need the whole text must check `page.info.paged`.
+CI tests the workspace/renderers and extracted PE executable. Packages are
+unsigned portable folders. Windows is an SSH client, not a helper host. Validate
+dialogs, clipboard, scaling, accessibility, and window recovery on a desktop.
 
 ## Themes and branding
 
-`src/theme.rs` declares every color role once in the `roles!` table and holds
-the built-in themes, one row per theme. To add a role, add a row and a color to
-every built-in (plus a `DERIVED` fallback if older theme files need one). To add a
-built-in theme, add its row and regenerate the files in `themes/`:
-
-```sh
-HEDIT_WRITE_THEMES=1 cargo test --locked --test themes
-```
-
-The theme tests require readable contrast and a `themes/` folder that matches
-the catalog. The [palette credits](assets/licenses/theme-palettes.md) record
-upstream sources and licenses; bundle their notices with any new adaptations.
-
-The name is lowercase **hedit** and the tagline is **Keep your train of thought.**
-Brand SVGs in `assets/` are generated by `python3 scripts/generate-brand.py`; keep
-their geometry in step with `src/brand.rs`. Dark/light in a file name describes
-the background it is for.
+Themes are JSON under `themes/`; preserve schema fields and
+[palette credits](assets/licenses/theme-palettes.md). Regenerate brand SVGs with
+`python3 scripts/generate-brand.py`; keep `src/brand.rs` consistent. Asset
+dark/light names describe their intended background.
 
 ## Packaging and releases
 
-`make package` builds a Linux tarball and its SHA-256 file with the binary, the
-three documents, the license, `assets/`, themes, the CUDA example, a desktop file,
-and an installer script. `Makefile`, `scripts/package-linux.py`, and
-`packaging/linux/install.sh` must install the same paths; update
-`scripts/smoke-package.py` when the layout changes.
+`make package smoke` checks the Linux archive, checksum, extraction, installation,
+and executable. Ship guides, notices, assets, themes, and CUDA examples; exclude
+test drivers/development scripts. Keep packagers, installers, and tests aligned.
 
-The CI workflow runs Linux, macOS, and Windows checks on pushes and pull requests. Linux and
-macOS use Makefile targets; Windows uses Cargo and Python directly, without
-requiring GNU Make. The release workflow first runs the shared Linux, macOS,
-and Windows validation jobs; all package builds wait for that lint/test gate.
-Pushing a version tag runs the release workflow, which builds
-Linux x86-64 and ARM64 tarballs, the universal macOS app, and a Windows x86-64 ZIP, tests them, and
-publishes them with checksums. Tags with a hyphen (`vX.Y.Z-rc.1`) publish as
-prereleases.
+1. Update workspace versions/lockfile and a concise dated `CHANGELOG.md` entry.
+   Match README feature availability to the release downloads.
+2. Run `make ci`, no-default-features/live SSH tests, native platform validation,
+   and `make release-check RELEASE_TAG=vX.Y.Z`.
+3. Review notes from
+   `RELEASE_TAG=vX.Y.Z python3 scripts/check-release.py --notes-file /tmp/hedit-notes.md`.
+4. After review, commit/push changes, then create/push the version tag.
 
-To release:
+Tags validate Linux/macOS/Windows before publishing Linux x86-64/ARM64
+tarballs, DEB/RPM/AppImage packages,
+a universal macOS ZIP, and a Windows x86-64 ZIP with checksums/changelog notes.
+Hyphenated tags are prereleases; manual workflows build without publishing tags.
 
-1. Set the version in `Cargo.toml`, run `cargo check` to update `Cargo.lock`, and
-   date the version's section in `CHANGELOG.md`.
-2. Run `make ci` and `make release-check RELEASE_TAG=vX.Y.Z`. The release check
-   also requires a dated, nonempty changelog entry. Preview the GitHub release
-   description with `RELEASE_TAG=vX.Y.Z python3 scripts/check-release.py --notes-file /tmp/hedit-release-notes.md`.
-3. Commit, push, then tag:
-
-   ```sh
-   git tag -a vX.Y.Z -m "hedit X.Y.Z"
-   git push origin vX.Y.Z
-   ```
-
-The publishing workflow uses the matching changelog entry as the GitHub release
-body, including when retrying an existing draft. Keep that entry ready for readers.
-The changelog lists only changes users of the previous release will notice: a
-bug fixed during development of a feature that has not shipped is not a fix.
-
-The in-app updater (`Help → Check for updates…`) never downloads or installs
-without the user asking. It checks the SHA-256 file from the same release, runs
-the new binary's `--version` before installing, rejects unsafe archive entries
-before extracting, and swaps the Linux binary in last, rolling back on failure.
-On macOS it selects the universal ZIP, validates bundle metadata and the code
-signature, and atomically exchanges the complete app bundle with `RENAME_SWAP`.
-Staging happens beside the app; read-only and translocated apps use the manual
-download fallback. The current process stays open until the user chooses Restart
-or quits. Restart follows the normal successful-checkpoint shutdown path, then
-relaunches the executable path captured before the update with only the saved
-session directory. The old UI and its recovery lock must be dropped before the
-new process starts; startup file, stdin, and wait arguments must not be replayed.
-macOS release signatures are currently ad hoc, so this checks bundle integrity rather
-than a Developer ID identity or notarization.
-`install.sh` is served from `main`, not from a release, so keep it compatible with
-the asset names of published releases.
+Updaters verify checksum, archive paths, candidate version, and macOS signature;
+preserve rollback and checkpoint before restarting. macOS swaps the whole bundle.
+The installer is served from `main`; keep published asset names compatible.
 
 ## Provenance and license
 
-The file engine, session foundation, and folder utilities derive from
-[rsedit](https://github.com/goodappsstore/rsedit) (commit
-`63a9ee4966d3fe1cfcd7d4af70e963e10aa297ff`); keep its MIT notice in
-[LICENSE](LICENSE). Syntax definitions come from the `two-face` crate, each under
-its own permissive license.
+The engine derives from [rsedit](https://github.com/goodappsstore/rsedit), commit
+`63a9ee4966d3fe1cfcd7d4af70e963e10aa297ff`. Preserve its [MIT notice](LICENSE) and
+all bundled font/dictionary/renderer/palette notices under `assets/`, including
+the math color table's LPPL license.
 
-The spell checker's en_US dictionary (`assets/dictionaries/en_US.aff` and
-`en_US.dic`) is from SCOWL and is built into the binary. Its notices are in
-[assets/dictionaries/en_US-LICENSE.txt](assets/dictionaries/en_US-LICENSE.txt),
-which ships with the packages; keep the two together.
-
-Math rendering uses `latex-rust` and its embedded STIX Two Math font. Keep the
-[font license](assets/licenses/STIX-Two-Math-OFL.txt),
-[renderer notice](assets/licenses/latex-rust-NOTICE.txt),
-[MIT license](assets/licenses/latex-rust-MIT.txt),
-[modified color table](assets/licenses/latex-rust-dvipsnames.tsv), and its
-[LPPL license](assets/licenses/LPPL-1.3c.txt) in distributed
-packages. Mermaid uses `mermaid-rs-renderer`; `resvg` rasterizes both kinds of SVG
-on worker threads without a browser or network fetches. Keep the
-[Mermaid MIT notice](assets/licenses/mermaid-rs-renderer-MIT.txt) and
-[resvg MIT notice](assets/licenses/resvg-MIT.txt) with the packages too.
-
-The native Markdown renderer includes a local dependency patch for document
-layout; see [the patch notes](vendor/egui_commonmark/PATCH.md). Keep its
-[MIT notice](assets/licenses/egui_commonmark-MIT.txt) with distributed packages.
-
-Document views use bundled Noto Sans regular, semibold, italic, and semibold
-italic fonts, plus Noto Sans Symbols for symbols. Editor and application fonts keep their existing settings.
-Keep the [Noto font license](assets/licenses/Noto-Sans-OFL.txt) and font files
-under `assets/fonts/` with distributed packages. The source fonts come from
-[the Noto project](https://github.com/notofonts/noto-fonts).
-
-Terminal RTL runs use Rustybuzz for OpenType shaping, with each glyph cluster
-fitted to its original Ghostty cells. Unicode bidi layout supplies reversible
-cell maps for the cursor and selection. The original text and VT stream are
-unchanged. Keep the bundled Noto Sans Arabic font and its
-[OFL notice](assets/licenses/Noto-Sans-Arabic-OFL.txt) in distributed packages;
-the source is [Google Fonts](https://github.com/google/fonts/tree/main/ofl/notosansarabic).
+Local patches: [Markdown](vendor/egui_commonmark/PATCH.md),
+[Ghostty build](vendor/libghostty-vt-sys/PATCH.md). Text-renderer patches share row
+meshes, bound viewport submission, and index cursor/glyph lookups. Preserve their
+normal-gate parity tests, or remove patches and corresponding tests together.

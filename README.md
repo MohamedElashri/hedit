@@ -1,83 +1,129 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/hedit-lockup-dark.svg">
-    <img src="assets/hedit-lockup-light.svg" width="320" alt="hedit">
+    <img src="assets/hedit-lockup-light.svg" width="280" alt="hedit">
   </picture>
 </p>
-<p align="center"><strong>Keep your train of thought.</strong></p>
+<p align="center"><strong>A native editor that remembers your work.</strong></p>
+<p align="center">Code, technical notes, large logs, and remote projects. Free and open source.</p>
 <p align="center">
-  <a href="https://github.com/MohamedElashri/hedit/releases">Download</a> ·
+  <a href="https://github.com/MohamedElashri/hedit/releases/latest"><img src="https://img.shields.io/github/v/release/MohamedElashri/hedit?label=Download%20stable&amp;style=for-the-badge&amp;color=196f55" alt="Download the latest stable release"></a>
+</p>
+<p align="center">
+  <a href="https://github.com/MohamedElashri/hedit/actions/workflows/ci.yml?query=branch%3Amain"><img src="https://github.com/MohamedElashri/hedit/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI on main"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/licence-MIT-196f55" alt="MIT licence"></a>
+</p>
+<p align="center">
+  <a href="#install">Install</a> ·
   <a href="#quick-start">Quick start</a> ·
   <a href="USER_GUIDE.md">User guide</a> ·
-  <a href="DEVELOPER_GUIDE.md">Developer guide</a>
+  <a href="CHANGELOG.md">Release notes</a>
 </p>
-
-hedit is a native text editor for Linux, macOS, and Windows. It keeps open files
-and unsaved notes between sessions, with project search, code editing, and
-large-log viewing.
 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/screenshot-dark.png">
-    <img src="docs/images/screenshot-light.png" width="900" alt="hedit with a project folder in the sidebar, Rust code in the editor, and the completion list open">
+    <img src="docs/images/screenshot-light.png" width="1000" alt="Hedit editing a Rust sensor-analysis project, with folders, file tabs, syntax highlighting, and recovery status">
   </picture>
 </p>
 
-- Recovery checkpoints, closed-file history, and undo/redo across sessions.
-- Multiple cursors, split panes, completions, and go-to-definition.
-- Native Git workspace with file/hunk/line staging, syntax-colored diffs,
-  branch comparisons, scoped history, line authorship, tags, reflog recovery,
-  conflict review, stashes, rebasing, and remote operations using your installed Git.
-- Markdown source, synchronized split preview, and reading modes, with math and Mermaid diagrams.
-- Dark and light themes, plus an offline User Guide built into the app.
-- Optional Ghostty-powered terminal with compact draggable tabs, Arabic shaping,
-  and bidirectional text; disabled by default.
-- Paged large files and read-only log following.
-- Right-to-left Arabic and Hebrew, UTF-8/UTF-16, and legacy encodings.
-- CUDA source editing everywhere; local CUDA tools on Linux.
+hedit is a native text editor for developers and researchers moving between code,
+technical notes, logs, and SSH servers. Open files and unsaved notes return when
+you reopen the app. Experimental SSH workspaces keep recovery on the remote host.
 
 ## Install
 
-**Linux and macOS:**
+Choose your platform's archive from the release's **Assets**, together with its
+matching `.sha256` checksum. No compiler is needed for a stable download.
+
+| Platform | Stable download | Requirements |
+| --- | --- | --- |
+| Linux | [DEB, RPM, AppImage, or tarball](https://github.com/MohamedElashri/hedit/releases/latest) | x86-64 or ARM64; X11/Wayland and OpenGL |
+| macOS | [Universal app ZIP](https://github.com/MohamedElashri/hedit/releases/latest) | macOS 11+; Apple Silicon or Intel |
+| Windows | [Portable x86-64 ZIP](https://github.com/MohamedElashri/hedit/releases/latest) | Windows 10+; OpenGL-capable driver |
+
+For DEB/RPM/AppImage instructions, see [Linux packages](USER_GUIDE.md#linux-packages).
+
+On Linux and macOS, you can also let the installer choose and verify the package:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/MohamedElashri/hedit/main/install.sh | sh
 ```
 
-The installer verifies checksums and installs under `~/.local` on Linux or
-`~/Applications` on macOS. Add `~/.local/bin` to your `PATH` for the `hedit` command.
-
-**Windows:** Download the x86-64 ZIP and its checksum from
-[Releases](https://github.com/MohamedElashri/hedit/releases), verify it, extract it,
-and run **hedit.exe**. Requires Windows 10 or newer and an OpenGL-capable driver.
-
-CI builds and tests macOS and Windows packages; hands-on GUI validation is pending. See the
-[installation guide](USER_GUIDE.md#installation) for platform requirements,
-signing notes, manual downloads, and upgrades. In-app updates support Linux and macOS.
+It installs under `~/.local` on Linux or `~/Applications` on macOS. Add
+`~/.local/bin` to `PATH` for the command. On Windows, verify and extract the ZIP,
+then run **hedit.exe**. macOS builds are not notarized; Windows builds are unsigned.
+See [installation and verification](USER_GUIDE.md#installation) for details.
 
 ## Quick start
 
+Open a project, jump to a source location, or keep a note from the terminal:
+
 ```sh
 hedit .
-hedit application.log
-hedit kernel.cu:42:8
-printf 'keep this snippet\n' | hedit -
+hedit src/main.rs:12:5
+printf 'keep this note\n' | hedit -
 ```
 
-Use **Ctrl+P** to find files and **Ctrl+Shift+P** for commands (**Cmd** on macOS).
-Open **Help → User guide** (**F1**) to read the bundled guide without internet.
-Recovery checkpoints are periodic; save important work to disk.
+**Ctrl+P** finds files; **Ctrl+Shift+P** runs commands (**Cmd** on macOS).
+**F1** opens the offline guide. Enable **Settings → Terminal** for an integrated shell.
 
-To use the [integrated terminal](USER_GUIDE.md#integrated-terminal), enable it in
-**Preferences → Settings → Terminal**, then choose **Tools → Toggle terminal**
-or press **Ctrl+`** (**Control+`** on macOS). Use **+** for another shell, drag tabs
-to reorder them, and open **…** for tab actions. Hiding the panel keeps shells
-running; terminal sessions end when you quit.
+## Features
 
-See the [user guide](USER_GUIDE.md) for editing, shortcuts, recovery, Git, and CUDA
-tools; the [developer guide](DEVELOPER_GUIDE.md) for building, terminal toolchain
-setup, and contributing; and the [changelog](CHANGELOG.md) for release notes.
+- **Resume unfinished work.** Restore tabs, unsaved notes, and undo history;
+  recover closed notes from Closed Files. Checkpoints run every few seconds,
+  so save important work. [Recovery details](USER_GUIDE.md#recovery).
+- **Move between local and remote projects.** Edit and search over SSH, review Git,
+  and run builds or shells with explicit execution trust. Remote document content
+  stays out of Hedit's local recovery. SSH is experimental and requires a matching
+  host helper. [Setup, privacy, and limits](USER_GUIDE.md#ssh-remote-workspaces).
+- **Keep code and technical notes together.** Stage Git changes by file, hunk, or
+  line. Write Markdown beside a synchronized preview with local images, LaTeX
+  equations, and Mermaid diagrams. [Git](USER_GUIDE.md#source-control) ·
+  [Markdown](USER_GUIDE.md#markdown-preview).
+
+Multiple cursors, snippets, word completion, folding, split panes, background
+project search, and paged log viewing support everyday editing. Customize themes,
+fonts, and keys; edit Arabic/Hebrew and legacy encodings. CUDA highlighting works
+everywhere, with local CUDA tools on Linux.
+
+Code navigation uses source indexing; there is no language-server integration.
+The terminal is opt-in. Tests cover recovery, Unicode editing, Git operations,
+and real SSH crashes and reconnects. [Testing and performance measurement](DEVELOPER_GUIDE.md#checks).
+
+## Looks
+
+Real Hedit views from a small sample project. Open a screenshot for the full-size view.
+
+**Edit remotely, with recovery on the host.** This view uses a disposable OpenSSH
+server, with execution restricted and an edited file awaiting a separate Save.
+
+[![An SSH workspace showing a remote Rust project and host recovery status](docs/images/ssh.png)](docs/images/ssh.png)
+
+**Pick up an unfinished note.** Type a note without saving a file, close its tab,
+reopen the session, and recover it from Closed Files. This demo uses a completed
+recovery checkpoint. [Recovery behavior](USER_GUIDE.md#recovery).
+
+[![An unsaved note recovered from Closed Files after reopening the session](docs/images/recovery.gif)](docs/images/recovery.png)
+
+| Review only the changes you want | Keep notes beside their rendered document |
+| :---: | :---: |
+| [![Git workspace with a syntax-colored diff](docs/images/git.png)](docs/images/git.png) | [![Markdown source beside rendered tables, a diagram, and an equation](docs/images/markdown.png)](docs/images/markdown.png) |
+| [File, hunk, and line staging](USER_GUIDE.md#source-control) | [Synchronized Markdown preview](USER_GUIDE.md#markdown-preview) |
+
+| Find a change across the project | Keep related files in view |
+| :---: | :---: |
+| [![Project-wide search with grouped source matches](docs/images/search.png)](docs/images/search.png) | [![Two Rust files open in independent editor panes](docs/images/split-panes.png)](docs/images/split-panes.png) |
+| [Project search and replacement](USER_GUIDE.md#finding-and-navigating) | [Independent editor panes](USER_GUIDE.md#views-and-layout) |
+
+| Run a shell without leaving your project | Choose colors that suit your work |
+| :---: | :---: |
+| [![Integrated terminal running the sample Rust project](docs/images/terminal.png)](docs/images/terminal.png) | [![Appearance settings with built-in theme previews](docs/images/themes.png)](docs/images/themes.png) |
+| [Opt-in terminal](USER_GUIDE.md#integrated-terminal) | [Built-in and custom themes](USER_GUIDE.md#appearance) |
+
+[User guide](USER_GUIDE.md) · [Build and contribute](DEVELOPER_GUIDE.md) ·
+[Report an issue](https://github.com/MohamedElashri/hedit/issues)
 
 ## Licence
 
-[MIT](LICENSE).
+Free and open source under the [MIT licence](LICENSE).

@@ -177,7 +177,7 @@ fn routine_search_outcomes_are_notices_not_errors() {
     app.query = "absent".into();
     app.find(&ctx);
     let started = Instant::now();
-    while app.busy {
+    while app.busy || app.opens.pending() {
         assert!(started.elapsed() < Duration::from_secs(5));
         app.receive(&ctx);
         thread::sleep(Duration::from_millis(5));
@@ -190,7 +190,11 @@ fn open_binary(ctx: &egui::Context, app: &mut HeditApp, path: &std::path::Path) 
     std::fs::write(path, [0, 1, 2, 3]).unwrap();
     app.open(ctx, Some(path.to_owned()));
     let started = Instant::now();
-    while app.busy || app.checkpoint_pending || app.generation != app.persisted {
+    while app.busy
+        || app.opens.pending()
+        || app.checkpoint_pending
+        || app.generation != app.persisted
+    {
         assert!(started.elapsed() < Duration::from_secs(5));
         app.receive(ctx);
         thread::sleep(Duration::from_millis(5));
@@ -337,4 +341,26 @@ fn panels_and_banners_share_one_close_button() {
             "{label}"
         );
     }
+}
+
+#[test]
+fn escape_closes_the_picker_before_cancelling_a_pending_file_open() {
+    let (_directory, ctx, mut app) = app_with("keep editing");
+    let (tx, rx) = mpsc::channel();
+    let (started_tx, started_rx) = mpsc::channel();
+    app.read_open(&ctx, "slow file".into(), move || {
+        started_tx.send(()).unwrap();
+        rx.recv().unwrap();
+        Ok(Action::Nothing)
+    });
+    // Exercise cancellation of a running read, independently of thread scheduling.
+    started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    app.palette = true;
+    escape(&ctx, &mut app);
+    assert!(!app.palette);
+    assert!(app.opens.pending());
+    escape(&ctx, &mut app);
+    assert!(!app.opens.pending());
+    tx.send(()).unwrap();
+    assert_eq!(app.active().page.text, "keep editing");
 }

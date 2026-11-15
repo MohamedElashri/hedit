@@ -40,6 +40,9 @@ pub(super) struct Quality {
     pub folder_context: bool,
     pub folder_collapsed: std::collections::HashSet<PathBuf>,
     pub folder_state: folder_search::State,
+    pub folder_task: Option<folder_search::Task>,
+    pub folder_revisions: Vec<(u64, u64)>,
+    pub folder_roots: Vec<PathBuf>,
     pub folder_snapshot: Option<(String, String, search::Options)>,
     pub folder_regex: Option<regex::Regex>,
     pub filter: String,
@@ -111,6 +114,14 @@ pub(super) struct LastFind {
     end: usize,
 }
 impl LastFind {
+    pub(super) fn matches(&self, buffer: &Buffer, query: &str, options: &search::Options) -> bool {
+        self.id == buffer.view.id
+            && self.revision == buffer.page.info.revision
+            && self.query == query
+            && self.options == *options
+            && self.start == self.end
+            && self.start == buffer.cursor_offset() as usize
+    }
     pub(super) fn at(
         buffer: &hedit::workspace::Buffer,
         query: &str,
@@ -375,6 +386,7 @@ impl HeditApp {
                 self.notice = "Project and workspace saved.".into();
             }
             Event::ProjectLoaded(path, project, state, tabs) => {
+                self.opens.cancel();
                 if let Err(e) = self.workspace.checkpoint() {
                     self.error = Some(e);
                     return;
@@ -615,13 +627,20 @@ impl HeditApp {
                 return false;
             }
             if doc.info().encoding == "UTF-8" {
-                doc.set_bom(needs_bom);
+                if let Err(error) = doc.set_bom(needs_bom) {
+                    self.error = Some(error);
+                    return false;
+                }
             }
             self.workspace.open[self.workspace.active].page.info = doc.info();
         }
         true
     }
     pub(super) fn find_advanced(&mut self, ctx: &egui::Context, previous: bool) {
+        if !self.active().page.info.paged {
+            self.navigate_find(ctx, previous);
+            return;
+        }
         let id = self.active().view.id;
         let query = self.query.clone();
         let options = self.quality.options.clone();
@@ -785,13 +804,28 @@ impl HeditApp {
             .iter()
             .filter(|b| !b.page.info.paged && !b.follow)
             .filter_map(|b| {
-                let path = std::fs::canonicalize(b.page.info.path.as_ref()?).ok()?;
+                let path = remote_canonical(b.page.info.path.as_ref()?)?;
                 Some((path, b.page.text.clone()))
             })
             .collect();
-        let cancel = Arc::clone(&self.cancel);
-        self.job(ctx, move || {
-            search::folders(
+        // Search holds immutable snapshots, never the UI's mutation lock.
+        self.quality.folder_revisions = self
+            .workspace
+            .open
+            .iter()
+            .map(|b| (b.view.id, b.page.info.revision))
+            .collect();
+        self.quality.folder_roots = roots.clone();
+        self.quality.folder_task = None; // Cancels a superseded search.
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = mpsc::channel();
+        self.quality.folder_task = Some(folder_search::Task {
+            cancel: cancel.clone(),
+            rx,
+        });
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            let result = search::folders(
                 &roots,
                 &filter,
                 &query,
@@ -799,8 +833,9 @@ impl HeditApp {
                 &options,
                 &open,
                 &cancel,
-            )
-            .map(|r| Action::Quality(Box::new(Event::Results(r))))
+            );
+            let _ = tx.send(result);
+            ctx.request_repaint();
         });
     }
     pub(super) fn apply_folder_replacements(&mut self, ctx: &egui::Context) {
@@ -819,11 +854,7 @@ impl HeditApp {
         let mut open_errors = vec![];
         for plan in open_plans {
             let index = self.workspace.open.iter().position(|b| {
-                b.page
-                    .info
-                    .path
-                    .as_ref()
-                    .and_then(|p| std::fs::canonicalize(p).ok())
+                b.page.info.path.as_ref().and_then(|p| remote_canonical(p))
                     == Some(plan.path.clone())
             });
             let Some(index) = index else {
@@ -1088,6 +1119,7 @@ impl HeditApp {
         });
     }
     pub(super) fn load_project(&mut self, ctx: &egui::Context, path: Option<PathBuf>) {
+        self.opens.cancel();
         if let Some(current) = self.quality.project_path.clone() {
             match self
                 .project_snapshot()
@@ -1332,12 +1364,54 @@ impl HeditApp {
             .unwrap_or_default()
             .to_string_lossy()
             .into_owned();
+        if self.workspace.remote.is_some() {
+            self.quality.file_name = if operation == FileOperation::Move {
+                String::new()
+            } else {
+                percent_encoding::percent_decode_str(&self.quality.file_name)
+                    .decode_utf8_lossy()
+                    .into_owned()
+            };
+        }
         self.quality.file_action = Some((path, operation));
     }
     pub(super) fn perform_file_action(&mut self, ctx: &egui::Context) {
         let Some((path, operation)) = self.quality.file_action.take() else {
             return;
         };
+        if operation != FileOperation::Duplicate {
+            self.opens.cancel();
+        }
+        if let Some(remote) = self.workspace.remote.clone() {
+            let name = self.quality.file_name.clone();
+            self.job(ctx, move || {
+                remote.flush()?;
+                let path = hedit::folder::entry_path(&path)?;
+                let to = match operation {
+                    FileOperation::Rename => Some(PathBuf::from(hedit::folder::rename_path(
+                        path.to_string_lossy().into_owned(),
+                        name,
+                    )?)),
+                    FileOperation::Move => {
+                        let target = remote.path(&name)?;
+                        Some(hedit::folder::move_path(&path, &target)?)
+                    }
+                    FileOperation::Duplicate => {
+                        let target = hedit::folder::duplicate_sibling(&path, &name)?;
+                        return Ok(Action::Created(
+                            target.to_string_lossy().into_owned(),
+                            false,
+                        ));
+                    }
+                    FileOperation::Trash => {
+                        hedit::folder::trash_path(&path)?;
+                        None
+                    }
+                };
+                Ok(Action::Quality(Box::new(Event::FileChanged(path, to))))
+            });
+            return;
+        }
         // Documents and roots use resolved paths. Normalize the source before
         // mutation, while its ancestors still exist (e.g. macOS /var aliases).
         let path = match hedit::folder::entry_path(&path) {
@@ -1418,7 +1492,11 @@ impl HeditApp {
             return;
         }
         if self.quality.incoming.is_some() {
-            if !self.busy && self.pending_paths.is_empty() && !self.checkpoint_pending {
+            if !self.busy
+                && !self.opens.pending()
+                && self.pending_paths.is_empty()
+                && !self.checkpoint_pending
+            {
                 if self.generation != self.persisted {
                     self.checkpoint(ctx);
                     return;
@@ -1429,7 +1507,7 @@ impl HeditApp {
             }
             return;
         }
-        if self.busy || !self.pending_paths.is_empty() {
+        if self.busy || self.opens.pending() || !self.pending_paths.is_empty() {
             return;
         }
         let Some(incoming) = hedit::ipc::receive(self.workspace.store.directory()) else {
@@ -1460,7 +1538,7 @@ impl HeditApp {
             self.job(ctx, move || {
                 let mut doc = Document::from_stdin(editor.id(), &path)?;
                 let page = doc.page(0)?;
-                Ok(Action::Add(doc, page, 0))
+                Ok(Action::Add(Box::new(doc), page, 0))
             });
         }
     }
@@ -1487,6 +1565,9 @@ impl HeditApp {
                     .is_none_or(|t| t.elapsed() >= Duration::from_secs(30)))
     }
     pub(super) fn poll_git(&mut self, ctx: &egui::Context) {
+        if self.workspace.remote.is_some() {
+            return;
+        }
         if self.quality.git_pending
             || self.busy
             || self.closing
@@ -1560,4 +1641,13 @@ pub(super) fn refocused(ctx: &egui::Context) -> bool {
             .iter()
             .any(|e| matches!(e, egui::Event::WindowFocused(true)))
     })
+}
+
+fn remote_canonical(path: &str) -> Option<PathBuf> {
+    let p = PathBuf::from(path);
+    if hedit_core::backend::is_remote(&p) {
+        Some(p)
+    } else {
+        std::fs::canonicalize(p).ok()
+    }
 }

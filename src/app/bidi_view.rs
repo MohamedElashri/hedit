@@ -27,7 +27,7 @@ pub(super) struct RowDirs {
 /// right-to-left text.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct BidiRows {
-    rows: Vec<Option<RowDirs>>,
+    pub(super) rows: Vec<Option<RowDirs>>,
 }
 
 impl BidiRows {
@@ -95,7 +95,7 @@ pub(super) fn apply(fonts: &Fonts, galley: Arc<Galley>, base: Base) -> (Arc<Gall
         let shaped = bidi::shape(&chars);
         let mut start = 0;
         for r in rows {
-            let row = &mut galley.rows[r];
+            let row = Arc::make_mut(&mut galley.rows[r]);
             let count = row.glyphs.len();
             let rtl = line.row_rtl(start, start + count);
             let quads: Vec<bool> = row.glyphs.iter().map(|g| !g.uv_rect.is_nothing()).collect();
@@ -130,6 +130,7 @@ pub(super) fn apply(fonts: &Fonts, galley: Arc<Galley>, base: Base) -> (Arc<Gall
         .map(|row| row.rect.max.x)
         .fold(galley.rect.max.x, f32::max);
     galley.rect.max.x = right;
+    galley.invalidate_cursor_index();
     (Arc::new(galley), BidiRows { rows: dirs })
 }
 
@@ -187,8 +188,8 @@ fn retessellate(
     pixels_per_point: f32,
 ) {
     let round = |v: f32| (v * pixels_per_point).round() / pixels_per_point;
-    let mesh = &mut row.visuals.mesh;
     let mut vertex = row.visuals.glyph_vertex_range.start;
+    let mesh = row.visuals.mesh_mut();
     for (i, glyph) in row.glyphs.iter().enumerate() {
         if !quads[i] {
             continue;
@@ -230,6 +231,7 @@ fn retessellate(
         }
     }
     row.visuals.mesh_bounds = mesh.calc_bounds();
+    row.visuals.mesh_cache.invalidate();
 }
 
 /// The x of a caret before character `column` of `row`, relative to the
@@ -298,10 +300,7 @@ fn locate(galley: &Galley, index: usize) -> (usize, usize) {
 
 /// The character index where `row` starts.
 fn row_start(galley: &Galley, row: usize) -> usize {
-    galley.rows[..row]
-        .iter()
-        .map(Row::char_count_including_newline)
-        .sum()
+    galley.row_start(row)
 }
 
 /// The caret before character `index`, relative to the galley.
@@ -344,11 +343,22 @@ pub(super) fn spans(
 }
 
 /// Rectangles, relative to the galley, covering characters `start..end`.
+#[cfg(test)]
 pub(super) fn range_rects(
     galley: &Galley,
     bidi: &BidiRows,
     start: usize,
     end: usize,
+) -> Vec<egui::Rect> {
+    range_rects_in_rows(galley, bidi, start, end, 0..galley.rows.len())
+}
+
+pub(super) fn range_rects_in_rows(
+    galley: &Galley,
+    bidi: &BidiRows,
+    start: usize,
+    end: usize,
+    rows: Range<usize>,
 ) -> Vec<egui::Rect> {
     if start >= end {
         return Vec::new();
@@ -356,7 +366,7 @@ pub(super) fn range_rects(
     let (first, first_column) = locate(galley, start);
     let (last, last_column) = locate(galley, end);
     let mut rects = Vec::new();
-    for row in first..=last.min(galley.rows.len().saturating_sub(1)) {
+    for row in first.max(rows.start)..last.saturating_add(1).min(galley.rows.len()).min(rows.end) {
         let r = &galley.rows[row];
         let a = if row == first { first_column } else { 0 };
         let b = if row == last {
@@ -393,11 +403,7 @@ pub(super) fn glyph_rect(galley: &Galley, index: usize) -> Option<egui::Rect> {
 
 /// The row at height `y`, or the nearest one.
 fn row_at(galley: &Galley, y: f32) -> usize {
-    galley
-        .rows
-        .iter()
-        .position(|r| y < r.max_y())
-        .unwrap_or(galley.rows.len().saturating_sub(1))
+    galley.row_at_y(y)
 }
 
 /// The character index of the caret nearest `pos`, relative to the galley, or
@@ -411,6 +417,29 @@ pub(super) fn hit(galley: &Galley, bidi: &BidiRows, pos: egui::Vec2) -> Option<u
         .min_by(|a, b| (a.1 - pos.x).abs().total_cmp(&(b.1 - pos.x).abs()))
         .map_or(0, |(c, _)| c);
     Some(row_start(galley, row) + column)
+}
+
+/// Collapse a selection without taking an extra arrow step. Within one visual
+/// row use its left/right edge; across rows retain document-order endpoints.
+pub(super) fn visual_selection_edge(
+    galley: &Galley,
+    bidi: &BidiRows,
+    anchor: usize,
+    head: usize,
+    right: bool,
+) -> usize {
+    if locate(galley, anchor).0 == locate(galley, head).0 {
+        let a = caret_rect(galley, bidi, anchor).left();
+        let h = caret_rect(galley, bidi, head).left();
+        if a != h {
+            return if (a > h) == right { anchor } else { head };
+        }
+    }
+    if right {
+        anchor.max(head)
+    } else {
+        anchor.min(head)
+    }
 }
 
 /// Where the caret at `index` goes with Left or Right in a row with
@@ -442,9 +471,39 @@ pub(super) fn visual_step(
         None if dirs.base_rtl && right => Some(start.saturating_sub(1)),
         None if dirs.base_rtl => {
             let end = start + r.char_count_including_newline();
-            Some(end.min(galley.text().chars().count()))
+            Some(end.min(galley.cursor_index().end.start))
         }
         None => None,
+    }
+}
+
+/// Correct pure RTL AccessKit runs after TextEdit built its generic LTR nodes.
+/// Positions are measured from the right edge when the run reads right to left.
+#[cfg(target_os = "macos")]
+pub(super) fn accessibility(ctx: &egui::Context, id: egui::Id, galley: &Galley, bidi: &BidiRows) {
+    if ctx.accesskit_node_builder(id, |_| ()).is_none() {
+        return;
+    }
+    for (index, dirs) in bidi.rows.iter().enumerate() {
+        let Some(dirs) = dirs else {
+            continue;
+        };
+        if dirs.rtl.is_empty() || !dirs.rtl.iter().all(|rtl| *rtl) {
+            continue;
+        }
+        let row = &galley.rows[index];
+        let mut positions: Vec<f32> = row
+            .glyphs
+            .iter()
+            .map(|g| row.rect.right() - g.pos.x - g.advance_width)
+            .collect();
+        if row.ends_with_newline {
+            positions.push(row.rect.width());
+        }
+        ctx.accesskit_node_builder(id.with(index), |node| {
+            node.set_text_direction(egui::accesskit::TextDirection::RightToLeft);
+            node.set_character_positions(positions);
+        });
     }
 }
 
@@ -463,6 +522,7 @@ pub(super) fn interact(
     output: &mut egui::text_edit::TextEditOutput,
     bidi: &BidiRows,
     background: egui::layers::ShapeIdx,
+    visible_rows: Range<usize>,
     look: Look,
 ) {
     let galley = Arc::clone(&output.galley);
@@ -501,7 +561,13 @@ pub(super) fn interact(
         return;
     };
     let (head, anchor) = (range.primary.ccursor.index, range.secondary.ccursor.index);
-    let rects = range_rects(&galley, bidi, head.min(anchor), head.max(anchor));
+    let rects = range_rects_in_rows(
+        &galley,
+        bidi,
+        head.min(anchor),
+        head.max(anchor),
+        visible_rows,
+    );
     ui.painter().set(
         background,
         egui::Shape::Vec(
@@ -573,7 +639,8 @@ pub(super) fn field(
             .show(ui);
         let bidi = latest.take();
         if rtl && bidi.any() {
-            interact(ui, &mut output, &bidi, background, look);
+            let rows = 0..output.galley.rows.len();
+            interact(ui, &mut output, &bidi, background, rows, look);
         }
         output.response
     })

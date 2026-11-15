@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -16,7 +17,18 @@ parser.add_argument('--binary', type=Path, default=ROOT / 'target/release/hedit'
 args = parser.parse_args()
 with tempfile.TemporaryDirectory(prefix='hedit-package-smoke-') as work:
     work = Path(work)
-    subprocess.run([sys.executable, str(ROOT / 'scripts/package-linux.py'),
+    source = work / 'source'
+    (source / 'scripts').mkdir(parents=True)
+    shutil.copy2(ROOT / 'scripts/package-linux.py', source / 'scripts/package-linux.py')
+    for filename in ['Cargo.toml', 'README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md', 'CHANGELOG.md', 'LICENSE']:
+        shutil.copy2(ROOT / filename, source / filename)
+    for directory in ['assets', 'themes', 'docs/images', 'examples/cuda', 'packaging/linux']:
+        shutil.copytree(ROOT / directory, source / directory)
+    for relative in ['vendor/egui_commonmark/PATCH.md', 'vendor/libghostty-vt-sys/PATCH.md']:
+        (source / relative).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / relative, source / relative)
+    (source / 'examples/development_probe.rs').write_text('not a release resource')
+    subprocess.run([sys.executable, str(source / 'scripts/package-linux.py'),
                     '--binary', str(args.binary.resolve()), '--out-dir', str(work)], check=True)
     archive = next(work.glob('hedit-*.tar.gz'))
     checksum = archive.with_name(archive.name + '.sha256').read_text().split()[0]
@@ -42,4 +54,8 @@ with tempfile.TemporaryDirectory(prefix='hedit-package-smoke-') as work:
                      'share/hedit/themes/hedit-ink.json']:
         assert (prefix / relative).is_file(), relative
     assert (package / 'examples/cuda/vector_add.cu').is_file()
+    assert {path.relative_to(package).as_posix() for path in (package / 'examples').rglob('*')
+            if path.is_file()} == {'examples/cuda/vector_add.cu'}
+    for relative in ['CHANGELOG.md', 'vendor/egui_commonmark/PATCH.md', 'vendor/libghostty-vt-sys/PATCH.md'] + [path.relative_to(ROOT).as_posix() for path in (ROOT / 'docs/images').glob('*') if path.is_file()]:
+        assert (prefix / 'share/doc/hedit' / relative).read_bytes() == (ROOT / relative).read_bytes(), relative
 print('Linux package checksum, extraction, installation, and executable smoke test passed.')

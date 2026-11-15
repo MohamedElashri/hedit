@@ -41,6 +41,7 @@ pub struct Grid {
 enum Output {
     Bytes(Vec<u8>),
     Error(String),
+    Exit,
 }
 
 pub struct Session {
@@ -49,7 +50,8 @@ pub struct Session {
     row_iter: RowIterator<'static>,
     cell_iter: CellIterator<'static>,
     encoder: key::Encoder<'static>,
-    master: Box<dyn MasterPty + Send>,
+    master: Option<Box<dyn MasterPty + Send>>,
+    remote: Option<hedit_core::backend::RemotePty>,
     child: Option<Box<dyn Child + Send + Sync>>,
     input: SyncSender<Vec<u8>>,
     output: Receiver<Output>,
@@ -65,9 +67,83 @@ impl Session {
         directory: &Path,
         wake: impl Fn() + Send + Sync + 'static,
     ) -> Result<Self, String> {
+        if let Some(backend) = hedit_core::backend::lookup(directory)? {
+            return Self::from_remote(directory, backend.terminal(directory)?, wake);
+        }
         Self::spawn(directory, CommandBuilder::new_default_prog(), wake)
     }
 
+    fn from_remote(
+        directory: &Path,
+        mut remote: hedit_core::backend::RemotePty,
+        wake: impl Fn() + Send + Sync + 'static,
+    ) -> Result<Self, String> {
+        let mut vt = Terminal::new(TerminalOptions {
+            cols: 80,
+            rows: 24,
+            max_scrollback: 10_000,
+        })
+        .map_err(|e| e.to_string())?;
+        let render = RenderState::new().map_err(|e| e.to_string())?;
+        let row_iter = RowIterator::new().map_err(|e| e.to_string())?;
+        let cell_iter = CellIterator::new().map_err(|e| e.to_string())?;
+        let encoder = key::Encoder::new().map_err(|e| e.to_string())?;
+        let input = remote.input.clone();
+        let reply = input.clone();
+        let (tx, output) = mpsc::sync_channel(QUEUE_SIZE);
+        let errors = tx.clone();
+        vt.on_pty_write(move |_, bytes| {
+            if reply.try_send(bytes.to_vec()).is_err() {
+                let _ =
+                    errors.try_send(Output::Error("Remote terminal input queue is full.".into()));
+            }
+        })
+        .map_err(|e| e.to_string())?;
+        let size = Rc::new(std::cell::Cell::new((80, 24, 0, 0)));
+        let report = size.clone();
+        vt.on_size(move |_| {
+            let (columns, rows, cell_width, cell_height) = report.get();
+            Some(libghostty_vt::terminal::SizeReportSize {
+                columns,
+                rows,
+                cell_width,
+                cell_height,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+        let (_, placeholder) = mpsc::channel();
+        let stream = std::mem::replace(&mut remote.output, placeholder);
+        thread::spawn(move || {
+            for event in stream {
+                let event = match event {
+                    hedit_core::backend::PtyEvent::Bytes(b) => Output::Bytes(b),
+                    hedit_core::backend::PtyEvent::Exit => Output::Exit,
+                    hedit_core::backend::PtyEvent::Error(e) => Output::Error(e),
+                };
+                if tx.send(event).is_err() {
+                    break;
+                }
+                wake();
+            }
+        });
+        Ok(Self {
+            vt,
+            render,
+            row_iter,
+            cell_iter,
+            encoder,
+            master: None,
+            remote: Some(remote),
+            child: None,
+            input,
+            output,
+            directory: directory.to_owned(),
+            status: "Connecting to SSH shell…".into(),
+            running: true,
+            output_generation: 0,
+            size,
+        })
+    }
     fn spawn(
         directory: &Path,
         mut command: CommandBuilder,
@@ -187,7 +263,8 @@ impl Session {
             row_iter,
             cell_iter,
             encoder,
-            master: pair.master,
+            master: Some(pair.master),
+            remote: None,
             child: Some(child),
             input,
             output: reads,
@@ -211,7 +288,14 @@ impl Session {
                     self.vt.vt_write(&bytes);
                     self.output_generation = self.output_generation.wrapping_add(1);
                 }
-                Output::Error(error) => self.status = error,
+                Output::Error(error) => {
+                    self.status = error;
+                    self.running = false;
+                }
+                Output::Exit => {
+                    self.status = "Shell exited".into();
+                    self.running = false;
+                }
             }
             count += 1;
         }
@@ -276,14 +360,19 @@ impl Session {
         if self.size.get() == size {
             return Ok(());
         }
-        self.master
-            .resize(PtySize {
-                cols,
-                rows,
-                pixel_width: (u32::from(cols) * width).min(u32::from(u16::MAX)) as u16,
-                pixel_height: (u32::from(rows) * height).min(u32::from(u16::MAX)) as u16,
-            })
-            .map_err(|e| e.to_string())?;
+        if let Some(remote) = &self.remote {
+            (remote.resize)(cols, rows, width, height)?;
+        }
+        if let Some(master) = &self.master {
+            master
+                .resize(PtySize {
+                    cols,
+                    rows,
+                    pixel_width: (u32::from(cols) * width).min(u32::from(u16::MAX)) as u16,
+                    pixel_height: (u32::from(rows) * height).min(u32::from(u16::MAX)) as u16,
+                })
+                .map_err(|e| e.to_string())?;
+        }
         self.vt
             .resize(cols, rows, width, height)
             .map_err(|e| e.to_string())?;
@@ -339,13 +428,17 @@ impl Session {
     }
 
     fn hang_up(&mut self) {
+        if let Some(remote) = self.remote.take() {
+            (remote.stop)();
+        }
         if self.child.is_none() {
             return;
         }
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(group) = self
             .master
-            .process_group_leader()
+            .as_ref()
+            .and_then(|master| master.process_group_leader())
             .filter(|&pid| pid > 1)
             .and_then(rustix::process::Pid::from_raw)
         {
