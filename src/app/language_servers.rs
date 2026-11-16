@@ -1125,11 +1125,21 @@ impl HeditApp {
         if !known {
             return;
         }
+        let root = self.language_root(&path);
+        let selected = self.languages.installed.iter().find(|entry| {
+            entry.registration.enabled_at(&root)
+                && entry
+                    .registration
+                    .languages
+                    .iter()
+                    .any(|l| l == b.language().id())
+                && (entry.registration.external.is_some() || entry.registration.managed.is_some())
+        });
         let status = self
             .languages
             .statuses
             .values()
-            .filter(|s| path.starts_with(&s.root))
+            .filter(|s| path.starts_with(&s.root) && selected.is_some_and(|entry| entry.id == s.id))
             .max_by_key(|s| s.root.components().count());
         let (label, detail) = status
             .map(|s| {
@@ -1515,6 +1525,57 @@ mod tests {
             a.languages.pending.is_empty()
                 && a.languages.statuses.values().any(|s| s.state == "Running")
         });
+    }
+    #[test]
+    fn cpp_status_button_uses_the_selected_cpp_server() {
+        let (dir, ctx, mut app) = app();
+        let path = dir.path().join("main.cpp");
+        std::fs::write(&path, "int main() {}\n").unwrap();
+        app.open(&ctx, Some(path));
+        finish_app_job(&mut app, &ctx);
+        assert_eq!(app.active().language().id(), "cpp");
+        let path = PathBuf::from(app.active().page.info.path.as_ref().unwrap());
+        let root = app.language_root(&path);
+        let launch = app.languages.installed[0].registration.external.clone();
+        app.languages.statuses.insert(
+            ("clangd".into(), root.clone()),
+            Status {
+                id: "clangd".into(),
+                root,
+                state: "Starting".into(),
+                detail: String::new(),
+                logs: vec![],
+            },
+        );
+        for (registered, enabled, expected) in [
+            (false, false, "LSP: Set up…"),
+            (true, true, "LSP: Starting"),
+            (true, false, "LSP: Set up…"),
+        ] {
+            app.languages.installed.retain(|entry| entry.id != "clangd");
+            if registered {
+                app.languages.installed.push(Installed {
+                    id: "clangd".into(),
+                    registration: Registration {
+                        languages: vec!["cpp".into()],
+                        enabled,
+                        external: launch.clone(),
+                        ..Registration::default()
+                    },
+                });
+            }
+            let mut shown = false;
+            for _ in 0..2 {
+                let output = ctx.run(egui::RawInput::default(), |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| app.language_status_button(ui));
+                });
+                shown = output
+                    .shapes
+                    .iter()
+                    .any(|shape| super::super::tests::text_rect(&shape.shape, expected).is_some());
+            }
+            assert!(shown, "missing C++ status: {expected}");
+        }
     }
     #[test]
     fn paged_documents_and_unsaved_notes_do_not_enter_lsp_snapshots() {
