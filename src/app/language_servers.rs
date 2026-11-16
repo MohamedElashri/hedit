@@ -37,6 +37,13 @@ enum Intent {
     Sync,
     Feature(Guard),
 }
+struct Diagnostics {
+    server: String,
+    root: PathBuf,
+    revision: u64,
+    encoding: Encoding,
+    items: Vec<Value>,
+}
 #[derive(Default)]
 pub(super) struct LanguageServers {
     pub(super) service: Option<Service>,
@@ -46,7 +53,7 @@ pub(super) struct LanguageServers {
     next: u64,
     snapshots: Vec<Snapshot>,
     observed: Option<(Vec<Snapshot>, Instant)>,
-    pub(super) diagnostics: BTreeMap<PathBuf, (u64, Encoding, Vec<Value>)>,
+    diagnostics: BTreeMap<PathBuf, Diagnostics>,
     pub(super) problems: bool,
     pub(super) info: Option<String>,
     filter: String,
@@ -273,14 +280,14 @@ impl HeditApp {
         for event in events {
             self.language_event(ctx, event);
         }
-        self.languages.diagnostics.retain(|path, (revision, _, _)| {
+        self.languages.diagnostics.retain(|path, diagnostics| {
             self.workspace.open.iter().any(|b| {
                 b.page
                     .info
                     .path
                     .as_ref()
                     .is_some_and(|p| Path::new(p) == path)
-                    && b.page.info.revision == *revision
+                    && b.page.info.revision == diagnostics.revision
             })
         });
         let _ = self.sync_language_documents(false);
@@ -304,7 +311,9 @@ impl HeditApp {
             Event::Progress { id, message } => self.languages.progress = format!("{id}: {message}"),
             Event::Status(status) => {
                 if status.state != "Running" {
-                    self.languages.diagnostics.clear();
+                    self.languages.diagnostics.retain(|_, diagnostics| {
+                        diagnostics.server != status.id || diagnostics.root != status.root
+                    });
                 }
                 self.languages
                     .statuses
@@ -324,6 +333,8 @@ impl HeditApp {
                 }
             }
             Event::Diagnostics {
+                server,
+                root,
                 path,
                 revision,
                 encoding,
@@ -337,9 +348,16 @@ impl HeditApp {
                         .is_some_and(|p| Path::new(p) == path)
                         && b.page.info.revision == revision
                 }) {
-                    self.languages
-                        .diagnostics
-                        .insert(path, (revision, encoding, items));
+                    self.languages.diagnostics.insert(
+                        path,
+                        Diagnostics {
+                            server,
+                            root,
+                            revision,
+                            encoding,
+                            items,
+                        },
+                    );
                 }
             }
             Event::Result { ticket, result } => {
@@ -603,7 +621,7 @@ impl HeditApp {
                                 .info
                                 .path
                                 .as_ref()
-                                .is_some_and(|p| Path::new(p) == path)
+                                .is_some_and(|p| text::same_path(Path::new(p), &path))
                         })
                         .and_then(|b| {
                             let byte = reply.encoding.byte(&b.page.text, range.start).ok()?;
@@ -998,8 +1016,8 @@ impl HeditApp {
                     if self.languages.diagnostics.is_empty() {
                         ui.weak("No diagnostics for open files.");
                     }
-                    for (path, (_, encoding, items)) in &self.languages.diagnostics {
-                        for item in items {
+                    for (path, diagnostics) in &self.languages.diagnostics {
+                        for item in &diagnostics.items {
                             let Ok(range) =
                                 serde_json::from_value::<text::Range>(item["range"].clone())
                             else {
@@ -1023,7 +1041,7 @@ impl HeditApp {
                                 )
                                 .clicked()
                             {
-                                jump = Some((path.clone(), *encoding, range.start));
+                                jump = Some((path.clone(), diagnostics.encoding, range.start));
                             }
                         }
                     }
@@ -1107,11 +1125,21 @@ impl HeditApp {
         if !known {
             return;
         }
+        let root = self.language_root(&path);
+        let selected = self.languages.installed.iter().find(|entry| {
+            entry.registration.enabled_at(&root)
+                && entry
+                    .registration
+                    .languages
+                    .iter()
+                    .any(|l| l == b.language().id())
+                && (entry.registration.external.is_some() || entry.registration.managed.is_some())
+        });
         let status = self
             .languages
             .statuses
             .values()
-            .filter(|s| path.starts_with(&s.root))
+            .filter(|s| path.starts_with(&s.root) && selected.is_some_and(|entry| entry.id == s.id))
             .max_by_key(|s| s.root.components().count());
         let (label, detail) = status
             .map(|s| {
@@ -1177,6 +1205,7 @@ mod tests {
         pump(&ctx, &mut app, |a| {
             a.languages.statuses.values().any(|s| s.state == "Running")
                 && a.languages.pending.is_empty()
+                && !a.languages.diagnostics.is_empty()
         });
         frame(&ctx, &mut app, vec![]);
         (dir, ctx, app)
@@ -1213,6 +1242,53 @@ mod tests {
         assert_eq!(app.active().page.text, "fo");
     }
     #[test]
+    fn stopping_one_server_keeps_diagnostics_from_other_sessions() {
+        let (_dir, ctx, mut app) = app();
+        let path = PathBuf::from(app.active().page.info.path.as_ref().unwrap());
+        let root = app.language_root(&path);
+        app.language_event(
+            &ctx,
+            Event::Diagnostics {
+                server: "fixture".into(),
+                root: root.clone(),
+                path: path.clone(),
+                revision: app.active().page.info.revision,
+                encoding: Encoding::Utf16,
+                items: vec![json!({"message":"keep this diagnostic"})],
+            },
+        );
+        for (id, affected_root) in [
+            ("another-server", root.clone()),
+            ("fixture", root.join("other")),
+        ] {
+            app.language_event(
+                &ctx,
+                Event::Status(Status {
+                    id: id.into(),
+                    root: affected_root,
+                    state: "Failed".into(),
+                    detail: "another session stopped".into(),
+                    logs: vec![],
+                }),
+            );
+            assert!(
+                app.languages.diagnostics.contains_key(&path),
+                "unrelated status cleared diagnostics"
+            );
+        }
+        app.language_event(
+            &ctx,
+            Event::Status(Status {
+                id: "fixture".into(),
+                root,
+                state: "Stopped".into(),
+                detail: String::new(),
+                logs: vec![],
+            }),
+        );
+        assert!(!app.languages.diagnostics.contains_key(&path));
+    }
+    #[test]
     fn language_hover_and_problems_are_available_from_commands() {
         let (_dir, ctx, mut app) = app();
         app.execute(&ctx, Command::LanguageHover);
@@ -1233,7 +1309,7 @@ mod tests {
             .languages
             .diagnostics
             .values()
-            .flat_map(|(_, _, items)| items)
+            .flat_map(|diagnostics| &diagnostics.items)
             .any(|d| d["message"] == "fixture diagnostic"));
         app.escape(&ctx); // No key event: remains open.
     }
@@ -1303,6 +1379,34 @@ mod tests {
         finish_app_job(&mut app, &ctx);
         assert!(app.active().view.name.ends_with("target.rs"));
         assert_eq!(app.active().view.head, 2);
+    }
+    #[test]
+    fn navigation_uses_unsaved_open_target_text_for_utf8_columns() {
+        let (dir, ctx, mut app) = app();
+        app.open(&ctx, Some(dir.path().join("target.rs")));
+        finish_app_job(&mut app, &ctx);
+        app.batch(hedit::advanced::Batch {
+            text: "éabc target\n".into(),
+            selections: vec![hedit::advanced::Selection::caret(0)],
+        });
+        let source = app
+            .workspace
+            .open
+            .iter()
+            .position(|b| b.view.name == "main.rs")
+            .unwrap();
+        app.select_tab(source);
+        assert!(app.request_language_feature(&ctx, Feature::Definition));
+        pump(&ctx, &mut app, |a| {
+            !a.languages
+                .pending
+                .values()
+                .any(|i| matches!(i, Intent::Feature(_)))
+        });
+        finish_app_job(&mut app, &ctx);
+        assert!(app.active().view.name.ends_with("target.rs"));
+        assert_eq!(app.active().page.text, "éabc target\n");
+        assert_eq!(app.active().view.head, 4);
     }
     #[test]
     fn settings_commands_open_manager_and_info_closes_with_escape() {
@@ -1421,6 +1525,57 @@ mod tests {
             a.languages.pending.is_empty()
                 && a.languages.statuses.values().any(|s| s.state == "Running")
         });
+    }
+    #[test]
+    fn cpp_status_button_uses_the_selected_cpp_server() {
+        let (dir, ctx, mut app) = app();
+        let path = dir.path().join("main.cpp");
+        std::fs::write(&path, "int main() {}\n").unwrap();
+        app.open(&ctx, Some(path));
+        finish_app_job(&mut app, &ctx);
+        assert_eq!(app.active().language().id(), "cpp");
+        let path = PathBuf::from(app.active().page.info.path.as_ref().unwrap());
+        let root = app.language_root(&path);
+        let launch = app.languages.installed[0].registration.external.clone();
+        app.languages.statuses.insert(
+            ("clangd".into(), root.clone()),
+            Status {
+                id: "clangd".into(),
+                root,
+                state: "Starting".into(),
+                detail: String::new(),
+                logs: vec![],
+            },
+        );
+        for (registered, enabled, expected) in [
+            (false, false, "LSP: Set up…"),
+            (true, true, "LSP: Starting"),
+            (true, false, "LSP: Set up…"),
+        ] {
+            app.languages.installed.retain(|entry| entry.id != "clangd");
+            if registered {
+                app.languages.installed.push(Installed {
+                    id: "clangd".into(),
+                    registration: Registration {
+                        languages: vec!["cpp".into()],
+                        enabled,
+                        external: launch.clone(),
+                        ..Registration::default()
+                    },
+                });
+            }
+            let mut shown = false;
+            for _ in 0..2 {
+                let output = ctx.run(egui::RawInput::default(), |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| app.language_status_button(ui));
+                });
+                shown = output
+                    .shapes
+                    .iter()
+                    .any(|shape| super::super::tests::text_rect(&shape.shape, expected).is_some());
+            }
+            assert!(shown, "missing C++ status: {expected}");
+        }
     }
     #[test]
     fn paged_documents_and_unsaved_notes_do_not_enter_lsp_snapshots() {
