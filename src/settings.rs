@@ -62,6 +62,72 @@ impl FormatSettings {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
+pub struct TerminalFont {
+    /// Empty selects the built-in font, independently of the editor font.
+    pub face: String,
+    pub size: f32,
+}
+impl Default for TerminalFont {
+    fn default() -> Self {
+        Self {
+            face: String::new(),
+            size: 14.0,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TerminalColors {
+    pub foreground: crate::theme::Rgb,
+    pub background: crate::theme::Rgb,
+    pub cursor: crate::theme::Rgb,
+    pub selection: crate::theme::Rgb,
+    pub selection_text: crate::theme::Rgb,
+    /// Unset keeps Ghostty's ANSI palette and application OSC color overrides.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ansi: Option<[crate::theme::Rgb; 16]>,
+}
+impl TerminalColors {
+    pub fn from_theme(theme: &crate::theme::Theme) -> Self {
+        Self {
+            foreground: theme.text,
+            background: theme.surface,
+            cursor: theme.text,
+            selection: theme.selection,
+            selection_text: theme.selection_text,
+            ansi: None,
+        }
+    }
+    pub fn theme_palette(theme: &crate::theme::Theme) -> [crate::theme::Rgb; 16] {
+        let base = [
+            theme.background,
+            theme.error,
+            theme.success,
+            theme.warning,
+            theme.keyword,
+            theme.type_name,
+            theme.accent,
+            theme.text,
+        ];
+        std::array::from_fn(|i| {
+            let color = base[i % 8];
+            if i < 8 {
+                color
+            } else {
+                crate::theme::Rgb(color.0.map(|c| c.saturating_add(35)))
+            }
+        })
+    }
+}
+impl Default for TerminalColors {
+    fn default() -> Self {
+        Self::from_theme(&crate::theme::Theme::default())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Settings {
     // Editor
     /// A font family name or font file path; empty uses the built-in font.
@@ -122,6 +188,12 @@ pub struct Settings {
     pub terminal_enabled: bool,
     /// Reorder bidirectional terminal text and shape Arabic for display.
     pub terminal_bidi: bool,
+    /// Unset follows the editor's font family and size.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_font: Option<TerminalFont>,
+    /// Unset follows the app's appearance.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_colors: Option<TerminalColors>,
     /// The first-launch terminal choice has been answered.
     #[serde(default = "onboarding_complete_for_existing_settings")]
     pub terminal_onboarding_complete: bool,
@@ -198,6 +270,8 @@ impl Default for Settings {
             show_folders: true,
             terminal_enabled: false,
             terminal_bidi: true,
+            terminal_font: None,
+            terminal_colors: None,
             terminal_onboarding_complete: false,
             format: FormatSettings::default(),
             syntax_specific: BTreeMap::new(),
@@ -265,6 +339,8 @@ impl Settings {
             encoding: Some("utf-8".into()),
         };
         Self {
+            terminal_font: Some(TerminalFont::default()),
+            terminal_colors: Some(TerminalColors::default()),
             syntax_specific: BTreeMap::from([("python".into(), format.clone())]),
             build_systems: vec![crate::build::BuildSystem::default()],
             format,
@@ -272,6 +348,17 @@ impl Settings {
         }
     }
     pub fn validate(&self) -> Result<(), String> {
+        if let Some(font) = &self.terminal_font {
+            if !(8.0..=40.0).contains(&font.size)
+                || font.face.len() > 4096
+                || font.face.contains(['\0', '\n', '\r'])
+            {
+                return Err(
+                    "terminal_font needs a valid font name/path and a size between 8 and 40."
+                        .into(),
+                );
+            }
+        }
         if !FONT_SIZES.contains(&self.font_size) {
             return Err("font_size must be between 10 and 28.".into());
         }

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Add verified managed ty, Ruff, LuaLS and Tombi installs, plus external presets for Go and common web and shell servers.
+- Add per-feature language-server controls, priority, launch arguments, environment overrides, project root markers and initialization options.
+- Run companion servers per document and combine their diagnostics with predictable feature routing.
+- Add optional terminal font, size, colors and ANSI palette independent of the app, applied to running local and SSH shells.
+- Update the SSH protocol for the expanded server controls; remote workspaces require the matching helper.
+
 ## [0.5.1] - 2026-11-16
 
 - Add language-server management in Settings and the CLI, with verified rust-analyzer/clangd installs and external server configuration.

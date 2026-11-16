@@ -34,6 +34,8 @@ struct Guard {
 enum Intent {
     List,
     Manage,
+    Save(String),
+    Detect(String),
     Sync,
     Feature(Guard),
 }
@@ -53,7 +55,7 @@ pub(super) struct LanguageServers {
     next: u64,
     snapshots: Vec<Snapshot>,
     observed: Option<(Vec<Snapshot>, Instant)>,
-    diagnostics: BTreeMap<PathBuf, Diagnostics>,
+    diagnostics: BTreeMap<PathBuf, Vec<Diagnostics>>,
     pub(super) problems: bool,
     pub(super) info: Option<String>,
     filter: String,
@@ -71,7 +73,88 @@ struct Configuration {
     executable: String,
     arguments: String,
     settings: String,
+    initialization: String,
+    environment: String,
+    markers: String,
+    override_arguments: bool,
+    new: bool,
     registration: Registration,
+}
+impl Configuration {
+    fn new(id: String, registration: Registration, new: bool) -> Self {
+        Self {
+            languages: registration.languages.join(", "),
+            executable: registration
+                .external
+                .as_ref()
+                .map(|l| l.executable.display().to_string())
+                .unwrap_or_default(),
+            arguments: serde_json::to_string_pretty(
+                &registration
+                    .arguments
+                    .clone()
+                    .or_else(|| registration.external.as_ref().map(|l| l.arguments.clone()))
+                    .or_else(|| registration.managed.as_ref().map(|r| r.arguments.clone()))
+                    .unwrap_or_else(|| manager::default_arguments(&id)),
+            )
+            .unwrap(),
+            settings: serde_json::to_string_pretty(&registration.configuration).unwrap(),
+            initialization: registration
+                .initialization_options
+                .as_ref()
+                .map(|v| serde_json::to_string_pretty(v).unwrap())
+                .unwrap_or_default(),
+            environment: serde_json::to_string_pretty(&registration.environment).unwrap(),
+            markers: registration.root_markers.join(", "),
+            override_arguments: registration.arguments.is_some(),
+            id,
+            new,
+            registration,
+        }
+    }
+    fn registration(&self) -> Result<Registration, String> {
+        manager::Manager::validate_id(&self.id)?;
+        let mut registration = self.registration.clone();
+        registration.languages = self
+            .languages
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+            .collect();
+        registration.root_markers = self
+            .markers
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+            .collect();
+        registration.configuration =
+            serde_json::from_str(&self.settings).map_err(|e| format!("Server settings: {e}"))?;
+        registration.initialization_options = if self.initialization.trim().is_empty() {
+            None
+        } else {
+            Some(
+                serde_json::from_str(&self.initialization)
+                    .map_err(|e| format!("Initialization options: {e}"))?,
+            )
+        };
+        registration.environment =
+            serde_json::from_str(&self.environment).map_err(|e| format!("Environment: {e}"))?;
+        let arguments: Vec<String> =
+            serde_json::from_str(&self.arguments).map_err(|e| format!("Arguments: {e}"))?;
+        registration.arguments = self.override_arguments.then_some(arguments.clone());
+        registration.external = if self.executable.trim().is_empty() {
+            None
+        } else {
+            Some(manager::Launch {
+                executable: self.executable.trim().into(),
+                arguments,
+            })
+        };
+        manager::validate(&registration)?;
+        Ok(registration)
+    }
 }
 impl LanguageServers {
     fn send(&mut self, operation: Operation, intent: Intent) -> Result<(), String> {
@@ -85,9 +168,12 @@ impl LanguageServers {
         Ok(())
     }
     fn managing(&self) -> bool {
-        self.pending
-            .values()
-            .any(|i| matches!(i, Intent::Manage | Intent::List))
+        self.pending.values().any(|i| {
+            matches!(
+                i,
+                Intent::Manage | Intent::List | Intent::Save(_) | Intent::Detect(_)
+            )
+        })
     }
     pub(super) fn completion_edit(
         text: &str,
@@ -280,15 +366,18 @@ impl HeditApp {
         for event in events {
             self.language_event(ctx, event);
         }
-        self.languages.diagnostics.retain(|path, diagnostics| {
-            self.workspace.open.iter().any(|b| {
-                b.page
-                    .info
-                    .path
-                    .as_ref()
-                    .is_some_and(|p| Path::new(p) == path)
-                    && b.page.info.revision == diagnostics.revision
-            })
+        self.languages.diagnostics.retain(|path, sources| {
+            sources.retain(|diagnostics| {
+                self.workspace.open.iter().any(|b| {
+                    b.page
+                        .info
+                        .path
+                        .as_ref()
+                        .is_some_and(|p| Path::new(p) == path)
+                        && b.page.info.revision == diagnostics.revision
+                })
+            });
+            !sources.is_empty()
         });
         let _ = self.sync_language_documents(false);
         if !self.languages.installed.is_empty()
@@ -311,8 +400,9 @@ impl HeditApp {
             Event::Progress { id, message } => self.languages.progress = format!("{id}: {message}"),
             Event::Status(status) => {
                 if status.state != "Running" {
-                    self.languages.diagnostics.retain(|_, diagnostics| {
-                        diagnostics.server != status.id || diagnostics.root != status.root
+                    self.languages.diagnostics.retain(|_, sources| {
+                        sources.retain(|d| d.server != status.id || d.root != status.root);
+                        !sources.is_empty()
                     });
                 }
                 self.languages
@@ -348,16 +438,21 @@ impl HeditApp {
                         .is_some_and(|p| Path::new(p) == path)
                         && b.page.info.revision == revision
                 }) {
-                    self.languages.diagnostics.insert(
-                        path,
-                        Diagnostics {
+                    let sources = self.languages.diagnostics.entry(path).or_default();
+                    sources.retain(|d| d.server != server || d.root != root);
+                    if !items.is_empty() {
+                        sources.push(Diagnostics {
                             server,
                             root,
                             revision,
                             encoding,
                             items,
-                        },
-                    );
+                        });
+                    }
+                    sources.sort_by(|a, b| (&a.server, &a.root).cmp(&(&b.server, &b.root)));
+                    self.languages
+                        .diagnostics
+                        .retain(|_, sources| !sources.is_empty());
                 }
             }
             Event::Result { ticket, result } => {
@@ -379,7 +474,21 @@ impl HeditApp {
                                 Err(e) => self.languages.error = Some(e.to_string()),
                             }
                         }
-                        Some(Intent::Manage) => {
+                        Some(Intent::Detect(id)) => {
+                            if let Some(editor) = &mut self.languages.editor {
+                                if editor.id == id {
+                                    editor.executable = serde_json::from_value::<PathBuf>(value)
+                                        .map(|p| p.display().to_string())
+                                        .unwrap_or_default();
+                                }
+                            }
+                        }
+                        Some(Intent::Manage | Intent::Save(_)) => {
+                            if let Some(Intent::Save(id)) = intent {
+                                if self.languages.editor.as_ref().is_some_and(|e| e.id == id) {
+                                    self.languages.editor = None;
+                                }
+                            }
                             self.languages.progress.clear();
                             self.languages.snapshots.clear();
                             self.languages.last_completion = None;
@@ -460,6 +569,7 @@ impl HeditApp {
         let root = self.language_root(&path);
         if !self.languages.installed.iter().any(|e| {
             e.registration.enabled_at(&root)
+                && e.registration.features.enabled(feature)
                 && e.registration
                     .languages
                     .iter()
@@ -718,9 +828,13 @@ impl HeditApp {
         if let Some(error) = &self.languages.error {
             ui.colored_label(self.theme.warning.color(), error);
         }
+        self.language_configuration_editor(ui);
         let mut entries: Vec<_> = manager::catalog()
             .into_iter()
-            .map(|c| (c.id, c.languages, c.requirements, true))
+            .map(|c| {
+                let managed = !c.repository.is_empty();
+                (c.id, c.languages, c.requirements, managed)
+            })
             .collect();
         for entry in &self.languages.installed {
             if !entries.iter().any(|(id, _, _, _)| id == &entry.id) {
@@ -816,30 +930,9 @@ impl HeditApp {
                         let registration = installed
                             .as_ref()
                             .map(|e| e.registration.clone())
-                            .unwrap_or_else(|| Registration {
-                                languages: languages.clone(),
-                                ..Registration::default()
-                            });
-                        self.languages.editor = Some(Configuration {
-                            id: id.clone(),
-                            languages: registration.languages.join(", "),
-                            executable: registration
-                                .external
-                                .as_ref()
-                                .map(|l| l.executable.display().to_string())
-                                .unwrap_or_default(),
-                            arguments: serde_json::to_string_pretty(
-                                &registration
-                                    .external
-                                    .as_ref()
-                                    .map(|l| l.arguments.clone())
-                                    .unwrap_or_default(),
-                            )
-                            .unwrap(),
-                            settings: serde_json::to_string_pretty(&registration.configuration)
-                                .unwrap(),
-                            registration,
-                        });
+                            .unwrap_or_else(|| manager::preset(&id));
+                        self.languages.editor =
+                            Some(Configuration::new(id.clone(), registration, false));
                     }
                     if installed.is_some() {
                         if ui.button("Restart").clicked() {
@@ -872,14 +965,26 @@ impl HeditApp {
                         });
                     }
                     if let Some(root) = root {
-                        let mut enabled = registration.enabled_at(&root);
-                        if ui
-                            .checkbox(&mut enabled, "Enabled in this workspace")
-                            .changed()
-                        {
-                            registration
-                                .workspaces
-                                .insert(root.to_string_lossy().into_owned(), enabled);
+                        let key = root.to_string_lossy().into_owned();
+                        let mut choice = registration.workspaces.get(&key).copied();
+                        let previous = choice;
+                        egui::ComboBox::from_id_salt(("server-workspace", &id))
+                            .selected_text(match choice {
+                                None => "Workspace: use default",
+                                Some(true) => "Workspace: enabled",
+                                Some(false) => "Workspace: disabled",
+                            })
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut choice, None, "Use default");
+                                ui.selectable_value(&mut choice, Some(true), "Enabled");
+                                ui.selectable_value(&mut choice, Some(false), "Disabled");
+                            });
+                        if choice != previous {
+                            if let Some(enabled) = choice {
+                                registration.workspaces.insert(key, enabled);
+                            } else {
+                                registration.workspaces.remove(&key);
+                            }
                             self.manage_language_server(Operation::Configure {
                                 id: id.clone(),
                                 registration: Box::new(registration),
@@ -897,86 +1002,79 @@ impl HeditApp {
             )
             .clicked()
         {
-            self.languages.editor = Some(Configuration {
-                id: String::new(),
-                languages: String::new(),
-                executable: String::new(),
-                arguments: "[]".into(),
-                settings: "{}".into(),
-                registration: Registration::default(),
-            });
+            self.languages.editor = Some(Configuration::new(
+                String::new(),
+                Registration {
+                    initialization_options: Some(json!({})),
+                    ..Registration::default()
+                },
+                true,
+            ));
         }
-        if let Some(mut editor) = self.languages.editor.take() {
-            ui.separator();
-            ui.strong("Server configuration");
-            ui.label("Server ID");
-            ui.text_edit_singleline(&mut editor.id);
-            ui.label("Language IDs (comma separated)");
-            ui.text_edit_singleline(&mut editor.languages);
-            ui.label("Absolute executable path (empty uses managed installation)");
-            ui.text_edit_singleline(&mut editor.executable);
-            ui.label("Arguments (JSON array, for example [\"--stdio\"])");
-            ui.add(
-                egui::TextEdit::multiline(&mut editor.arguments)
-                    .desired_rows(2)
-                    .code_editor(),
-            );
-            ui.label("Server settings (JSON object)");
-            ui.add(
-                egui::TextEdit::multiline(&mut editor.settings)
-                    .desired_rows(4)
-                    .code_editor(),
-            );
-            let mut keep = true;
-            ui.horizontal(|ui| {
-                if ui
-                    .add_enabled(
-                        !self.languages.managing(),
-                        egui::Button::new("Save configuration"),
-                    )
-                    .clicked()
-                {
-                    let result = (|| -> Result<Registration, String> {
-                        manager::Manager::validate_id(&editor.id)?;
-                        let mut registration = editor.registration.clone();
-                        registration.languages = editor
-                            .languages
-                            .split(',')
-                            .map(str::trim)
-                            .filter(|s| !s.is_empty())
-                            .map(str::to_owned)
-                            .collect();
-                        registration.configuration =
-                            serde_json::from_str(&editor.settings).map_err(|e| e.to_string())?;
-                        registration.external = if editor.executable.trim().is_empty() {
-                            None
-                        } else {
-                            Some(manager::Launch {
-                                executable: PathBuf::from(editor.executable.trim()),
-                                arguments: serde_json::from_str(&editor.arguments)
-                                    .map_err(|e| e.to_string())?,
-                            })
-                        };
-                        Ok(registration)
-                    })();
-                    match result {
-                        Ok(registration) => {
-                            self.manage_language_server(Operation::Configure {
-                                id: editor.id.clone(),
-                                registration: Box::new(registration),
-                            });
-                            keep = false
+    }
+    fn language_configuration_editor(&mut self, ui: &mut egui::Ui) {
+        let Some(mut editor) = self.languages.editor.take() else {
+            return;
+        };
+        let mut keep = true;
+        let busy = self.languages.managing();
+        ui.group(|ui| {
+            ui.strong(format!("Configure {}", if editor.id.is_empty() { "external server" } else { &editor.id }));
+            ui.add_enabled_ui(!busy, |ui| {
+                if editor.new { ui.label("Server ID"); ui.text_edit_singleline(&mut editor.id); }
+                ui.label("Language IDs (comma separated)");
+                ui.text_edit_singleline(&mut editor.languages);
+                ui.label("Executable path (empty uses managed installation)");
+                ui.text_edit_singleline(&mut editor.executable);
+                if manager::catalog().iter().any(|e| e.id == editor.id) && ui.button("Detect installed on PATH").clicked() {
+                    self.languages.error = None;
+                    if let Err(e) = self.languages.send(Operation::Detect { id: editor.id.clone() }, Intent::Detect(editor.id.clone())) { self.languages.error = Some(e); }
+                }
+                if cfg!(windows) { ui.small("For npm servers on Windows, choose node.exe and put the server script followed by --stdio in Arguments."); }
+                ui.horizontal(|ui| {
+                    ui.label("Priority"); ui.add(egui::DragValue::new(&mut editor.registration.priority));
+                });
+                ui.small("Higher priority wins for each supported action. Equal priorities use server ID order. Diagnostics are combined.");
+                ui.label("Features");
+                let features = &mut editor.registration.features;
+                ui.horizontal_wrapped(|ui| {
+                    ui.checkbox(&mut features.completion, "Completion"); ui.checkbox(&mut features.hover, "Hover");
+                    ui.checkbox(&mut features.definition, "Definition"); ui.checkbox(&mut features.references, "References");
+                    ui.checkbox(&mut features.formatting, "Formatting"); ui.checkbox(&mut features.diagnostics, "Diagnostics");
+                });
+                ui.checkbox(&mut editor.override_arguments, "Override default launch arguments");
+                ui.add_enabled_ui(editor.override_arguments || !editor.executable.trim().is_empty(), |ui| {
+                    ui.label("Arguments (JSON array, for example [\"--stdio\"])");
+                    ui.add(egui::TextEdit::multiline(&mut editor.arguments).desired_width(f32::INFINITY).desired_rows(2).code_editor());
+                });
+                ui.label("Server settings (JSON object)");
+                ui.add(egui::TextEdit::multiline(&mut editor.settings).desired_width(f32::INFINITY).desired_rows(4).code_editor());
+                egui::CollapsingHeader::new("Advanced launch and project settings").id_salt(("advanced-lsp", &editor.id)).show(ui, |ui| {
+                    ui.label("Initialization options (JSON object)");
+                    ui.small("{} sends empty options; blank uses Server settings for compatibility.");
+                    ui.add(egui::TextEdit::multiline(&mut editor.initialization).desired_width(f32::INFINITY).desired_rows(4).code_editor());
+                    ui.label("Environment overrides (JSON object of strings)");
+                    ui.add(egui::TextEdit::multiline(&mut editor.environment).desired_width(f32::INFINITY).desired_rows(3).code_editor());
+                    ui.label("Project root markers (comma separated)");
+                    ui.text_edit_singleline(&mut editor.markers);
+                    ui.small("Files or directories relative to a project root. Empty uses language defaults. Search stays inside the workspace.");
+                });
+                ui.horizontal(|ui| {
+                    if ui.button("Save configuration").clicked() {
+                        match editor.registration() {
+                            Ok(registration) => {
+                                self.languages.error = None;
+                                if let Err(e) = self.languages.send(Operation::Configure { id: editor.id.clone(), registration: Box::new(registration) }, Intent::Save(editor.id.clone())) { self.languages.error = Some(e); }
+                            }
+                            Err(e) => self.languages.error = Some(e),
                         }
-                        Err(e) => self.languages.error = Some(e),
                     }
-                }
-                if ui.button("Cancel editing").clicked() {
-                    keep = false;
-                }
+                    if ui.button("Cancel editing").clicked() { keep = false; }
+                });
             });
-            if keep {
-                self.languages.editor = Some(editor);
-            }
+        });
+        if keep {
+            self.languages.editor = Some(editor);
         }
     }
     pub(super) fn language_panels(&mut self, ctx: &egui::Context) {
@@ -1016,8 +1114,11 @@ impl HeditApp {
                     if self.languages.diagnostics.is_empty() {
                         ui.weak("No diagnostics for open files.");
                     }
-                    for (path, diagnostics) in &self.languages.diagnostics {
-                        for item in &diagnostics.items {
+                    for (path, sources) in &self.languages.diagnostics {
+                        for (diagnostics, item) in sources
+                            .iter()
+                            .flat_map(|d| d.items.iter().map(move |item| (d, item)))
+                        {
                             let Ok(range) =
                                 serde_json::from_value::<text::Range>(item["range"].clone())
                             else {
@@ -1033,7 +1134,8 @@ impl HeditApp {
                                 .selectable_label(
                                     false,
                                     format!(
-                                        "{severity} · {}:{} · {}",
+                                        "{severity} · {} · {}:{} · {}",
+                                        diagnostics.server,
                                         path.file_name().unwrap_or_default().to_string_lossy(),
                                         range.start.line + 1,
                                         message.chars().take(500).collect::<String>()
@@ -1126,34 +1228,57 @@ impl HeditApp {
             return;
         }
         let root = self.language_root(&path);
-        let selected = self.languages.installed.iter().find(|entry| {
-            entry.registration.enabled_at(&root)
-                && entry
-                    .registration
-                    .languages
-                    .iter()
-                    .any(|l| l == b.language().id())
-                && (entry.registration.external.is_some() || entry.registration.managed.is_some())
-        });
-        let status = self
+        let relevant: Vec<_> = self
             .languages
-            .statuses
-            .values()
-            .filter(|s| path.starts_with(&s.root) && selected.is_some_and(|entry| entry.id == s.id))
-            .max_by_key(|s| s.root.components().count());
-        let (label, detail) = status
-            .map(|s| {
-                (
-                    format!("LSP: {}", s.state),
-                    format!("{} · {}\n{}", s.id, s.root.display(), s.detail),
-                )
+            .installed
+            .iter()
+            .filter(|entry| {
+                entry.registration.enabled_at(&root)
+                    && entry
+                        .registration
+                        .languages
+                        .iter()
+                        .any(|l| l == b.language().id())
+                    && (entry.registration.external.is_some()
+                        || entry.registration.managed.is_some())
             })
-            .unwrap_or_else(|| {
-                (
-                    "LSP: Set up…".into(),
-                    "Install or configure a language server for this file".into(),
-                )
-            });
+            .filter_map(|entry| {
+                self.languages
+                    .statuses
+                    .values()
+                    .filter(|s| s.id == entry.id && path.starts_with(&s.root))
+                    .max_by_key(|s| s.root.components().count())
+            })
+            .collect();
+        let running = relevant.iter().filter(|s| s.state == "Running").count();
+        let label = if running > 1 {
+            format!("LSP: {running} running")
+        } else if let Some(status) = relevant
+            .iter()
+            .find(|s| s.state == "Running")
+            .or_else(|| relevant.first())
+        {
+            format!("LSP: {}", status.state)
+        } else {
+            "LSP: Set up…".into()
+        };
+        let detail = if relevant.is_empty() {
+            "Install or configure a language server for this file".into()
+        } else {
+            relevant
+                .iter()
+                .map(|s| {
+                    format!(
+                        "{} · {} · {}\n{}",
+                        s.id,
+                        s.state,
+                        s.root.display(),
+                        s.detail
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
         if ui.small_button(label).on_hover_text(detail).clicked() {
             self.open_preferences(PreferencesPage::LanguageServers);
         }
@@ -1309,6 +1434,7 @@ mod tests {
             .languages
             .diagnostics
             .values()
+            .flatten()
             .flat_map(|diagnostics| &diagnostics.items)
             .any(|d| d["message"] == "fixture diagnostic"));
         app.escape(&ctx); // No key event: remains open.
@@ -1587,11 +1713,133 @@ mod tests {
         app.workspace.open[app.workspace.active].page.info.path = None;
         assert!(app.language_snapshots().is_empty());
     }
+    #[test]
+    fn diagnostics_from_companion_servers_are_replaced_and_cleared_independently() {
+        let (_dir, ctx, mut app) = app();
+        app.languages.diagnostics.clear();
+        let path = PathBuf::from(app.active().page.info.path.as_ref().unwrap());
+        let root = app.language_root(&path);
+        let revision = app.active().page.info.revision;
+        for (server, message) in [("ty", "typing"), ("ruff", "lint"), ("ty", "updated typing")] {
+            app.language_event(
+                &ctx,
+                Event::Diagnostics {
+                    server: server.into(),
+                    root: root.clone(),
+                    path: path.clone(),
+                    revision,
+                    encoding: Encoding::Utf16,
+                    items: vec![json!({"message":message})],
+                },
+            );
+        }
+        let sources = &app.languages.diagnostics[&path];
+        assert_eq!(sources.len(), 2);
+        assert_eq!(
+            sources.iter().find(|d| d.server == "ty").unwrap().items[0]["message"],
+            "updated typing"
+        );
+        app.language_event(
+            &ctx,
+            Event::Diagnostics {
+                server: "ruff".into(),
+                root: root.clone(),
+                path: path.clone(),
+                revision,
+                encoding: Encoding::Utf16,
+                items: vec![],
+            },
+        );
+        assert_eq!(app.languages.diagnostics[&path].len(), 1);
+        assert_eq!(app.languages.diagnostics[&path][0].server, "ty");
+        app.language_event(
+            &ctx,
+            Event::Status(Status {
+                id: "ruff".into(),
+                root: root.clone(),
+                state: "Stopped".into(),
+                detail: String::new(),
+                logs: vec![],
+            }),
+        );
+        assert_eq!(app.languages.diagnostics[&path].len(), 1);
+        app.language_event(
+            &ctx,
+            Event::Status(Status {
+                id: "ty".into(),
+                root,
+                state: "Stopped".into(),
+                detail: String::new(),
+                logs: vec![],
+            }),
+        );
+        assert!(!app.languages.diagnostics.contains_key(&path));
+    }
+    #[test]
+    fn configuration_form_roundtrips_advanced_fields_and_keeps_failed_saves() {
+        let (_dir, ctx, mut app) = app();
+        let registration = app.languages.installed[0].registration.clone();
+        let mut editor = Configuration::new("fixture".into(), registration, false);
+        editor.override_arguments = true;
+        editor.arguments = r#"["--custom"]"#.into();
+        editor.environment = r#"{"EXAMPLE":"value"}"#.into();
+        editor.initialization = r#"{"init":true}"#.into();
+        editor.settings = r#"{"runtime":true}"#.into();
+        editor.markers = "project.json, .git".into();
+        editor.registration.priority = 42;
+        editor.registration.features.formatting = false;
+        let updated = editor.registration().unwrap();
+        assert_eq!(updated.arguments.as_ref().unwrap(), &["--custom"]);
+        assert_eq!(updated.environment["EXAMPLE"], "value");
+        assert_eq!(updated.root_markers, ["project.json", ".git"]);
+        assert_eq!(updated.initialization_options, Some(json!({"init":true})));
+        assert_eq!(updated.configuration, json!({"runtime":true}));
+        assert!(!updated.features.formatting);
+        assert_eq!(updated.priority, 42);
+        editor.environment = "[]".into();
+        assert!(editor.registration().is_err());
+        editor.environment = r#"{"EXAMPLE":"value"}"#.into();
+        app.languages.editor = Some(editor);
+        // Simulate an asynchronous storage/lock failure, preserving the draft.
+        app.languages
+            .pending
+            .insert(500, Intent::Save("fixture".into()));
+        app.language_event(
+            &ctx,
+            Event::Result {
+                ticket: 500,
+                result: Err("installation is locked".into()),
+            },
+        );
+        assert!(app.languages.editor.is_some());
+        assert_eq!(
+            app.languages.editor.as_ref().unwrap().settings,
+            r#"{"runtime":true}"#
+        );
+        assert_eq!(
+            app.languages.error.as_deref(),
+            Some("installation is locked")
+        );
+        // A late PATH detection must not replace another selected server's path.
+        app.languages
+            .pending
+            .insert(501, Intent::Detect("ty".into()));
+        let before = app.languages.editor.as_ref().unwrap().executable.clone();
+        app.language_event(
+            &ctx,
+            Event::Result {
+                ticket: 501,
+                result: Ok(json!("/old/server")),
+            },
+        );
+        assert_eq!(app.languages.editor.as_ref().unwrap().executable, before);
+    }
 }
 
 #[cfg(test)]
 mod preview_tests {
     use super::*;
+
     #[test]
     #[ignore = "manual native language-server settings export to HEDIT_PREVIEW_DIR"]
     fn export_language_server_settings() {
@@ -1606,7 +1854,15 @@ mod preview_tests {
         for (name, size) in [
             ("wide", egui::vec2(1280.0, 820.0)),
             ("small", egui::vec2(720.0, 480.0)),
+            ("configuration", egui::vec2(1280.0, 820.0)),
         ] {
+            if name == "configuration" {
+                app.languages.editor = Some(Configuration::new(
+                    "ty".into(),
+                    manager::preset("ty"),
+                    false,
+                ));
+            }
             for _ in 0..3 {
                 super::super::tests::frame_size(&ctx, &mut app, vec![], size);
             }

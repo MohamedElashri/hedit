@@ -1,0 +1,43 @@
+{
+  "tag_name": "v1.11.3",
+  "draft": false,
+  "prerelease": false,
+  "assets": [
+    {
+      "name": "tombi-cli-1.11.3-aarch64-apple-darwin.tar.gz",
+      "browser_download_url": "https://github.com/tombi-toml/tombi/releases/download/v1.11.3/tombi-cli-1.11.3-aarch64-apple-darwin.tar.gz",
+      "size": 8347653,
+      "digest": "sha256:4e7daae9197910fe3717d241e5ca85cafd0f7f0ead988056fdd0b2cf2a447600"
+    },
+    {
+      "name": "tombi-cli-1.11.3-aarch64-pc-windows-msvc.zip",
+      "browser_download_url": "https://github.com/tombi-toml/tombi/releases/download/v1.11.3/tombi-cli-1.11.3-aarch64-pc-windows-msvc.zip",
+      "size": 10392885,
+      "digest": "sha256:621bf39b23546ecf9b2b4759f4203d6c5040a40ccd2abe17fa731999de1f81f0"
+    },
+    {
+      "name": "tombi-cli-1.11.3-aarch64-unknown-linux-musl.tar.gz",
+      "browser_download_url": "https://github.com/tombi-toml/tombi/releases/download/v1.11.3/tombi-cli-1.11.3-aarch64-unknown-linux-musl.tar.gz",
+      "size": 8581518,
+      "digest": "sha256:083614471a69e15f147ba68c96fe1e3ea02e8efe38d6bcdb4606b5a37ab8758a"
+    },
+    {
+      "name": "tombi-cli-1.11.3-x86_64-apple-darwin.tar.gz",
+      "browser_download_url": "https://github.com/tombi-toml/tombi/releases/download/v1.11.3/tombi-cli-1.11.3-x86_64-apple-darwin.tar.gz",
+      "size": 8982656,
+      "digest": "sha256:642900713c3cb04adf45264117649e5f4731395b62cbafee8a9a2824fa479684"
+    },
+    {
+      "name": "tombi-cli-1.11.3-x86_64-pc-windows-msvc.zip",
+      "browser_download_url": "https://github.com/tombi-toml/tombi/releases/download/v1.11.3/tombi-cli-1.11.3-x86_64-pc-windows-msvc.zip",
+      "size": 11415716,
+      "digest": "sha256:b6b2d9e6419216aaa0b8e74a5c81c48335cb193d6eb87f50a7d77468bce10073"
+    },
+    {
+      "name": "tombi-cli-1.11.3-x86_64-unknown-linux-musl.tar.gz",
+      "browser_download_url": "https://github.com/tombi-toml/tombi/releases/download/v1.11.3/tombi-cli-1.11.3-x86_64-unknown-linux-musl.tar.gz",
+      "size": 9354244,
+      "digest": "sha256:36672279d05f093455f01fa5a2799a8cc2162a9195cbbb23f0f8d1107d0de497"
+    }
+  ]
+}

@@ -25,7 +25,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 MAX_FRAME = 65536
-PROTOCOL_VERSION = 3
+PROTOCOL_VERSION = 4
 ARGS = None
 LAB = None
 

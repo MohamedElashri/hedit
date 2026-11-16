@@ -163,6 +163,7 @@ enum Action {
     /// A font loaded for the `font_face` setting.
     /// A font for `font_face`: its name, file bytes, and face index.
     Font(String, Vec<u8>, u32),
+    TerminalFont(u64, String, Result<(Vec<u8>, u32), String>),
     /// Installed font families, for the font picker.
     FontFamilies(Vec<hedit::fonts::Family>),
     /// System fonts for other scripts are ready.
@@ -295,6 +296,9 @@ pub struct HeditApp {
     font_applied: String,
     /// The `font_face` font file, kept to rebuild the fonts when fallbacks load.
     editor_font: Option<(Vec<u8>, u32)>,
+    terminal_font: Option<(Vec<u8>, u32)>,
+    terminal_font_applied: Option<String>,
+    terminal_font_generation: u64,
     /// Installed font families, once listed.
     font_families: Option<Vec<hedit::fonts::Family>>,
     /// Open the font picker when the families arrive.
@@ -493,6 +497,9 @@ impl HeditApp {
             goto_origin: None,
             font_applied: String::new(),
             editor_font: None,
+            terminal_font: None,
+            terminal_font_applied: None,
+            terminal_font_generation: 0,
             font_families: None,
             font_picker_pending: false,
             fonts_listing: false,
@@ -1339,7 +1346,26 @@ impl HeditApp {
                 Ok(Action::Font(name, bytes, index)) => {
                     if self.settings.font_face == name {
                         self.editor_font = Some((bytes, index));
-                        settings_store::set_editor_font(ctx, self.editor_font.clone());
+                        self.rebuild_fonts(ctx);
+                    }
+                }
+                Ok(Action::TerminalFont(generation, name, result)) => {
+                    if generation == self.terminal_font_generation
+                        && self
+                            .settings
+                            .terminal_font
+                            .as_ref()
+                            .is_some_and(|font| font.face.trim() == name)
+                    {
+                        match result {
+                            Ok(font) => self.terminal_font = Some(font),
+                            Err(error) => {
+                                self.terminal_font = None;
+                                self.notice =
+                                    format!("Terminal font: {error} Using the built-in font.");
+                            }
+                        }
+                        self.rebuild_fonts(ctx);
                     }
                 }
                 Ok(Action::FontFamilies(families)) => {
@@ -1350,7 +1376,7 @@ impl HeditApp {
                     }
                 }
                 Ok(Action::FallbackFonts) => {
-                    settings_store::set_editor_font(ctx, self.editor_font.clone());
+                    self.rebuild_fonts(ctx);
                 }
                 Ok(Action::OpenFailed(error)) => {
                     self.quality.preview_request = false;

@@ -219,3 +219,41 @@ fn installed_fonts_list_and_load_with_their_face() {
     assert!(!bytes.is_empty());
     assert!(hedit::fonts::load("No Such Font Family").is_err());
 }
+
+#[test]
+fn terminal_appearance_is_optional_roundtrips_and_validates_colors_and_font_size() {
+    use hedit::{
+        settings::{TerminalColors, TerminalFont},
+        theme::{Rgb, Theme},
+    };
+    let (legacy, warnings) = Settings::parse(r#"{"font_size": 18}"#).unwrap();
+    assert!(warnings.is_empty());
+    assert!(legacy.terminal_font.is_none() && legacy.terminal_colors.is_none());
+    assert!(!legacy.to_json().contains("terminal_font"));
+    assert!(!legacy.to_json().contains("terminal_colors"));
+    let settings = Settings {
+        terminal_font: Some(TerminalFont {
+            face: "Example Mono".into(),
+            size: 22.0,
+        }),
+        terminal_colors: Some(TerminalColors {
+            foreground: Rgb::new(210, 220, 230),
+            ansi: Some([Rgb::new(10, 20, 30); 16]),
+            ..TerminalColors::from_theme(&Theme::default())
+        }),
+        ..legacy
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("settings.json");
+    settings.save(&file).unwrap();
+    assert_eq!(Settings::load(&file).unwrap(), (settings, vec![]));
+    for input in [
+        r#"{"terminal_font":{"size":7}}"#,
+        r#"{"terminal_font":{"size":41}}"#,
+        r#"{"terminal_font":{"face":"bad\nname"}}"#,
+        r#"{"terminal_colors":{"foreground":"wrong"}}"#,
+        r##"{"terminal_colors":{"ansi":["#000000"]}}"##,
+    ] {
+        assert!(Settings::parse(input).is_err(), "{input}");
+    }
+}

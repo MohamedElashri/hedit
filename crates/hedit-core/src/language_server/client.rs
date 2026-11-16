@@ -98,6 +98,12 @@ pub(crate) struct Client {
     stopped: bool,
     processes: Arc<Processes>,
 }
+pub(crate) struct ClientSettings {
+    pub configuration: Value,
+    pub initialization_options: Value,
+    pub environment: std::collections::BTreeMap<String, String>,
+    pub section: String,
+}
 impl Client {
     #[cfg(test)]
     pub fn start(
@@ -111,25 +117,29 @@ impl Client {
             launch,
             lease,
             root,
-            configuration,
+            ClientSettings {
+                initialization_options: configuration.clone(),
+                configuration,
+                environment: Default::default(),
+                section: String::new(),
+            },
             cancel,
             Arc::new(Processes::default()),
-            String::new(),
         )
     }
     pub fn start_owned(
         launch: Launch,
         lease: File,
         root: &Path,
-        configuration: Value,
+        settings: ClientSettings,
         cancel: &AtomicBool,
         processes: Arc<Processes>,
-        configuration_section: String,
     ) -> Result<Self, String> {
         check_cancel(cancel)?;
         let mut command = Command::new(&launch.executable);
         command
             .args(&launch.arguments)
+            .envs(&settings.environment)
             .current_dir(root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -211,14 +221,14 @@ impl Client {
             notifications: VecDeque::new(),
             logs,
             next: 1,
-            configuration,
-            configuration_section,
+            configuration: settings.configuration,
+            configuration_section: settings.section,
             root: text::uri(root)?,
             _lease: lease,
             stopped: false,
             processes,
         };
-        let response=client.request("initialize",json!({"processId":std::process::id(),"clientInfo":{"name":"hedit","version":env!("CARGO_PKG_VERSION")},"rootUri":client.root,"workspaceFolders":[{"uri":client.root,"name":root.file_name().unwrap_or_default().to_string_lossy()}],"capabilities":{"general":{"positionEncodings":["utf-8","utf-16","utf-32"]},"workspace":{"configuration":true,"workspaceFolders":true,"applyEdit":false},"textDocument":{"synchronization":{"didSave":true},"publishDiagnostics":{"versionSupport":true},"completion":{"completionItem":{"snippetSupport":false,"insertReplaceSupport":false}},"hover":{"contentFormat":["plaintext"]},"definition":{"linkSupport":true}}},"initializationOptions":client.configuration}),cancel,Duration::from_secs(30))?;
+        let response=client.request("initialize",json!({"processId":std::process::id(),"clientInfo":{"name":"hedit","version":env!("CARGO_PKG_VERSION")},"rootUri":client.root,"workspaceFolders":[{"uri":client.root,"name":root.file_name().unwrap_or_default().to_string_lossy()}],"capabilities":{"general":{"positionEncodings":["utf-8","utf-16","utf-32"]},"workspace":{"configuration":true,"workspaceFolders":true,"applyEdit":false},"textDocument":{"synchronization":{"didSave":true},"publishDiagnostics":{"versionSupport":true},"completion":{"completionItem":{"snippetSupport":false,"insertReplaceSupport":false}},"hover":{"contentFormat":["plaintext"]},"definition":{"linkSupport":true}}},"initializationOptions":settings.initialization_options}),cancel,Duration::from_secs(30))?;
         client.encoding = Encoding::parse(response["capabilities"]["positionEncoding"].as_str())?;
         client.capabilities = response["capabilities"].clone();
         client.notify("initialized", json!({}))?;

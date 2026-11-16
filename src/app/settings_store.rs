@@ -406,6 +406,10 @@ pub(super) fn load_fallback_fonts(tx: mpsc::Sender<Result<Action, String>>, ctx:
 /// Put the editor font first in the monospace family, or restore egui's own,
 /// and let both families fall back to system fonts for other scripts.
 pub(super) fn set_editor_font(ctx: &egui::Context, font: Option<(Vec<u8>, u32)>) {
+    set_fonts(ctx, font, None);
+}
+
+fn set_fonts(ctx: &egui::Context, font: Option<(Vec<u8>, u32)>, terminal: Option<(Vec<u8>, u32)>) {
     let mut fonts = egui::FontDefinitions::default();
     fonts.font_data.insert(
         "terminal-arabic".into(),
@@ -419,6 +423,18 @@ pub(super) fn set_editor_font(ctx: &egui::Context, font: Option<(Vec<u8>, u32)>)
             .entry(family)
             .or_default()
             .push("terminal-arabic".into());
+    }
+    // Keep a terminal family independent of editor font changes.
+    let mut terminal_family = fonts.families[&egui::FontFamily::Monospace].clone();
+    if let Some((bytes, index)) = terminal {
+        fonts.font_data.insert(
+            "terminal-custom".into(),
+            std::sync::Arc::new(egui::FontData {
+                index,
+                ..egui::FontData::from_owned(bytes)
+            }),
+        );
+        terminal_family.insert(0, "terminal-custom".into());
     }
     // Characters the chosen font lacks, such as Latin letters in an Arabic-only
     // font, fall through to the built-in font and then the system fallbacks.
@@ -447,7 +463,12 @@ pub(super) fn set_editor_font(ctx: &egui::Context, font: Option<(Vec<u8>, u32)>)
         for family in [egui::FontFamily::Monospace, egui::FontFamily::Proportional] {
             fonts.families.entry(family).or_default().push(name.clone());
         }
+        terminal_family.push(name.clone());
     }
+    fonts.families.insert(
+        egui::FontFamily::Name("hedit-terminal".into()),
+        terminal_family,
+    );
     fonts.font_data.insert(
         "reader-symbols".into(),
         std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
@@ -491,8 +512,38 @@ pub(super) fn set_editor_font(ctx: &egui::Context, font: Option<(Vec<u8>, u32)>)
 }
 
 impl HeditApp {
+    pub(super) fn rebuild_fonts(&mut self, ctx: &egui::Context) {
+        self.invalidate_terminal_font();
+        set_fonts(ctx, self.editor_font.clone(), self.terminal_font.clone());
+    }
+    fn apply_terminal_font(&mut self, ctx: &egui::Context) {
+        let wanted = self
+            .settings
+            .terminal_font
+            .as_ref()
+            .map(|font| font.face.trim().to_owned());
+        if wanted == self.terminal_font_applied || self.settings_files.changed_at.is_some() {
+            return;
+        }
+        self.terminal_font_applied = wanted.clone();
+        self.terminal_font_generation = self.terminal_font_generation.wrapping_add(1);
+        self.terminal_font = None;
+        self.rebuild_fonts(ctx);
+        let Some(name) = wanted.filter(|name| !name.is_empty()) else {
+            return;
+        };
+        let generation = self.terminal_font_generation;
+        let tx = self.tx.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            let result = hedit::fonts::load(&name);
+            let _ = tx.send(Ok(Action::TerminalFont(generation, name, result)));
+            ctx.request_repaint();
+        });
+    }
     /// Apply the cursor and font settings once they settle.
     pub(super) fn apply_editor_style(&mut self, ctx: &egui::Context) {
+        self.apply_terminal_font(ctx);
         let (width, blink) = (self.settings.caret_width, self.settings.caret_blink);
         let cursor = ctx.style().visuals.text_cursor.clone();
         if cursor.stroke.width != width || cursor.blink != blink {
@@ -510,7 +561,7 @@ impl HeditApp {
         let name = self.font_applied.trim().to_owned();
         if name.is_empty() {
             self.editor_font = None;
-            set_editor_font(ctx, None);
+            self.rebuild_fonts(ctx);
             return;
         }
         let tx = self.tx.clone();

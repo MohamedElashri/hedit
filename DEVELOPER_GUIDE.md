@@ -170,6 +170,14 @@ runs there; it does not use the editor's blocking job flag. Shared installation
 leases prevent changes while another window owns a server. Installs verify
 upstream digests, stage/extract with path and size limits, then atomically publish
 an exact receipt. Keep external executable ownership separate from managed files.
+Multiple servers may own the same document. Route each request by supported and
+enabled feature, descending priority, then server ID; use the same priority policy
+for the eight-session cap. Keep diagnostics keyed by server/project as well as
+path, and clear only the affected source. Launch environment, arguments, root
+markers, initialization options, and runtime settings are separate persisted
+controls. Missing initialization options retain compatibility with older settings.
+Catalog presets include external-only servers; an empty repository forbids a
+managed install. PATH detection runs on the host worker and never executes a probe.
 
 SSH language workers live in the helper runtime and are tied to a bound connection,
 writer epoch, and execution trust. Commands/snapshots use the existing bounded
@@ -190,10 +198,19 @@ cargo test --locked -p hedit-core live_managed_server -- --ignored --nocapture
 The last command is an explicit network smoke test: it installs verified upstream
 rust-analyzer and clangd into temporary storage, starts real stdio sessions,
 requests hover information, and removes the packages. It requires curl and the
-relevant toolchains. The disposable SSH suite additionally checks language-server
+relevant toolchains. `live_cached_native_installs_start_and_serve_language_requests`
+also exercises real ty, Ruff, LuaLS and Tombi archives when `HEDIT_LSP_ASSET_DIR`
+contains the official archives and GitHub release JSON; it still verifies every
+archive against its upstream digest. Offline release snapshots cover native
+asset selection on Linux, macOS and Windows. The disposable SSH suite additionally checks language-server
 execution, Unicode navigation, large snapshots, registration ownership, and trust
 revocation through the production bridge. Use `HEDIT_PREVIEW_DIR` with the ignored
 `export_language_server_settings` test to inspect the native manager layout.
+Terminal appearance uses a separate egui font family and optional color overrides.
+Load terminal fonts off the UI thread with generation checks; preserve that family
+when editor/fallback fonts change. Live style changes resize the existing PTY and
+preserve its VT state, including application OSC color overrides. Reapply the
+configured palette when a session is restarted.
 
 ## Linux release packages
 

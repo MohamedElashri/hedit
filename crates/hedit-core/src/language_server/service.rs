@@ -1,5 +1,5 @@
 use super::{
-    client::Client,
+    client::{Client, ClientSettings},
     manager::{self, Manager, Registration},
     text::{self, Encoding, Position},
     MAX_DOCUMENT,
@@ -57,6 +57,9 @@ impl Feature {
 pub enum Operation {
     List,
     Install {
+        id: String,
+    },
+    Detect {
         id: String,
     },
     Remove {
@@ -137,15 +140,10 @@ impl Operation {
             }
             Self::Configure { id, registration } => {
                 Manager::validate_id(id)?;
-                if serde_json::to_vec(registration)
-                    .map_err(super::error)?
-                    .len()
-                    > 1024 * 1024
-                {
-                    return Err("Server configuration is too large.".into());
-                }
+                manager::validate(registration)?;
             }
-            Self::Install { id }
+            Self::Detect { id }
+            | Self::Install { id }
             | Self::Remove { id }
             | Self::Stop { id }
             | Self::Restart { id } => Manager::validate_id(id)?,
@@ -350,6 +348,8 @@ impl Drop for Service {
 }
 struct Session {
     client: Client,
+    features: manager::Features,
+    priority: i16,
     documents: BTreeMap<PathBuf, Document>,
 }
 struct Worker {
@@ -413,6 +413,9 @@ impl Worker {
                     json!({"catalog":manager::catalog(),"installed":self.manager.list()?,"directory":self.manager.root()}),
                 )
             }
+            Operation::Detect { id } => {
+                serde_json::to_value(manager::detect(&id)?).map_err(super::error)
+            }
             Operation::Install { id } => {
                 self.stop(&id, emit);
                 self.manager.install(&id, cancel, |message| {
@@ -461,9 +464,17 @@ impl Worker {
                 tab_size,
                 spaces,
             } => {
-                let Some(session) = self.sessions.values_mut().find(|s| {
-                    s.documents.contains_key(&path) && s.client.supported(feature.capability())
-                }) else {
+                let selected = self
+                    .sessions
+                    .iter()
+                    .filter(|(_, s)| {
+                        s.documents.contains_key(&path)
+                            && s.features.enabled(feature)
+                            && s.client.supported(feature.capability())
+                    })
+                    .min_by(|(ka, a), (kb, b)| b.priority.cmp(&a.priority).then_with(|| ka.cmp(kb)))
+                    .map(|(key, _)| key.clone());
+                let Some(session) = selected.and_then(|key| self.sessions.get_mut(&key)) else {
                     return Err("No running language server supports this action.".into());
                 };
                 let document = &session.documents[&path];
@@ -510,10 +521,11 @@ impl Worker {
         emit: &impl Fn(Event) -> bool,
     ) -> Result<(), String> {
         let registered = self.manager.list()?;
-        let mut wanted: HashMap<(String, PathBuf), Vec<Document>> = HashMap::new();
-        for document in &documents {
+        let mut wanted: HashMap<(String, PathBuf), Vec<usize>> = HashMap::new();
+        for (index, document) in documents.iter().enumerate() {
             for entry in &registered {
                 if self.stopped.contains(&entry.id)
+                    || !entry.registration.features.any_enabled()
                     || !entry.registration.enabled_at(&document.root)
                     || !entry
                         .registration
@@ -525,15 +537,30 @@ impl Worker {
                 {
                     continue;
                 }
-                let root = project_root(document);
+                let root = project_root(document, &entry.registration.root_markers);
                 wanted
                     .entry((entry.id.clone(), root))
                     .or_default()
-                    .push(document.clone());
-                // One selected server per document avoids duplicate diagnostics
-                // and ambiguous formatting. Ordering is deterministic by ID.
-                break;
+                    .push(index);
             }
+        }
+        // Apply the session cap deterministically, including when higher-priority
+        // registrations are enabled after lower-priority sessions are running.
+        let mut keys: Vec<_> = wanted.keys().cloned().collect();
+        let priority = |id: &str| {
+            registered
+                .iter()
+                .find(|r| r.id == id)
+                .map_or(0, |r| r.registration.priority)
+        };
+        keys.sort_by(|a, b| priority(&b.0).cmp(&priority(&a.0)).then_with(|| a.cmp(b)));
+        for key in keys.into_iter().skip(8) {
+            wanted.remove(&key);
+            emit(Self::status(
+                &key,
+                "Limited",
+                "At most eight language-server sessions can run per workspace.",
+            ));
         }
         self.documents = documents;
         self.failed.retain(|key| wanted.contains_key(key));
@@ -561,22 +588,28 @@ impl Worker {
                     continue;
                 }
                 emit(Self::status(&key, "Starting", ""));
-                let config = registered
+                let registration = &registered
                     .iter()
                     .find(|r| r.id == key.0)
                     .unwrap()
-                    .registration
-                    .configuration
-                    .clone();
+                    .registration;
+                let settings = ClientSettings {
+                    configuration: registration.configuration.clone(),
+                    initialization_options: registration
+                        .initialization_options
+                        .clone()
+                        .unwrap_or_else(|| registration.configuration.clone()),
+                    environment: registration.environment.clone(),
+                    section: key.0.clone(),
+                };
                 let started = self.manager.launch(&key.0).and_then(|(launch, lease)| {
                     Client::start_owned(
                         launch,
                         lease,
                         &key.1,
-                        config,
+                        settings,
                         cancel,
                         self.processes.clone(),
-                        key.0.clone(),
                     )
                 });
                 match started {
@@ -585,6 +618,8 @@ impl Worker {
                             key.clone(),
                             Session {
                                 client,
+                                features: registration.features.clone(),
+                                priority: registration.priority,
                                 documents: BTreeMap::new(),
                             },
                         );
@@ -600,6 +635,11 @@ impl Worker {
             let Some(session) = self.sessions.get_mut(&key) else {
                 continue;
             };
+            // Clone text only for the bounded set of selected sessions.
+            let docs = docs
+                .into_iter()
+                .map(|index| self.documents[index].clone())
+                .collect();
             let result = sync_session(session, docs);
             if let Err(e) = result {
                 self.sessions.remove(&key);
@@ -630,6 +670,9 @@ impl Worker {
                 continue;
             }
             while let Some(notification) = session.client.notifications.pop_front() {
+                if !session.features.diagnostics {
+                    continue;
+                }
                 let params = &notification["params"];
                 let Ok(path) = params["uri"]
                     .as_str()
@@ -678,11 +721,17 @@ impl Worker {
         }
     }
 }
-fn project_root(document: &Document) -> PathBuf {
+fn project_root(document: &Document, custom: &[String]) -> PathBuf {
     let markers: &[&str] = match document.language.as_str() {
         "rust" => &["Cargo.toml", "rust-project.json"],
         "c" | "cpp" | "cuda" => &["compile_commands.json", "compile_flags.txt", ".clangd"],
-        "python" => &["pyproject.toml", "setup.py"],
+        "python" => &["pyproject.toml", "setup.py", "ruff.toml", ".ruff.toml"],
+        "go" => &["go.work", "go.mod"],
+        "lua" => &[".luarc.json", ".luarc.jsonc"],
+        "toml" => &["tombi.toml", "taplo.toml", ".taplo.toml", "Cargo.toml"],
+        "javascript" | "typescript" | "jsx" | "tsx" => {
+            &["tsconfig.json", "jsconfig.json", "package.json"]
+        }
         _ => &[],
     };
     let mut at = document.path.parent();
@@ -690,7 +739,12 @@ fn project_root(document: &Document) -> PathBuf {
         if !path.starts_with(&document.root) {
             break;
         }
-        if markers.iter().any(|marker| path.join(marker).is_file()) {
+        let found = if custom.is_empty() {
+            markers.iter().any(|marker| path.join(marker).exists())
+        } else {
+            custom.iter().any(|marker| path.join(marker).exists())
+        };
+        if found {
             return path.to_owned();
         }
         if path == document.root {
@@ -699,6 +753,19 @@ fn project_root(document: &Document) -> PathBuf {
         at = path.parent();
     }
     document.root.clone()
+}
+fn language_id(document: &Document) -> &str {
+    let extension = document
+        .path
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    match document.language.as_str() {
+        "javascript" if extension.eq_ignore_ascii_case("jsx") => "javascriptreact",
+        "typescript" if extension.eq_ignore_ascii_case("tsx") => "typescriptreact",
+        "shell" => "shellscript",
+        language => language,
+    }
 }
 fn sync_session(session: &mut Session, documents: Vec<Document>) -> Result<(), String> {
     let wanted: HashSet<_> = documents.iter().map(|d| d.path.clone()).collect();
@@ -731,7 +798,7 @@ fn sync_session(session: &mut Session, documents: Vec<Document>) -> Result<(), S
             session.documents.remove(&document.path);
         }
         match session.documents.get(&document.path) {
-            None=>session.client.notify("textDocument/didOpen",json!({"textDocument":{"uri":uri,"languageId":document.language,"version":document.revision,"text":document.text}}))?,
+            None=>session.client.notify("textDocument/didOpen",json!({"textDocument":{"uri":uri,"languageId":language_id(&document),"version":document.revision,"text":document.text}}))?,
             Some(old)=>{
                 if old.revision!=document.revision {
                     let sync=&session.client.capabilities["textDocumentSync"];
@@ -879,5 +946,32 @@ mod tests {
             let found = events.borrow().iter().any(|event| matches!(event, Event::Diagnostics{items,..} if items.iter().any(|d|d["message"]=="version check")));
             assert_eq!(found, accepted, "diagnostic version {version:?}");
         }
+    }
+    #[test]
+    fn project_markers_respect_workspace_boundaries_and_protocol_language_ids() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("workspace");
+        std::fs::create_dir_all(root.join("nested/src")).unwrap();
+        std::fs::create_dir(root.join("nested/.project")).unwrap();
+        std::fs::write(directory.path().join("outside.marker"), "").unwrap();
+        let mut document = Document {
+            path: root.join("nested/src/component.JSX"),
+            root: root.clone(),
+            language: "javascript".into(),
+            revision: 0,
+            text: String::new(),
+            dirty: false,
+        };
+        assert_eq!(
+            project_root(&document, &[".project".into()]),
+            root.join("nested")
+        );
+        assert_eq!(project_root(&document, &["outside.marker".into()]), root);
+        assert_eq!(language_id(&document), "javascriptreact");
+        document.path.set_extension("TSX");
+        document.language = "typescript".into();
+        assert_eq!(language_id(&document), "typescriptreact");
+        document.language = "shell".into();
+        assert_eq!(language_id(&document), "shellscript");
     }
 }

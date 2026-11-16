@@ -23,22 +23,264 @@ pub struct CatalogEntry {
     pub requirements: String,
 }
 pub fn catalog() -> Vec<CatalogEntry> {
-    vec![
-        CatalogEntry {
-            id: "rust-analyzer".into(),
-            name: "rust-analyzer".into(),
-            languages: vec!["rust".into()],
-            repository: "rust-lang/rust-analyzer".into(),
-            requirements: "Rust toolchain and project dependencies".into(),
-        },
-        CatalogEntry {
-            id: "clangd".into(),
-            name: "clangd".into(),
-            languages: vec!["c".into(), "cpp".into(), "cuda".into()],
-            repository: "clangd/clangd".into(),
-            requirements: "C/C++ toolchain; compile_commands.json recommended".into(),
-        },
-    ]
+    let entries = [
+        (
+            "rust-analyzer",
+            "Rust",
+            "rust",
+            "rust-lang/rust-analyzer",
+            "Rust toolchain and project dependencies",
+        ),
+        (
+            "clangd",
+            "C / C++",
+            "c,cpp,cuda",
+            "clangd/clangd",
+            "C/C++ toolchain; compile_commands.json recommended",
+        ),
+        (
+            "ty",
+            "Python · ty",
+            "python",
+            "astral-sh/ty",
+            "Python environment and project dependencies",
+        ),
+        (
+            "ruff",
+            "Python · Ruff",
+            "python",
+            "astral-sh/ruff",
+            "Python linting and formatting; works alongside ty",
+        ),
+        (
+            "lua-language-server",
+            "Lua",
+            "lua",
+            "LuaLS/lua-language-server",
+            "Lua project; bundled runtime included",
+        ),
+        (
+            "tombi",
+            "TOML · Tombi",
+            "toml",
+            "tombi-toml/tombi",
+            "TOML completion, validation and formatting",
+        ),
+        (
+            "gopls",
+            "Go",
+            "go",
+            "",
+            "Install gopls with your Go toolchain, then detect its executable",
+        ),
+        (
+            "typescript-language-server",
+            "JavaScript / TypeScript",
+            "javascript,typescript",
+            "",
+            "Install typescript and typescript-language-server with npm",
+        ),
+        (
+            "vscode-html-language-server",
+            "HTML",
+            "html",
+            "",
+            "Install vscode-langservers-extracted with npm",
+        ),
+        (
+            "vscode-css-language-server",
+            "CSS",
+            "css",
+            "",
+            "Install vscode-langservers-extracted with npm",
+        ),
+        (
+            "vscode-json-language-server",
+            "JSON",
+            "json",
+            "",
+            "Install vscode-langservers-extracted with npm",
+        ),
+        (
+            "yaml-language-server",
+            "YAML",
+            "yaml",
+            "",
+            "Install yaml-language-server with npm",
+        ),
+        (
+            "bash-language-server",
+            "Shell",
+            "shell",
+            "",
+            "Install bash-language-server with npm",
+        ),
+        (
+            "taplo",
+            "TOML · Taplo",
+            "toml",
+            "",
+            "Install a Taplo build with language-server support",
+        ),
+        (
+            "pylsp",
+            "Python · pylsp",
+            "python",
+            "",
+            "Install python-lsp-server in your Python environment",
+        ),
+    ];
+    entries
+        .into_iter()
+        .map(
+            |(id, name, languages, repository, requirements)| CatalogEntry {
+                id: id.into(),
+                name: name.into(),
+                languages: languages.split(',').map(str::to_owned).collect(),
+                repository: repository.into(),
+                requirements: requirements.into(),
+            },
+        )
+        .collect()
+}
+pub fn default_arguments(id: &str) -> Vec<String> {
+    match id {
+        "ty" | "ruff" => vec!["server".into()],
+        "tombi" => vec!["lsp".into()],
+        "taplo" => vec!["lsp".into(), "stdio".into()],
+        "bash-language-server" => vec!["start".into()],
+        "typescript-language-server"
+        | "vscode-html-language-server"
+        | "vscode-css-language-server"
+        | "vscode-json-language-server"
+        | "yaml-language-server" => vec!["--stdio".into()],
+        _ => vec![],
+    }
+}
+/// Defaults for a new registration; existing registrations retain their settings.
+pub fn preset(id: &str) -> Registration {
+    let mut registration = Registration {
+        languages: catalog()
+            .into_iter()
+            .find(|e| e.id == id)
+            .map(|e| e.languages)
+            .unwrap_or_default(),
+        initialization_options: Some(serde_json::json!({})),
+        ..Registration::default()
+    };
+    registration.arguments = catalog()
+        .iter()
+        .find(|e| e.id == id)
+        .filter(|e| e.repository.is_empty())
+        .map(|_| default_arguments(id));
+    let section = match id {
+        "lua-language-server" => Some("Lua"),
+        "vscode-html-language-server" => Some("html"),
+        "vscode-css-language-server" => Some("css"),
+        "vscode-json-language-server" => Some("json"),
+        "yaml-language-server" => Some("yaml"),
+        "bash-language-server" => Some("bashIde"),
+        _ => None,
+    };
+    if let Some(section) = section {
+        registration.configuration = serde_json::json!({(section):{}});
+    }
+    if id == "typescript-language-server" {
+        registration.configuration = serde_json::json!({"typescript":{},"javascript":{}});
+    }
+    if id == "ty" {
+        registration.priority = 50;
+        registration.features.formatting = false;
+    }
+    if id == "ruff" {
+        registration.features = Features {
+            completion: false,
+            hover: false,
+            definition: false,
+            references: false,
+            ..Features::default()
+        };
+        registration.initialization_options = Some(serde_json::json!({"settings":{}}));
+    }
+    registration
+}
+/// Find a preset executable on this host. Never searches relative PATH entries.
+/// Detection does not launch the program or change a registration.
+pub fn detect(id: &str) -> Result<PathBuf, String> {
+    if !catalog().iter().any(|e| e.id == id) {
+        return Err("Detection requires a known server preset; enter an absolute executable path for custom servers.".into());
+    }
+    let path = std::env::var_os("PATH").ok_or("PATH is not available on this host.")?;
+    detect_in(id, &path)
+}
+fn detect_in(id: &str, path: &std::ffi::OsStr) -> Result<PathBuf, String> {
+    let mut names = vec![id.to_owned()];
+    if cfg!(windows) {
+        // Shell wrappers (.cmd/.bat) are not direct stdio executables. A native
+        // .exe or an explicit runtime launch is required for predictable argv.
+        names = vec![format!("{id}.exe")];
+    }
+    for directory in std::env::split_paths(path)
+        .take(512)
+        .filter(|p| p.is_absolute())
+    {
+        for name in &names {
+            let candidate = directory.join(name);
+            if !candidate.is_file() {
+                continue;
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if !fs::metadata(&candidate).is_ok_and(|m| m.permissions().mode() & 0o111 != 0) {
+                    continue;
+                }
+            }
+            return Ok(candidate);
+        }
+    }
+    Err(format!("{id} was not found on this host's PATH. Install it separately or choose an absolute executable path."))
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Features {
+    pub completion: bool,
+    pub hover: bool,
+    pub definition: bool,
+    pub references: bool,
+    pub formatting: bool,
+    pub diagnostics: bool,
+}
+impl Default for Features {
+    fn default() -> Self {
+        Self {
+            completion: true,
+            hover: true,
+            definition: true,
+            references: true,
+            formatting: true,
+            diagnostics: true,
+        }
+    }
+}
+impl Features {
+    pub fn any_enabled(&self) -> bool {
+        self.completion
+            || self.hover
+            || self.definition
+            || self.references
+            || self.formatting
+            || self.diagnostics
+    }
+    pub fn enabled(&self, feature: super::Feature) -> bool {
+        match feature {
+            super::Feature::Completion => self.completion,
+            super::Feature::Hover => self.hover,
+            super::Feature::Definition => self.definition,
+            super::Feature::References => self.references,
+            super::Feature::Formatting => self.formatting,
+        }
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Launch {
@@ -53,6 +295,8 @@ pub struct Receipt {
     pub source: String,
     pub directory: String,
     pub executable: PathBuf,
+    #[serde(default)]
+    pub arguments: Vec<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
@@ -62,6 +306,13 @@ pub struct Registration {
     pub external: Option<Launch>,
     pub managed: Option<Receipt>,
     pub configuration: serde_json::Value,
+    /// None retains the pre-0.5.2 behavior of using configuration at initialize.
+    pub initialization_options: Option<serde_json::Value>,
+    pub arguments: Option<Vec<String>>,
+    pub environment: BTreeMap<String, String>,
+    pub root_markers: Vec<String>,
+    pub priority: i16,
+    pub features: Features,
     pub workspaces: BTreeMap<String, bool>,
 }
 impl Default for Registration {
@@ -73,6 +324,12 @@ impl Default for Registration {
             managed: None,
             configuration: serde_json::json!({}),
             workspaces: BTreeMap::new(),
+            initialization_options: None,
+            arguments: None,
+            environment: BTreeMap::new(),
+            root_markers: vec![],
+            priority: 0,
+            features: Features::default(),
         }
     }
 }
@@ -230,6 +487,7 @@ impl Manager {
         self.write(id, &registration)
     }
     fn write(&self, id: &str, registration: &Registration) -> Result<(), String> {
+        validate(registration)?;
         let dir = self.prepare(id)?;
         let mut temp = tempfile::NamedTempFile::new_in(&dir).map_err(error)?;
         serde_json::to_writer_pretty(&mut temp, registration).map_err(error)?;
@@ -243,7 +501,7 @@ impl Manager {
         let registration = self
             .read(id)?
             .ok_or("Server is not installed or registered.")?;
-        let launch = if let Some(external) = registration.external {
+        let mut launch = if let Some(external) = registration.external {
             external
         } else if let Some(r) = registration.managed {
             let base = self.directory(id)?.join(&r.directory);
@@ -256,13 +514,16 @@ impl Manager {
             }
             Launch {
                 executable: base.join(r.executable),
-                arguments: vec![],
+                arguments: r.arguments,
             }
         } else {
             return Err(
                 "Server is not installed. Select Install or configure an executable.".into(),
             );
         };
+        if let Some(arguments) = registration.arguments {
+            launch.arguments = arguments;
+        }
         if !launch.executable.is_absolute() {
             return Err("Choose an absolute executable path.".into());
         }
@@ -301,7 +562,7 @@ impl Manager {
     ) -> Result<(), String> {
         let entry = catalog()
             .into_iter()
-            .find(|e| e.id == id)
+            .find(|e| e.id == id && !e.repository.is_empty())
             .ok_or("This server has no managed installer; configure an existing executable.")?;
         let _lock = self.lock(id, false)?;
         let dir = self.prepare(id)?;
@@ -402,7 +663,7 @@ impl Manager {
             progress("Checking executable…");
             probe_executable(&executable, cancel, Duration::from_secs(10))?;
         }
-        let mut registration = self.read(id)?.unwrap_or_default();
+        let mut registration = self.read(id)?.unwrap_or_else(|| preset(id));
         if registration.languages.is_empty() {
             registration.languages = catalog()
                 .into_iter()
@@ -422,6 +683,7 @@ impl Manager {
                 .to_string_lossy()
                 .into_owned(),
             executable: package.executable.clone(),
+            arguments: default_arguments(id),
         };
         let previous = registration.managed.as_ref().map(|r| r.directory.clone());
         let current = receipt.directory.clone();
@@ -449,7 +711,15 @@ impl Manager {
         Ok(())
     }
 }
-fn validate(registration: &Registration) -> Result<(), String> {
+pub fn validate(registration: &Registration) -> Result<(), String> {
+    if serde_json::to_vec_pretty(registration)
+        .map_err(error)?
+        .len()
+        > 1024 * 1024
+    {
+        return Err("Server configuration is too large.".into());
+    }
+
     if registration.languages.is_empty()
         || registration.languages.len() > 32
         || registration.languages.iter().any(|s| {
@@ -471,8 +741,41 @@ fn validate(registration: &Registration) -> Result<(), String> {
     {
         return Err("Server configuration must be a bounded JSON object.".into());
     }
+    let valid_arguments = |args: &[String]| {
+        args.len() <= 128 && args.iter().all(|s| s.len() <= 8192 && !s.contains('\0'))
+    };
+    if registration
+        .arguments
+        .as_ref()
+        .is_some_and(|a| !valid_arguments(a))
+        || registration.environment.len() > 128
+        || registration.environment.iter().any(|(k, v)| {
+            k.is_empty()
+                || k.len() > 256
+                || k.contains(['=', '\0'])
+                || v.len() > 8192
+                || v.contains('\0')
+        })
+        || registration.root_markers.len() > 32
+        || registration
+            .root_markers
+            .iter()
+            .any(|s| s.len() > 256 || s.contains('\0') || !safe_relative(Path::new(s)))
+        || registration
+            .initialization_options
+            .as_ref()
+            .is_some_and(|v| {
+                !v.is_object() || serde_json::to_vec(v).map_or(true, |b| b.len() > 256 * 1024)
+            })
+    {
+        return Err(
+            "Invalid arguments, environment, root markers or initialization options.".into(),
+        );
+    }
     if let Some(launch) = &registration.external {
         if !launch.executable.is_absolute()
+            || launch.executable.as_os_str().len() > 4096
+            || launch.executable.to_string_lossy().contains('\0')
             || launch.arguments.len() > 128
             || launch
                 .arguments
@@ -486,6 +789,7 @@ fn validate(registration: &Registration) -> Result<(), String> {
         if !r.directory.starts_with("install-")
             || Path::new(&r.directory).components().count() != 1
             || !safe_relative(&r.executable)
+            || !valid_arguments(&r.arguments)
         {
             return Err("Invalid managed installation receipt.".into());
         }
@@ -666,6 +970,7 @@ struct Package {
     size: u64,
     executable: PathBuf,
     gzip: bool,
+    tar: bool,
     probe: bool,
 }
 impl Package {
@@ -719,11 +1024,66 @@ impl Package {
                     format!("clangd_{version}/bin/{exe}"),
                 )
             }
+            ("ty" | "ruff" | "tombi", "linux" | "macos" | "windows", "x86_64" | "aarch64") => {
+                let target = match os {
+                    "linux" if id == "tombi" => "unknown-linux-musl",
+                    "linux" => "unknown-linux-gnu",
+                    "macos" => "apple-darwin",
+                    _ => "pc-windows-msvc",
+                };
+                let stem = if id == "tombi" {
+                    format!(
+                        "tombi-cli-{}-{arch}-{target}",
+                        version.trim_start_matches('v')
+                    )
+                } else {
+                    format!("{id}-{arch}-{target}")
+                };
+                let ext = if os == "windows" { "zip" } else { "tar.gz" };
+                let exe = if os == "windows" {
+                    format!("{id}.exe")
+                } else {
+                    id.into()
+                };
+                (
+                    format!("{stem}.{ext}"),
+                    if os == "windows" {
+                        exe
+                    } else {
+                        format!("{stem}/{exe}")
+                    },
+                )
+            }
+            ("lua-language-server", "linux" | "macos" | "windows", "x86_64" | "aarch64")
+                if !(os == "windows" && arch == "aarch64") =>
+            {
+                let platform = match os {
+                    "linux" => "linux",
+                    "macos" => "darwin",
+                    _ => "win32",
+                };
+                let cpu = if arch == "x86_64" { "x64" } else { "arm64" };
+                let ext = if os == "windows" { "zip" } else { "tar.gz" };
+                (
+                    format!("lua-language-server-{version}-{platform}-{cpu}.{ext}"),
+                    if os == "windows" {
+                        "bin/lua-language-server.exe".into()
+                    } else {
+                        "bin/lua-language-server".into()
+                    },
+                )
+            }
             _ => return Err(
                 "No managed release supports this OS/architecture. Configure an external server."
                     .into(),
             ),
         };
+        if !safe_relative(Path::new(&name))
+            || Path::new(&name).components().count() != 1
+            || !safe_relative(Path::new(&executable))
+        {
+            return Err("Unsafe release asset name or executable path.".into());
+        }
         let assets = value["assets"]
             .as_array()
             .ok_or("Missing release assets.")?;
@@ -763,6 +1123,7 @@ impl Package {
             size,
             executable: executable.into(),
             gzip: name.ends_with(".gz"),
+            tar: name.ends_with(".tar.gz"),
             probe: true,
         })
     }
@@ -780,6 +1141,45 @@ fn unpack(
     package: &Package,
     cancel: &AtomicBool,
 ) -> Result<(), String> {
+    if package.tar {
+        let input = flate2::read::GzDecoder::new(File::open(archive).map_err(error)?);
+        let mut archive = tar::Archive::new(input);
+        let mut remaining = EXPANDED_LIMIT;
+        let mut paths = std::collections::BTreeSet::new();
+        for entry in archive.entries().map_err(error)?.raw(true) {
+            check_cancel(cancel)?;
+            let mut entry = entry.map_err(error)?;
+            let path = entry.path().map_err(error)?.into_owned();
+            let kind = entry.header().entry_type();
+            if !safe_relative(&path)
+                || !(kind.is_file() || kind.is_dir())
+                || (kind.is_dir() && entry.size() != 0)
+                || path.as_os_str().len() > 4096
+                || !paths.insert(path.clone())
+                || paths.len() > 20_000
+            {
+                return Err(
+                    "Unsafe path, duplicate entry or unsupported type in server archive.".into(),
+                );
+            }
+            let target = destination.join(path);
+            if kind.is_dir() {
+                fs::create_dir_all(target).map_err(error)?;
+            } else {
+                if let Some(parent) = target.parent() {
+                    fs::create_dir_all(parent).map_err(error)?;
+                }
+                remaining -= copy_bounded(&mut entry, &target, remaining, cancel)?;
+            }
+        }
+        // Finish decoding to validate the gzip checksum even after TAR's terminator.
+        let mut input = archive.into_inner();
+        let mut tail = std::io::Read::by_ref(&mut input).take(EXPANDED_LIMIT + 1);
+        if std::io::copy(&mut tail, &mut std::io::sink()).map_err(error)? > remaining {
+            return Err("Expanded server archive is too large.".into());
+        }
+        return Ok(());
+    }
     if package.gzip {
         let mut input = flate2::read::GzDecoder::new(File::open(archive).map_err(error)?);
         return copy_bounded(
@@ -926,6 +1326,7 @@ mod tests {
             size: bytes.len() as u64,
             executable: executable.into(),
             gzip,
+            tar: false,
             probe: false,
         }
     }
@@ -1376,5 +1777,366 @@ mod tests {
         fs::create_dir(root.join("fixture")).unwrap();
         symlink(outside.join("lock"), root.join("fixture/lock")).unwrap();
         assert!(manager.remove("fixture").is_err());
+    }
+    #[test]
+    fn tar_installs_preserve_runtime_files_and_default_launch_arguments() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("server.tar.gz");
+        tar_fixture(
+            &archive,
+            &[
+                (
+                    "bin/lua-language-server",
+                    tar::EntryType::Regular,
+                    b"executable",
+                ),
+                ("main.lua", tar::EntryType::Regular, b"runtime"),
+            ],
+        );
+        let mut p = package(&archive, "bin/lua-language-server", true);
+        p.tar = true;
+        let manager = Manager::new(dir.path().join("servers"));
+        manager
+            .activate(
+                "lua-language-server",
+                &p,
+                &archive,
+                &AtomicBool::new(false),
+                |_| {},
+            )
+            .unwrap();
+        let (launch, lease) = manager.launch("lua-language-server").unwrap();
+        assert_eq!(
+            fs::read(
+                launch
+                    .executable
+                    .parent()
+                    .unwrap()
+                    .parent()
+                    .unwrap()
+                    .join("main.lua")
+            )
+            .unwrap(),
+            b"runtime"
+        );
+        drop(lease);
+        let mut registration = manager.read("lua-language-server").unwrap().unwrap();
+        registration.arguments = Some(vec!["--custom".into()]);
+        registration
+            .environment
+            .insert("EXAMPLE".into(), "value".into());
+        manager
+            .configure("lua-language-server", registration)
+            .unwrap();
+        manager
+            .activate(
+                "lua-language-server",
+                &p,
+                &archive,
+                &AtomicBool::new(false),
+                |_| {},
+            )
+            .unwrap();
+        let (launch, _) = manager.launch("lua-language-server").unwrap();
+        assert_eq!(launch.arguments, ["--custom"]);
+        assert_eq!(
+            manager
+                .read("lua-language-server")
+                .unwrap()
+                .unwrap()
+                .environment["EXAMPLE"],
+            "value"
+        );
+    }
+    fn tar_fixture(path: &Path, entries: &[(&str, tar::EntryType, &[u8])]) {
+        let output = flate2::write::GzEncoder::new(
+            File::create(path).unwrap(),
+            flate2::Compression::default(),
+        );
+        let mut builder = tar::Builder::new(output);
+        for (name, kind, data) in entries {
+            let mut header = tar::Header::new_gnu();
+            header.set_mode(0o644);
+            header.set_size(data.len() as u64);
+            header.set_entry_type(*kind);
+            header.as_mut_bytes()[..name.len()].copy_from_slice(name.as_bytes());
+            header.set_cksum();
+            builder.append(&header, *data).unwrap();
+        }
+        builder.into_inner().unwrap().finish().unwrap();
+    }
+    #[test]
+    fn tar_rejects_traversal_links_duplicate_names_and_metadata_entries() {
+        for (name, kind) in [
+            ("../escape", tar::EntryType::Regular),
+            ("/escape", tar::EntryType::Regular),
+            ("a\\b", tar::EntryType::Regular),
+            ("C:evil", tar::EntryType::Regular),
+            ("server", tar::EntryType::Symlink),
+            ("server", tar::EntryType::Link),
+            ("server", tar::EntryType::Fifo),
+            ("server", tar::EntryType::GNULongName),
+            ("server", tar::EntryType::XHeader),
+            ("server", tar::EntryType::Directory),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let archive = dir.path().join("server.tar.gz");
+            tar_fixture(&archive, &[(name, kind, b"x")]);
+            let mut p = package(&archive, "server", true);
+            p.tar = true;
+            let manager = Manager::new(dir.path().join("servers"));
+            assert!(
+                manager
+                    .activate("ty", &p, &archive, &AtomicBool::new(false), |_| {})
+                    .is_err(),
+                "{name} {kind:?}"
+            );
+            assert!(manager.read("ty").unwrap().is_none());
+            assert!(!dir.path().join("escape").exists());
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("server.tar.gz");
+        tar_fixture(
+            &archive,
+            &[
+                ("server", tar::EntryType::Regular, b"one"),
+                ("server", tar::EntryType::Regular, b"two"),
+            ],
+        );
+        let mut p = package(&archive, "server", true);
+        p.tar = true;
+        assert!(unpack(
+            &archive,
+            &dir.path().join("out"),
+            &p,
+            &AtomicBool::new(false)
+        )
+        .is_err());
+    }
+    #[test]
+    fn all_presets_validate_and_keep_companion_features_separate() {
+        let entries = catalog();
+        let mut ids = std::collections::BTreeSet::new();
+        for entry in &entries {
+            assert!(ids.insert(&entry.id));
+            validate(&preset(&entry.id)).unwrap();
+        }
+        assert_eq!(
+            entries.iter().filter(|e| !e.repository.is_empty()).count(),
+            6
+        );
+        assert_eq!(default_arguments("ty"), ["server"]);
+        assert!(preset("ty").arguments.is_none());
+        assert!(preset("ty").features.completion);
+        assert!(!preset("ty").features.formatting);
+        assert!(!preset("ruff").features.hover);
+        assert!(preset("ruff").features.formatting);
+        assert!(preset("ruff").features.diagnostics);
+        assert!(preset("ty").priority > preset("ruff").priority);
+        assert_eq!(
+            preset("lua-language-server").configuration,
+            serde_json::json!({"Lua":{}})
+        );
+    }
+
+    #[test]
+    fn native_catalog_resolves_published_release_assets_for_supported_platforms() {
+        for (id, fixture) in [
+            ("ty", include_str!("../../tests/support/releases/ty.json")),
+            (
+                "ruff",
+                include_str!("../../tests/support/releases/ruff.json"),
+            ),
+            (
+                "lua-language-server",
+                include_str!("../../tests/support/releases/lua-language-server.json"),
+            ),
+            (
+                "tombi",
+                include_str!("../../tests/support/releases/tombi.json"),
+            ),
+        ] {
+            let release = serde_json::from_str(fixture).unwrap();
+            let entry = catalog().into_iter().find(|e| e.id == id).unwrap();
+            for os in ["linux", "macos", "windows"] {
+                for arch in ["x86_64", "aarch64"] {
+                    let package = Package::resolve(id, &entry.repository, &release, os, arch);
+                    if id == "lua-language-server" && os == "windows" && arch == "aarch64" {
+                        assert!(package.is_err());
+                        continue;
+                    }
+                    let package = package.unwrap_or_else(|e| panic!("{id} {os} {arch}: {e}"));
+                    assert_eq!(package.tar, os != "windows");
+                    assert_eq!(package.gzip, os != "windows");
+                    assert!(safe_relative(&package.executable));
+                    if os == "windows" && id != "lua-language-server" {
+                        assert_eq!(package.executable, PathBuf::from(format!("{id}.exe")));
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    #[ignore = "requires verified upstream archives and release JSON in HEDIT_LSP_ASSET_DIR"]
+    fn live_cached_native_installs_start_and_serve_language_requests() {
+        use super::super::{
+            client::{Client, ClientSettings, Processes},
+            text,
+        };
+        let assets =
+            PathBuf::from(std::env::var_os("HEDIT_LSP_ASSET_DIR").expect("HEDIT_LSP_ASSET_DIR"));
+        for (id, metadata, filename, language, source, method) in [
+            (
+                "ty",
+                "astral-sh-ty.json",
+                "main.py",
+                "python",
+                "answer: int = 42\nprint(answer)\n",
+                "textDocument/hover",
+            ),
+            (
+                "ruff",
+                "astral-sh-ruff.json",
+                "main.py",
+                "python",
+                "answer=42\n",
+                "textDocument/formatting",
+            ),
+            (
+                "lua-language-server",
+                "LuaLS-lua-language-server.json",
+                "main.lua",
+                "lua",
+                "local answer = 42\nprint(answer)\n",
+                "textDocument/hover",
+            ),
+            (
+                "tombi",
+                "tombi-toml-tombi.json",
+                "example.toml",
+                "toml",
+                "answer=42\n",
+                "textDocument/formatting",
+            ),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let root = dir.path().canonicalize().unwrap();
+            let manager = Manager::new(root.join("servers"));
+            let entry = catalog().into_iter().find(|e| e.id == id).unwrap();
+            let release =
+                serde_json::from_slice(&fs::read(assets.join(metadata)).unwrap()).unwrap();
+            let package = Package::resolve(
+                id,
+                &entry.repository,
+                &release,
+                std::env::consts::OS,
+                std::env::consts::ARCH,
+            )
+            .unwrap();
+            let archive = assets.join(package.url.rsplit('/').next().unwrap());
+            manager
+                .activate(id, &package, &archive, &AtomicBool::new(false), |s| {
+                    eprintln!("{id}: {s}")
+                })
+                .unwrap();
+            let r = manager.read(id).unwrap().unwrap();
+            let (launch, lease) = manager.launch(id).unwrap();
+            eprintln!("{id}: {:?} {:?}", launch.executable, launch.arguments);
+            let settings = ClientSettings {
+                configuration: r.configuration,
+                initialization_options: r.initialization_options.unwrap(),
+                environment: r.environment,
+                section: id.into(),
+            };
+            let mut client = Client::start_owned(
+                launch,
+                lease,
+                &root,
+                settings,
+                &AtomicBool::new(false),
+                std::sync::Arc::new(Processes::default()),
+            )
+            .unwrap();
+            let file = root.join(filename);
+            fs::write(&file, source).unwrap();
+            let uri = text::uri(&file).unwrap();
+            client.notify("textDocument/didOpen", serde_json::json!({"textDocument":{"uri":uri,"languageId":language,"version":1,"text":source}})).unwrap();
+            let position = client
+                .encoding
+                .position(source, source.find("answer").unwrap() + 2)
+                .unwrap();
+            let until = Instant::now() + Duration::from_secs(20);
+            loop {
+                let result = client.request(method, serde_json::json!({"textDocument":{"uri":uri},"position":position,"options":{"tabSize":4,"insertSpaces":true}}), &AtomicBool::new(false), Duration::from_secs(10));
+                if result.as_ref().is_ok_and(|v| {
+                    !v.is_null()
+                        && (id != "lua-language-server"
+                            || v["contents"]["value"]
+                                .as_str()
+                                .is_some_and(|s| s.contains("answer")))
+                }) {
+                    eprintln!("{id}: {method}: {}", result.unwrap());
+                    break;
+                }
+                assert!(
+                    Instant::now() < until,
+                    "{id}: {result:?} logs {:?}",
+                    client.logs.lock().unwrap()
+                );
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            client.stop();
+            drop(client);
+            manager.remove(id).unwrap();
+            assert!(manager.list().unwrap().is_empty());
+            assert!(file.is_file());
+        }
+    }
+    #[cfg(unix)]
+    #[test]
+    fn path_detection_skips_relative_entries_and_nonexecutable_files() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let first = directory.path().join("first");
+        let second = directory.path().join("second");
+        fs::create_dir(&first).unwrap();
+        fs::create_dir(&second).unwrap();
+        fs::write(first.join("gopls"), "never run").unwrap();
+        fs::set_permissions(first.join("gopls"), fs::Permissions::from_mode(0o600)).unwrap();
+        fs::write(second.join("gopls"), "never run").unwrap();
+        fs::set_permissions(second.join("gopls"), fs::Permissions::from_mode(0o700)).unwrap();
+        let path =
+            std::env::join_paths([Path::new("."), Path::new("relative"), &first, &second]).unwrap();
+        assert_eq!(detect_in("gopls", &path).unwrap(), second.join("gopls"));
+        assert!(detect_in("missing", &path).is_err());
+        assert!(detect("custom-id").is_err());
+    }
+    #[test]
+    fn release_versions_cannot_escape_installation_paths() {
+        let mut bad = release();
+        bad["tag_name"] = serde_json::json!("v1/../../escape");
+        for (id, repo) in [
+            ("clangd", "clangd/clangd"),
+            ("tombi", "tombi-toml/tombi"),
+            ("lua-language-server", "LuaLS/lua-language-server"),
+        ] {
+            assert!(Package::resolve(id, repo, &bad, "linux", "x86_64")
+                .unwrap_err()
+                .contains("Unsafe release"));
+        }
+    }
+    #[test]
+    fn registrations_cannot_exceed_the_pretty_printed_storage_limit() {
+        let mut registration = preset("ty");
+        registration.environment = (0..128)
+            .map(|i| (format!("VARIABLE_{i}"), "x".repeat(7800)))
+            .collect();
+        registration.arguments = Some((0..128).map(|_| "a".repeat(150)).collect());
+        let size = serde_json::to_vec(&registration).unwrap().len();
+        registration.configuration =
+            serde_json::json!({"padding":"x".repeat(1024 * 1024 - size - 64)});
+        assert!(serde_json::to_vec(&registration).unwrap().len() < 1024 * 1024);
+        assert!(serde_json::to_vec_pretty(&registration).unwrap().len() > 1024 * 1024);
+        assert!(validate(&registration).is_err());
     }
 }

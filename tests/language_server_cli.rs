@@ -73,10 +73,12 @@ fn language_server_cli_removes_registration_and_preserves_external_executable() 
 fn language_server_cli_rejects_unsupported_installers_and_ambiguous_editor_arguments() {
     let dir = tempfile::tempdir().unwrap();
     let store = dir.path().join("servers");
-    let output = run(&store, &["install", "unknown-server"]);
-    assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("no managed installer"));
-    assert!(!store.exists());
+    for id in ["unknown-server", "gopls"] {
+        let output = run(&store, &["install", id]);
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("no managed installer"));
+        assert!(!store.exists());
+    }
     let output = run(&store, &["list", "file.rs"]);
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("cannot be combined"));

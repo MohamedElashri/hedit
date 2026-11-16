@@ -93,6 +93,20 @@ fn run() -> Result<(), String> {
             }),
             ..Registration::default()
         };
+        let mut registration = registration;
+        registration.priority = 30;
+        registration
+            .environment
+            .insert("HEDIT_LSP_TEST_FLAG".into(), "host-value".into());
+        registration.root_markers = vec![".hedit-project".into()];
+        registration.initialization_options = Some(serde_json::json!({"hostInit":true}));
+        registration.arguments = registration.external.as_ref().map(|l| l.arguments.clone());
+        let mut companion = registration.clone();
+        companion.priority = -1;
+        companion.features.hover = false;
+        companion.features.completion = false;
+        companion.features.definition = false;
+        companion.features.references = false;
         service.submit(
             1,
             Operation::Configure {
@@ -101,6 +115,17 @@ fn run() -> Result<(), String> {
             },
         )?;
         collect(1)?;
+        service.submit(
+            1000,
+            Operation::Configure {
+                id: "companion".into(),
+                registration: Box::new(companion),
+            },
+        )?;
+        collect(1000)?;
+        service.submit(1001, Operation::List)?;
+        let registered = collect(1001)?;
+        assert!(registered.iter().any(|e| matches!(e, Event::Result { result: Ok(value), .. } if value["installed"].as_array().is_some_and(|servers| servers.iter().any(|server| server["id"] == "fixture" && server["registration"]["priority"] == 30 && server["registration"]["environment"]["HEDIT_LSP_TEST_FLAG"] == "host-value" && server["registration"]["initialization_options"]["hostInit"] == true)))));
         let path = remote.path("main.rs")?;
         let document = LspDocument {
             path: path.clone(),
@@ -140,6 +165,12 @@ fn run() -> Result<(), String> {
             if started.elapsed() > Duration::from_secs(5) {
                 return Err(format!("Missing mapped diagnostic ownership: {events:?}"));
             }
+            events.extend(service.poll());
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let until = Instant::now() + Duration::from_secs(5);
+        while !events.iter().any(|e| matches!(e, Event::Diagnostics { server, path: source, .. } if server == "companion" && *source == path)) {
+            assert!(Instant::now() < until, "missing companion diagnostics over SSH");
             events.extend(service.poll());
             std::thread::sleep(Duration::from_millis(10));
         }

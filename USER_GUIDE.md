@@ -291,22 +291,35 @@ or the **LSP** button in the status bar. The manager lists available and registe
 servers, installation source/version, workspace status, failures, and logs
 (**Refresh** updates logs). No server downloads until you select **Install**.
 
-- **Managed installs:** rust-analyzer for Rust and clangd for C/C++/CUDA. Select
+- **Managed installs:** rust-analyzer (Rust), clangd (C/C++/CUDA), ty and Ruff
+  (Python), LuaLS (Lua), and Tombi (TOML). Select
   **Install**, **Update / Repair**, or **Remove**. Packages come from the upstream
   GitHub release, require a release-provided SHA-256 digest, and install under
   hedit's user data directory. Downloads require `curl`; updating is manual.
   Rust projects also need a Rust toolchain (and `rust-src` for standard-library
   sources); C/C++ projects benefit from `compile_commands.json`. Unsupported
   OS/architecture combinations report an error and can use an external server.
-- **External servers:** select **Add external server…**, enter an ID, comma-separated
-  syntax IDs such as `python` or `go`, an absolute executable path, arguments as a
+- **External servers:** presets cover gopls, TypeScript/JavaScript, HTML, CSS, JSON,
+  YAML, shell, pylsp, and Taplo. Select **Configure → Detect installed on PATH**
+  to find a preset on the current computer or SSH host. Detection does not install
+  dependencies or run the executable. For other servers, select **Add external
+  server…**, enter an ID, comma-separated syntax IDs such as `python` or `go`,
+  an absolute executable path, arguments as a
   JSON array, and settings as a JSON object. For example, a Python server may use
   `/absolute/path/to/pylsp` with `[]`; a Node-based server may need `["--stdio"]`.
-  Install its runtime/dependencies separately. Removing a registration preserves
-  external executables. **Configure** can also override a built-in server.
+  On Windows, npm wrappers need an explicit `node.exe` path with the server script
+  and `--stdio` in the argument array. Install runtimes/dependencies separately.
+  Removing a registration preserves external executables. **Configure** can also override a built-in server.
 - **Control:** installed, enabled, and running are separate states. Change defaults
-  or enable/disable a server for the current workspace. **Stop** lasts for this
-  window; **Restart** starts it again. Repeated crashes require an explicit
+  or choose **Use default**, **Enabled**, or **Disabled** for the current workspace.
+  **Configure** provides feature switches and priority. Advanced settings include
+  environment overrides (a JSON object of strings), project root markers (files or
+  directories), and initialization options separate from runtime server settings.
+  Presets scaffold the server's settings namespace (for example, LuaLS uses
+  `{"Lua": {"runtime": {"version": "LuaJIT"}}}`). Root discovery stays within the
+  workspace. Arguments can override managed defaults too. Empty initialization options (`{}`) send no extra options; a blank field
+  preserves the older behavior of also sending server settings at initialization.
+  **Stop** lasts for this window; **Restart** starts it again. Repeated crashes require an explicit
   restart. Stop a server in other hedit windows before changing its registration
   or installation; shared installations are protected by cross-window locks.
 
@@ -324,10 +337,12 @@ Servers start as needed for saved, fully loaded files up to 4 MiB. A workspace
 synchronizes up to 32 documents / 32 MiB and runs up to eight server sessions;
 the active file is prioritized. SSH uses a 4 MiB aggregate snapshot budget to
 stay within its bounded JSON transfer limit. Paged logs, follow mode, and untitled notes do
-not start servers. One registered server is selected per file in server-ID order;
-disable a competing registration to choose another. Server capabilities determine
-which actions are available. Rename, code actions, semantic highlighting,
-server-supplied snippets/commands, and unsolicited workspace edits are not yet
+not start servers. Multiple enabled servers can share a file. Each action uses
+the highest-priority server that supports it and has that feature enabled; ties
+use server-ID order. Diagnostics are combined and labeled by server. Python
+defaults pair ty for language intelligence with Ruff for linting and formatting.
+The session cap also favors higher priorities. Rename, code actions, semantic
+highlighting, server-supplied snippets/commands, and unsolicited workspace edits are not yet
 supported.
 
 In **SSH workspaces**, the manager targets the host. Execution trust is required
@@ -391,6 +406,20 @@ renamed; **Use shell title** restores that. Restart clears output; Stop retains
 it. Disabling the feature or quitting ends shells; sessions/output are not restored.
 RTL shaping affects display only; turn it off if a terminal app already reorders
 text. Graphics and mouse-event forwarding are unsupported.
+
+**Settings → Terminal** also has independent appearance controls. **Use app font
+and size** and **Use app colors** are enabled by default. Turn either off to
+choose a terminal font (family or font-file path, 8–40 pt), foreground, background,
+cursor and selection colors, or an optional 16-color ANSI palette. Copy a theme
+as a starting point and adjust individual colors. Terminal programs can still
+set their own colors. Changes apply to existing local and SSH shells without
+restarting them; app/editor colors and fonts keep their own settings.
+
+In `settings.json`, omitted or `null` `terminal_font` and `terminal_colors` use
+the app appearance. For example, a separate font can be set with
+`"terminal_font": {"face": "", "size": 18}` (empty face uses the built-in font).
+Color objects use six-digit hex values for `foreground`, `background`, `cursor`,
+`selection`, and `selection_text`; `ansi` is an optional array of 16 colors.
 
 ## Source Control
 
