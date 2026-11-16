@@ -99,6 +99,12 @@ pub fn path(uri: &str) -> Result<PathBuf, String> {
     url.to_file_path().map_err(|_| "Invalid file URI.".into())
 }
 
+/// File URIs omit Windows' verbatim path prefix. Compare their file identities
+/// without filesystem access so open, unsaved documents keep their source text.
+pub fn same_path(left: &Path, right: &Path) -> bool {
+    left == right || matches!((uri(left), uri(right)), (Ok(a), Ok(b)) if a == b)
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TextEdit {
