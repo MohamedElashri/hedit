@@ -194,6 +194,8 @@ pub enum Event {
     },
     Status(Status),
     Diagnostics {
+        server: String,
+        root: PathBuf,
         path: PathBuf,
         revision: u64,
         encoding: Encoding,
@@ -656,6 +658,8 @@ impl Worker {
                     })
                     .unwrap_or_default();
                 emit(Event::Diagnostics {
+                    server: key.0.clone(),
+                    root: key.1.clone(),
                     path,
                     revision: document.revision,
                     encoding: session.client.encoding,

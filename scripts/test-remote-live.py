@@ -203,7 +203,7 @@ class Wire:
 
     def send(self, **request):
         self.next_id += 1
-        data = json.dumps(dict(version=2, id=self.next_id, request=request),
+        data = json.dumps(dict(version=3, id=self.next_id, request=request),
                           ensure_ascii=False, separators=(",", ":")).encode()
         assert 0 < len(data) <= MAX_FRAME
         self.proc.stdin.write(struct.pack(">I", len(data)) + data)

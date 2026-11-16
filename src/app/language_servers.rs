@@ -37,6 +37,13 @@ enum Intent {
     Sync,
     Feature(Guard),
 }
+struct Diagnostics {
+    server: String,
+    root: PathBuf,
+    revision: u64,
+    encoding: Encoding,
+    items: Vec<Value>,
+}
 #[derive(Default)]
 pub(super) struct LanguageServers {
     pub(super) service: Option<Service>,
@@ -46,7 +53,7 @@ pub(super) struct LanguageServers {
     next: u64,
     snapshots: Vec<Snapshot>,
     observed: Option<(Vec<Snapshot>, Instant)>,
-    pub(super) diagnostics: BTreeMap<PathBuf, (u64, Encoding, Vec<Value>)>,
+    diagnostics: BTreeMap<PathBuf, Diagnostics>,
     pub(super) problems: bool,
     pub(super) info: Option<String>,
     filter: String,
@@ -273,14 +280,14 @@ impl HeditApp {
         for event in events {
             self.language_event(ctx, event);
         }
-        self.languages.diagnostics.retain(|path, (revision, _, _)| {
+        self.languages.diagnostics.retain(|path, diagnostics| {
             self.workspace.open.iter().any(|b| {
                 b.page
                     .info
                     .path
                     .as_ref()
                     .is_some_and(|p| Path::new(p) == path)
-                    && b.page.info.revision == *revision
+                    && b.page.info.revision == diagnostics.revision
             })
         });
         let _ = self.sync_language_documents(false);
@@ -304,7 +311,9 @@ impl HeditApp {
             Event::Progress { id, message } => self.languages.progress = format!("{id}: {message}"),
             Event::Status(status) => {
                 if status.state != "Running" {
-                    self.languages.diagnostics.clear();
+                    self.languages.diagnostics.retain(|_, diagnostics| {
+                        diagnostics.server != status.id || diagnostics.root != status.root
+                    });
                 }
                 self.languages
                     .statuses
@@ -324,6 +333,8 @@ impl HeditApp {
                 }
             }
             Event::Diagnostics {
+                server,
+                root,
                 path,
                 revision,
                 encoding,
@@ -337,9 +348,16 @@ impl HeditApp {
                         .is_some_and(|p| Path::new(p) == path)
                         && b.page.info.revision == revision
                 }) {
-                    self.languages
-                        .diagnostics
-                        .insert(path, (revision, encoding, items));
+                    self.languages.diagnostics.insert(
+                        path,
+                        Diagnostics {
+                            server,
+                            root,
+                            revision,
+                            encoding,
+                            items,
+                        },
+                    );
                 }
             }
             Event::Result { ticket, result } => {
@@ -998,8 +1016,8 @@ impl HeditApp {
                     if self.languages.diagnostics.is_empty() {
                         ui.weak("No diagnostics for open files.");
                     }
-                    for (path, (_, encoding, items)) in &self.languages.diagnostics {
-                        for item in items {
+                    for (path, diagnostics) in &self.languages.diagnostics {
+                        for item in &diagnostics.items {
                             let Ok(range) =
                                 serde_json::from_value::<text::Range>(item["range"].clone())
                             else {
@@ -1023,7 +1041,7 @@ impl HeditApp {
                                 )
                                 .clicked()
                             {
-                                jump = Some((path.clone(), *encoding, range.start));
+                                jump = Some((path.clone(), diagnostics.encoding, range.start));
                             }
                         }
                     }
@@ -1213,6 +1231,53 @@ mod tests {
         assert_eq!(app.active().page.text, "fo");
     }
     #[test]
+    fn stopping_one_server_keeps_diagnostics_from_other_sessions() {
+        let (_dir, ctx, mut app) = app();
+        let path = PathBuf::from(app.active().page.info.path.as_ref().unwrap());
+        let root = app.language_root(&path);
+        app.language_event(
+            &ctx,
+            Event::Diagnostics {
+                server: "fixture".into(),
+                root: root.clone(),
+                path: path.clone(),
+                revision: app.active().page.info.revision,
+                encoding: Encoding::Utf16,
+                items: vec![json!({"message":"keep this diagnostic"})],
+            },
+        );
+        for (id, affected_root) in [
+            ("another-server", root.clone()),
+            ("fixture", root.join("other")),
+        ] {
+            app.language_event(
+                &ctx,
+                Event::Status(Status {
+                    id: id.into(),
+                    root: affected_root,
+                    state: "Failed".into(),
+                    detail: "another session stopped".into(),
+                    logs: vec![],
+                }),
+            );
+            assert!(
+                app.languages.diagnostics.contains_key(&path),
+                "unrelated status cleared diagnostics"
+            );
+        }
+        app.language_event(
+            &ctx,
+            Event::Status(Status {
+                id: "fixture".into(),
+                root,
+                state: "Stopped".into(),
+                detail: String::new(),
+                logs: vec![],
+            }),
+        );
+        assert!(!app.languages.diagnostics.contains_key(&path));
+    }
+    #[test]
     fn language_hover_and_problems_are_available_from_commands() {
         let (_dir, ctx, mut app) = app();
         app.execute(&ctx, Command::LanguageHover);
@@ -1233,7 +1298,7 @@ mod tests {
             .languages
             .diagnostics
             .values()
-            .flat_map(|(_, _, items)| items)
+            .flat_map(|diagnostics| &diagnostics.items)
             .any(|d| d["message"] == "fixture diagnostic"));
         app.escape(&ctx); // No key event: remains open.
     }
