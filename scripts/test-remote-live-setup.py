@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Check disposable SSH fixture placement without starting sshd."""
 import importlib.util
+import io
+import json
 import os
 from pathlib import Path
+import re
+import struct
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -18,6 +22,26 @@ class FixtureLocationTests(unittest.TestCase):
         ports = patch.object(live, 'available_port', return_value=12345)
         ports.start()
         self.addCleanup(ports.stop)
+
+    def test_wire_send_and_receive_use_the_helper_protocol_version(self):
+        protocol = (live.ROOT / 'crates/hedit-remote/src/protocol.rs').read_text()
+        version = int(re.search(r'pub const VERSION: u32 = (\d+);', protocol)[1])
+        wire = live.Wire.__new__(live.Wire)
+        wire.next_id = 0
+        wire.proc = SimpleNamespace(stdin=io.BytesIO())
+        wire.send(op='ping')
+        sent = wire.proc.stdin.getvalue()
+        self.assertEqual(struct.unpack('>I', sent[:4])[0], len(sent) - 4)
+        self.assertEqual(json.loads(sent[4:])['version'], version)
+        for reply_version in (version, version + 1):
+            data = json.dumps(dict(version=reply_version, id=wire.next_id,
+                                   result=dict(ok=True))).encode()
+            wire.exact = io.BytesIO(struct.pack('>I', len(data)) + data).read
+            if reply_version == version:
+                self.assertEqual(wire.receive(), dict(ok=True))
+            else:
+                with self.assertRaises(AssertionError):
+                    wire.receive()
 
     def test_default_uses_checkout_and_cleanup_preserves_parent(self):
         with tempfile.TemporaryDirectory() as directory:

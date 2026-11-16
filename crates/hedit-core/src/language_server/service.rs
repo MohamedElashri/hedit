@@ -194,6 +194,8 @@ pub enum Event {
     },
     Status(Status),
     Diagnostics {
+        server: String,
+        root: PathBuf,
         path: PathBuf,
         revision: u64,
         encoding: Encoding,
@@ -636,7 +638,12 @@ impl Worker {
                 else {
                     continue;
                 };
-                let Some(document) = session.documents.get(&path) else {
+                let Some(document) = session.documents.get(&path).or_else(|| {
+                    session
+                        .documents
+                        .values()
+                        .find(|d| text::same_path(&d.path, &path))
+                }) else {
                     continue;
                 };
                 if params
@@ -656,7 +663,9 @@ impl Worker {
                     })
                     .unwrap_or_default();
                 emit(Event::Diagnostics {
-                    path,
+                    server: key.0.clone(),
+                    root: key.1.clone(),
+                    path: document.path.clone(),
                     revision: document.revision,
                     encoding: session.client.encoding,
                     items,
@@ -773,7 +782,10 @@ fn normalize_locations(
             location["heditColumn16"] = json!(range.start.character as u64 + 1);
             continue;
         }
-        let loaded = if documents.contains_key(&path) {
+        let document = documents
+            .get(&path)
+            .or_else(|| documents.values().find(|d| text::same_path(&d.path, &path)));
+        let loaded = if document.is_some() {
             None
         } else {
             crate::file_io::open_regular(&path)
@@ -785,10 +797,7 @@ fn normalize_locations(
                         .map(|(text, _)| text)
                 })
         };
-        let source = documents
-            .get(&path)
-            .map(|d| d.text.as_str())
-            .or(loaded.as_deref());
+        let source = document.map(|d| d.text.as_str()).or(loaded.as_deref());
         let Some(source) = source else {
             location["heditInvalidPosition"] = json!(true);
             continue;

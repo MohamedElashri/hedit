@@ -25,6 +25,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 MAX_FRAME = 65536
+PROTOCOL_VERSION = 3
 ARGS = None
 LAB = None
 
@@ -203,7 +204,7 @@ class Wire:
 
     def send(self, **request):
         self.next_id += 1
-        data = json.dumps(dict(version=2, id=self.next_id, request=request),
+        data = json.dumps(dict(version=PROTOCOL_VERSION, id=self.next_id, request=request),
                           ensure_ascii=False, separators=(",", ":")).encode()
         assert 0 < len(data) <= MAX_FRAME
         self.proc.stdin.write(struct.pack(">I", len(data)) + data)
@@ -227,7 +228,7 @@ class Wire:
         length = struct.unpack(">I", self.exact(4))[0]
         assert 0 < length <= MAX_FRAME
         reply = json.loads(self.exact(length))
-        assert reply["version"] == 2 and reply["id"] == self.next_id
+        assert reply["version"] == PROTOCOL_VERSION and reply["id"] == self.next_id
         return reply["result"]
 
     def call(self, **request):

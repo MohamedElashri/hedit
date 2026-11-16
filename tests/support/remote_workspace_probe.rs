@@ -56,21 +56,24 @@ fn run() -> Result<(), String> {
             let start = Instant::now();
             let mut events = vec![];
             loop {
+                let mut completed = false;
                 for event in service.poll() {
                     match &event {
                         Event::Disconnected(e) => return Err(e.clone()),
                         Event::Result { ticket: t, result } if *t == ticket => {
                             result.as_ref().map_err(Clone::clone)?;
-                            events.push(event);
-                            return Ok(events);
+                            completed = true;
                         }
                         Event::Response { ticket: t, result } if *t == ticket => {
                             result.as_ref().map_err(Clone::clone)?;
-                            events.push(event);
-                            return Ok(events);
+                            completed = true;
                         }
-                        _ => events.push(event),
+                        _ => (),
                     }
+                    events.push(event);
+                }
+                if completed {
+                    return Ok(events);
                 }
                 if start.elapsed() > Duration::from_secs(15) {
                     return Err(format!("LSP bridge timed out: {events:?}"));
@@ -113,7 +116,7 @@ fn run() -> Result<(), String> {
                 documents: vec![document.clone()],
             },
         )?;
-        collect(2)?;
+        let mut events = collect(2)?;
         service.submit(
             3,
             Operation::Request {
@@ -125,8 +128,21 @@ fn run() -> Result<(), String> {
                 spaces: true,
             },
         )?;
-        let events = collect(3)?;
+        events.extend(collect(3)?);
         assert!(events.iter().any(|event|matches!(event,Event::Response{result:Ok(reply),..} if reply.path==path && reply.value["contents"]["value"]=="Fixture hover information")));
+        let started = Instant::now();
+        while !events.iter().any(|event| {
+            matches!(event,
+                Event::Diagnostics { server, root, path: source, .. }
+                    if server == "fixture" && *root == remote.root() && *source == path
+            )
+        }) {
+            if started.elapsed() > Duration::from_secs(5) {
+                return Err(format!("Missing mapped diagnostic ownership: {events:?}"));
+            }
+            events.extend(service.poll());
+            std::thread::sleep(Duration::from_millis(10));
+        }
         service.submit(
             4,
             Operation::Request {
