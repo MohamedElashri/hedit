@@ -154,6 +154,17 @@ fn file_uris_roundtrip_spaces_unicode_and_reject_other_schemes() {
     }
 }
 #[test]
+fn file_uri_paths_match_canonical_document_paths_without_reading_from_disk() {
+    let dir = tempfile::tempdir().unwrap();
+    let canonical = dir.path().canonicalize().unwrap().join("unsaved #😀.rs");
+    let from_uri = text::path(&text::uri(&canonical).unwrap()).unwrap();
+    assert!(text::same_path(&canonical, &from_uri));
+    assert!(!text::same_path(
+        &canonical,
+        &from_uri.with_extension("cpp")
+    ));
+}
+#[test]
 fn edit_batches_validate_before_mutating_and_preserve_equal_insert_order() {
     use text::{Encoding, Position, Range, TextEdit};
     let p = |n| Position {

@@ -83,6 +83,9 @@ while True:
         }], 'isIncomplete': False}})
     elif method == 'textDocument/hover':
         send({'id': request_id, 'result': {'contents': {'kind': 'plaintext', 'value': 'Fixture hover information'}}})
+    elif method == 'test/diagnostics':
+        send({'method': 'textDocument/publishDiagnostics', 'params': params})
+        send({'id': request_id, 'result': True})
     elif method == 'textDocument/definition':
         char = {'utf-8': 5, 'utf-16': 3, 'utf-32': 2}[args.encoding]
         start = {'line': 0, 'character': char}

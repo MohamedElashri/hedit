@@ -1138,7 +1138,10 @@ impl Connection {
                                 }
                             }
                         }
-                        Event::Diagnostics { path, .. } => map(path)?,
+                        Event::Diagnostics { path, root, .. } => {
+                            map(path)?;
+                            map(root)?;
+                        }
                         Event::Status(status) => map(&mut status.root)?,
                         Event::Response {
                             result: Ok(reply), ..

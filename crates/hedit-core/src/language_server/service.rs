@@ -194,6 +194,8 @@ pub enum Event {
     },
     Status(Status),
     Diagnostics {
+        server: String,
+        root: PathBuf,
         path: PathBuf,
         revision: u64,
         encoding: Encoding,
@@ -636,12 +638,17 @@ impl Worker {
                 else {
                     continue;
                 };
-                let Some(document) = session.documents.get(&path) else {
+                let Some(document) = session.documents.get(&path).or_else(|| {
+                    session
+                        .documents
+                        .values()
+                        .find(|d| text::same_path(&d.path, &path))
+                }) else {
                     continue;
                 };
-                if params["version"]
-                    .as_u64()
-                    .is_some_and(|v| v != document.revision)
+                if params
+                    .get("version")
+                    .is_some_and(|v| !v.is_null() && v.as_u64() != Some(document.revision))
                 {
                     continue;
                 }
@@ -656,7 +663,9 @@ impl Worker {
                     })
                     .unwrap_or_default();
                 emit(Event::Diagnostics {
-                    path,
+                    server: key.0.clone(),
+                    root: key.1.clone(),
+                    path: document.path.clone(),
                     revision: document.revision,
                     encoding: session.client.encoding,
                     items,
@@ -773,7 +782,10 @@ fn normalize_locations(
             location["heditColumn16"] = json!(range.start.character as u64 + 1);
             continue;
         }
-        let loaded = if documents.contains_key(&path) {
+        let document = documents
+            .get(&path)
+            .or_else(|| documents.values().find(|d| text::same_path(&d.path, &path)));
+        let loaded = if document.is_some() {
             None
         } else {
             crate::file_io::open_regular(&path)
@@ -785,10 +797,7 @@ fn normalize_locations(
                         .map(|(text, _)| text)
                 })
         };
-        let source = documents
-            .get(&path)
-            .map(|d| d.text.as_str())
-            .or(loaded.as_deref());
+        let source = document.map(|d| d.text.as_str()).or(loaded.as_deref());
         let Some(source) = source else {
             location["heditInvalidPosition"] = json!(true);
             continue;
@@ -802,4 +811,73 @@ fn normalize_locations(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+
+    #[test]
+    fn diagnostics_reject_negative_and_mismatched_versions_but_accept_unversioned_results() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = Manager::new(dir.path().join("servers"));
+        manager
+            .configure(
+                "fixture",
+                Registration {
+                    languages: vec!["rust".into()],
+                    external: Some(super::super::tests::launch(&[])),
+                    ..Registration::default()
+                },
+            )
+            .unwrap();
+        let mut worker = Worker {
+            manager,
+            sessions: HashMap::new(),
+            documents: vec![],
+            failed: HashSet::new(),
+            stopped: HashSet::new(),
+            processes: Arc::new(super::super::client::Processes::default()),
+        };
+        let document = Document {
+            path: dir.path().join("main.rs"),
+            root: dir.path().into(),
+            language: "rust".into(),
+            revision: 0,
+            text: "fo".into(),
+            dirty: false,
+        };
+        let cancel = AtomicBool::new(false);
+        worker
+            .sync(vec![document.clone()], &cancel, &|_| true)
+            .unwrap();
+        for (version, accepted) in [
+            (Some(json!(-1)), false),
+            (Some(json!(1)), false),
+            (Some(json!(0)), true),
+            (Some(Value::Null), true),
+            (None, true),
+        ] {
+            let mut params = json!({"uri":text::uri(&document.path).unwrap(),"diagnostics":[{"message":"version check"}]});
+            if let Some(version) = &version {
+                params["version"] = version.clone();
+            }
+            worker
+                .sessions
+                .values_mut()
+                .next()
+                .unwrap()
+                .client
+                .request("test/diagnostics", params, &cancel, Duration::from_secs(2))
+                .unwrap();
+            let events = RefCell::new(vec![]);
+            worker.poll(&|e| {
+                events.borrow_mut().push(e);
+                true
+            });
+            let found = events.borrow().iter().any(|event| matches!(event, Event::Diagnostics{items,..} if items.iter().any(|d|d["message"]=="version check")));
+            assert_eq!(found, accepted, "diagnostic version {version:?}");
+        }
+    }
 }
