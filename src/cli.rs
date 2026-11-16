@@ -4,8 +4,17 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LanguageServerCommand {
+    List,
+    Install(String),
+    Remove(String),
+}
+
 #[derive(Debug, Default)]
 pub struct Options {
+    pub language_server: Option<LanguageServerCommand>,
+    pub language_server_directory: Option<PathBuf>,
     pub remote: Option<crate::remote::Config>,
     pub session_dir: Option<PathBuf>,
     pub files: Vec<PathBuf>,
@@ -37,6 +46,36 @@ impl Options {
             }
             match arg.to_str() {
                 Some("--") => literal = true,
+                Some("--lsp") => {
+                    if options.language_server.is_some() {
+                        return Err("Specify --lsp only once.".into());
+                    }
+                    let action = args.next().ok_or("--lsp needs list, install, or remove")?;
+                    options.language_server = Some(match action.to_str() {
+                        Some("list") => LanguageServerCommand::List,
+                        Some("install" | "remove") => {
+                            let id = args
+                                .next()
+                                .and_then(|s| s.into_string().ok())
+                                .ok_or("--lsp install/remove needs a server ID")?;
+                            crate::language_server::manager::Manager::validate_id(&id)?;
+                            if action == "install" {
+                                LanguageServerCommand::Install(id)
+                            } else {
+                                LanguageServerCommand::Remove(id)
+                            }
+                        }
+                        _ => return Err("--lsp needs list, install, or remove.".into()),
+                    });
+                }
+                Some("--lsp-dir") => {
+                    let path =
+                        PathBuf::from(args.next().ok_or("--lsp-dir needs an absolute directory")?);
+                    if !path.is_absolute() {
+                        return Err("--lsp-dir must be absolute.".into());
+                    }
+                    options.language_server_directory = Some(path);
+                }
                 Some("--ssh") => {
                     ssh = Some(
                         args.next()
@@ -135,6 +174,20 @@ impl Options {
         {
             return Err("SSH options require --ssh HOST.".into());
         }
+        if options.language_server.is_some()
+            && (!options.files.is_empty()
+                || options.remote.is_some()
+                || options.stdin
+                || options.wait
+                || options.new_buffer)
+        {
+            return Err(
+                "--lsp cannot be combined with editor files, SSH, stdin, --wait, or --new.".into(),
+            );
+        }
+        if options.language_server_directory.is_some() && options.language_server.is_none() {
+            return Err("--lsp-dir requires --lsp.".into());
+        }
         Ok(options)
     }
 }
@@ -158,4 +211,41 @@ pub fn location(path: &Path) -> (PathBuf, u64, u64) {
         }
     }
     (PathBuf::from(prefix), last, 1)
+}
+
+#[cfg(test)]
+mod language_server_tests {
+    use super::*;
+    fn parse(args: &[&str]) -> Result<Options, String> {
+        Options::parse(args.iter().map(OsString::from))
+    }
+    #[test]
+    fn language_server_commands_do_not_open_files_or_accept_ambiguous_arguments() {
+        assert_eq!(
+            parse(&["--lsp", "list"]).unwrap().language_server,
+            Some(LanguageServerCommand::List)
+        );
+        assert_eq!(
+            parse(&["--lsp", "install", "rust-analyzer"])
+                .unwrap()
+                .language_server,
+            Some(LanguageServerCommand::Install("rust-analyzer".into()))
+        );
+        for args in [
+            vec!["--lsp"],
+            vec!["--lsp", "unknown"],
+            vec!["--lsp", "install"],
+            vec!["--lsp", "remove", "../escape"],
+            vec!["--lsp", "list", "file.rs"],
+            vec!["--lsp", "list", "--new"],
+            vec!["--lsp-dir", "relative"],
+            vec!["--lsp", "list", "--lsp", "list"],
+        ] {
+            assert!(parse(&args).is_err(), "{args:?}");
+        }
+        assert_eq!(
+            parse(&["--", "--lsp"]).unwrap().files,
+            [PathBuf::from("--lsp")]
+        );
+    }
 }

@@ -157,6 +157,44 @@ pinned keys, and agent authentication. Stop only test-owned jobs; remove their
 state/locks afterwards. Agent approval must complete within startup's 15 seconds.
 Durable-RPC timings include host commits and network trips, not display latency.
 
+## Language-server architecture and tests
+
+`crates/hedit-core/src/language_server/` owns the server catalog, managed package
+receipts and locks, bounded stdio JSON-RPC client, position conversion, and
+workspace service. `src/app/language_servers.rs` connects the native manager,
+Problems panel, and guarded editor results; `auto_complete.rs` merges LSP choices.
+The manager is also used by the headless `--lsp` commands.
+
+Every workspace has a bounded worker mailbox. Filesystem/process/network work
+runs there; it does not use the editor's blocking job flag. Shared installation
+leases prevent changes while another window owns a server. Installs verify
+upstream digests, stage/extract with path and size limits, then atomically publish
+an exact receipt. Keep external executable ownership separate from managed files.
+
+SSH language workers live in the helper runtime and are tied to a bound connection,
+writer epoch, and execution trust. Commands/snapshots use the existing bounded
+upload/download protocol. Revocation and disconnect drop workers. Validate host
+paths before enqueueing, map navigation URIs explicitly, and never fall back to
+client filesystem access for remote results. Update both helper/client protocol
+versions and the live harness together when changing the wire contract.
+
+Normal tests use `crates/hedit-core/tests/support/fake_language_server.py` and
+synthetic archives, without network or installed language servers:
+
+```sh
+cargo test --locked --workspace language_server
+cargo test --locked -p hedit-remote language_
+cargo test --locked -p hedit-core live_managed_server -- --ignored --nocapture
+```
+
+The last command is an explicit network smoke test: it installs verified upstream
+rust-analyzer and clangd into temporary storage, starts real stdio sessions,
+requests hover information, and removes the packages. It requires curl and the
+relevant toolchains. The disposable SSH suite additionally checks language-server
+execution, Unicode navigation, large snapshots, registration ownership, and trust
+revocation through the production bridge. Use `HEDIT_PREVIEW_DIR` with the ignored
+`export_language_server_settings` test to inspect the native manager layout.
+
 ## Linux release packages
 
 On Ubuntu 24.04, install `rpm`, `dpkg-dev`, `desktop-file-utils`, `cpio`, `file`, and the

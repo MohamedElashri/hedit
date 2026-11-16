@@ -176,6 +176,12 @@ impl HeditApp {
                                     Command::NextResult,
                                     Command::PreviousResult,
                                 ],
+                                vec![
+                                    Command::LanguageHover,
+                                    Command::LanguageFormat,
+                                    Command::LanguageProblems,
+                                    Command::LanguageRestart,
+                                ],
                                 vec![Command::Checkpoint],
                             ],
                         ),
@@ -186,6 +192,7 @@ impl HeditApp {
                                 Command::Appearance,
                                 Command::ChooseFont,
                                 Command::ToolSettings,
+                                Command::LanguageServers,
                                 Command::KeyBindings,
                             ]],
                         ),
@@ -634,6 +641,7 @@ impl HeditApp {
                             self.open_preferences(PreferencesPage::Recovery);
                         }
                         self.language_menu(ui);
+                        self.language_status_button(ui);
                         self.status_menus(ui, &mut status_action);
                     });
                 });

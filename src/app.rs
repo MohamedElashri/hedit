@@ -42,6 +42,7 @@ mod goto_matches;
 mod goto_tests;
 #[cfg(test)]
 mod interaction_tests;
+mod language_servers;
 #[cfg(test)]
 mod long_line_tests;
 mod macros;
@@ -263,6 +264,7 @@ pub struct HeditApp {
     /// Tab moves through the fields of the snippet inserted last.
     snippet: Option<snippet_fields::SnippetSession>,
     auto: auto_complete::AutoComplete,
+    languages: language_servers::LanguageServers,
     /// The focused editor's caret on screen, for the completion list.
     caret_screen: Option<egui::Rect>,
     /// The view, name range, and pointer position of a name the pointer rests on.
@@ -469,6 +471,7 @@ impl HeditApp {
             pick_list: None,
             snippet: None,
             auto: Default::default(),
+            languages: Default::default(),
             caret_screen: None,
             hover_target: None,
             hover: None,
@@ -3672,6 +3675,8 @@ impl eframe::App for HeditApp {
         self.opening_bar(ctx);
         self.updates.poll();
         self.receive(ctx);
+        self.poll_language_servers(ctx);
+        self.language_panels(ctx);
         self.poll_incoming(ctx);
         self.activation.update(ctx);
         self.project.poll();
@@ -3841,6 +3846,7 @@ impl eframe::App for HeditApp {
 }
 impl Drop for HeditApp {
     fn drop(&mut self) {
+        self.languages.service.take();
         if let Some(worker) = self.checkpoint_worker.take() {
             let _ = worker.join();
         }
@@ -3887,6 +3893,13 @@ mod tests {
         let output = ctx.run(input, |ctx| {
             app.note_open_input(ctx);
             app.poll_source_control(ctx);
+            if app.languages.service.is_some()
+                || app.languages.info.is_some()
+                || app.languages.problems
+            {
+                app.poll_language_servers(ctx);
+                app.language_panels(ctx);
+            }
             app.shortcuts(ctx);
             app.chrome(ctx);
             app.gpu(ctx);

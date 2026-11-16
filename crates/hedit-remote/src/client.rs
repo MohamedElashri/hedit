@@ -350,9 +350,9 @@ def request():
     n=struct.unpack('>I',h)[0]
     return json.loads(sys.stdin.buffer.read(n))
 def reply(i,body):
-    b=json.dumps(dict(version=1,id=i,result=dict(Ok=body))).encode()
+    b=json.dumps(dict(version=wire_version,id=i,result=dict(Ok=body))).encode()
     sys.stdout.buffer.write(struct.pack('>I',len(b))+b);sys.stdout.buffer.flush()
-r=request();reply(r['id'],dict(kind='hello',version=1,max_frame=65536,session='a'*64,worker_pid=1))
+r=request();wire_version=r['version'];reply(r['id'],dict(kind='hello',version=wire_version,max_frame=65536,session='a'*64,worker_pid=1))
 r=request()
 if sys.argv[1]=='wrong_id':reply(r['id']+1,dict(kind='pong'))
 time.sleep(10)

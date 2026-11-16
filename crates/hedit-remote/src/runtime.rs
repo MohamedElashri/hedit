@@ -82,6 +82,7 @@ pub struct Runtime {
     next: u64,
     jobs: HashMap<u64, Job>,
     processes: HashMap<u64, Process>,
+    languages: HashMap<u64, hedit_core::language_server::Service>,
     uploads: HashMap<(u64, u64), (usize, Vec<u8>)>,
     downloads: HashMap<(u64, u64), Vec<u8>>,
     git_lock: Arc<Mutex<()>>,
@@ -97,6 +98,7 @@ impl Default for Runtime {
             next: 1,
             jobs: HashMap::new(),
             processes: HashMap::new(),
+            languages: HashMap::new(),
             uploads: HashMap::new(),
             downloads: HashMap::new(),
             git_lock: Arc::new(Mutex::new(())),
@@ -123,6 +125,7 @@ impl Runtime {
         Ok(())
     }
     pub fn disconnected(&mut self, connection: u64) {
+        self.languages.remove(&connection);
         self.processes
             .retain(|_, process| process.connection != connection);
         for job in self
@@ -140,6 +143,7 @@ impl Runtime {
         }
     }
     fn detach(&mut self) {
+        self.languages.clear();
         for job in self.jobs.values() {
             job.cancel.store(true, Ordering::Relaxed);
         }
@@ -224,6 +228,7 @@ impl Runtime {
                 | Request::Save { .. }
                 | Request::Metadata { .. }
                 | Request::Reload { .. }
+                | Request::Language { .. }
         ) {
             return Err(Error::Permission);
         }
@@ -272,6 +277,7 @@ impl Runtime {
                     return Err(Error::Fenced);
                 }
                 if !allow {
+                    self.languages.clear();
                     for job in self.jobs.values() {
                         job.cancel.store(true, Ordering::Relaxed);
                     }
@@ -499,6 +505,77 @@ impl Runtime {
                 let job = self.jobs.get(id).ok_or(Error::Missing)?;
                 job.cancel.store(true, Ordering::Relaxed);
                 Ok(Response::Pong {})
+            })()),
+            Request::Language {
+                session,
+                epoch,
+                ticket,
+                operation,
+            } => Some((|| {
+                self.authorized(connection, *epoch)?;
+                self.check_session(journal, session)?;
+                if !self.trusted {
+                    return Err(Error::Permission);
+                }
+                let files = Files {
+                    root: journal.root_file()?,
+                    path: journal.root_path()?,
+                    state: journal.state_path().to_owned(),
+                };
+                let mut operation = operation.clone();
+                match &operation {
+                    hedit_core::language_server::Operation::Sync { documents } => {
+                        for document in documents {
+                            files.directory(&document.root)?;
+                            host::open_source(&files.root, &Files::relative(&document.path)?)?;
+                        }
+                    }
+                    hedit_core::language_server::Operation::Request { path, .. } => {
+                        host::open_source(&files.root, &Files::relative(path)?)?;
+                    }
+                    _ => (),
+                }
+                operation
+                    .map_paths(|path| {
+                        let relative = Files::relative(path).map_err(|e| e.to_string())?;
+                        let relative = host::path_or_empty(&relative);
+                        let parent = relative.parent().unwrap_or(Path::new(""));
+                        // The actual path remains inside the pinned workspace.
+                        files.directory(parent).map_err(|e| e.to_string())?;
+                        files.actual(&relative).map_err(|e| e.to_string())
+                    })
+                    .map_err(|_| Error::Permission)?;
+                operation.validate().map_err(|_| Error::Limit)?;
+                if !self.languages.contains_key(&connection) {
+                    if self.languages.len() >= 4 {
+                        return Err(Error::Limit);
+                    }
+                    self.languages.insert(
+                        connection,
+                        hedit_core::language_server::Service::start(
+                            journal.state_path().join("language-servers"),
+                            Arc::new(|| {}),
+                        ),
+                    );
+                }
+                self.languages[&connection]
+                    .submit(*ticket, operation)
+                    .map_err(|_| Error::Busy)?;
+                Ok(Response::Pong {})
+            })()),
+            Request::LanguagePoll {} => Some((|| {
+                self.authorized(connection, self.epoch)?;
+                if !self.trusted {
+                    return Err(Error::Permission);
+                }
+                let events = self
+                    .languages
+                    .get(&connection)
+                    .map(|s| s.poll())
+                    .unwrap_or_default();
+                Ok(Response::Value {
+                    value: serde_json::to_value(events).map_err(|_| Error::Protocol)?,
+                })
             })()),
             Request::ProcessStart {
                 session,
@@ -811,5 +888,176 @@ mod tests {
             result: Ok(response),
         };
         assert!(protocol::encode(&reply).is_ok());
+    }
+    fn language_fixture() -> (tempfile::TempDir, Journal, Runtime, u64) {
+        use std::os::unix::{ffi::OsStrExt, fs::PermissionsExt};
+        let temp = tempfile::Builder::new()
+            .permissions(std::fs::Permissions::from_mode(0o700))
+            .tempdir()
+            .unwrap();
+        let root = temp.path().canonicalize().unwrap().join("project");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("main.rs"), "fo").unwrap();
+        let mut journal =
+            Journal::open(&temp.path().canonicalize().unwrap().join("state")).unwrap();
+        journal.workspace(root.as_os_str().as_bytes()).unwrap();
+        let epoch = journal.acquire().unwrap();
+        let mut runtime = Runtime::default();
+        runtime.owner(1, epoch).unwrap();
+        (temp, journal, runtime, epoch)
+    }
+    #[test]
+    fn language_workers_require_trust_session_and_epoch_and_are_revoked_on_disconnect() {
+        use hedit_core::language_server::Operation;
+        let (_temp, mut journal, mut runtime, epoch) = language_fixture();
+        let request = |epoch, session: String| Request::Language {
+            epoch,
+            session,
+            ticket: 1,
+            operation: Operation::List,
+        };
+        let session = journal.session().to_owned();
+        assert!(matches!(
+            runtime
+                .handle(&mut journal, 1, &request(epoch, session.clone()))
+                .unwrap(),
+            Err(Error::Permission)
+        ));
+        runtime
+            .handle(&mut journal, 1, &Request::Trust { epoch, allow: true })
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            runtime
+                .handle(&mut journal, 1, &request(epoch + 1, session.clone()))
+                .unwrap(),
+            Err(Error::Fenced)
+        ));
+        assert!(matches!(
+            runtime
+                .handle(&mut journal, 1, &request(epoch, "wrong-session".into()))
+                .unwrap(),
+            Err(Error::Conflict)
+        ));
+        assert!(matches!(
+            runtime
+                .handle(&mut journal, 2, &request(epoch, session.clone()))
+                .unwrap(),
+            Err(Error::Fenced)
+        ));
+        runtime
+            .handle(&mut journal, 1, &request(epoch, session.clone()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(runtime.languages.len(), 1);
+        runtime
+            .handle(
+                &mut journal,
+                1,
+                &Request::Trust {
+                    epoch,
+                    allow: false,
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert!(runtime.languages.is_empty());
+        runtime
+            .handle(&mut journal, 1, &Request::Trust { epoch, allow: true })
+            .unwrap()
+            .unwrap();
+        runtime
+            .handle(&mut journal, 1, &request(epoch, session))
+            .unwrap()
+            .unwrap();
+        runtime.disconnected(1);
+        assert!(runtime.languages.is_empty());
+    }
+    #[test]
+    fn language_document_paths_reject_absolute_parent_and_symlink_escapes() {
+        use hedit_core::language_server::{Document, Operation};
+        let (temp, mut journal, mut runtime, epoch) = language_fixture();
+        runtime
+            .handle(&mut journal, 1, &Request::Trust { epoch, allow: true })
+            .unwrap()
+            .unwrap();
+        let outside = temp.path().canonicalize().unwrap().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("escaped.rs"), "private").unwrap();
+        std::os::unix::fs::symlink(&outside, journal.root_path().unwrap().join("link")).unwrap();
+        for (path, root) in [
+            ("../outside/escaped.rs", ""),
+            ("/etc/passwd", ""),
+            ("link/escaped.rs", "link"),
+        ] {
+            let request = Request::Language {
+                session: journal.session().into(),
+                epoch,
+                ticket: 1,
+                operation: Operation::Sync {
+                    documents: vec![Document {
+                        path: path.into(),
+                        root: root.into(),
+                        language: "rust".into(),
+                        revision: 1,
+                        text: "fo".into(),
+                        dirty: true,
+                    }],
+                },
+            };
+            assert!(
+                matches!(
+                    runtime.handle(&mut journal, 1, &request).unwrap(),
+                    Err(Error::Permission)
+                ),
+                "{path}"
+            );
+        }
+        assert!(runtime.languages.is_empty());
+    }
+    #[test]
+    fn language_operations_and_large_snapshots_use_the_bounded_transfer_protocol() {
+        use hedit_core::language_server::{Document, Operation};
+        let (_temp, mut journal, mut runtime, epoch) = language_fixture();
+        runtime
+            .handle(&mut journal, 1, &Request::Trust { epoch, allow: true })
+            .unwrap()
+            .unwrap();
+        let request = Request::Language {
+            session: journal.session().into(),
+            epoch,
+            ticket: 42,
+            operation: Operation::Sync {
+                documents: vec![Document {
+                    path: "main.rs".into(),
+                    root: "".into(),
+                    language: "rust".into(),
+                    revision: 1,
+                    text: "x".repeat(100_000),
+                    dirty: true,
+                }],
+            },
+        };
+        assert!(protocol::encode(&request).is_err());
+        let data = protocol::encode_limit(&request, protocol::MAX_VALUE).unwrap();
+        let id = runtime.id();
+        runtime.uploads.insert((1, id), (data.len(), data));
+        let request = runtime.uploaded(1, id).unwrap();
+        runtime.handle(&mut journal, 1, &request).unwrap().unwrap();
+        let started = std::time::Instant::now();
+        loop {
+            let response = runtime
+                .handle(&mut journal, 1, &Request::LanguagePoll {})
+                .unwrap()
+                .unwrap();
+            if let Response::Value { value } = response {
+                if value.as_array().is_some_and(|a| !a.is_empty()) {
+                    assert!(value.to_string().contains("42"));
+                    break;
+                }
+            }
+            assert!(started.elapsed() < std::time::Duration::from_secs(3));
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
     }
 }

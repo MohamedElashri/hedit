@@ -69,8 +69,8 @@ fn malicious_lengths_are_rejected_without_reading_body() {
 #[test]
 fn unknown_fields_duplicate_fields_and_deep_nesting_are_rejected() {
     for input in [
-        r#"{"version":1,"id":1,"request":{"op":"ping","execute":"rm"}}"#.into(),
-        r#"{"version":1,"id":1,"id":2,"request":{"op":"ping"}}"#.into(),
+        r#"{"version":3,"id":1,"request":{"op":"ping","execute":"rm"}}"#.into(),
+        r#"{"version":3,"id":1,"id":2,"request":{"op":"ping"}}"#.into(),
         format!("{}0{}", "[".repeat(200), "]".repeat(200)),
         "not json".into(),
     ] {

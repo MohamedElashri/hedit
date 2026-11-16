@@ -249,7 +249,7 @@ missing. **Esc** returns to one cursor after dismissing open panels/dialogs.
 | Replace in folders | Enable Replace, enter text, then **Preview**. Review/select files and **Apply**. Open files remain unsaved/undoable; unopened files are written only if unchanged since preview, with **Undo replacements** available |
 | Go to anything | **Ctrl+P** finds by letters in order (`srcprj` → `src/project.rs`). Append `@symbol`, `:42:7`, or `#text`; alone these search the current file. Esc cancels previews |
 | Commands/symbols/lines | **Ctrl+Shift+P / Ctrl+R / Ctrl+G**; **Alt+Left/Right** navigates history |
-| Definitions/references | **F12 / Shift+F12** searches source lines in open files/folders; hover shows definitions. No language server: results cover common declarations, not all language rules |
+| Definitions/references | **F12 / Shift+F12** uses the configured language server. Local files fall back to source indexing when a server cannot answer; pointer hover also shows indexed definitions |
 | Header/implementation | **Alt+O** switches matching C/C++/CUDA/Objective-C stems, checking siblings then the nearest project; multiple matches open a picker |
 | Path under cursor | **Alt+D** opens a path/include/`file:line:column` in the line or selection. Quote spaces. Checks beside the file, then open folders and `include/`; existing files only, no URLs |
 | Bookmarks | **Ctrl+F2** toggles; **F2/Shift+F2** navigates; **Goto → Bookmarks…** lists; **Alt+F2** adds cursors; **Ctrl+Shift+F2** clears |
@@ -261,8 +261,8 @@ indexing progress, unreadable folders, and incomplete results.
 
 ## Writing code
 
-**Completions:** words from fully loaded open files and matching snippets appear
-as you type. Up/Down chooses, Tab/Enter accepts, Esc dismisses; **Ctrl+Space** opens
+**Completions:** language-server suggestions, words from fully loaded open files,
+and matching snippets appear as you type. Up/Down chooses, Tab/Enter accepts, Esc dismisses; **Ctrl+Space** opens
 the list. Background indexing prioritizes the active file and notes incomplete
 results. Set `auto_complete_commit_on_tab` to keep Enter for new lines.
 
@@ -283,6 +283,79 @@ Windows. Custom `build_systems` in settings accept `name`, `shell_cmd`, `selecto
 and `file_regex` (file, line, optional column, message capture groups).
 Commands expand `$file`, `$file_path`, `$file_name`, `$file_base_name`,
 `$file_extension`, and `$folder`; matching a built-in name overrides it.
+
+### Language servers
+
+Open **Settings → Language Servers**, **Preferences → Language servers: manage…**,
+or the **LSP** button in the status bar. The manager lists available and registered
+servers, installation source/version, workspace status, failures, and logs
+(**Refresh** updates logs). No server downloads until you select **Install**.
+
+- **Managed installs:** rust-analyzer for Rust and clangd for C/C++/CUDA. Select
+  **Install**, **Update / Repair**, or **Remove**. Packages come from the upstream
+  GitHub release, require a release-provided SHA-256 digest, and install under
+  hedit's user data directory. Downloads require `curl`; updating is manual.
+  Rust projects also need a Rust toolchain (and `rust-src` for standard-library
+  sources); C/C++ projects benefit from `compile_commands.json`. Unsupported
+  OS/architecture combinations report an error and can use an external server.
+- **External servers:** select **Add external server…**, enter an ID, comma-separated
+  syntax IDs such as `python` or `go`, an absolute executable path, arguments as a
+  JSON array, and settings as a JSON object. For example, a Python server may use
+  `/absolute/path/to/pylsp` with `[]`; a Node-based server may need `["--stdio"]`.
+  Install its runtime/dependencies separately. Removing a registration preserves
+  external executables. **Configure** can also override a built-in server.
+- **Control:** installed, enabled, and running are separate states. Change defaults
+  or enable/disable a server for the current workspace. **Stop** lasts for this
+  window; **Restart** starts it again. Repeated crashes require an explicit
+  restart. Stop a server in other hedit windows before changing its registration
+  or installation; shared installations are protected by cross-window locks.
+
+**Ctrl+Space** and automatic completion include plain-text LSP completions and
+additional text edits. **F12 / Shift+F12** requests definitions/references.
+Use the command palette or Tools menu for **Language server: show hover
+information**, **format document**, **toggle problems**, and **restart**.
+The Problems panel lists diagnostics for open files; select one to navigate.
+Formatting and accepted completion edits remain unsaved and use normal Undo and
+recovery. Delayed results are discarded after relevant document, cursor,
+selection, pane, or workspace changes. Source indexing and word completion remain
+available without a server.
+
+Servers start as needed for saved, fully loaded files up to 4 MiB. A workspace
+synchronizes up to 32 documents / 32 MiB and runs up to eight server sessions;
+the active file is prioritized. SSH uses a 4 MiB aggregate snapshot budget to
+stay within its bounded JSON transfer limit. Paged logs, follow mode, and untitled notes do
+not start servers. One registered server is selected per file in server-ID order;
+disable a competing registration to choose another. Server capabilities determine
+which actions are available. Rename, code actions, semantic highlighting,
+server-supplied snippets/commands, and unsolicited workspace edits are not yet
+supported.
+
+In **SSH workspaces**, the manager targets the host. Execution trust is required
+for management and execution; revoking trust or disconnecting stops its workers.
+Packages and registrations live in the helper state's `language-servers` directory;
+executable paths and runtime requirements refer to the host. LSP document text,
+logs, and diagnostics remain memory-only on the client. Results outside the
+remote workspace are excluded from navigation. Install the matching updated
+helper; the language-server feature uses the updated SSH protocol.
+
+Local management also works without opening a window:
+
+```sh
+hedit --lsp list
+hedit --lsp install rust-analyzer
+hedit --lsp remove rust-analyzer
+hedit --lsp-dir /absolute/private/server-store --lsp list
+```
+
+`list` returns JSON containing the catalog and registrations. `install` resolves
+the latest stable release and records its exact version, hash, and source;
+`remove` deletes only hedit-owned package directories and the registration.
+Downloads install through temporary directories, a bounded executable version
+check, and atomic activation. Failures or cancellation before activation preserve
+the active installation. If a receipt write cannot be confirmed, hedit preserves
+package files and reports the uncertainty; refresh the manager to inspect the
+active version. The previous managed
+installation is retained until the next successful update or removal.
 
 ### Syntax highlighting
 
@@ -472,6 +545,7 @@ hedit [--session-dir DIR] [--new] [-w] [FILE[:LINE[:COLUMN]] | FOLDER ...] [-]
 | `--new` | Add an empty note |
 | `-w`, `--wait` | Wait until files close; use `git config --global core.editor "hedit -w"` |
 | `--session-dir DIR` | Separate session/window; default from `HEDIT_SESSION_DIR` |
+| `--lsp list`, `--lsp install ID`, `--lsp remove ID` | Manage local language servers without a window; optional `--lsp-dir DIR` selects another server store |
 | `--` | Remaining arguments are filenames |
 | `-h`, `--version` | Help/version |
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.5.1] - 2026-11-16
+
+- Add language-server management in Settings and the CLI, with verified rust-analyzer/clangd installs and external server configuration.
+- Add completion, diagnostics, definitions/references, hover information, and undoable formatting for local and trusted SSH workspaces.
+- Fix server synchronization after reopening files, reject stale diagnostic versions, and preserve diagnostics from unaffected sessions.
+- Fix Windows file-URI matching so diagnostics reach open documents and navigation uses their unsaved text.
+- Show the selected language server's status for the active document.
+- Update the SSH protocol for host-side language servers; SSH workspaces require the matching updated helper.
+
 ## [0.5.0] - 2026-11-15
 
 - Add experimental SSH workspaces with remote files, search, Git, builds, terminals, and host-only recovery. Connections use pinned host keys, writer fencing, and explicit execution trust.

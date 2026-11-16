@@ -87,9 +87,11 @@ project search, and paged log viewing support everyday editing. Customize themes
 fonts, and keys; edit Arabic/Hebrew and legacy encodings. CUDA highlighting works
 everywhere, with local CUDA tools on Linux.
 
-Code navigation uses source indexing; there is no language-server integration.
-The terminal is opt-in. Tests cover recovery, Unicode editing, Git operations,
-and real SSH crashes and reconnects. [Testing and performance measurement](DEVELOPER_GUIDE.md#checks).
+Language servers can be installed, configured, restarted, and removed in
+**Settings → Language Servers**. Managed rust-analyzer/clangd packages and external
+servers provide completion, diagnostics, navigation, hover information, and
+formatting for local or trusted SSH workspaces.
+[Setup and supported features](USER_GUIDE.md#language-servers).
 
 ## Looks
 

@@ -25,7 +25,7 @@ pub mod windows;
 pub mod workspace;
 
 use hedit_core::file_io;
-pub use hedit_core::{build, document, folder, git, search, text_encoding};
+pub use hedit_core::{build, document, folder, git, language_server, search, text_encoding};
 
 use document::Document;
 use std::{

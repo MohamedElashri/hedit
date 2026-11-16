@@ -25,6 +25,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 MAX_FRAME = 65536
+PROTOCOL_VERSION = 3
 ARGS = None
 LAB = None
 
@@ -203,7 +204,7 @@ class Wire:
 
     def send(self, **request):
         self.next_id += 1
-        data = json.dumps(dict(version=1, id=self.next_id, request=request),
+        data = json.dumps(dict(version=PROTOCOL_VERSION, id=self.next_id, request=request),
                           ensure_ascii=False, separators=(",", ":")).encode()
         assert 0 < len(data) <= MAX_FRAME
         self.proc.stdin.write(struct.pack(">I", len(data)) + data)
@@ -227,7 +228,7 @@ class Wire:
         length = struct.unpack(">I", self.exact(4))[0]
         assert 0 < length <= MAX_FRAME
         reply = json.loads(self.exact(length))
-        assert reply["version"] == 1 and reply["id"] == self.next_id
+        assert reply["version"] == PROTOCOL_VERSION and reply["id"] == self.next_id
         return reply["result"]
 
     def call(self, **request):
@@ -639,6 +640,21 @@ class LiveTests(unittest.TestCase):
         self.assertIn("ب🦀", self.root.joinpath("file").read_text())
         self.assertEqual(self.root.joinpath("scratch-saved.txt").read_text(), "SCRATCH_HOST_ONLY")
         self.assertFalse(LAB.sentinel.exists())
+
+    def test_language_servers_run_on_host_and_stop_when_trust_is_revoked(self):
+        self.root.joinpath("file").write_text("base")
+        self.root.joinpath("main.rs").write_text("fo")
+        self.root.joinpath("target.rs").write_text("😀 target\n")
+        shutil.copyfile(ROOT / "crates/hedit-core/tests/support/fake_language_server.py",
+                        self.root / "fake-language-server.py")
+        probe = ROOT / "target/debug/examples/remote_workspace_probe"
+        result = subprocess.run([str(probe), str(LAB.client_config), str(ARGS.binary),
+                                 str(self.state), str(self.root), str(LAB.port), "language_servers"],
+                                capture_output=True, text=True, timeout=90)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("LANGUAGE_SERVER_REMOTE_OK", result.stdout)
+        self.assertEqual(self.root.joinpath("main.rs").read_text(), "fo")
+        self.assertTrue(self.root.joinpath("fake-language-server.py").is_file())
 
     def test_refusing_last_tab_close_and_discard_preserves_documents(self):
         self.root.joinpath("file").write_text("base")
