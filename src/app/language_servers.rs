@@ -621,7 +621,7 @@ impl HeditApp {
                                 .info
                                 .path
                                 .as_ref()
-                                .is_some_and(|p| Path::new(p) == path)
+                                .is_some_and(|p| text::same_path(Path::new(p), &path))
                         })
                         .and_then(|b| {
                             let byte = reply.encoding.byte(&b.page.text, range.start).ok()?;
@@ -1195,6 +1195,7 @@ mod tests {
         pump(&ctx, &mut app, |a| {
             a.languages.statuses.values().any(|s| s.state == "Running")
                 && a.languages.pending.is_empty()
+                && !a.languages.diagnostics.is_empty()
         });
         frame(&ctx, &mut app, vec![]);
         (dir, ctx, app)
@@ -1368,6 +1369,34 @@ mod tests {
         finish_app_job(&mut app, &ctx);
         assert!(app.active().view.name.ends_with("target.rs"));
         assert_eq!(app.active().view.head, 2);
+    }
+    #[test]
+    fn navigation_uses_unsaved_open_target_text_for_utf8_columns() {
+        let (dir, ctx, mut app) = app();
+        app.open(&ctx, Some(dir.path().join("target.rs")));
+        finish_app_job(&mut app, &ctx);
+        app.batch(hedit::advanced::Batch {
+            text: "éabc target\n".into(),
+            selections: vec![hedit::advanced::Selection::caret(0)],
+        });
+        let source = app
+            .workspace
+            .open
+            .iter()
+            .position(|b| b.view.name == "main.rs")
+            .unwrap();
+        app.select_tab(source);
+        assert!(app.request_language_feature(&ctx, Feature::Definition));
+        pump(&ctx, &mut app, |a| {
+            !a.languages
+                .pending
+                .values()
+                .any(|i| matches!(i, Intent::Feature(_)))
+        });
+        finish_app_job(&mut app, &ctx);
+        assert!(app.active().view.name.ends_with("target.rs"));
+        assert_eq!(app.active().page.text, "éabc target\n");
+        assert_eq!(app.active().view.head, 4);
     }
     #[test]
     fn settings_commands_open_manager_and_info_closes_with_escape() {
