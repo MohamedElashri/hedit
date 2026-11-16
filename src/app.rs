@@ -1147,7 +1147,12 @@ impl HeditApp {
                     Ok(Action::Quality(event)) => {
                         matches!(&**event, quality::Event::GitMarkers(..))
                     }
-                    Ok(Action::Font(..) | Action::FallbackFonts | Action::FontFamilies(_)) => true,
+                    Ok(
+                        Action::Font(..)
+                        | Action::TerminalFont(..)
+                        | Action::FallbackFonts
+                        | Action::FontFamilies(_),
+                    ) => true,
                     _ => false,
                 };
             let restore_focus = if !side {

@@ -805,6 +805,8 @@ fn stale_terminal_font_results_do_not_replace_a_new_selection() {
         size: 20.0,
     });
     app.terminal_font_generation = 2;
+    app.busy = true;
+    app.job_editor_focus = Some(egui::Id::new("busy-editor"));
     let notice = app.notice.clone();
     app.tx
         .send(Ok(Action::TerminalFont(
@@ -814,6 +816,8 @@ fn stale_terminal_font_results_do_not_replace_a_new_selection() {
         )))
         .unwrap();
     app.receive(&ctx);
+    assert!(app.busy);
+    assert_eq!(app.job_editor_focus, Some(egui::Id::new("busy-editor")));
     assert_eq!(app.notice, notice);
     assert!(app.terminal_font.is_none());
     app.settings.terminal_font = None;
@@ -825,8 +829,26 @@ fn stale_terminal_font_results_do_not_replace_a_new_selection() {
         )))
         .unwrap();
     app.receive(&ctx);
+    assert!(app.busy);
+    assert_eq!(app.job_editor_focus, Some(egui::Id::new("busy-editor")));
     assert_eq!(app.notice, notice);
     assert!(app.terminal_font.is_none());
+    app.settings.terminal_font = Some(TerminalFont {
+        face: "current".into(),
+        size: 20.0,
+    });
+    app.tx
+        .send(Ok(Action::TerminalFont(
+            2,
+            "current".into(),
+            Err("cannot load selected font".into()),
+        )))
+        .unwrap();
+    app.receive(&ctx);
+    assert!(app.busy);
+    assert_eq!(app.job_editor_focus, Some(egui::Id::new("busy-editor")));
+    assert!(app.notice.contains("cannot load selected font"));
+    app.busy = false;
     settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
 }
 

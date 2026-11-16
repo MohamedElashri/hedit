@@ -232,7 +232,7 @@ fn run() -> Result<(), String> {
         collect(6)?;
         service.submit(7, Operation::List)?;
         let events = collect(7)?;
-        assert!(events.iter().any(|e|matches!(e,Event::Result{result:Ok(value),..} if value["installed"][0]["registration"]["workspaces"][remote.root().to_string_lossy().as_ref()]==false)));
+        assert!(events.iter().any(|e|matches!(e,Event::Result{result:Ok(value),..} if value["installed"].as_array().is_some_and(|servers| servers.iter().any(|server| server["id"] == "fixture" && server["registration"]["workspaces"][remote.root().to_string_lossy().as_ref()] == false)))));
         service.submit(
             8,
             Operation::Remove {
