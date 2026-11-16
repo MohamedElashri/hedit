@@ -510,6 +510,77 @@ fn service_drives_open_change_save_features_and_filters_old_diagnostics() {
         .any(|v| v["method"] == "textDocument/didSave" && v["params"]["text"] == d.text));
 }
 #[test]
+fn reopening_a_document_resets_its_server_lifecycle_before_reusing_versions() {
+    let dir = tempfile::tempdir().unwrap();
+    let record = dir.path().join("record.jsonl");
+    let manager = Manager::new(dir.path().join("servers"));
+    manager
+        .configure(
+            "fixture",
+            registration(&["--record", record.to_str().unwrap()]),
+        )
+        .unwrap();
+    let service = Service::start(manager.root().to_owned(), Arc::new(|| {}));
+    for (ticket, revision, source) in [(1, 5, "old"), (2, 0, "reopened"), (3, 0, "replaced")] {
+        service
+            .submit(
+                ticket,
+                Operation::Sync {
+                    documents: vec![Document {
+                        path: dir.path().join("main.rs"),
+                        root: dir.path().into(),
+                        language: "rust".into(),
+                        revision,
+                        text: source.into(),
+                        dirty: false,
+                    }],
+                },
+            )
+            .unwrap();
+        wait(&service, ticket).0.unwrap();
+    }
+    service
+        .submit(
+            4,
+            Operation::Stop {
+                id: "fixture".into(),
+            },
+        )
+        .unwrap();
+    wait(&service, 4).0.unwrap();
+    let records: Vec<Value> = std::fs::read_to_string(record)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .filter(|v: &Value| {
+            matches!(
+                v["method"].as_str(),
+                Some("textDocument/didOpen" | "textDocument/didClose" | "textDocument/didChange")
+            )
+        })
+        .collect();
+    assert_eq!(
+        records
+            .iter()
+            .map(|v| v["method"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        [
+            "textDocument/didOpen",
+            "textDocument/didClose",
+            "textDocument/didOpen",
+            "textDocument/didClose",
+            "textDocument/didOpen"
+        ]
+    );
+    for (message, source) in records
+        .iter()
+        .step_by(2)
+        .zip(["old", "reopened", "replaced"])
+    {
+        assert_eq!(message["params"]["textDocument"]["text"], source);
+    }
+}
+#[test]
 fn crashes_do_not_loop_and_restart_is_explicit() {
     let dir = tempfile::tempdir().unwrap();
     let record = dir.path().join("record.jsonl");

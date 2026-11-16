@@ -708,11 +708,14 @@ fn sync_session(session: &mut Session, documents: Vec<Document>) -> Result<(), S
     }
     for document in documents {
         let uri = text::uri(&document.path)?;
-        if session
-            .documents
-            .get(&document.path)
-            .is_some_and(|old| old.language != document.language)
-        {
+        if session.documents.get(&document.path).is_some_and(|old| {
+            old.language != document.language
+                || document.revision < old.revision
+                || (document.revision == old.revision && document.text != old.text)
+        }) {
+            // A close/reopen can be coalesced into one workspace snapshot.
+            // Start a new LSP lifecycle before an editor revision is reused;
+            // didChange versions must increase within an open document.
             session
                 .client
                 .notify("textDocument/didClose", json!({"textDocument":{"uri":uri}}))?;
