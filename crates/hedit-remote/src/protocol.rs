@@ -2,7 +2,7 @@
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::io::{self, Read, Write};
 
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 pub const MAX_FRAME: usize = 64 * 1024;
 pub const MAX_INSERT: usize = 8 * 1024 * 1024;
 pub const MAX_DOCUMENT: usize = 8 * 1024 * 1024;
@@ -123,6 +123,13 @@ pub enum Request {
     TaskCancel {
         id: u64,
     },
+    Language {
+        session: String,
+        epoch: u64,
+        ticket: u64,
+        operation: hedit_core::language_server::Operation,
+    },
+    LanguagePoll {},
     ProcessStart {
         session: String,
         epoch: u64,

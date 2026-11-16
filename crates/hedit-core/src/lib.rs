@@ -8,3 +8,5 @@ pub mod git;
 pub mod search;
 pub mod text_encoding;
 pub mod wire_path;
+
+pub mod language_server;

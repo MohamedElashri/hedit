@@ -72,7 +72,23 @@ impl HeditApp {
     }
     /// Find where the word at the cursor is defined, or every place it is used.
     pub(super) fn look_up(&mut self, ctx: &egui::Context, references: bool) {
+        if self.request_language_feature(
+            ctx,
+            if references {
+                hedit::language_server::Feature::References
+            } else {
+                hedit::language_server::Feature::Definition
+            },
+        ) {
+            return;
+        }
+        self.look_up_indexed(ctx, references);
+    }
+    /// Local source indexing remains available when a server cannot answer.
+    pub(super) fn look_up_indexed(&mut self, ctx: &egui::Context, references: bool) {
         if self.workspace.remote.is_some() {
+            self.notice =
+                "Configure a host language server for navigation in this SSH workspace.".into();
             return;
         }
         let Some(name) = self.lookup_name() else {

@@ -45,6 +45,182 @@ fn run() -> Result<(), String> {
     assert!(doc.is_ephemeral());
     assert!(doc.info().name == "file");
     let original = doc.text(10 * 1024 * 1024)?;
+    if args.get(5).is_some_and(|mode| mode == "language_servers") {
+        use hedit::language_server::{
+            manager::{Launch, Registration},
+            Document as LspDocument, Event, Feature, Operation, Reply,
+        };
+        remote.trust(true)?;
+        let service = remote.language_servers(Arc::new(|| {}));
+        let collect = |ticket: u64| -> Result<Vec<Event>, String> {
+            let start = Instant::now();
+            let mut events = vec![];
+            loop {
+                for event in service.poll() {
+                    match &event {
+                        Event::Disconnected(e) => return Err(e.clone()),
+                        Event::Result { ticket: t, result } if *t == ticket => {
+                            result.as_ref().map_err(Clone::clone)?;
+                            events.push(event);
+                            return Ok(events);
+                        }
+                        Event::Response { ticket: t, result } if *t == ticket => {
+                            result.as_ref().map_err(Clone::clone)?;
+                            events.push(event);
+                            return Ok(events);
+                        }
+                        _ => events.push(event),
+                    }
+                }
+                if start.elapsed() > Duration::from_secs(15) {
+                    return Err(format!("LSP bridge timed out: {events:?}"));
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        let registration = Registration {
+            languages: vec!["rust".into()],
+            external: Some(Launch {
+                executable: PathBuf::from("/usr/bin/python3"),
+                arguments: vec![
+                    format!("{}/fake-language-server.py", remote.config.root),
+                    "--encoding".into(),
+                    "utf-8".into(),
+                ],
+            }),
+            ..Registration::default()
+        };
+        service.submit(
+            1,
+            Operation::Configure {
+                id: "fixture".into(),
+                registration: Box::new(registration),
+            },
+        )?;
+        collect(1)?;
+        let path = remote.path("main.rs")?;
+        let document = LspDocument {
+            path: path.clone(),
+            root: remote.root(),
+            language: "rust".into(),
+            revision: 1,
+            text: "fo".into(),
+            dirty: true,
+        };
+        service.submit(
+            2,
+            Operation::Sync {
+                documents: vec![document.clone()],
+            },
+        )?;
+        collect(2)?;
+        service.submit(
+            3,
+            Operation::Request {
+                path: path.clone(),
+                revision: 1,
+                scalar: 2,
+                feature: Feature::Hover,
+                tab_size: 4,
+                spaces: true,
+            },
+        )?;
+        let events = collect(3)?;
+        assert!(events.iter().any(|event|matches!(event,Event::Response{result:Ok(reply),..} if reply.path==path && reply.value["contents"]["value"]=="Fixture hover information")));
+        service.submit(
+            4,
+            Operation::Request {
+                path: path.clone(),
+                revision: 1,
+                scalar: 2,
+                feature: Feature::Definition,
+                tab_size: 4,
+                spaces: true,
+            },
+        )?;
+        let events = collect(4)?;
+        let reply: Reply = events
+            .into_iter()
+            .find_map(|e| match e {
+                Event::Response {
+                    result: Ok(reply), ..
+                } => Some(reply),
+                _ => None,
+            })
+            .ok_or("No definition response.")?;
+        assert_eq!(
+            reply.value[0]["targetUri"],
+            remote.path("target.rs")?.to_string_lossy().as_ref()
+        );
+        assert_eq!(reply.value[0]["heditColumn16"], 4);
+        let mut large = document;
+        large.revision = 2;
+        large.text = "x".repeat(100_000);
+        service.submit(
+            5,
+            Operation::Sync {
+                documents: vec![large],
+            },
+        )?;
+        collect(5)?;
+        let mut registration = Registration {
+            languages: vec!["rust".into()],
+            ..Registration::default()
+        };
+        registration
+            .workspaces
+            .insert(remote.root().to_string_lossy().into_owned(), false);
+        // Keep the explicit host executable while updating the workspace override.
+        registration.external = Some(Launch {
+            executable: "/usr/bin/python3".into(),
+            arguments: vec![format!("{}/fake-language-server.py", remote.config.root)],
+        });
+        service.submit(
+            6,
+            Operation::Configure {
+                id: "fixture".into(),
+                registration: Box::new(registration),
+            },
+        )?;
+        collect(6)?;
+        service.submit(7, Operation::List)?;
+        let events = collect(7)?;
+        assert!(events.iter().any(|e|matches!(e,Event::Result{result:Ok(value),..} if value["installed"][0]["registration"]["workspaces"][remote.root().to_string_lossy().as_ref()]==false)));
+        service.submit(
+            8,
+            Operation::Remove {
+                id: "fixture".into(),
+            },
+        )?;
+        collect(8)?;
+        let script = remote.path("fake-language-server.py")?;
+        assert!(Backend::request(
+            remote.as_ref(),
+            Call::File {
+                path: script,
+                query: FsQuery::Entry
+            },
+            &AtomicBool::new(false)
+        )
+        .is_ok());
+        remote.trust(false)?;
+        let started = Instant::now();
+        loop {
+            if service
+                .poll()
+                .iter()
+                .any(|e| matches!(e, Event::Disconnected(_)))
+            {
+                break;
+            }
+            if started.elapsed() > Duration::from_secs(5) {
+                return Err("LSP bridge ignored trust revocation.".into());
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        println!("LANGUAGE_SERVER_REMOTE_OK");
+        return Ok(());
+    }
     if args.get(5).is_some_and(|mode| mode == "last_tab_refusal") {
         let directory = tempfile::tempdir().map_err(|e| e.to_string())?;
         let mut config = remote.config.clone();

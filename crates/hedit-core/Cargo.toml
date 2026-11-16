@@ -19,6 +19,9 @@ globset = "0.4"
 encoding_rs = "0.8"
 trash = "5"
 similar = "3.2"
+flate2 = "1"
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+url = "2"
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", features = ["fs", "process"] }

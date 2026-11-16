@@ -26,11 +26,12 @@ pub(super) enum Overlay {
     About,
     Updates,
     Preferences,
+    LanguageInfo,
     Find,
     Build,
 }
 impl Overlay {
-    const ALL: [Self; 23] = [
+    const ALL: [Self; 24] = [
         Self::GitPrompt,
         Self::UserGuide,
         Self::Palette,
@@ -51,6 +52,7 @@ impl Overlay {
         Self::Settings,
         Self::About,
         Self::Updates,
+        Self::LanguageInfo,
         Self::Preferences,
         Self::Find,
         Self::Build,
@@ -93,6 +95,7 @@ impl HeditApp {
             Overlay::About => self.about_open,
             Overlay::Updates => self.updates.open,
             Overlay::Preferences => self.preferences_open,
+            Overlay::LanguageInfo => self.languages.info.is_some(),
             Overlay::Find => self.find_open,
             Overlay::Build => self.build.open,
         }
@@ -123,6 +126,7 @@ impl HeditApp {
             Overlay::Settings => self.quality.settings_open = false,
             Overlay::About => self.about_open = false,
             Overlay::Updates => self.updates.open = false,
+            Overlay::LanguageInfo => self.languages.info = None,
             Overlay::Preferences => {
                 self.preferences_open = false;
                 self.appearance.save_name = None;
@@ -154,6 +158,7 @@ impl HeditApp {
         if !ctx.input(|i| i.key_pressed(Key::Escape)) {
             return;
         }
+        self.cancel_language_requests();
         // Menus, combo boxes, and context menus dismiss themselves.
         if self.open_menu.is_some() || ctx.memory(|m| m.any_popup_open()) {
             return;

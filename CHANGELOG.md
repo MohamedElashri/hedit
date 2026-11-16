@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Add native language-server management with verified rust-analyzer/clangd installs, external server configuration, workspace enablement, restart/stop, logs, and headless install/list/remove commands.
+- Add LSP completion, diagnostics, definitions/references, hover information, and undoable formatting for local and trusted SSH workspaces.
+- Bound protocol queues, snapshots, downloads, archive extraction, and process lifetimes; protect installations across windows and reject stale editor results.
+- Update the SSH protocol for host-side language workers and extend deterministic, editor, installer, and SSH regression coverage.
+
 ## [0.5.0] - 2026-11-15
 
 - Add experimental SSH workspaces with remote files, search, Git, builds, terminals, and host-only recovery. Connections use pinned host keys, writer fencing, and explicit execution trust.

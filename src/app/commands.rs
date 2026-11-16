@@ -221,6 +221,11 @@ pub(super) enum Command {
     Appearance,
     ChooseFont,
     ToolSettings,
+    LanguageServers,
+    LanguageHover,
+    LanguageFormat,
+    LanguageProblems,
+    LanguageRestart,
     Checkpoint,
     UserGuide,
     About,
@@ -443,6 +448,11 @@ impl Command {
         Self::Appearance,
         Self::ChooseFont,
         Self::ToolSettings,
+        Self::LanguageServers,
+        Self::LanguageHover,
+        Self::LanguageFormat,
+        Self::LanguageProblems,
+        Self::LanguageRestart,
         Self::Checkpoint,
         Self::UserGuide,
         Self::About,
@@ -465,6 +475,8 @@ impl Command {
                 | Self::Rename
                 | Self::Settings
                 | Self::ToolSettings
+                | Self::LanguageServers
+                | Self::LanguageHover
                 | Self::TerminalSettings
                 | Self::KeyBindings
                 | Self::ProjectSettings
@@ -705,6 +717,11 @@ impl Command {
             Self::Appearance => "Color theme…",
             Self::ChooseFont => "Editor font…",
             Self::ToolSettings => "CUDA tool settings…",
+            Self::LanguageServers => "Language servers: manage…",
+            Self::LanguageHover => "Language server: show hover information",
+            Self::LanguageFormat => "Language server: format document",
+            Self::LanguageProblems => "Language server: toggle problems",
+            Self::LanguageRestart => "Language servers: restart",
             Self::Checkpoint => "Checkpoint now",
             Self::UserGuide => "User guide",
             Self::About => "About hedit",
@@ -1273,8 +1290,6 @@ impl HeditApp {
                 | Command::MarkdownSplit
                 | Command::MarkdownPreview
                 | Command::MarkdownRefresh
-                | Command::GotoDefinition
-                | Command::GotoReferences
                 | Command::SwitchCounterpart
                 | Command::OpenFileReference
                 | Command::CompareDisk
@@ -1836,6 +1851,20 @@ impl HeditApp {
             Command::Appearance => self.open_theme_palette(),
             Command::ChooseFont => self.open_font_picker(ctx),
             Command::ToolSettings => self.open_preferences(PreferencesPage::Tools),
+            Command::LanguageServers => self.open_preferences(PreferencesPage::LanguageServers),
+            Command::LanguageHover => {
+                if !self.request_language_feature(ctx, hedit::language_server::Feature::Hover) {
+                    self.notice = "Configure a language server for this file first.".into();
+                }
+            }
+            Command::LanguageFormat => {
+                if !self.request_language_feature(ctx, hedit::language_server::Feature::Formatting)
+                {
+                    self.notice = "Configure a language server for this file first.".into();
+                }
+            }
+            Command::LanguageProblems => self.languages.problems = !self.languages.problems,
+            Command::LanguageRestart => self.restart_language_servers(),
             Command::Checkpoint => self.checkpoint(ctx),
             Command::UserGuide => {
                 self.guide.start();

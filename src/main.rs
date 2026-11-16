@@ -22,11 +22,42 @@ fn run(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let options = hedit::cli::Options::parse(args.clone())?;
     if options.help {
-        println!("hedit — keep your train of thought\n\nUsage: hedit [--session-dir DIR] [--new] [FILE[:LINE[:COLUMN]] | FOLDER ...] [-]\n\n  -                 Read UTF-8 stdin into an unsaved file\n  --new             Add a new file\n  -w, --wait        Wait until the files are closed (for git and other tools)\n  --session-dir DIR Use an isolated session (one process per session)\n  --ssh HOST        Open a separate private SSH workspace\n  --ssh-root DIR    Absolute workspace directory on the host\n  --ssh-helper FILE Absolute installed helper on the host\n  --ssh-state DIR   Private host recovery directory\n  --ssh-user USER   SSH user (optional)\n  --ssh-port PORT   SSH port (default 22)\n  --ssh-config FILE Trusted absolute local SSH config\n  --ssh-takeover    Explicitly fence another workspace writer\n  --                Treat remaining arguments as paths\n  -h, --help        Show help\n  -V, --version     Show version\n\nhedit opens in the running session and releases the terminal after startup.\nBuild and run with Cargo. CUDA tools are optional.");
+        println!("hedit — keep your train of thought\n\nUsage: hedit [--session-dir DIR] [--new] [FILE[:LINE[:COLUMN]] | FOLDER ...] [-]\n\n  -                 Read UTF-8 stdin into an unsaved file\n  --new             Add a new file\n  -w, --wait        Wait until the files are closed (for git and other tools)\n  --session-dir DIR Use an isolated session (one process per session)\n  --lsp list        List registered language servers (JSON)\n  --lsp install ID  Install or update a managed language server\n  --lsp remove ID   Remove a managed server or external registration\n  --lsp-dir DIR     Override the local server store for --lsp\n  --ssh HOST        Open a separate private SSH workspace\n  --ssh-root DIR    Absolute workspace directory on the host\n  --ssh-helper FILE Absolute installed helper on the host\n  --ssh-state DIR   Private host recovery directory\n  --ssh-user USER   SSH user (optional)\n  --ssh-port PORT   SSH port (default 22)\n  --ssh-config FILE Trusted absolute local SSH config\n  --ssh-takeover    Explicitly fence another workspace writer\n  --                Treat remaining arguments as paths\n  -h, --help        Show help\n  -V, --version     Show version\n\nhedit opens in the running session and releases the terminal after startup.\nBuild and run with Cargo. CUDA tools are optional.");
         return Ok(());
     }
     if options.version {
         println!("hedit {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    if let Some(action) = &options.language_server {
+        use hedit::language_server::manager::{catalog, Manager};
+        let directory = options
+            .language_server_directory
+            .clone()
+            .or_else(|| {
+                directories::ProjectDirs::from("", "hedit", "hedit")
+                    .map(|d| d.data_local_dir().join("language-servers"))
+            })
+            .ok_or("Cannot determine language-server data directory; pass --lsp-dir.")?;
+        let manager = Manager::new(directory);
+        match action {
+            hedit::cli::LanguageServerCommand::List => println!(
+                "{}",
+                serde_json::to_string_pretty(
+                    &serde_json::json!({"catalog":catalog(),"installed":manager.list()?,"directory":manager.root()})
+                )?
+            ),
+            hedit::cli::LanguageServerCommand::Install(id) => {
+                manager.install(id, &std::sync::atomic::AtomicBool::new(false), |message| {
+                    eprintln!("{message}")
+                })?;
+                println!("Installed {id}.");
+            }
+            hedit::cli::LanguageServerCommand::Remove(id) => {
+                manager.remove(id)?;
+                println!("Removed {id}.");
+            }
+        }
         return Ok(());
     }
     let remote_window = options.remote.is_some();

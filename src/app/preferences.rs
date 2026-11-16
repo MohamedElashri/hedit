@@ -13,10 +13,11 @@ pub(super) enum PreferencesPage {
     Keys,
     Snippets,
     Tools,
+    LanguageServers,
     Recovery,
 }
 impl PreferencesPage {
-    pub(super) const ALL: [Self; 10] = [
+    pub(super) const ALL: [Self; 11] = [
         Self::General,
         Self::Terminal,
         Self::Editor,
@@ -26,6 +27,7 @@ impl PreferencesPage {
         Self::Keys,
         Self::Snippets,
         Self::Tools,
+        Self::LanguageServers,
         Self::Recovery,
     ];
     fn title(self) -> &'static str {
@@ -39,6 +41,7 @@ impl PreferencesPage {
             Self::Keys => "Key Bindings",
             Self::Snippets => "Snippets",
             Self::Tools => "CUDA Tools",
+            Self::LanguageServers => "Language Servers",
             Self::Recovery => "Recovery",
         }
     }
@@ -145,6 +148,9 @@ impl HeditApp {
                                     PreferencesPage::Snippets => self.snippet_preferences(ui),
                                     PreferencesPage::Appearance => self.theme_preferences(ui, ctx),
                                     PreferencesPage::Tools => self.tool_preferences(ui),
+                                    PreferencesPage::LanguageServers => {
+                                        self.language_preferences(ui)
+                                    }
                                     PreferencesPage::Recovery => self.recovery_preferences(ui, ctx),
                                 });
                         });

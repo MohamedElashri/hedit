@@ -1062,6 +1062,132 @@ pub fn join(root: &Path, path: &Path) -> PathBuf {
     root.join(escaped)
 }
 
+impl Connection {
+    /// A dedicated bound SSH connection owns the host LSP worker. Disconnecting
+    /// or revoking execution trust drops its sessions and cancels installers.
+    pub fn language_servers(
+        self: &Arc<Self>,
+        wake: Arc<dyn Fn() + Send + Sync>,
+    ) -> hedit_core::language_server::Service {
+        use hedit_core::language_server::{Event, Operation};
+        let connection = self.clone();
+        let mut client = None;
+        hedit_core::language_server::Service::bridge(
+            move |operation: Option<(u64, Operation)>| {
+                if !connection.state.lock().unwrap().trusted {
+                    return Err(
+                        "Trust this SSH workspace before managing or running language servers."
+                            .into(),
+                    );
+                }
+                if client.is_none() {
+                    client = Some(connection.service()?);
+                }
+                let client = client.as_mut().unwrap();
+                if let Some((ticket, mut operation)) = operation {
+                    operation
+                        .map_paths(|path| connection.relative(path).map(wire_path::from_bytes))?;
+                    let state = connection.state.lock().unwrap();
+                    let request = Request::Language {
+                        session: state.session.clone(),
+                        epoch: state.epoch,
+                        ticket,
+                        operation,
+                    };
+                    drop(state);
+                    rpc(client, request)?;
+                }
+                let Response::Value { value } = rpc(client, Request::LanguagePoll {})? else {
+                    return Err("Invalid remote language-server reply.".into());
+                };
+                let mut events: Vec<Event> =
+                    serde_json::from_value(value).map_err(|e| e.to_string())?;
+                for event in &mut events {
+                    let map = |path: &mut PathBuf| -> Result<(), String> {
+                        let relative = path
+                            .strip_prefix(&connection.config.root)
+                            .map_err(|_| "Language-server result is outside the SSH workspace.")?;
+                        let uri = connection.uri(&wire_path::bytes(relative));
+                        connection.relative(&uri)?;
+                        *path = uri;
+                        Ok(())
+                    };
+                    match event {
+                        Event::Result {
+                            result: Ok(value), ..
+                        } => {
+                            if let Some(installed) =
+                                value.get_mut("installed").and_then(Value::as_array_mut)
+                            {
+                                for entry in installed {
+                                    if let Some(workspaces) = entry["registration"]
+                                        .get_mut("workspaces")
+                                        .and_then(Value::as_object_mut)
+                                    {
+                                        let old = std::mem::take(workspaces);
+                                        for (key, enabled) in old {
+                                            let mut path = PathBuf::from(key);
+                                            if map(&mut path).is_ok() {
+                                                workspaces.insert(
+                                                    path.to_string_lossy().into_owned(),
+                                                    enabled,
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Event::Diagnostics { path, .. } => map(path)?,
+                        Event::Status(status) => map(&mut status.root)?,
+                        Event::Response {
+                            result: Ok(reply), ..
+                        } => {
+                            map(&mut reply.path)?;
+                            if matches!(
+                                reply.feature,
+                                hedit_core::language_server::Feature::Definition
+                                    | hedit_core::language_server::Feature::References
+                            ) {
+                                let convert = |location: &mut Value| -> bool {
+                                    for field in ["uri", "targetUri"] {
+                                        if let Some(value) = location.get_mut(field) {
+                                            let Some(uri) = value.as_str() else {
+                                                return false;
+                                            };
+                                            let Ok(mut path) =
+                                                hedit_core::language_server::text::path(uri)
+                                            else {
+                                                return false;
+                                            };
+                                            if map(&mut path).is_err() {
+                                                return false;
+                                            }
+                                            *value =
+                                                Value::String(path.to_string_lossy().into_owned());
+                                        }
+                                    }
+                                    true
+                                };
+                                if reply.value.is_object() {
+                                    if !convert(&mut reply.value) {
+                                        reply.value = Value::Null;
+                                    }
+                                } else if let Value::Array(items) = &mut reply.value {
+                                    items.retain_mut(convert);
+                                }
+                            }
+                        }
+                        _ => (),
+                    }
+                }
+                Ok(events)
+            },
+            wake,
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

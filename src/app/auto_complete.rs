@@ -12,6 +12,7 @@ const SNAPSHOT_FILES: usize = 32;
 #[derive(Clone, Debug)]
 pub(super) enum Choice {
     Word(String),
+    Language(language_servers::Completion),
     Snippet(hedit::intelligence::Snippet),
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -128,6 +129,7 @@ impl HeditApp {
             && !self.goto_open
             && !self.about_open
             && !self.guide.open
+            && self.languages.info.is_none()
             && self.rename_target.is_none()
             && !self.shelf_open
             && !self.bookmarks_open
@@ -358,10 +360,26 @@ impl HeditApp {
         {
             return;
         }
-        let choices = self.completion_choices(&query.typed, words);
+        let mut choices = self.completion_choices(&query.typed, words);
+        if let Some(popup) = &self.auto.popup {
+            if popup.query == query {
+                let language: Vec<_> = popup
+                    .choices
+                    .iter()
+                    .filter(|c| matches!(c, Choice::Language(_)))
+                    .cloned()
+                    .collect();
+                if !language.is_empty() {
+                    choices.splice(0..0, language);
+                    choices.truncate(SHOWN);
+                }
+            }
+        }
         if choices.is_empty() {
             self.auto.popup = None;
-            self.auto.intent = None;
+            if !self.language_completion_pending() {
+                self.auto.intent = None;
+            }
         } else {
             self.auto.popup = Some(Popup {
                 query,
@@ -373,6 +391,9 @@ impl HeditApp {
         }
     }
     fn refresh_choices(&mut self, ctx: &egui::Context) {
+        if self.auto.intent.is_some() {
+            self.request_language_completion(ctx);
+        }
         if let Some(job) = &self.auto.ranking {
             let current = self.auto.ranking_key.as_ref().is_some_and(|(q, v)| {
                 self.auto.intent.as_ref() == Some(q) && *v == self.auto.version
@@ -463,6 +484,7 @@ impl HeditApp {
     }
     pub(super) fn open_completion(&mut self, ctx: &egui::Context) {
         self.auto.dismiss();
+        self.reset_language_completion();
         let Some(query) = self.completion_query() else {
             self.notice = "No completions here.".into();
             return;
@@ -702,6 +724,18 @@ impl HeditApp {
                 );
                 self.batch(batch);
             }
+            Choice::Language(choice) => {
+                match language_servers::LanguageServers::completion_edit(
+                    &self.active().page.text,
+                    &choice,
+                ) {
+                    Ok((text, cursor)) => self.batch(hedit::advanced::Batch {
+                        text,
+                        selections: vec![hedit::advanced::Selection::caret(cursor)],
+                    }),
+                    Err(e) => self.notice = e,
+                }
+            }
             Choice::Snippet(snippet) => self.insert_snippet(snippet, popup.query.typed.len()),
         }
         self.focus_editor = true;
@@ -757,6 +791,7 @@ impl HeditApp {
                         {
                             let (label, detail) = match choice {
                                 Choice::Word(word) => (word.as_str(), ""),
+                                Choice::Language(c) => (c.label.as_str(), c.detail.as_str()),
                                 Choice::Snippet(s) => (s.trigger.as_str(), s.description.as_str()),
                             };
                             // Button shortcut text never wraps or truncates on its own.
@@ -889,3 +924,108 @@ mod redesign_tests {
 #[cfg(test)]
 #[path = "completion_tests.rs"]
 mod tests;
+
+impl HeditApp {
+    pub(super) fn publish_language_completions(
+        &mut self,
+        value: serde_json::Value,
+        encoding: hedit::language_server::text::Encoding,
+    ) {
+        use hedit::language_server::text::{Range, TextEdit};
+        let Some(query) = self.auto.intent.clone() else {
+            return;
+        };
+        if self.completion_query().as_ref() != Some(&query)
+            || self.auto.popup.as_ref().is_some_and(|p| p.locked)
+        {
+            return;
+        }
+        let items = value.as_array().or_else(|| value["items"].as_array());
+        let Some(items) = items else {
+            if self.auto.popup.is_none() {
+                self.auto.dismiss();
+            }
+            return;
+        };
+        let source = &self.active().page.text;
+        let Ok(start) = encoding.position(source, query.start) else {
+            return;
+        };
+        let Ok(end) = encoding.position(source, query.head) else {
+            return;
+        };
+        let mut choices = vec![];
+        for item in items.iter().take(2000) {
+            // The client advertises plain-text completions. Never insert
+            // unsupported snippet syntax or execute completion commands.
+            if item["insertTextFormat"] == 2 {
+                continue;
+            }
+            let Some(label) = item["label"].as_str().filter(|s| s.len() <= 2048) else {
+                continue;
+            };
+            let edit = if let Some(edit) = item.get("textEdit") {
+                let Ok(edit) = serde_json::from_value::<TextEdit>(edit.clone()) else {
+                    continue;
+                };
+                edit
+            } else {
+                TextEdit {
+                    range: Range { start, end },
+                    new_text: item["insertText"].as_str().unwrap_or(label).to_owned(),
+                }
+            };
+            let mut edits = vec![edit];
+            if let Some(additional) = item.get("additionalTextEdits") {
+                let Ok(additional) = serde_json::from_value::<Vec<TextEdit>>(additional.clone())
+                else {
+                    continue;
+                };
+                if additional.len() > 100 {
+                    continue;
+                }
+                edits.extend(additional);
+            }
+            if hedit::language_server::text::apply(source, &edits, encoding).is_err() {
+                continue;
+            }
+            choices.push(Choice::Language(language_servers::Completion {
+                label: label.into(),
+                detail: item["detail"]
+                    .as_str()
+                    .unwrap_or("Language server")
+                    .chars()
+                    .take(200)
+                    .collect(),
+                edits,
+                encoding,
+            }));
+            if choices.len() == SHOWN {
+                break;
+            }
+        }
+        if choices.is_empty() {
+            if self.auto.popup.is_none() {
+                self.auto.dismiss();
+            }
+            return;
+        }
+        if let Some(popup) = &self.auto.popup {
+            choices.extend(
+                popup
+                    .choices
+                    .iter()
+                    .filter(|c| !matches!(c, Choice::Language(_)))
+                    .take(SHOWN.saturating_sub(choices.len()))
+                    .cloned(),
+            );
+        }
+        self.auto.popup = Some(Popup {
+            query,
+            version: self.auto.version,
+            locked: false,
+            choices,
+            selected: 0,
+        });
+    }
+}
