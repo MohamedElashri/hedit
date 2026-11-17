@@ -551,3 +551,82 @@ fn split_editor_ids_cannot_alias_the_primary_editors_accessibility_rows() {
     );
     assert_accessible_focus_is_reachable(out);
 }
+
+#[test]
+fn duplicate_tab_locations_refresh_on_save_as_close_and_reopen() {
+    let (_dir, ctx, mut app) = app("", 2);
+    for (buffer, path) in app.workspace.open.iter_mut().zip([
+        "/project/client/src/config.json",
+        "/project/server/src/config.json",
+    ]) {
+        buffer.view.name = "config.json".into();
+        buffer.page.info.path = Some(path.into());
+    }
+    app.workspace.open[0].view.pinned = true;
+    app.quality.preview = Some(app.workspace.open[1].view.id);
+    for _ in 0..4 {
+        frame(&ctx, &mut app, vec![]);
+    }
+    assert_eq!(
+        app.tab_strip.label(0).replace('\\', "/"),
+        "config.json · client/src"
+    );
+    let out = frame(&ctx, &mut app, vec![]);
+    for expected in ["◆ config.json · client/src", "config.json · server/src"] {
+        assert!(
+            out.shapes.iter().any(|s| match &s.shape {
+                egui::Shape::Text(t) =>
+                    t.galley.text().replace('\\', "/") == expected
+                        && t.visual_bounding_rect().intersects(s.clip_rect),
+                _ => false,
+            }),
+            "missing visible location: {expected}"
+        );
+    }
+    // Save As can retain the basename while changing the distinguishing parent.
+    app.workspace.open[1].page.info.path = Some("/project/tools/config.json".into());
+    frame(&ctx, &mut app, vec![]);
+    assert_eq!(app.tab_strip.label(0), "config.json · src");
+    assert_eq!(app.tab_strip.label(1), "config.json · tools");
+    let buffer = app.workspace.open.remove(1);
+    frame(&ctx, &mut app, vec![]);
+    assert_eq!(app.tab_strip.label(0), "config.json");
+    app.workspace.open.push(buffer);
+    frame(&ctx, &mut app, vec![]);
+    assert_eq!(app.tab_strip.label(0), "config.json · src");
+    assert_eq!(app.tab_strip.label(1), "config.json · tools");
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn duplicate_tabs_expose_locations_in_accessibility_and_close_labels() {
+    let (_dir, ctx, mut app) = app("", 2);
+    ctx.enable_accesskit();
+    for (buffer, path) in app
+        .workspace
+        .open
+        .iter_mut()
+        .zip(["/client/config.json", "/server/config.json"])
+    {
+        buffer.view.name = "config.json".into();
+        buffer.page.info.path = Some(path.into());
+    }
+    for _ in 0..4 {
+        frame(&ctx, &mut app, vec![]);
+    }
+    let tree = frame(&ctx, &mut app, vec![])
+        .platform_output
+        .accesskit_update
+        .unwrap();
+    for label in ["config.json · client", "config.json · server"] {
+        assert!(tree
+            .nodes
+            .iter()
+            .any(|(_, node)| node.role() == egui::accesskit::Role::Tab
+                && node.label() == Some(label)));
+        assert!(tree
+            .nodes
+            .iter()
+            .any(|(_, node)| node.label() == Some(format!("Close {label}").as_str())));
+    }
+}

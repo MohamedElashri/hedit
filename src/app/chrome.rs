@@ -1,4 +1,5 @@
 use super::*;
+use std::path::Path;
 
 /// The Find bar's query field, which keeps focus while stepping through matches.
 pub(super) const FIND_INPUT: &str = "find-input";
@@ -306,7 +307,41 @@ impl HeditApp {
                                 let buffer = &self.workspace.open[index];
                                 let active = index == self.workspace.active;
                                 let can_close = self.workspace.can_close(index);
-                                let title = self.tab_strip.title(index).to_owned();
+                                let title = self.tab_strip.title(
+                                    index,
+                                    if active {
+                                        theme.text.color()
+                                    } else {
+                                        theme.muted.color()
+                                    },
+                                    theme.muted.color(),
+                                    self.quality.preview == Some(buffer.view.id),
+                                );
+                                let label = self.tab_strip.label(index).to_owned();
+                                let tooltip = buffer.page.info.path.as_deref().map_or_else(
+                                    || "Unsaved file · included in recovery".to_owned(),
+                                    |path| {
+                                        self.workspace
+                                            .remote
+                                            .as_ref()
+                                            .and_then(|remote| {
+                                                remote.relative(Path::new(path)).ok().map(
+                                                    |relative| {
+                                                        format!(
+                                                            "{}:{}/{}",
+                                                            remote.config.target.host,
+                                                            remote
+                                                                .config
+                                                                .root
+                                                                .trim_end_matches('/'),
+                                                            String::from_utf8_lossy(&relative)
+                                                        )
+                                                    },
+                                                )
+                                            })
+                                            .unwrap_or_else(|| path.to_owned())
+                                    },
+                                );
                                 let shown = ui.push_id(buffer.view.id, |ui| {
                                     egui::Frame::new()
                                         .fill(if active {
@@ -325,36 +360,20 @@ impl HeditApp {
                                             ui.push_id(buffer.page.info.id, |ui| {
                                                 ui.horizontal(|ui| {
                                                     let response = ui
-                                                    .add(
-                                                        egui::Button::new(
-                                                            (if self.quality.preview
-                                                                == Some(buffer.view.id)
-                                                            {
-                                                                RichText::new(title).italics()
-                                                            } else {
-                                                                RichText::new(title)
-                                                            })
-                                                            .size(12.0)
-                                                            .color(if active {
-                                                                theme.text.color()
-                                                            } else {
-                                                                theme.muted.color()
-                                                            }),
+                                                        .add(
+                                                            egui::Button::new(title)
+                                                                .frame(false)
+                                                                .min_size(egui::vec2(96.0, 20.0))
+                                                                .sense(
+                                                                    egui::Sense::click_and_drag(),
+                                                                ),
                                                         )
-                                                        .frame(false)
-                                                        .min_size(egui::vec2(96.0, 20.0))
-                                                        .sense(egui::Sense::click_and_drag()),
-                                                    )
-                                                    .on_hover_text(
-                                                        buffer.page.info.path.as_deref().unwrap_or(
-                                                            "Unsaved file · included in recovery",
-                                                        ),
-                                                    );
+                                                        .on_hover_text(tooltip);
                                                     response.widget_info(|| {
                                                         egui::WidgetInfo::labeled(
                                                             egui::WidgetType::Button,
                                                             ui.is_enabled(),
-                                                            &buffer.view.name,
+                                                            &label,
                                                         )
                                                     });
                                                     #[cfg(target_os = "macos")]
@@ -365,9 +384,7 @@ impl HeditApp {
                                                                 egui::accesskit::Role::Tab,
                                                             );
                                                             node.set_selected(active);
-                                                            node.set_label(
-                                                                buffer.view.name.clone(),
-                                                            );
+                                                            node.set_label(label.clone());
                                                             if buffer.view.pinned
                                                                 && buffer.page.info.dirty
                                                             {
@@ -463,16 +480,13 @@ impl HeditApp {
                                                             )
                                                             .on_hover_text(format!(
                                                                 "Close {}",
-                                                                buffer.view.name
+                                                                label
                                                             ));
                                                         close_response.widget_info(|| {
                                                             egui::WidgetInfo::labeled(
                                                                 egui::WidgetType::Button,
                                                                 ui.is_enabled(),
-                                                                format!(
-                                                                    "Close {}",
-                                                                    buffer.view.name
-                                                                ),
+                                                                format!("Close {}", label),
                                                             )
                                                         });
                                                         if close_response.clicked() {
