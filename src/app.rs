@@ -2009,6 +2009,7 @@ impl HeditApp {
                 self.error_banner(ui, &theme);
                 self.pane_layout(ui);
             });
+        self.git_prompt(ctx);
     }
     /// One banner above all panes; Escape or its close button clears it.
     fn error_banner(&mut self, ui: &mut egui::Ui, theme: &Theme) {

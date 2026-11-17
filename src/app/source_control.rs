@@ -1590,7 +1590,7 @@ impl HeditApp {
                 });
         });
     }
-    fn git_prompt(&mut self, ctx: &egui::Context) {
+    pub(super) fn git_prompt(&mut self, ctx: &egui::Context) {
         let Some(mut prompt) = self.source_control.prompt.take() else {
             self.source_control.ux.prompt_visible = false;
             return;
