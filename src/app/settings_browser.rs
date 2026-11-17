@@ -403,6 +403,25 @@ fn catalog() -> &'static [Setting] {
             "Shape Arabic and arrange Hebrew and Arabic text in reading order."
         );
         setting!(Terminal, Group(&["terminal_font","terminal_colors"]), "terminal_font", "Terminal font and colors", "Customize terminal font, size, cursor, selection and ANSI palette, independently of the app.");
+        setting!(Appearance, Text, "ui_font_face", "UI font family or file", "Font for menus, tabs, panels and settings. Empty uses bundled Noto Sans. Editor and terminal fonts are independent.");
+        setting!(
+            Appearance,
+            Number(10.0, 20.0, 1.0),
+            "ui_font_size",
+            "UI font size",
+            "Size of interface text in logical pixels, independent of editor zoom."
+        );
+        setting!(
+            Appearance,
+            Choice(&[
+                ("compact", "Compact"),
+                ("default", "Default"),
+                ("comfortable", "Comfortable")
+            ]),
+            "ui_density",
+            "UI density",
+            "Control spacing and row height throughout the workbench."
+        );
         setting!(
             Appearance,
             Group(&[
@@ -584,6 +603,15 @@ impl HeditApp {
         self.settings_browser.errors.remove(key);
         self.settings_browser.drafts.remove(key);
         Ok(())
+    }
+    pub(super) fn interface_settings(&mut self, ui: &mut egui::Ui) {
+        let current = self.settings_document();
+        for spec in catalog().iter().filter(|s| s.key.starts_with("ui_")) {
+            ui.push_id(spec.key, |ui| {
+                self.setting_card(ui, spec, &current, defaults())
+            });
+            ui.add_space(8.0);
+        }
     }
     pub(super) fn settings_catalog(&mut self, ui: &mut egui::Ui, page: Option<PreferencesPage>) {
         let current = self.settings_document();

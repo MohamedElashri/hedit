@@ -20,6 +20,7 @@ pub mod syntax;
 pub mod terminal;
 pub mod text_commands;
 pub mod theme;
+pub mod ui_style;
 pub mod update;
 pub mod windows;
 pub mod workspace;

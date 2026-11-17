@@ -35,6 +35,7 @@ fn menu_item(ui: &mut egui::Ui, app: &HeditApp, command: Command) -> bool {
 }
 impl HeditApp {
     pub(super) fn chrome(&mut self, ctx: &egui::Context) {
+        self.apply_workbench_style(ctx);
         let theme = self.theme.clone();
         let mut action = None;
         let mut open_menu = None;
@@ -775,7 +776,7 @@ impl HeditApp {
             |ui| {
                 let width = (ui.ctx().screen_rect().width() - 40.0).clamp(240.0, 380.0);
                 ui.set_width(width);
-                ui.spacing_mut().interact_size.y = 28.0;
+                ui.spacing_mut().interact_size.y = hedit::ui_style::Metrics::for_ui(ui).row;
                 ui.style_mut()
                     .text_styles
                     .insert(egui::TextStyle::Button, egui::FontId::proportional(15.0));
@@ -818,7 +819,7 @@ impl HeditApp {
                     choice = Some(None);
                 }
                 ui.separator();
-                let row_height = 28.0;
+                let row_height = hedit::ui_style::Metrics::for_ui(ui).row;
                 let mut scroll = egui::ScrollArea::vertical()
                     .id_salt("syntax-choices")
                     .max_height(height)

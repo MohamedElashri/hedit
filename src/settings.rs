@@ -142,6 +142,10 @@ impl Default for TerminalColors {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    /// Independent workbench typography; empty uses bundled Noto Sans.
+    pub ui_font_face: String,
+    pub ui_font_size: f32,
+    pub ui_density: crate::ui_style::Density,
     // Editor
     /// A font family name or font file path; empty uses the built-in font.
     pub font_face: String,
@@ -247,6 +251,9 @@ fn onboarding_complete_for_existing_settings() -> bool {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            ui_font_face: String::new(),
+            ui_font_size: 13.0,
+            ui_density: crate::ui_style::Density::default(),
             font_face: String::new(),
             font_size: 14.0,
             line_padding: 0.0,
@@ -361,6 +368,12 @@ impl Settings {
         }
     }
     pub fn validate(&self) -> Result<(), String> {
+        if !(10.0..=20.0).contains(&self.ui_font_size) {
+            return Err("ui_font_size must be between 10 and 20.".into());
+        }
+        if self.ui_font_face.len() > 4096 || self.ui_font_face.contains(['\0', '\n', '\r']) {
+            return Err("ui_font_face must be a valid font family or file path.".into());
+        }
         if let Some(font) = &self.terminal_font {
             font.validate()?;
         }
@@ -533,4 +546,39 @@ pub fn strip_comments(text: &str) -> String {
         result.push(c);
     }
     result
+}
+
+#[cfg(test)]
+mod workbench_tests {
+    use super::*;
+    #[test]
+    fn old_preferences_gain_independent_workbench_defaults() {
+        let (s, warnings) = Settings::parse(r#"{"font_size":18,"font_face":"editor"}"#).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(s.font_size, 18.0);
+        assert!(s.ui_font_face.is_empty());
+        assert_eq!(s.ui_font_size, 13.0);
+        assert_eq!(s.ui_density, crate::ui_style::Density::Default);
+    }
+    #[test]
+    fn workbench_preferences_roundtrip_and_reject_invalid_values() {
+        let (s,warnings)=Settings::parse(r#"{"ui_font_face":"Noto Sans","ui_font_size":17,"ui_density":"comfortable","font_size":14}"#).unwrap();
+        assert!(warnings.is_empty());
+        let (again, warnings) = Settings::parse(&s.to_json()).unwrap();
+        assert_eq!(again, s);
+        assert!(warnings.is_empty());
+        for text in [
+            r#"{"ui_font_size":9}"#,
+            r#"{"ui_font_size":21}"#,
+            r#"{"ui_density":"huge"}"#,
+            r#"{"ui_font_face":"bad\nname"}"#,
+        ] {
+            assert!(Settings::parse(text).is_err(), "{text}");
+        }
+        let direct = Settings {
+            ui_font_size: f32::NAN,
+            ..Settings::default()
+        };
+        assert!(direct.validate().is_err());
+    }
 }
