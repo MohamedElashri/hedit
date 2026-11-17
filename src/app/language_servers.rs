@@ -166,8 +166,23 @@ impl LanguageServers {
             .service
             .as_ref()
             .ok_or("Language-server manager is not available.")?;
+        let changes_servers = matches!(
+            operation,
+            Operation::Install { .. }
+                | Operation::Remove { .. }
+                | Operation::Configure { .. }
+                | Operation::Restart { .. }
+                | Operation::Stop { .. }
+        );
         self.next += 1;
         service.submit(self.next, operation)?;
+        if changes_servers {
+            // Replies already in flight belong to the previous configuration.
+            // Invalidate them when the change is queued, before the next poll.
+            self.pending
+                .retain(|_, intent| !matches!(intent, Intent::Feature(_)));
+            self.last_completion = None;
+        }
         self.pending.insert(self.next, intent);
         Ok(())
     }
@@ -563,6 +578,7 @@ impl HeditApp {
         self.ensure_language_servers(ctx);
         if self.busy
             || self.closing
+            || self.languages.managing()
             || self.active().page.info.paged
             || self.active().follow
             || self.languages.service.is_none()
@@ -1413,6 +1429,55 @@ mod tests {
         app.history(&ctx, false);
         finish_app_job(&mut app, &ctx);
         assert_eq!(app.active().page.text, "fo");
+    }
+    #[test]
+    fn managing_servers_discards_earlier_feature_responses() {
+        let (_dir, ctx, mut app) = app();
+        for operation in [
+            Operation::Stop {
+                id: "fixture".into(),
+            },
+            Operation::Restart {
+                id: "fixture".into(),
+            },
+            Operation::Configure {
+                id: "fixture".into(),
+                registration: Box::new(app.languages.installed[0].registration.clone()),
+            },
+            // Unknown managed IDs fail before performing any network access.
+            Operation::Install {
+                id: "fixture".into(),
+            },
+            Operation::Remove {
+                id: "fixture".into(),
+            },
+        ] {
+            assert!(app.request_language_feature(&ctx, Feature::Formatting));
+            let ticket = app.languages.next;
+            let path = PathBuf::from(app.active().page.info.path.as_ref().unwrap());
+            let revision = app.active().page.info.revision;
+            app.languages.send(operation, Intent::Manage).unwrap();
+            app.language_event(&ctx, Event::Response {
+                ticket,
+                result: Ok(Reply {
+                    path,
+                    revision,
+                    encoding: Encoding::Utf8,
+                    feature: Feature::Formatting,
+                    value: json!([{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":0}},"newText":"STALE"}]),
+                }),
+            });
+            assert_eq!(
+                app.active().page.text,
+                "fo",
+                "a response survived server management"
+            );
+            assert!(
+                !app.request_language_feature(&ctx, Feature::Formatting),
+                "requests must wait for refreshed configuration"
+            );
+            pump(&ctx, &mut app, |a| a.languages.pending.is_empty());
+        }
     }
     #[test]
     fn stopping_one_server_keeps_diagnostics_from_other_sessions() {
