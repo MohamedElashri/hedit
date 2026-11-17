@@ -382,4 +382,31 @@ mod tests {
             assert!(!bindings_collide(&primary, "Ctrl+Shift+B"));
         }
     }
+    #[test]
+    fn recording_a_secondary_alias_claims_the_keys_for_the_new_command() {
+        let (_dir, _ctx, mut app) = fixture();
+        app.quality.config.keybindings = vec![
+            Binding {
+                command: Command::Build,
+                shortcut: "F8".into(),
+                editor_only: false,
+            },
+            Binding {
+                command: Command::Build,
+                shortcut: "F9".into(),
+                editor_only: false,
+            },
+        ];
+        app.set_binding(Command::Goto, Some("F9".into()));
+        assert_eq!(app.shortcut_text(Command::Goto), "F9");
+        assert!(app.shortcut_text(Command::Build).is_empty());
+        assert_eq!(
+            app.configured_bindings()
+                .iter()
+                .filter(|b| b.shortcut == "F9")
+                .count(),
+            1
+        );
+        assert!(app.notice.contains("Build"));
+    }
 }

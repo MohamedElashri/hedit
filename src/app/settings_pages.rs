@@ -301,10 +301,16 @@ impl HeditApp {
                         .copied()
                         .filter(|&other| {
                             other != command
-                                && shortcut_preset::bindings_collide(
+                                && (shortcut_preset::bindings_collide(
                                     &keys,
                                     &self.shortcut_text(other),
-                                )
+                                ) || self.configured_bindings().iter().any(|binding| {
+                                    binding.command == other
+                                        && shortcut_preset::bindings_collide(
+                                            &keys,
+                                            &binding.shortcut,
+                                        )
+                                }))
                         })
                         .collect()
                 });
