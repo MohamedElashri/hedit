@@ -157,6 +157,14 @@ pinned keys, and agent authentication. Stop only test-owned jobs; remove their
 state/locks afterwards. Agent approval must complete within startup's 15 seconds.
 Durable-RPC timings include host commits and network trips, not display latency.
 
+## Workbench navigation
+
+The optional activity bar uses existing commands and workspace state. Hiding it
+restores the text workspace switcher. Distraction-free mode hides both without
+changing their saved preferences. Shared UI metrics scale status and terminal
+headers independently of document and terminal content. Refresh stored built-in
+palettes only when every color matches an old default; preserve custom colors.
+
 ## Settings UI
 
 `src/app/settings_browser.rs` contains searchable preference metadata and validated

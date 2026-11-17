@@ -492,6 +492,10 @@ from Source also refreshes. Find/Replace/Go to line/search results expose source
 | Font | **Preferences → Editor font…** filters installed fonts by family/script. **Ctrl++ / Ctrl+- / Ctrl+0** changes/resets size |
 | Editor details | **View → Editor** toggles numbers, current-line highlight, whitespace, guides, minimap, tabs, and status bar |
 
+The activity bar provides Files, Source Control, Find in files and Settings.
+Click the active Files or Source Control icon to hide its sidebar. Turn off
+`show_activity_bar` in Settings to restore the text workspace switcher.
+
 The status bar shows position, indentation, line endings, encoding, syntax, and
 recovery; hover for details. Click its recovery dot for settings.
 

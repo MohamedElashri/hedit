@@ -200,6 +200,7 @@ pub struct Settings {
     pub show_tab_bar: bool,
     pub show_status_bar: bool,
     pub show_sidebar: bool,
+    pub show_activity_bar: bool,
     pub show_folders: bool,
     /// Allow the integrated terminal. A shell starts only when its panel opens.
     pub terminal_enabled: bool,
@@ -287,6 +288,7 @@ impl Default for Settings {
             show_tab_bar: true,
             show_status_bar: true,
             show_sidebar: true,
+            show_activity_bar: true,
             show_folders: true,
             terminal_enabled: false,
             terminal_bidi: true,

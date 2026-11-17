@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add an optional activity bar, flatter tabs, restrained dark and light workbench palettes, and responsive status and terminal headers. Preserve customized themes.
+
 - Use one embedded, font-independent icon family and consistent toolbar actions across file tabs, sidebars, trees and terminals, with readable primary actions and keyboard focus.
 
 - Add independent workbench font, size and density controls with shared tab, tree and button metrics, while preserving editor, terminal and document typography.

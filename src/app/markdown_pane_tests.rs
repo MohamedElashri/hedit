@@ -16,7 +16,7 @@ fn divider(output: &egui::FullOutput, size: egui::Vec2) -> [egui::Pos2; 2] {
                     && points[0].x < size.x - 240.0;
                 let horizontal = size.x < 900.0
                     && (points[0].y - points[1].y).abs() < 1.0
-                    && points[1].x - points[0].x > size.x - 250.0
+                    && points[1].x - points[0].x > s.clip_rect.width() * 0.8
                     && points[0].y > size.y * 0.25
                     && points[0].y < size.y * 0.75;
                 (vertical || horizontal).then_some(*points)

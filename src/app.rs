@@ -119,6 +119,7 @@ mod user_guide;
 mod view_commands;
 mod wait;
 mod workbench;
+mod workbench_navigation;
 
 use commands::Command;
 use eframe::egui::{self, FontId, Key, Modifiers, RichText};

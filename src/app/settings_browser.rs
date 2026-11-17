@@ -78,6 +78,13 @@ fn catalog() -> &'static [Setting] {
             "Show folders in the sidebar",
             "Browse project folders alongside open and closed files."
         );
+        setting!(
+            General,
+            Bool,
+            "show_activity_bar",
+            "Show activity bar",
+            "Keep Files, Source Control, Search and Settings navigation beside the sidebar."
+        );
         setting!(Editor, Text, "font_face", "Font family or file", "Use an installed font family or an absolute font-file path. Empty selects built-in Hack.");
         setting!(
             Editor,

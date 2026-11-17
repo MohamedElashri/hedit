@@ -144,28 +144,38 @@ fn redesign_status_actions_fit_with_follow_multicursor_and_a_long_notice() {
     app.workspace.open[0].follow = true;
     app.workspace.open[0].view.selections = vec![hedit::advanced::Selection::caret(0); 12];
     app.notice = "An external file changed in a very long project path. ".repeat(30);
-    for _ in 0..3 {
-        frame_size(&ctx, &mut app, vec![], SIZE);
-    }
-    let output = frame_size(&ctx, &mut app, vec![], SIZE);
-    let status = egui::containers::panel::PanelState::load(&ctx, egui::Id::new("status"))
-        .unwrap()
-        .rect;
-    for label in [
-        format!("{} ⏷", language.label()),
-        "UTF-8".into(),
-        "LF".into(),
-        "Spaces: 4".into(),
-    ] {
-        let rect = output
-            .shapes
-            .iter()
-            .find_map(|s| text_rect(&s.shape, &label))
-            .unwrap_or_else(|| panic!("missing {label}"));
-        assert!(
-            status.contains_rect(rect),
-            "{label} was clipped: {rect:?}, status {status:?}"
-        );
+    for font in [10.0, 13.0, 20.0] {
+        for density in [
+            hedit::ui_style::Density::Compact,
+            hedit::ui_style::Density::Default,
+            hedit::ui_style::Density::Comfortable,
+        ] {
+            app.settings.ui_font_size = font;
+            app.settings.ui_density = density;
+            for _ in 0..3 {
+                frame_size(&ctx, &mut app, vec![], SIZE);
+            }
+            let output = frame_size(&ctx, &mut app, vec![], SIZE);
+            let status = egui::containers::panel::PanelState::load(&ctx, egui::Id::new("status"))
+                .unwrap()
+                .rect;
+            for label in [
+                format!("{} ⏷", language.label()),
+                "UTF-8".into(),
+                "LF".into(),
+                "Spaces: 4".into(),
+            ] {
+                let rect = output
+                    .shapes
+                    .iter()
+                    .find_map(|s| text_rect(&s.shape, &label))
+                    .unwrap_or_else(|| panic!("missing {label}"));
+                assert!(
+                    status.contains_rect(rect),
+                    "{label} was clipped: {rect:?}, status {status:?}"
+                );
+            }
+        }
     }
 }
 
@@ -185,7 +195,7 @@ fn redesign_find_and_replace_remain_clickable_beside_a_wide_sidebar() {
             .unwrap()
             .rect;
         let from = egui::pos2(side.right() - 1.0, side.center().y);
-        let to = egui::pos2(359.0, side.center().y);
+        let to = egui::pos2(side.left() + 359.0, side.center().y);
         frame_size(
             &ctx,
             &mut app,
@@ -230,7 +240,7 @@ fn redesign_find_and_replace_remain_clickable_beside_a_wide_sidebar() {
                 .shapes
                 .iter()
                 .find_map(|s| text_rect(&s.shape, label).map(|r| (s, r)))
-                .unwrap();
+                .unwrap_or_else(|| panic!("missing action: {label}"));
             assert!(
                 screen.contains_rect(rect) && shape.clip_rect.contains_rect(rect),
                 "{label} clipped: {rect:?}, clip {:?}",
