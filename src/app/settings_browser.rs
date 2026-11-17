@@ -10,6 +10,8 @@ pub(super) struct State {
     pub category: Option<PreferencesPage>,
     pub reset_scroll: bool,
     pub focus_search: bool,
+    pub terminal_font_draft: Option<String>,
+    pub terminal_font_error: Option<String>,
     snapshot: Option<(hedit::settings::Settings, std::sync::Arc<Value>)>,
     drafts: BTreeMap<&'static str, String>,
     errors: BTreeMap<&'static str, String>,

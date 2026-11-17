@@ -91,13 +91,30 @@ impl HeditApp {
             .changed()
         {
             self.settings.terminal_font = (!inherited).then(|| TerminalFont {
-                face: self.settings.font_face.clone(),
+                face: String::new(),
                 size: self.settings.font_size,
             });
+            self.settings_browser.terminal_font_draft = None;
+            self.settings_browser.terminal_font_error = None;
+            if let Some(font) = &mut self.settings.terminal_font {
+                let candidate = TerminalFont {
+                    face: self.settings.font_face.clone(),
+                    size: font.size,
+                };
+                match candidate.validate() {
+                    Ok(()) => *font = candidate,
+                    Err(error) => {
+                        self.settings_browser.terminal_font_draft = Some(candidate.face);
+                        self.settings_browser.terminal_font_error = Some(error);
+                    }
+                }
+            }
         }
         if self.settings.terminal_font.is_some() {
             self.request_font_families(ui.ctx());
             let font = self.settings.terminal_font.as_mut().unwrap();
+            let previous_face = font.face.clone();
+            let mut picked_face = false;
             egui::ComboBox::from_id_salt("terminal-font-family")
                 .selected_text(if font.face.is_empty() {
                     "Built-in (Hack)"
@@ -107,24 +124,71 @@ impl HeditApp {
                 .width(250.0)
                 .height(220.0)
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut font.face, String::new(), "Built-in (Hack)");
+                    picked_face |= ui
+                        .selectable_value(&mut font.face, String::new(), "Built-in (Hack)")
+                        .clicked();
                     if let Some(families) = &self.font_families {
                         for family in families {
-                            ui.selectable_value(
-                                &mut font.face,
-                                family.name.clone(),
-                                format!("{} · {}", family.name, font_picker::family_detail(family)),
-                            );
+                            picked_face |= ui
+                                .selectable_value(
+                                    &mut font.face,
+                                    family.name.clone(),
+                                    format!(
+                                        "{} · {}",
+                                        family.name,
+                                        font_picker::family_detail(family)
+                                    ),
+                                )
+                                .clicked();
                         }
                     } else {
                         ui.weak("Listing installed fonts…");
                     }
                 });
-            ui.add(
-                egui::TextEdit::singleline(&mut font.face)
+            if picked_face {
+                match font.validate() {
+                    Ok(()) => {
+                        self.settings_browser.terminal_font_draft = None;
+                        self.settings_browser.terminal_font_error = None;
+                    }
+                    Err(error) => {
+                        self.settings_browser.terminal_font_draft =
+                            Some(std::mem::replace(&mut font.face, previous_face));
+                        self.settings_browser.terminal_font_error = Some(error);
+                    }
+                }
+            }
+            let mut face = self
+                .settings_browser
+                .terminal_font_draft
+                .clone()
+                .unwrap_or_else(|| font.face.clone());
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut face)
+                    .id(egui::Id::new("terminal-font-face"))
                     .hint_text("Font family or absolute font-file path")
-                    .desired_width(340.0),
+                    .desired_width(340.0)
+                    .char_limit(4096),
             );
+            if response.changed() {
+                let candidate = TerminalFont {
+                    face: face.clone(),
+                    size: font.size,
+                };
+                match candidate.validate() {
+                    Ok(()) => {
+                        font.face = face.clone();
+                        self.settings_browser.terminal_font_error = None;
+                    }
+                    Err(error) => self.settings_browser.terminal_font_error = Some(error),
+                }
+            }
+            self.settings_browser.terminal_font_draft = (response.has_focus()
+                || self.settings_browser.terminal_font_error.is_some())
+            .then_some(face);
+            if let Some(error) = &self.settings_browser.terminal_font_error {
+                ui.colored_label(self.theme.warning.color(), error);
+            }
             preferences::row(ui, "Size", |ui| {
                 ui.add(
                     egui::DragValue::new(&mut font.size)
@@ -150,6 +214,8 @@ impl HeditApp {
         {
             self.settings.terminal_font = None;
             self.settings.terminal_colors = None;
+            self.settings_browser.terminal_font_draft = None;
+            self.settings_browser.terminal_font_error = None;
         }
         if let Some(colors) = &mut self.settings.terminal_colors {
             egui::ComboBox::from_id_salt("terminal-color-preset")

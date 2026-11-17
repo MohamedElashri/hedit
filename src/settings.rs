@@ -75,6 +75,19 @@ impl Default for TerminalFont {
         }
     }
 }
+impl TerminalFont {
+    pub fn validate(&self) -> Result<(), String> {
+        if !(8.0..=40.0).contains(&self.size)
+            || self.face.len() > 4096
+            || self.face.contains(['\0', '\n', '\r'])
+        {
+            return Err(
+                "terminal_font needs a valid font name/path and a size between 8 and 40.".into(),
+            );
+        }
+        Ok(())
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -349,15 +362,7 @@ impl Settings {
     }
     pub fn validate(&self) -> Result<(), String> {
         if let Some(font) = &self.terminal_font {
-            if !(8.0..=40.0).contains(&font.size)
-                || font.face.len() > 4096
-                || font.face.contains(['\0', '\n', '\r'])
-            {
-                return Err(
-                    "terminal_font needs a valid font name/path and a size between 8 and 40."
-                        .into(),
-                );
-            }
+            font.validate()?;
         }
         if !FONT_SIZES.contains(&self.font_size) {
             return Err("font_size must be between 10 and 28.".into());

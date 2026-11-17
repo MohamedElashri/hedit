@@ -65,6 +65,70 @@ fn terminal_settings_are_available_and_render_in_all_builds() {
     frame(&ctx, &mut app, vec![]);
 }
 
+#[test]
+fn invalid_terminal_font_drafts_do_not_block_other_settings_or_reach_disk() {
+    let directory = tempfile::tempdir().unwrap();
+    let (ctx, mut app) = app_in(directory.path());
+    app.choose_terminal(false);
+    app.settings.terminal_font = Some(hedit::settings::TerminalFont::default());
+    app.open_preferences(PreferencesPage::Terminal);
+    for _ in 0..3 {
+        frame(&ctx, &mut app, vec![]);
+    }
+    ctx.memory_mut(|m| m.request_focus(egui::Id::new("terminal-font-face")));
+    // The limit is in bytes, while TextEdit's character limit counts scalars.
+    frame(&ctx, &mut app, vec![egui::Event::Paste("界".repeat(2000))]);
+    assert!(
+        app.settings.validate().is_ok(),
+        "invalid font text reached live settings"
+    );
+    assert!(app.settings.terminal_font.as_ref().unwrap().face.is_empty());
+    app.set_browser_value("font_size", serde_json::json!(20.0))
+        .unwrap();
+    app.flush_settings();
+    let (saved, _) = hedit::settings::Settings::load(&app.settings_path().unwrap()).unwrap();
+    assert_eq!(saved.font_size, 20.0);
+    assert!(saved.terminal_font.unwrap().face.is_empty());
+    app.open_preferences(PreferencesPage::General);
+    frame(&ctx, &mut app, vec![]);
+    app.open_preferences(PreferencesPage::Terminal);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![]);
+    let output = frame(&ctx, &mut app, vec![]);
+    assert!(
+        output.shapes.iter().any(|shape| super::tests::text_rect(
+            &shape.shape,
+            "terminal_font needs a valid font name/path and a size between 8 and 40."
+        )
+        .is_some()),
+        "invalid draft lost its visible error after navigation"
+    );
+    super::tests::click_label(&ctx, &mut app, "Built-in (Hack)");
+    let output = frame(&ctx, &mut app, vec![]);
+    let choice = output
+        .shapes
+        .iter()
+        .filter_map(|shape| {
+            super::tests::text_rect(&shape.shape, "Built-in (Hack)")
+                .filter(|rect| shape.clip_rect.contains(rect.center()))
+        })
+        .next_back()
+        .expect("the built-in font choice is visible");
+    super::tests::click_at(&ctx, &mut app, choice.center(), egui::vec2(1280.0, 820.0));
+    assert!(app.settings_browser.terminal_font_error.is_none());
+    assert!(app
+        .settings_browser
+        .terminal_font_draft
+        .as_ref()
+        .is_none_or(String::is_empty));
+    // Reset also discards an invalid draft while keeping the app usable.
+    ctx.memory_mut(|m| m.request_focus(egui::Id::new("terminal-font-face")));
+    frame(&ctx, &mut app, vec![egui::Event::Paste("界".repeat(2000))]);
+    super::tests::click_label(&ctx, &mut app, "Use app font and size");
+    assert!(app.settings.terminal_font.is_none());
+    settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
+}
+
 #[cfg(feature = "terminal")]
 #[test]
 fn terminal_hide_keeps_session_and_disabling_ends_it_without_editing_buffer() {
