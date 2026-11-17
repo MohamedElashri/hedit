@@ -596,6 +596,83 @@ fn reopening_a_document_resets_its_server_lifecycle_before_reusing_versions() {
     }
 }
 #[test]
+fn removing_one_document_clears_its_diagnostics_without_stopping_the_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let manager = Manager::new(dir.path().join("servers"));
+    manager.configure("fixture", registration(&[])).unwrap();
+    let service = Service::start(manager.root().to_owned(), Arc::new(|| {}));
+    let document = |name: &str| Document {
+        path: dir.path().join(name),
+        root: dir.path().to_owned(),
+        language: "rust".into(),
+        revision: 1,
+        text: "fo".into(),
+        dirty: true,
+    };
+    let mut first = document("first.rs");
+    let second = document("second.rs");
+    service
+        .submit(
+            1,
+            Operation::Sync {
+                documents: vec![first.clone(), second.clone()],
+            },
+        )
+        .unwrap();
+    wait(&service, 1).0.unwrap();
+    // Round-trip a request so the server has consumed both didOpen messages.
+    service
+        .submit(
+            2,
+            Operation::Request {
+                path: second.path.clone(),
+                revision: 1,
+                scalar: 0,
+                feature: Feature::Hover,
+                tab_size: 4,
+                spaces: true,
+            },
+        )
+        .unwrap();
+    wait(&service, 2).0.unwrap();
+    // Change the syntax without changing the text revision. The second file
+    // keeps the same server/project session alive.
+    first.language = "toml".into();
+    service
+        .submit(
+            3,
+            Operation::Sync {
+                documents: vec![first.clone(), second.clone()],
+            },
+        )
+        .unwrap();
+    let (result, events) = wait(&service, 3);
+    result.unwrap();
+    assert!(
+        events.iter().any(|e| matches!(e, Event::Diagnostics {
+        server, path, revision: 1, items, ..
+    } if server == "fixture" && *path == first.path && items.is_empty())),
+        "no diagnostic invalidation: {events:?}"
+    );
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e, Event::Status(s) if s.state == "Stopped")));
+    service
+        .submit(
+            4,
+            Operation::Request {
+                path: second.path,
+                revision: 1,
+                scalar: 0,
+                feature: Feature::Hover,
+                tab_size: 4,
+                spaces: true,
+            },
+        )
+        .unwrap();
+    wait(&service, 4).0.unwrap();
+}
+#[test]
 fn crashes_do_not_loop_and_restart_is_explicit() {
     let dir = tempfile::tempdir().unwrap();
     let record = dir.path().join("record.jsonl");

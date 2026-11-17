@@ -652,7 +652,17 @@ impl Worker {
                 .into_iter()
                 .map(|index| self.documents[index].clone())
                 .collect();
-            let result = sync_session(session, docs);
+            let encoding = session.client.encoding;
+            let result = sync_session(session, docs, |document| {
+                emit(Event::Diagnostics {
+                    server: key.0.clone(),
+                    root: key.1.clone(),
+                    path: document.path.clone(),
+                    revision: document.revision,
+                    encoding,
+                    items: vec![],
+                });
+            });
             if let Err(e) = result {
                 self.sessions.remove(&key);
                 self.failed.insert(key.clone());
@@ -779,7 +789,11 @@ fn language_id(document: &Document) -> &str {
         language => language,
     }
 }
-fn sync_session(session: &mut Session, documents: Vec<Document>) -> Result<(), String> {
+fn sync_session(
+    session: &mut Session,
+    documents: Vec<Document>,
+    clear_diagnostics: impl Fn(&Document),
+) -> Result<(), String> {
     let wanted: HashSet<_> = documents.iter().map(|d| d.path.clone()).collect();
     let closed: Vec<_> = session
         .documents
@@ -792,7 +806,9 @@ fn sync_session(session: &mut Session, documents: Vec<Document>) -> Result<(), S
             "textDocument/didClose",
             json!({"textDocument":{"uri":text::uri(&path)?}}),
         )?;
-        session.documents.remove(&path);
+        if let Some(document) = session.documents.remove(&path) {
+            clear_diagnostics(&document);
+        }
     }
     for document in documents {
         let uri = text::uri(&document.path)?;
@@ -807,7 +823,9 @@ fn sync_session(session: &mut Session, documents: Vec<Document>) -> Result<(), S
             session
                 .client
                 .notify("textDocument/didClose", json!({"textDocument":{"uri":uri}}))?;
-            session.documents.remove(&document.path);
+            if let Some(previous) = session.documents.remove(&document.path) {
+                clear_diagnostics(&previous);
+            }
         }
         match session.documents.get(&document.path) {
             None=>session.client.notify("textDocument/didOpen",json!({"textDocument":{"uri":uri,"languageId":language_id(&document),"version":document.revision,"text":document.text}}))?,
