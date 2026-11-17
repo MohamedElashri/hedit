@@ -511,7 +511,8 @@ modified files offer **Compare changes…**, keeping replaced editor text in Und
 
 **Preferences → Settings…** (**Ctrl+,**) opens a resizable settings window.
 Search by setting name, description, or JSON key; searches span categories, and
-selecting a category narrows the results. **Modified** shows values that differ
+selecting a category narrows the results. Focus a category and use **Up/Down**,
+**Home** or **End** to navigate without leaving the keyboard. **Modified** shows values that differ
 from defaults. Common settings show their default and offer an individual
 **Reset**. Invalid edits display an explanation and keep the last valid value;
 incomplete list entries remain available to correct after changing focus.
@@ -534,7 +535,9 @@ Two-key bindings are supported; `Primary` means Ctrl or macOS Cmd.
 **Settings → Appearance → Interface** controls `ui_font_face`, `ui_font_size`
 (10–20 logical pixels), and `ui_density` (`compact`, `default`, or `comfortable`).
 The bundled Noto Sans is the default UI font; an installed family or absolute
-font-file path can replace it. These preferences affect menus, tabs and panels
+font-file path can replace it. Use **Choose installed font…** to filter families
+by name or supported script, or type a family or font-file path directly.
+These preferences affect menus, tabs and panels
 independently of editor zoom, editor fonts and terminal overrides. Font files
 load in the background, with the built-in font as fallback when unavailable.
 

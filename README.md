@@ -87,6 +87,8 @@ project search, and paged log viewing support everyday editing. Customize themes
 fonts, and keys; edit Arabic/Hebrew and legacy encodings. CUDA highlighting works
 everywhere, with local CUDA tools on Linux.
 Search Settings by name or key, filter modified values, and reset individual preferences.
+Choose UI fonts and density independently of editor and terminal typography.
+[Settings preview](docs/images/settings.png).
 
 Language servers can be installed, configured, restarted, and removed in
 **Settings → Language Servers**. Managed Rust, C/C++, Python, Lua and TOML servers

@@ -146,6 +146,72 @@ mod tests {
     }
 
     #[test]
+    fn settled_workbench_frames_do_not_reupload_fonts_or_icons() {
+        let (_dir, ctx, mut app) = app();
+        app.settings.caret_blink = false;
+        app.settings.auto_complete = false;
+        app.settings.show_folders = false;
+        for _ in 0..5 {
+            frame(&ctx, &mut app, vec![]);
+        }
+        for _ in 0..30 {
+            let output = frame(&ctx, &mut app, vec![]);
+            assert!(
+                output.textures_delta.set.is_empty(),
+                "idle workbench uploaded textures again"
+            );
+        }
+        assert!(app.ui_font.loading.is_none());
+    }
+
+    #[test]
+    fn folder_toolbar_controls_stay_visible_and_clickable_with_larger_ui_fonts() {
+        use crate::app::tests::{click_at, frame_size};
+        use hedit::{icons::Icon, ui_style::Density};
+        let size = egui::vec2(720.0, 480.0);
+        for font in [10.0, 13.0, 20.0] {
+            for density in [Density::Compact, Density::Default, Density::Comfortable] {
+                let (_dir, ctx, mut app) = app();
+                app.settings.ui_font_size = font;
+                app.settings.ui_density = density;
+                for _ in 0..4 {
+                    frame_size(&ctx, &mut app, vec![], size);
+                }
+                let out = frame_size(&ctx, &mut app, vec![], size);
+                let sidebar =
+                    egui::containers::panel::PanelState::load(&ctx, egui::Id::new("buffers"))
+                        .unwrap()
+                        .rect;
+                let mut close = None;
+                for icon in [Icon::Add, Icon::Refresh, Icon::Close] {
+                    let rect = out
+                        .shapes
+                        .iter()
+                        .find_map(|s| match &s.shape {
+                            egui::Shape::Mesh(mesh)
+                                if icon.matches_texture(&ctx, mesh.texture_id)
+                                    && sidebar.contains_rect(mesh.calc_bounds())
+                                    && s.clip_rect.contains_rect(mesh.calc_bounds()) =>
+                            {
+                                Some(mesh.calc_bounds())
+                            }
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| {
+                            panic!("folder action {icon:?} clipped at font {font}, {density:?}")
+                        });
+                    if icon == Icon::Close {
+                        close = Some(rect.center());
+                    }
+                }
+                click_at(&ctx, &mut app, close.unwrap(), size);
+                assert!(!app.settings.show_folders);
+                assert!(app.active().page.text.is_empty());
+            }
+        }
+    }
+
+    #[test]
     fn font_rebuild_refreshes_offscreen_tab_geometry_and_keeps_active_tab_visible() {
         let (_dir, ctx, mut app) = app();
         app.settings.show_sidebar = false;
@@ -242,6 +308,14 @@ mod tests {
                 egui::vec2(1280.0, 820.0),
                 13.0,
                 Density::Default,
+                true,
+            ),
+            (
+                "settings-large",
+                false,
+                egui::vec2(720.0, 480.0),
+                20.0,
+                Density::Comfortable,
                 true,
             ),
             (

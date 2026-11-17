@@ -180,7 +180,12 @@ binding, snippet and macro files, and preserve unreadable files until repaired;
 fallback defaults are not permission to replace corrupt data.
 
 Keep both category navigation and content scrollable inside the viewport, with
-search and the footer outside those scroll regions. The minimum-window and
+search and the footer outside those scroll regions. Measure header controls and
+category widths using the current UI font, and reserve space for a wrapped footer.
+Category arrow keys belong to the focused navigation list, never a text field.
+Font choices share the asynchronous installed-family inventory and validate via
+the settings catalog. Keep invalid drafts and field focus when drawing flat rows.
+The minimum-window and
 pointer-reset tests cover geometry and interaction. The ignored
 `export_settings_browser` test exports previews to `HEDIT_PREVIEW_DIR`.
 

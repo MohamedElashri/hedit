@@ -659,8 +659,9 @@ impl HeditApp {
         let mut reset = false;
         let mut edited = None;
         let mut retain_draft = None;
-        egui::Frame::group(ui.style())
-            .inner_margin(12)
+        let background = ui.painter().add(egui::Shape::Noop);
+        let row = egui::Frame::new()
+            .inner_margin(egui::Margin::symmetric(10, 10))
             .show(ui, |ui| {
                 ui.set_min_width((ui.available_width() - 8.0).max(0.0));
                 ui.horizontal_wrapped(|ui| {
@@ -671,6 +672,19 @@ impl HeditApp {
                                 .small()
                                 .color(self.theme.accent.color()),
                         );
+                    }
+                    let reset_font = hedit::ui_style::Metrics::for_ui(ui).small;
+                    let reset_width = ui.fonts(|f| {
+                        f.layout_no_wrap(
+                            "Reset".into(),
+                            FontId::proportional(reset_font),
+                            self.theme.text.color(),
+                        )
+                        .size()
+                        .x
+                    }) + 2.0 * ui.spacing().button_padding.x;
+                    if ui.available_size_before_wrap().x < reset_width {
+                        ui.end_row();
                     }
                     if !matches!(spec.kind, Kind::Group(_))
                         && ui
@@ -690,189 +704,201 @@ impl HeditApp {
                 ui.label(spec.description);
                 ui.weak(RichText::new(spec.key).monospace().small());
                 ui.add_space(5.0);
-                match spec.kind {
-                    Kind::Group(_) => {
-                        let json_only = spec.key == "build_systems";
-                        if ui
-                            .button(if json_only {
-                                "Edit in settings.json"
+                ui.scope(|ui| {
+                    ui.set_max_width(ui.available_width().min(360.0));
+                    match spec.kind {
+                        Kind::Group(_) => {
+                            let json_only = spec.key == "build_systems";
+                            if ui
+                                .button(if json_only {
+                                    "Edit in settings.json"
+                                } else {
+                                    "Open settings…"
+                                })
+                                .clicked()
+                            {
+                                if json_only {
+                                    self.open_settings_file(ui.ctx());
+                                } else {
+                                    self.settings_browser.query.clear();
+                                    self.settings_browser.modified = false;
+                                    self.settings_browser.category = None;
+                                    self.preferences_page = spec.page;
+                                }
+                            }
+                        }
+                        Kind::Bool => {
+                            let mut v = current[spec.key].as_bool().unwrap_or(false);
+                            let enabled =
+                                spec.key != "terminal_enabled" || cfg!(feature = "terminal");
+                            if ui
+                                .add_enabled(enabled, egui::Checkbox::new(&mut v, "Enabled"))
+                                .changed()
+                            {
+                                edited = Some(json!(v));
+                            }
+                        }
+                        Kind::Number(min, max, step) => {
+                            let mut v = current[spec.key].as_f64().unwrap_or(min);
+                            if ui
+                                .add(
+                                    egui::DragValue::new(&mut v)
+                                        .range(min..=max)
+                                        .speed(step)
+                                        .max_decimals(if step < 1.0 { 1 } else { 0 }),
+                                )
+                                .changed()
+                            {
+                                edited = Some(
+                                    if spec.key == "font_size"
+                                        || spec.key == "line_padding"
+                                        || spec.key == "caret_width"
+                                    {
+                                        json!(v)
+                                    } else {
+                                        json!(v.round() as u64)
+                                    },
+                                );
+                            }
+                        }
+                        Kind::OptionalBool => {
+                            let old = current[spec.key].as_bool();
+                            let mut v = old;
+                            egui::ComboBox::from_id_salt("value")
+                                .selected_text(match v {
+                                    None => "Inherit file / project",
+                                    Some(true) => "Enabled",
+                                    Some(false) => "Disabled",
+                                })
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut v, None, "Inherit file / project");
+                                    ui.selectable_value(&mut v, Some(true), "Enabled");
+                                    ui.selectable_value(&mut v, Some(false), "Disabled");
+                                });
+                            if v != old {
+                                edited = Some(json!(v));
+                            }
+                        }
+                        Kind::Choice(choices) => {
+                            let old = if current[spec.key].is_null() {
+                                String::new()
                             } else {
-                                "Open settings…"
-                            })
-                            .clicked()
-                        {
-                            if json_only {
-                                self.open_settings_file(ui.ctx());
+                                current[spec.key]
+                                    .as_str()
+                                    .map(str::to_owned)
+                                    .unwrap_or_else(|| current[spec.key].to_string())
+                            };
+                            let mut v = old.clone();
+                            egui::ComboBox::from_id_salt("value")
+                                .selected_text(
+                                    choices
+                                        .iter()
+                                        .find(|(key, _)| *key == v)
+                                        .map_or(v.as_str(), |(_, title)| *title),
+                                )
+                                .show_ui(ui, |ui| {
+                                    for (key, title) in choices {
+                                        ui.selectable_value(&mut v, (*key).into(), *title);
+                                    }
+                                });
+                            if v != old {
+                                edited = Some(if v.is_empty() {
+                                    Value::Null
+                                } else if spec.key == "tab_size" {
+                                    json!(v.parse::<u8>().unwrap())
+                                } else {
+                                    json!(v)
+                                });
+                            }
+                        }
+                        kind => {
+                            let initial = match kind {
+                                Kind::Text => {
+                                    current[spec.key].as_str().unwrap_or_default().to_owned()
+                                }
+                                Kind::Columns => current[spec.key]
+                                    .as_array()
+                                    .map(|a| {
+                                        a.iter()
+                                            .map(Value::to_string)
+                                            .collect::<Vec<_>>()
+                                            .join(", ")
+                                    })
+                                    .unwrap_or_default(),
+                                _ => current[spec.key]
+                                    .as_array()
+                                    .map(|a| {
+                                        a.iter()
+                                            .filter_map(Value::as_str)
+                                            .collect::<Vec<_>>()
+                                            .join("\n")
+                                    })
+                                    .unwrap_or_default(),
+                            };
+                            let mut text = self
+                                .settings_browser
+                                .drafts
+                                .get(spec.key)
+                                .cloned()
+                                .unwrap_or(initial);
+                            let response = if matches!(kind, Kind::List) {
+                                ui.add(
+                                    egui::TextEdit::multiline(&mut text)
+                                        .id(egui::Id::new(("setting-value", spec.key)))
+                                        .desired_rows(3)
+                                        .desired_width(f32::INFINITY)
+                                        .char_limit(65536),
+                                )
                             } else {
-                                self.settings_browser.query.clear();
-                                self.settings_browser.modified = false;
-                                self.settings_browser.category = None;
-                                self.preferences_page = spec.page;
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut text)
+                                        .id(egui::Id::new(("setting-value", spec.key)))
+                                        .desired_width(f32::INFINITY)
+                                        .char_limit(4096),
+                                )
+                            };
+                            if response.has_focus() {
+                                retain_draft = Some(text.clone());
+                            } else if !self.settings_browser.errors.contains_key(spec.key) {
+                                self.settings_browser.drafts.remove(spec.key);
+                            }
+                            if response.changed() {
+                                edited = match kind {
+                                    Kind::Text => Some(json!(text)),
+                                    Kind::Columns => {
+                                        let numbers = text
+                                            .split([',', ' ', '\n'])
+                                            .filter(|s| !s.is_empty())
+                                            .map(str::parse::<u16>)
+                                            .collect::<Result<Vec<_>, _>>();
+                                        match numbers {
+                                            Ok(v) => Some(json!(v)),
+                                            Err(_) => {
+                                                self.settings_browser.errors.insert(
+                                                    spec.key,
+                                                    "Use comma-separated column numbers.".into(),
+                                                );
+                                                None
+                                            }
+                                        }
+                                    }
+                                    _ => Some(json!(text
+                                        .lines()
+                                        .map(str::trim)
+                                        .filter(|s| !s.is_empty())
+                                        .collect::<Vec<_>>())),
+                                };
+                                self.settings_browser.drafts.insert(spec.key, text.clone());
                             }
                         }
                     }
-                    Kind::Bool => {
-                        let mut v = current[spec.key].as_bool().unwrap_or(false);
-                        let enabled = spec.key != "terminal_enabled" || cfg!(feature = "terminal");
-                        if ui
-                            .add_enabled(enabled, egui::Checkbox::new(&mut v, "Enabled"))
-                            .changed()
-                        {
-                            edited = Some(json!(v));
+                    if spec.key == "ui_font_face" {
+                        if let Some(choice) = self.ui_font_choice(ui) {
+                            edited = Some(json!(choice));
+                            retain_draft = None;
                         }
                     }
-                    Kind::Number(min, max, step) => {
-                        let mut v = current[spec.key].as_f64().unwrap_or(min);
-                        if ui
-                            .add(
-                                egui::DragValue::new(&mut v)
-                                    .range(min..=max)
-                                    .speed(step)
-                                    .max_decimals(if step < 1.0 { 1 } else { 0 }),
-                            )
-                            .changed()
-                        {
-                            edited = Some(
-                                if spec.key == "font_size"
-                                    || spec.key == "line_padding"
-                                    || spec.key == "caret_width"
-                                {
-                                    json!(v)
-                                } else {
-                                    json!(v.round() as u64)
-                                },
-                            );
-                        }
-                    }
-                    Kind::OptionalBool => {
-                        let old = current[spec.key].as_bool();
-                        let mut v = old;
-                        egui::ComboBox::from_id_salt("value")
-                            .selected_text(match v {
-                                None => "Inherit file / project",
-                                Some(true) => "Enabled",
-                                Some(false) => "Disabled",
-                            })
-                            .show_ui(ui, |ui| {
-                                ui.selectable_value(&mut v, None, "Inherit file / project");
-                                ui.selectable_value(&mut v, Some(true), "Enabled");
-                                ui.selectable_value(&mut v, Some(false), "Disabled");
-                            });
-                        if v != old {
-                            edited = Some(json!(v));
-                        }
-                    }
-                    Kind::Choice(choices) => {
-                        let old = if current[spec.key].is_null() {
-                            String::new()
-                        } else {
-                            current[spec.key]
-                                .as_str()
-                                .map(str::to_owned)
-                                .unwrap_or_else(|| current[spec.key].to_string())
-                        };
-                        let mut v = old.clone();
-                        egui::ComboBox::from_id_salt("value")
-                            .selected_text(
-                                choices
-                                    .iter()
-                                    .find(|(key, _)| *key == v)
-                                    .map_or(v.as_str(), |(_, title)| *title),
-                            )
-                            .show_ui(ui, |ui| {
-                                for (key, title) in choices {
-                                    ui.selectable_value(&mut v, (*key).into(), *title);
-                                }
-                            });
-                        if v != old {
-                            edited = Some(if v.is_empty() {
-                                Value::Null
-                            } else if spec.key == "tab_size" {
-                                json!(v.parse::<u8>().unwrap())
-                            } else {
-                                json!(v)
-                            });
-                        }
-                    }
-                    kind => {
-                        let initial = match kind {
-                            Kind::Text => current[spec.key].as_str().unwrap_or_default().to_owned(),
-                            Kind::Columns => current[spec.key]
-                                .as_array()
-                                .map(|a| {
-                                    a.iter()
-                                        .map(Value::to_string)
-                                        .collect::<Vec<_>>()
-                                        .join(", ")
-                                })
-                                .unwrap_or_default(),
-                            _ => current[spec.key]
-                                .as_array()
-                                .map(|a| {
-                                    a.iter()
-                                        .filter_map(Value::as_str)
-                                        .collect::<Vec<_>>()
-                                        .join("\n")
-                                })
-                                .unwrap_or_default(),
-                        };
-                        let mut text = self
-                            .settings_browser
-                            .drafts
-                            .get(spec.key)
-                            .cloned()
-                            .unwrap_or(initial);
-                        let response = if matches!(kind, Kind::List) {
-                            ui.add(
-                                egui::TextEdit::multiline(&mut text)
-                                    .id(egui::Id::new(("setting-value", spec.key)))
-                                    .desired_rows(3)
-                                    .desired_width(f32::INFINITY)
-                                    .char_limit(65536),
-                            )
-                        } else {
-                            ui.add(
-                                egui::TextEdit::singleline(&mut text)
-                                    .id(egui::Id::new(("setting-value", spec.key)))
-                                    .desired_width(f32::INFINITY)
-                                    .char_limit(4096),
-                            )
-                        };
-                        if response.has_focus() {
-                            retain_draft = Some(text.clone());
-                        } else if !self.settings_browser.errors.contains_key(spec.key) {
-                            self.settings_browser.drafts.remove(spec.key);
-                        }
-                        if response.changed() {
-                            edited = match kind {
-                                Kind::Text => Some(json!(text)),
-                                Kind::Columns => {
-                                    let numbers = text
-                                        .split([',', ' ', '\n'])
-                                        .filter(|s| !s.is_empty())
-                                        .map(str::parse::<u16>)
-                                        .collect::<Result<Vec<_>, _>>();
-                                    match numbers {
-                                        Ok(v) => Some(json!(v)),
-                                        Err(_) => {
-                                            self.settings_browser.errors.insert(
-                                                spec.key,
-                                                "Use comma-separated column numbers.".into(),
-                                            );
-                                            None
-                                        }
-                                    }
-                                }
-                                _ => Some(json!(text
-                                    .lines()
-                                    .map(str::trim)
-                                    .filter(|s| !s.is_empty())
-                                    .collect::<Vec<_>>())),
-                            };
-                            self.settings_browser.drafts.insert(spec.key, text.clone());
-                        }
-                    }
-                }
+                });
                 if !matches!(spec.kind, Kind::Group(_)) {
                     ui.weak(format!("Default: {}", default_text(&defaults[spec.key])));
                 }
@@ -880,6 +906,25 @@ impl HeditApp {
                     ui.colored_label(self.theme.warning.color(), error);
                 }
             });
+        if ui.rect_contains_pointer(row.response.rect) {
+            ui.painter().set(
+                background,
+                egui::Shape::rect_filled(row.response.rect, 0.0, self.theme.hover().color()),
+            );
+        }
+        if modified {
+            let rect = row.response.rect.shrink2(egui::vec2(0.0, 10.0));
+            ui.painter().vline(
+                rect.left(),
+                rect.y_range(),
+                egui::Stroke::new(2.0_f32, self.theme.accent.color()),
+            );
+        }
+        ui.painter().hline(
+            row.response.rect.x_range(),
+            row.response.rect.bottom(),
+            egui::Stroke::new(1.0_f32, self.theme.border.color()),
+        );
         if reset {
             retain_draft = None;
             edited = Some(defaults[spec.key].clone());

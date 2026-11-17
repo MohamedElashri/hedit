@@ -50,7 +50,9 @@ impl PreferencesPage {
 
 /// A row of a settings page: a fixed-width label, then the control.
 pub(super) fn row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
-    if ui.available_width() < 460.0 {
+    let m = hedit::ui_style::Metrics::for_ui(ui);
+    let label_width = 170.0 * m.font / 13.0;
+    if ui.available_width() < label_width + 280.0 {
         ui.label(label);
         add(ui);
         ui.add_space(4.0);
@@ -58,10 +60,10 @@ pub(super) fn row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui
     }
     ui.horizontal(|ui| {
         ui.allocate_ui_with_layout(
-            egui::vec2(170.0, 20.0),
+            egui::vec2(label_width, m.control),
             egui::Layout::left_to_right(egui::Align::Center),
             |ui| {
-                ui.set_min_width(170.0);
+                ui.set_min_width(label_width);
                 ui.add(egui::Label::new(label).truncate());
             },
         );
@@ -109,8 +111,40 @@ impl HeditApp {
                 .collapsible(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(ctx, |ui| {
+                    let m = hedit::ui_style::Metrics::for_ui(ui);
+                    let text_width = |text: &str| {
+                        ui.fonts(|fonts| {
+                            fonts
+                                .layout_no_wrap(
+                                    text.into(),
+                                    FontId::proportional(m.font),
+                                    self.theme.text.color(),
+                                )
+                                .size()
+                                .x
+                        })
+                    };
+                    let header_controls = text_width("Modified")
+                        + text_width("Clear")
+                        + ui.spacing().icon_width
+                        + ui.spacing().icon_spacing
+                        + 2.0 * ui.spacing().button_padding.x
+                        + 4.0 * ui.spacing().item_spacing.x
+                        + 12.0;
+                    let category_width = (PreferencesPage::ALL
+                        .iter()
+                        .filter(|p| p.available())
+                        .map(|p| text_width(p.title()))
+                        .fold(0.0_f32, f32::max)
+                        + if self.settings_search_active() {
+                            64.0
+                        } else {
+                            24.0
+                        })
+                    .max(150.0)
+                    .min(ui.available_width() * 0.38);
                     ui.horizontal(|ui| {
-                        let width = (ui.available_width() - 150.0).max(120.0);
+                        let width = (ui.available_width() - header_controls).max(80.0);
                         let search = ui.add(
                             egui::TextEdit::singleline(&mut self.settings_browser.query)
                                 .id(egui::Id::new("settings-search"))
@@ -136,21 +170,21 @@ impl HeditApp {
                             self.settings_browser.reset_scroll = true;
                         }
                     });
-                    ui.small(
-                        if self.preferences_page == PreferencesPage::LanguageServers
-                            && !self.settings_search_active()
-                        {
-                            self.workspace
-                                .remote
-                                .as_ref()
-                                .map(|r| {
-                                    format!("Language servers · SSH host: {}", r.config.target.host)
-                                })
-                                .unwrap_or_else(|| "Language servers · This computer".into())
-                        } else {
-                            "User settings · This computer · Applies across projects".into()
-                        },
-                    );
+                    let scope: String = if self.preferences_page == PreferencesPage::LanguageServers
+                        && !self.settings_search_active()
+                    {
+                        self.workspace
+                            .remote
+                            .as_ref()
+                            .map(|r| {
+                                format!("Language servers · SSH host: {}", r.config.target.host)
+                            })
+                            .unwrap_or_else(|| "Language servers · This computer".into())
+                    } else {
+                        "User settings · This computer · Applies across projects".into()
+                    };
+                    ui.add(egui::Label::new(RichText::new(&scope).small()).truncate())
+                        .on_hover_text(scope);
                     ui.separator();
                     let searching = self.settings_search_active();
                     let counts = if searching {
@@ -158,57 +192,18 @@ impl HeditApp {
                     } else {
                         [0; 11]
                     };
-                    let body_height = (ui.available_height() - 35.0).max(120.0);
+                    let footer_height = 2.0 * m.control + 3.0 * m.gap + 4.0;
+                    let body_height = (ui.available_height() - footer_height).max(64.0);
                     ui.horizontal_top(|ui| {
                         ui.set_height(body_height);
                         ui.vertical(|ui| {
-                            ui.set_width(150.0);
-                            egui::ScrollArea::vertical()
-                                .id_salt("settings-categories")
-                                .max_height(body_height)
-                                .auto_shrink([false, false])
-                                .show(ui, |ui| {
-                                    if searching
-                                        && ui
-                                            .add_sized(
-                                                [145.0, 28.0],
-                                                egui::Button::new("All results").selected(
-                                                    self.settings_browser.category.is_none(),
-                                                ),
-                                            )
-                                            .clicked()
-                                    {
-                                        self.settings_browser.category = None;
-                                        self.settings_browser.reset_scroll = true;
-                                    }
-                                    for page in PreferencesPage::ALL {
-                                        if !page.available() {
-                                            continue;
-                                        }
-                                        let label = if searching {
-                                            format!("{} ({})", page.title(), counts[page as usize])
-                                        } else {
-                                            page.title().into()
-                                        };
-                                        let selected = if searching {
-                                            self.settings_browser.category == Some(page)
-                                        } else {
-                                            self.preferences_page == page
-                                        };
-                                        if ui
-                                            .add_sized(
-                                                [145.0, 28.0],
-                                                egui::Button::new(label).selected(selected),
-                                            )
-                                            .clicked()
-                                        {
-                                            self.preferences_page = page;
-                                            self.settings_browser.category =
-                                                searching.then_some(page);
-                                            self.settings_browser.reset_scroll = true;
-                                        }
-                                    }
-                                });
+                            self.settings_navigation(
+                                ui,
+                                searching,
+                                &counts,
+                                body_height,
+                                category_width,
+                            )
                         });
                         ui.separator();
                         ui.vertical(|ui| {
@@ -219,18 +214,23 @@ impl HeditApp {
                                 self.preferences_page.title()
                             });
                             ui.add_space(8.0);
-                            let mut scroll = egui::ScrollArea::vertical()
+                            let content_width = ui.available_width();
+                            let mut scroll = egui::ScrollArea::both()
+                                .max_width(content_width)
                                 .id_salt((
                                     "preferences-body",
                                     self.preferences_page as u8,
                                     searching,
                                 ))
-                                .max_height(body_height - 34.0)
+                                .max_height((body_height - (m.font + 5.0) * 1.5 - m.gap).max(24.0))
                                 .auto_shrink([false, false]);
                             if std::mem::take(&mut self.settings_browser.reset_scroll) {
                                 scroll = scroll.vertical_scroll_offset(0.0);
                             }
                             scroll.show(ui, |ui| {
+                                // Long binding/configuration rows can scroll without
+                                // widening the window; prose still wraps to the pane.
+                                ui.set_width(content_width);
                                 if searching {
                                     self.settings_catalog(ui, self.settings_browser.category);
                                 } else {
@@ -261,6 +261,7 @@ impl HeditApp {
                     });
                     ui.separator();
                     ui.horizontal_wrapped(|ui| {
+                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                         if ui
                             .add_enabled(
                                 self.settings_files.dir.is_some(),
@@ -274,16 +275,22 @@ impl HeditApp {
                         {
                             self.open_settings_file(ctx);
                         }
-                        ui.weak(
-                            if self.preferences_page == PreferencesPage::LanguageServers
-                                && !searching
-                            {
-                                "Server edits use Save configuration."
-                            } else if self.settings_files.broken {
-                                "Fix settings.json to resume saving."
-                            } else {
-                                "Valid changes save automatically."
-                            },
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(
+                                    if self.preferences_page == PreferencesPage::LanguageServers
+                                        && !searching
+                                    {
+                                        "Server edits use Save configuration."
+                                    } else if self.settings_files.broken {
+                                        "Fix settings.json to resume saving."
+                                    } else {
+                                        "Valid changes save automatically."
+                                    },
+                                )
+                                .weak(),
+                            )
+                            .wrap(),
                         );
                     });
                 });
