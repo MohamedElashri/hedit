@@ -23,6 +23,8 @@ struct Snapshot {
 }
 struct Guard {
     view: u64,
+    language: syntax::Language,
+    formatting_options: (u8, bool),
     pane: usize,
     head: usize,
     revision: u64,
@@ -534,6 +536,12 @@ impl HeditApp {
                 };
                 let b = self.active();
                 if b.view.id != guard.view
+                    || b.language() != guard.language
+                    || (guard.feature == Feature::Formatting
+                        && (
+                            b.view.tab_size.unwrap_or(4),
+                            b.view.indent.as_deref() != Some("tabs"),
+                        ) != guard.formatting_options)
                     || b.page.info.revision != guard.revision
                     || b.view.head != guard.head
                     || b.view.anchor != guard.anchor
@@ -616,6 +624,11 @@ impl HeditApp {
         let b = self.active();
         let guard = Guard {
             view: b.view.id,
+            language: b.language(),
+            formatting_options: (
+                b.view.tab_size.unwrap_or(4),
+                b.view.indent.as_deref() != Some("tabs"),
+            ),
             pane: self.panes.focused,
             head: b.view.head,
             revision: b.page.info.revision,
@@ -629,8 +642,8 @@ impl HeditApp {
             revision: guard.revision,
             scalar: guard.head,
             feature,
-            tab_size: b.view.tab_size.unwrap_or(4),
-            spaces: b.view.indent.as_deref() != Some("tabs"),
+            tab_size: guard.formatting_options.0,
+            spaces: guard.formatting_options.1,
         };
         self.languages
             .send(operation, Intent::Feature(guard))
@@ -1431,6 +1444,40 @@ mod tests {
         assert_eq!(app.active().page.text, "fo");
     }
     #[test]
+    fn formatting_responses_require_the_original_syntax_and_format_options() {
+        for change in 0..4 {
+            let (_dir, ctx, mut app) = app();
+            assert!(app.request_language_feature(&ctx, Feature::Formatting));
+            let ticket = app.languages.next;
+            let path = PathBuf::from(app.active().page.info.path.as_ref().unwrap());
+            let revision = app.active().page.info.revision;
+            match change {
+                0 => app.set_syntax(Some(syntax::Language::Python)),
+                1 => app.set_browser_value("tab_size", json!(8)).unwrap(),
+                2 => app
+                    .set_browser_value("translate_tabs_to_spaces", json!(false))
+                    .unwrap(),
+                _ => app.set_browser_value("font_size", json!(20.0)).unwrap(),
+            }
+            assert_eq!(app.active().page.info.revision, revision);
+            app.language_event(&ctx, Event::Response {
+                ticket,
+                result: Ok(Reply {
+                    path,
+                    revision,
+                    encoding: Encoding::Utf8,
+                    feature: Feature::Formatting,
+                    value: json!([{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":0}},"newText":"FORMATTED"}]),
+                }),
+            });
+            assert_eq!(
+                app.active().page.text,
+                if change == 3 { "FORMATTEDfo" } else { "fo" },
+                "format context change {change}"
+            );
+        }
+    }
+    #[test]
     fn managing_servers_discards_earlier_feature_responses() {
         let (_dir, ctx, mut app) = app();
         for operation in [
@@ -1559,6 +1606,11 @@ mod tests {
             let b = app.active();
             let guard = Guard {
                 view: b.view.id,
+                language: b.language(),
+                formatting_options: (
+                    b.view.tab_size.unwrap_or(4),
+                    b.view.indent.as_deref() != Some("tabs"),
+                ),
                 revision: b.page.info.revision,
                 head: b.view.head,
                 pane: app.panes.focused,
