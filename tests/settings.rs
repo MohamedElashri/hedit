@@ -77,6 +77,34 @@ fn settings_round_trip_through_a_commented_file() {
 }
 
 #[test]
+fn settings_cannot_save_a_file_larger_than_their_reload_limit() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("settings.json");
+    let initial = Settings::default();
+    initial.save(&path).unwrap();
+    let original = std::fs::read(&path).unwrap();
+    let oversized = Settings {
+        added_words: vec!["word".into(); 120_000],
+        ..initial.clone()
+    };
+    // Compact input fits the loader; pretty printing must not create an
+    // unreadable settings file on the next automatic save.
+    let compact = serde_json::to_string(&oversized).unwrap();
+    assert!(compact.len() < hedit::settings::FILE_LIMIT as usize);
+    assert!(oversized.to_json().len() > hedit::settings::FILE_LIMIT as usize);
+    assert!(
+        Settings::parse(&compact).is_err(),
+        "accepted settings that cannot round-trip"
+    );
+    assert!(
+        oversized.save(&path).is_err(),
+        "published an unreadable settings file"
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+    assert_eq!(Settings::load(&path).unwrap().0, initial);
+}
+
+#[test]
 fn custom_build_systems_load_without_a_false_unknown_setting_warning() {
     let (settings, warnings) = Settings::parse(
         r#"{

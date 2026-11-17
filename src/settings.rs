@@ -407,6 +407,9 @@ impl Settings {
                 .validate()
                 .map_err(|e| format!("syntax_specific.{syntax}: {e}"))?;
         }
+        if self.to_json().len() as u64 > FILE_LIMIT {
+            return Err("Settings exceed the 1 MiB file limit when saved.".into());
+        }
         Ok(())
     }
     pub fn to_json(&self) -> String {
@@ -421,6 +424,7 @@ impl Settings {
     }
     /// Write atomically so a crash never leaves a half-written file.
     pub fn save(&self, path: &Path) -> Result<(), String> {
+        self.validate()?;
         let parent = path.parent().unwrap_or(Path::new("."));
         std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
         let mut file = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
