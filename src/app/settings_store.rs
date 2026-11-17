@@ -243,13 +243,21 @@ impl HeditApp {
             return;
         }
         self.settings_files.changed_at = None;
-        self.settings_files.saved = self.settings.clone();
         let (Some(path), false) = (self.settings_path(), self.settings_files.broken) else {
+            self.settings_files.saved = self.settings.clone();
             return;
         };
         match self.settings.save(&path) {
-            Ok(()) => self.settings_files.stamp = stamp(&path),
-            Err(error) => self.error = Some(format!("Cannot save settings: {error}")),
+            Ok(()) => {
+                self.settings_files.saved = self.settings.clone();
+                self.settings_files.stamp = stamp(&path);
+            }
+            Err(error) => {
+                // Keep the last confirmed state and retry after a delay. A
+                // transient storage failure must not discard pending edits.
+                self.settings_files.changed_at = Some(Instant::now());
+                self.error = Some(format!("Cannot save settings: {error}"));
+            }
         }
     }
     /// How long until pending settings, key bindings, or snippets are written.
@@ -303,9 +311,12 @@ impl HeditApp {
         }
         self.settings_files.config_changed_at = None;
         let config = self.quality.config.clone();
-        self.settings_files.config_saved = config.clone();
-        if let Err(error) = self.save_config(config) {
-            self.error = Some(format!("Cannot save key bindings or snippets: {error}"));
+        match self.save_config(config.clone()) {
+            Ok(()) => self.settings_files.config_saved = config,
+            Err(error) => {
+                self.settings_files.config_changed_at = Some(Instant::now());
+                self.error = Some(format!("Cannot save key bindings or snippets: {error}"));
+            }
         }
     }
     /// Apply settings that other parts of the app copy at startup.
@@ -523,7 +534,10 @@ impl HeditApp {
             .as_ref()
             .map(|font| font.face.trim().to_owned());
         if wanted == self.terminal_font_applied
-            || self.settings_files.changed_at.is_some()
+            || self
+                .settings_files
+                .changed_at
+                .is_some_and(|at| at.elapsed() < SETTLE)
             || self.terminal_font_loading.is_some()
         {
             return;
@@ -558,7 +572,10 @@ impl HeditApp {
         }
         // Wait for typing in the font field to settle before searching.
         if self.font_applied == self.settings.font_face
-            || self.settings_files.changed_at.is_some()
+            || self
+                .settings_files
+                .changed_at
+                .is_some_and(|at| at.elapsed() < SETTLE)
             || self.editor_font_loading.is_some()
         {
             return;

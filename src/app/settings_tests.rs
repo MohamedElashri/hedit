@@ -107,6 +107,82 @@ fn changes_are_written_after_they_settle_and_reloaded_after_outside_edits() {
 }
 
 #[test]
+fn failed_settings_writes_remain_pending_and_retry_after_storage_recovers() {
+    let directory = tempfile::tempdir().unwrap();
+    let (ctx, mut app) = app_in(directory.path(), None);
+    let path = app.settings_path().unwrap();
+    let saved = app.settings_files.saved.clone();
+    std::fs::remove_file(&path).unwrap();
+    std::fs::create_dir(&path).unwrap();
+    app.settings.word_wrap = !saved.word_wrap;
+    app.settings.terminal_font = Some(hedit::settings::TerminalFont::default());
+    app.flush_settings();
+    assert!(app
+        .error
+        .as_deref()
+        .is_some_and(|e| e.contains("Cannot save settings")));
+    assert_eq!(
+        app.settings_files.saved, saved,
+        "a failed write was marked saved"
+    );
+    assert!(app
+        .settings_due()
+        .is_some_and(|delay| delay > Duration::ZERO));
+    app.settings_files.changed_at = Some(Instant::now() - Duration::from_secs(1));
+    app.font_applied = "previous font".into();
+    app.apply_editor_style(&ctx);
+    assert_eq!(
+        app.font_applied, app.settings.font_face,
+        "failed saving blocked editor font changes"
+    );
+    assert_eq!(
+        app.terminal_font_applied.as_deref(),
+        Some(""),
+        "failed saving blocked terminal font changes"
+    );
+    std::fs::remove_dir(&path).unwrap();
+    app.persist_settings();
+    let (loaded, _) = hedit::settings::Settings::load(&path).unwrap();
+    assert_eq!(loaded.word_wrap, !saved.word_wrap);
+    assert_eq!(app.settings_files.saved, app.settings);
+    assert!(app.settings_due().is_none());
+    settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
+}
+
+#[test]
+fn failed_config_writes_remain_pending_and_retry_after_storage_recovers() {
+    let directory = tempfile::tempdir().unwrap();
+    let (_ctx, mut app) = app_in(directory.path(), None);
+    let path = directory.path().join("config/snippets.json");
+    let saved = app.settings_files.config_saved.clone();
+    assert!(!saved.snippets.is_empty());
+    std::fs::remove_file(&path).unwrap();
+    std::fs::create_dir(&path).unwrap();
+    app.quality.config.snippets.clear();
+    app.flush_settings();
+    assert!(app
+        .error
+        .as_deref()
+        .is_some_and(|e| e.contains("Cannot save key bindings or snippets")));
+    assert_eq!(
+        app.settings_files.config_saved, saved,
+        "a partial config write was marked saved"
+    );
+    assert!(app
+        .settings_due()
+        .is_some_and(|delay| delay > Duration::ZERO));
+    std::fs::remove_dir(&path).unwrap();
+    app.settings_files.config_changed_at = Some(Instant::now() - Duration::from_secs(1));
+    app.persist_settings();
+    let snippets: Vec<hedit::intelligence::Snippet> =
+        hedit::projects::read_json(&path, 4 * 1024 * 1024).unwrap();
+    assert!(snippets.is_empty());
+    assert_eq!(app.settings_files.config_saved, app.quality.config);
+    assert!(app.settings_due().is_none());
+    settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
+}
+
+#[test]
 fn a_broken_settings_file_is_reported_and_never_overwritten() {
     let directory = tempfile::tempdir().unwrap();
     let config = directory.path().join("config");
