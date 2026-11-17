@@ -1282,6 +1282,25 @@ impl HeditApp {
         }
     }
     pub(super) fn execute(&mut self, ctx: &egui::Context, command: Command) {
+        if self.preferences_open {
+            if command == Command::Save {
+                self.save_scope_settings();
+                return;
+            }
+            if command == Command::Close {
+                self.preferences_open = false;
+                self.focus_editor = true;
+                return;
+            }
+            if self.settings_scope.scope == settings_scope::Scope::Project
+                && self.quality.project_editor.dirty
+                && matches!(command, Command::SaveProject | Command::SaveProjectAs)
+            {
+                self.quality.project_editor.error =
+                    Some("Save the settings draft before saving the project file.".into());
+                return;
+            }
+        }
         if self.workspace.remote.is_some() {
             match command {
                 Command::New => {
@@ -1418,7 +1437,8 @@ impl HeditApp {
             Command::SaveProjectAs => self.save_project(ctx, true),
             Command::RecentProjects => self.quality.recent_open = true,
             Command::ProjectSettings => {
-                self.open_project_settings();
+                self.open_preferences(PreferencesPage::Formatting);
+                self.prepare_project_scope();
             }
             Command::Symbols => self.list_symbols(ctx),
             Command::GotoDefinition => self.look_up(ctx, false),

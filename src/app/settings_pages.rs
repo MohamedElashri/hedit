@@ -111,6 +111,7 @@ pub(super) fn binding_text(modifiers: Modifiers, key: Key) -> String {
 
 impl HeditApp {
     pub(super) fn formatting_preferences(&mut self, ui: &mut egui::Ui) {
+        self.effective_settings_ui(ui);
         ui.weak("Defaults for every file. A project or .editorconfig can override them. Unset options leave each file's style alone.");
         section(ui, "All files");
         ui.checkbox(

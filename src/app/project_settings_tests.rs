@@ -85,7 +85,7 @@ fn gui_edits_and_json_round_trip_without_losing_overrides_or_metadata() {
 }
 
 #[test]
-fn closing_discards_an_unsaved_project_settings_draft() {
+fn closing_preserves_an_unsaved_project_settings_draft_without_applying_it() {
     let (_directory, ctx, mut app, path) = fixture();
     let before = std::fs::read(&path).unwrap();
     app.quality.project_editor.draft.formatting.indent_size = Some(8);
@@ -93,10 +93,15 @@ fn closing_discards_an_unsaved_project_settings_draft() {
     frame(&ctx, &mut app, vec![]);
     frame(&ctx, &mut app, vec![]);
     click_label(&ctx, &mut app, "Close");
-    assert!(!app.quality.settings_open);
+    assert!(!app.preferences_open);
     assert_eq!(std::fs::read(path).unwrap(), before);
     assert_eq!(app.quality.project_settings.formatting.indent_size, Some(4));
     app.execute(&ctx, Command::ProjectSettings);
+    assert_eq!(
+        app.quality.project_editor.draft.formatting.indent_size,
+        Some(8)
+    );
+    app.open_project_settings();
     assert_eq!(
         app.quality.project_editor.draft.formatting.indent_size,
         Some(4)

@@ -368,3 +368,12 @@ the revision/path-checked native symbol cache. It requests no work while hidden,
 skips paged and >2 MiB snapshots, uses a worker above 64 KiB and virtualizes up to
 500 result rows. It starts no language server. Outline filter focus follows the
 same Escape handoff as persistent Search.
+
+### Scoped settings and formatting sources
+
+`settings_scope` hosts the existing project GUI/JSON draft in Preferences. Scope
+switches retain the draft, and Save checks the original settings fingerprint and
+dirty project-file buffers before merging unknown JSON keys. Formatting provenance
+uses the same resolver as open/save, with source allocation enabled only for the
+inspector. A single background worker resolves the visible file; context keys reject
+stale results and an explicit refresh rereads external EditorConfig changes.

@@ -99,6 +99,7 @@ mod screenshot_tests;
 mod settings_browser;
 mod settings_navigation;
 mod settings_pages;
+mod settings_scope;
 mod settings_store;
 #[cfg(test)]
 mod settings_tests;
@@ -330,6 +331,7 @@ pub struct HeditApp {
     fullscreen: bool,
     preferences_page: PreferencesPage,
     settings_browser: settings_browser::State,
+    settings_scope: settings_scope::State,
     goto_open: bool,
     goto_focus: bool,
     replace_open: bool,
@@ -535,6 +537,7 @@ impl HeditApp {
             fullscreen: false,
             preferences_page: PreferencesPage::Editor,
             settings_browser: settings_browser::State::default(),
+            settings_scope: settings_scope::State::default(),
             goto_open: false,
             goto_focus: false,
             replace_open: false,
@@ -1615,7 +1618,7 @@ impl HeditApp {
     /// caret where composition began, so after the first letter it dropped
     /// them all; type such commits as plain text instead.
     fn plain_ime_commits(&mut self, ctx: &egui::Context) {
-        if self.source_control.open {
+        if self.source_control.open && !self.preferences_open {
             return;
         }
         ctx.input_mut(|input| {
@@ -1653,6 +1656,14 @@ impl HeditApp {
             return;
         }
         if self.terminal_shortcuts(ctx) {
+            return;
+        }
+        if self.preferences_open {
+            self.plain_ime_commits(ctx);
+            if !self.capture_binding(ctx) {
+                self.settings_shortcuts(ctx);
+                self.escape(ctx);
+            }
             return;
         }
         self.play_step(ctx);

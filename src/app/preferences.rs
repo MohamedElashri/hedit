@@ -79,7 +79,9 @@ pub(super) fn section(ui: &mut egui::Ui, title: &str) {
 
 impl HeditApp {
     pub(super) fn open_preferences(&mut self, page: PreferencesPage) {
+        self.settings_scope.scope = settings_scope::Scope::User;
         if !self.preferences_open {
+            self.settings_scope.invalidate();
             self.appearance.original = self.theme.clone();
         }
         self.preferences_page = if page.available() {
@@ -111,6 +113,12 @@ impl HeditApp {
                 .collapsible(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(ctx, |ui| {
+                    self.settings_scope_selector(ui);
+                    ui.separator();
+                    if self.settings_scope.scope == settings_scope::Scope::Project {
+                        self.project_scope_contents(ui);
+                        return;
+                    }
                     let m = hedit::ui_style::Metrics::for_ui(ui);
                     let text_width = |text: &str| {
                         ui.fonts(|fonts| {

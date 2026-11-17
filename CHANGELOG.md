@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Bring User and Project settings into one window with preserved drafts and an on-demand formatting-source inspector; protect project saves against concurrent disk or editor changes.
+
 - Add file-location breadcrumbs for editor groups and an optional on-demand Outline, with bounded symbol lists and no scans while hidden.
 
 - Give editor groups independent tab strips, order and cursor state while sharing documents, undo and recovery; move tabs between groups and keep Git reviews in their group.

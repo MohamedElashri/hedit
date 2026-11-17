@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Formatting {
     pub indent_style: Option<String>,
@@ -54,7 +54,7 @@ impl Formatting {
         Ok(())
     }
 }
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Defaults {
     pub formatting: Formatting,
@@ -142,20 +142,85 @@ pub fn load(path: &Path) -> Result<(Project, State), String> {
     Ok((project, state))
 }
 
+/// The saved scope responsible for one resolved formatting property.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FormattingSource {
+    User,
+    UserLanguage,
+    Project,
+    ProjectLanguage,
+    EditorConfig {
+        path: PathBuf,
+        property: &'static str,
+        unset: bool,
+    },
+}
+pub type FormattingSources = BTreeMap<&'static str, FormattingSource>;
+pub struct ResolvedFormatting {
+    pub formatting: Formatting,
+    pub sources: FormattingSources,
+}
+fn record_sources(sources: &mut FormattingSources, value: &Formatting, source: FormattingSource) {
+    macro_rules! record { ($($field:ident),*) => {$(if value.$field.is_some() { sources.insert(stringify!($field), source.clone()); })*}; }
+    record!(
+        indent_style,
+        indent_size,
+        end_of_line,
+        insert_final_newline,
+        trim_trailing_whitespace,
+        charset
+    );
+}
+/// Resolve without collecting provenance on ordinary editor open/save paths.
 pub fn formatting(
     path: &Path,
     language: &str,
     defaults: &Defaults,
     project: Option<&Defaults>,
 ) -> Result<Formatting, String> {
+    resolve_formatting(path, language, defaults, project, None)
+}
+/// Settings inspectors request provenance explicitly and use the same cascade.
+pub fn resolved_formatting(
+    path: &Path,
+    language: &str,
+    defaults: &Defaults,
+    project: Option<&Defaults>,
+) -> Result<ResolvedFormatting, String> {
+    let mut sources = FormattingSources::new();
+    let formatting = resolve_formatting(path, language, defaults, project, Some(&mut sources))?;
+    Ok(ResolvedFormatting {
+        formatting,
+        sources,
+    })
+}
+fn resolve_formatting(
+    path: &Path,
+    language: &str,
+    defaults: &Defaults,
+    project: Option<&Defaults>,
+    mut sources: Option<&mut FormattingSources>,
+) -> Result<Formatting, String> {
     let mut format = defaults.formatting.clone();
+    if let Some(sources) = sources.as_deref_mut() {
+        record_sources(sources, &format, FormattingSource::User);
+    }
     if let Some(p) = defaults.languages.get(language) {
         format.overlay(p);
+        if let Some(sources) = sources.as_deref_mut() {
+            record_sources(sources, p, FormattingSource::UserLanguage);
+        }
     }
     if let Some(p) = project {
         format.overlay(&p.formatting);
+        if let Some(sources) = sources.as_deref_mut() {
+            record_sources(sources, &p.formatting, FormattingSource::Project);
+        }
         if let Some(f) = p.languages.get(language) {
             format.overlay(f);
+            if let Some(sources) = sources.as_deref_mut() {
+                record_sources(sources, f, FormattingSource::ProjectLanguage);
+            }
         }
     }
     let mut configs = Vec::new();
@@ -180,6 +245,7 @@ pub fn formatting(
         }
     }
     let mut values = BTreeMap::new();
+    let mut origins = sources.is_some().then(BTreeMap::<String, PathBuf>::new);
     for (parent, text) in configs.into_iter().rev() {
         let relative = path
             .strip_prefix(&parent)
@@ -204,24 +270,49 @@ pub fn formatting(
             }
             if applies {
                 if let Some((k, v)) = line.split_once('=') {
-                    values.insert(k.trim().to_lowercase(), v.trim().to_lowercase());
+                    let key = k.trim().to_lowercase();
+                    if let Some(origins) = &mut origins {
+                        origins.insert(key.clone(), parent.join(".editorconfig"));
+                    }
+                    values.insert(key, v.trim().to_lowercase());
                 }
             }
         }
+    }
+    macro_rules! origin {
+        ($field:literal,$property:literal,$unset:expr) => {
+            if let (Some(sources), Some(origins)) = (sources.as_deref_mut(), origins.as_ref()) {
+                if let Some(path) = origins.get($property) {
+                    sources.insert(
+                        $field,
+                        FormattingSource::EditorConfig {
+                            path: path.clone(),
+                            property: $property,
+                            unset: $unset,
+                        },
+                    );
+                }
+            }
+        };
     }
     // Resolve dependent indentation values after the complete cascade. A child
     // tab_width must also affect an inherited indent_size = tab.
     let width = |value: &String| value.parse::<u8>().ok().filter(|n| (1..=8).contains(n));
     match values.get("indent_size").map(String::as_str) {
-        Some("unset") => format.indent_size = None,
+        Some("unset") => {
+            format.indent_size = None;
+            origin!("indent_size", "indent_size", true);
+        }
         Some("tab") | None => {
             if let Some(value) = values.get("tab_width").and_then(width) {
                 format.indent_size = Some(value);
+                origin!("indent_size", "tab_width", false);
             }
         }
         Some(_) => {
             if let Some(value) = values.get("indent_size").and_then(width) {
                 format.indent_size = Some(value);
+                origin!("indent_size", "indent_size", false);
             }
         }
     }
@@ -229,24 +320,58 @@ pub fn formatting(
         // EditorConfig plugins ignore unsupported values. Project JSON is
         // validated separately and still reports configuration errors.
         match (key.as_str(), value.as_str()) {
-            ("indent_style", "tab") => format.indent_style = Some("tabs".into()),
-            ("indent_style", "space") => format.indent_style = Some("spaces".into()),
-            ("indent_style", "unset") => format.indent_style = None,
-            ("end_of_line", "lf" | "crlf") => format.end_of_line = Some(value),
-            ("end_of_line", "unset") => format.end_of_line = None,
+            ("indent_style", "tab") => {
+                origin!("indent_style", "indent_style", false);
+                format.indent_style = Some("tabs".into());
+            }
+            ("indent_style", "space") => {
+                origin!("indent_style", "indent_style", false);
+                format.indent_style = Some("spaces".into());
+            }
+            ("indent_style", "unset") => {
+                origin!("indent_style", "indent_style", true);
+                format.indent_style = None;
+            }
+            ("end_of_line", "lf" | "crlf") => {
+                origin!("end_of_line", "end_of_line", false);
+                format.end_of_line = Some(value);
+            }
+            ("end_of_line", "unset") => {
+                origin!("end_of_line", "end_of_line", true);
+                format.end_of_line = None;
+            }
             ("insert_final_newline", "true" | "false") => {
+                origin!("insert_final_newline", "insert_final_newline", false);
                 format.insert_final_newline = Some(value == "true");
             }
-            ("insert_final_newline", "unset") => format.insert_final_newline = None,
+            ("insert_final_newline", "unset") => {
+                origin!("insert_final_newline", "insert_final_newline", true);
+                format.insert_final_newline = None;
+            }
             ("trim_trailing_whitespace", "true" | "false") => {
+                origin!(
+                    "trim_trailing_whitespace",
+                    "trim_trailing_whitespace",
+                    false
+                );
                 format.trim_trailing_whitespace = Some(value == "true");
             }
-            ("trim_trailing_whitespace", "unset") => format.trim_trailing_whitespace = None,
-            ("charset", "latin1") => format.charset = Some("ISO-8859-1".into()),
+            ("trim_trailing_whitespace", "unset") => {
+                origin!("trim_trailing_whitespace", "trim_trailing_whitespace", true);
+                format.trim_trailing_whitespace = None;
+            }
+            ("charset", "latin1") => {
+                origin!("charset", "charset", false);
+                format.charset = Some("ISO-8859-1".into());
+            }
             ("charset", "utf-8" | "utf-8-bom" | "utf-16be" | "utf-16le") => {
+                origin!("charset", "charset", false);
                 format.charset = Some(value);
             }
-            ("charset", "unset") => format.charset = None,
+            ("charset", "unset") => {
+                origin!("charset", "charset", true);
+                format.charset = None;
+            }
             _ => (),
         }
     }
@@ -290,4 +415,90 @@ pub fn clean(text: &str, format: &Formatting, eol: &str) -> String {
         text.push_str(if eol == "CRLF" { "\r\n" } else { "\n" });
     }
     text
+}
+
+#[cfg(test)]
+mod provenance_tests {
+    use super::*;
+    #[test]
+    fn sources_follow_language_project_editorconfig_and_unset_precedence() {
+        let dir = tempfile::tempdir().unwrap();
+        let child = dir.path().join("src");
+        std::fs::create_dir(&child).unwrap();
+        std::fs::write(dir.path().join(".editorconfig"),"root = true\n[*]\nindent_size = tab\ntab_width = 6\ntrim_trailing_whitespace = unset\n").unwrap();
+        std::fs::write(
+            child.join(".editorconfig"),
+            "[*]\ntab_width = 8\nend_of_line = crlf\ncharset = unsupported\n",
+        )
+        .unwrap();
+        let mut user = Defaults {
+            formatting: Formatting {
+                indent_style: Some("tabs".into()),
+                indent_size: Some(2),
+                trim_trailing_whitespace: Some(true),
+                charset: Some("utf-8".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        user.languages.insert(
+            "rust".into(),
+            Formatting {
+                insert_final_newline: Some(true),
+                ..Default::default()
+            },
+        );
+        let mut project = Defaults {
+            formatting: Formatting {
+                indent_size: Some(4),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        project.languages.insert(
+            "rust".into(),
+            Formatting {
+                indent_style: Some("spaces".into()),
+                trim_trailing_whitespace: Some(false),
+                ..Default::default()
+            },
+        );
+        let path = child.join("main.rs");
+        let result = resolved_formatting(&path, "rust", &user, Some(&project)).unwrap();
+        assert_eq!(result.formatting.indent_size, Some(8));
+        assert_eq!(result.formatting.indent_style.as_deref(), Some("spaces"));
+        assert_eq!(result.formatting.trim_trailing_whitespace, None);
+        assert_eq!(result.formatting.insert_final_newline, Some(true));
+        assert_eq!(result.formatting.end_of_line.as_deref(), Some("crlf"));
+        assert_eq!(result.formatting.charset.as_deref(), Some("utf-8"));
+        assert_eq!(
+            result.sources["indent_style"],
+            FormattingSource::ProjectLanguage
+        );
+        assert_eq!(
+            result.sources["insert_final_newline"],
+            FormattingSource::UserLanguage
+        );
+        assert_eq!(result.sources["charset"], FormattingSource::User);
+        assert_eq!(
+            result.sources["indent_size"],
+            FormattingSource::EditorConfig {
+                path: child.join(".editorconfig"),
+                property: "tab_width",
+                unset: false
+            }
+        );
+        assert_eq!(
+            result.sources["trim_trailing_whitespace"],
+            FormattingSource::EditorConfig {
+                path: dir.path().join(".editorconfig"),
+                property: "trim_trailing_whitespace",
+                unset: true
+            }
+        );
+        assert_eq!(
+            formatting(&path, "rust", &user, Some(&project)).unwrap(),
+            result.formatting
+        );
+    }
 }
