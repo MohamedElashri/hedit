@@ -225,6 +225,80 @@ fn oversized_config_files_are_rejected_before_any_preferences_are_replaced() {
 }
 
 #[test]
+fn corrupt_config_files_survive_unrelated_edits_and_resume_saving_after_repair() {
+    for (index, name) in ["keybindings.json", "snippets.json", "macros.json"]
+        .into_iter()
+        .enumerate()
+    {
+        let directory = tempfile::tempdir().unwrap();
+        let config = directory.path().join("config");
+        std::fs::create_dir(&config).unwrap();
+        let path = config.join(name);
+        let broken = b"[{ corrupt configuration worth preserving";
+        std::fs::write(&path, broken).unwrap();
+        let (_ctx, mut app) = app_in(directory.path(), None);
+        assert!(app
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains(name)));
+        let fallback = match index {
+            0 => serde_json::to_value(&app.quality.config.keybindings).unwrap(),
+            1 => serde_json::to_value(&app.quality.config.snippets).unwrap(),
+            _ => serde_json::to_value(&app.quality.config.macros).unwrap(),
+        };
+        if index == 0 {
+            app.quality.config.snippets[0].description = "unrelated snippet edit".into();
+        } else {
+            app.set_binding(Command::Save, Some("Primary+Alt+S".into()));
+        }
+        app.flush_settings();
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            broken,
+            "unrelated edit overwrote {name}"
+        );
+        assert_eq!(
+            app.settings_files.config_saved, app.quality.config,
+            "unrelated changes did not save"
+        );
+        let expected = match index {
+            0 => {
+                app.set_binding(Command::Save, Some("Primary+Alt+S".into()));
+                serde_json::to_value(&app.quality.config.keybindings).unwrap()
+            }
+            1 => {
+                app.quality.config.snippets[0].description = "pending snippet edit".into();
+                serde_json::to_value(&app.quality.config.snippets).unwrap()
+            }
+            _ => {
+                app.quality.config.macros.push(macros::Macro {
+                    name: "pending macro".into(),
+                    steps: vec![macros::Step::Text("text".into())],
+                });
+                serde_json::to_value(&app.quality.config.macros).unwrap()
+            }
+        };
+        app.flush_settings();
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            broken,
+            "editing fallback data overwrote {name}"
+        );
+        assert!(app
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("preserved")));
+        std::fs::write(&path, serde_json::to_vec(&fallback).unwrap()).unwrap();
+        app.flush_settings();
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved, expected);
+        assert!(app.settings_due().is_none());
+        settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
+    }
+}
+
+#[test]
 fn a_broken_settings_file_is_reported_and_never_overwritten() {
     let directory = tempfile::tempdir().unwrap();
     let config = directory.path().join("config");

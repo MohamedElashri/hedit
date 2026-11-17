@@ -398,10 +398,46 @@ impl HeditApp {
         check_size(&config.keybindings, KEYBINDINGS_LIMIT, KEYBINDINGS_FILE)?;
         check_size(&config.snippets, SNIPPETS_LIMIT, SNIPPETS_FILE)?;
         check_size(&config.macros, MACROS_LIMIT, MACROS_FILE)?;
+        let bindings_changed = config.keybindings != self.settings_files.config_saved.keybindings;
+        let snippets_changed = config.snippets != self.settings_files.config_saved.snippets;
+        let macros_changed = config.macros != self.settings_files.config_saved.macros;
         if let Some(dir) = &self.settings_files.dir {
-            projects::atomic_json(&dir.join(KEYBINDINGS_FILE), &config.keybindings)?;
-            projects::atomic_json(&dir.join(SNIPPETS_FILE), &config.snippets)?;
-            if !config.macros.is_empty() || dir.join(MACROS_FILE).exists() {
+            fn preserve_invalid<T: serde::de::DeserializeOwned>(
+                path: &Path,
+                limit: u64,
+            ) -> Result<(), String> {
+                match std::fs::symlink_metadata(path) {
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+                    _ => (),
+                }
+                projects::read_json::<T>(path, limit).map(|_| ()).map_err(|error| format!(
+                    "{} was preserved because it could not be read. Fix the file before saving changes to it: {error}", path.display()
+                ))
+            }
+            // Only replace files this edit changes. In particular, defaults
+            // shown after a parse error must never overwrite the corrupt file.
+            if bindings_changed {
+                preserve_invalid::<Vec<quality::Binding>>(
+                    &dir.join(KEYBINDINGS_FILE),
+                    KEYBINDINGS_LIMIT,
+                )?;
+            }
+            if snippets_changed {
+                preserve_invalid::<Vec<hedit::intelligence::Snippet>>(
+                    &dir.join(SNIPPETS_FILE),
+                    SNIPPETS_LIMIT,
+                )?;
+            }
+            if macros_changed {
+                preserve_invalid::<Vec<macros::Macro>>(&dir.join(MACROS_FILE), MACROS_LIMIT)?;
+            }
+            if bindings_changed {
+                projects::atomic_json(&dir.join(KEYBINDINGS_FILE), &config.keybindings)?;
+            }
+            if snippets_changed {
+                projects::atomic_json(&dir.join(SNIPPETS_FILE), &config.snippets)?;
+            }
+            if macros_changed {
                 projects::atomic_json(&dir.join(MACROS_FILE), &config.macros)?;
             }
         }

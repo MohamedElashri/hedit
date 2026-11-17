@@ -167,6 +167,9 @@ default value so optional formatting rules retain their inherit/true/false state
 Validate edits before applying them and preserve text drafts while focused or
 invalid; otherwise list separators disappear while users type. User settings and
 host-side server configuration have distinct scope and save behavior.
+Preference writes must fit each file's reload limit. Write only changed key
+binding, snippet and macro files, and preserve unreadable files until repaired;
+fallback defaults are not permission to replace corrupt data.
 
 Keep both category navigation and content scrollable inside the viewport, with
 search and the footer outside those scroll regions. The minimum-window and
