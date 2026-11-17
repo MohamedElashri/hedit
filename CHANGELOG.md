@@ -6,6 +6,8 @@
 
 - Give editor groups independent tab strips, order and cursor state while sharing documents, undo and recovery; move tabs between groups and keep Git reviews in their group.
 
+- Show Git action confirmations from the persistent sidebar even when a document is active.
+
 - Share one resizable bottom panel across Problems, Output and Terminal, preserving hidden builds, diagnostics and shell sessions.
 
 - Keep Search and Source Control in persistent sidebars beside the editor, with independent search inputs, reusable Git review tabs and cached result grouping.
