@@ -1,6 +1,6 @@
 use super::*;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum Command {
     ConnectSsh,
@@ -234,6 +234,25 @@ pub(super) enum Command {
     Updates,
 }
 impl Command {
+    fn requires_local(self) -> bool {
+        matches!(
+            self,
+            Self::OpenProject
+                | Self::SaveProject
+                | Self::SaveProjectAs
+                | Self::RecentProjects
+                | Self::SaveMacro
+                | Self::MarkdownSplit
+                | Self::MarkdownPreview
+                | Self::MarkdownRefresh
+                | Self::SwitchCounterpart
+                | Self::OpenFileReference
+                | Self::CompareDisk
+                | Self::GitDiff
+                | Self::Gpu
+                | Self::ToolSettings
+        )
+    }
     pub(super) const ALL: &'static [Self] = &[
         Self::Palette,
         Self::ConnectSsh,
@@ -546,10 +565,10 @@ impl Command {
             Self::SaveMacro => "Save macro…",
             Self::RunMacro => "Run saved macro…",
             Self::PinTab => "Pin tab",
-            Self::CloseOthers => "Close other tabs",
+            Self::CloseOthers => "Close other file tabs in group",
             Self::CloseRight => "Close tabs to the right",
             Self::OpenRecent => "Open recent file…",
-            Self::CloseAll => "Close all tabs",
+            Self::CloseAll => "Close all file tabs in group",
             Self::CloseUnmodified => "Close unmodified tabs",
             Self::SelectBookmarks => "Select all bookmarks",
             Self::ClearBookmarks => "Clear bookmarks",
@@ -575,7 +594,7 @@ impl Command {
             Self::Build => "Build",
             Self::BuildWith => "Build with…",
             Self::CancelBuild => "Cancel build",
-            Self::BuildResults => "Show build results",
+            Self::BuildResults => "Toggle Output",
             Self::Terminal => "Toggle terminal",
             Self::TerminalSettings => "Terminal settings…",
             Self::NewTerminal => "Terminal: new tab",
@@ -726,7 +745,7 @@ impl Command {
             Self::LanguageServers => "Language servers: manage…",
             Self::LanguageHover => "Language server: show hover information",
             Self::LanguageFormat => "Language server: format document",
-            Self::LanguageProblems => "Language server: toggle problems",
+            Self::LanguageProblems => "Toggle Problems",
             Self::LanguageRestart => "Language servers: restart",
             Self::Checkpoint => "Checkpoint now",
             Self::UserGuide => "User guide",
@@ -1062,6 +1081,19 @@ impl HeditApp {
         if self.busy || self.closing {
             return false;
         }
+        if self.preferences_open && matches!(command, Command::Save | Command::Close) {
+            return true;
+        }
+        if self.workspace.remote.is_some() && command.requires_local() {
+            return false;
+        }
+        if self.preferences_open
+            && self.settings_scope.scope == settings_scope::Scope::Project
+            && self.quality.project_editor.dirty
+            && matches!(command, Command::SaveProject | Command::SaveProjectAs)
+        {
+            return false;
+        }
         if command
             .operation()
             .is_some_and(|op| op != hedit::editing::Operation::SelectLine)
@@ -1312,20 +1344,7 @@ impl HeditApp {
                     self.remote_ui.path.clear();
                     return;
                 }
-                Command::OpenProject
-                | Command::SaveProject
-                | Command::SaveProjectAs
-                | Command::RecentProjects
-                | Command::SaveMacro
-                | Command::MarkdownSplit
-                | Command::MarkdownPreview
-                | Command::MarkdownRefresh
-                | Command::SwitchCounterpart
-                | Command::OpenFileReference
-                | Command::CompareDisk
-                | Command::GitDiff
-                | Command::Gpu
-                | Command::ToolSettings => {
+                command if command.requires_local() => {
                     self.error = Some("This tool is not available in SSH workspaces yet.".into());
                     return;
                 }
@@ -2055,7 +2074,7 @@ impl HeditApp {
                     if let Some(found) = score(command.label()).filter(|_| command != Command::Palette && self.command_enabled(command)) {
                         scored.push((
                             found,
-                            (command.label().to_owned(), command.shortcut(), Item::Command(command)),
+                            (command.label().to_owned(), self.shortcut_text(command), Item::Command(command)),
                         ));
                     }
                 }

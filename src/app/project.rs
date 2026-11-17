@@ -315,7 +315,7 @@ impl HeditApp {
                 ui,
                 &format!(
                     "Hide folder sidebar · {}",
-                    Command::FolderSidebar.shortcut()
+                    self.shortcut_text(Command::FolderSidebar)
                 ),
             )
             .clicked()

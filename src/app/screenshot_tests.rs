@@ -672,3 +672,25 @@ fn export_scoped_settings_previews() {
         scene.save(&output, if light { "user-light" } else { "user-dark" });
     }
 }
+
+#[test]
+#[ignore = "exports shortcut settings to HEDIT_PREVIEW_DIR"]
+fn export_shortcut_preset_previews() {
+    let output =
+        PathBuf::from(std::env::var_os("HEDIT_PREVIEW_DIR").expect("set HEDIT_PREVIEW_DIR"));
+    std::fs::create_dir_all(&output).unwrap();
+    for light in [false, true] {
+        let mut scene = Scene::new(light);
+        scene.app.open_preferences(PreferencesPage::Keys);
+        scene.app.settings.keybinding_preset = hedit::settings::KeybindingPreset::Vscode;
+        scene.app.key_filter = "build".into();
+        scene.save(
+            &output,
+            if light {
+                "shortcuts-light"
+            } else {
+                "shortcuts-dark"
+            },
+        );
+    }
+}

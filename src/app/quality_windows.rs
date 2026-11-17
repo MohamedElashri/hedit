@@ -66,33 +66,6 @@ pub(super) fn shortcut(value: &str) -> Result<Option<egui::KeyboardShortcut>, St
     )))
 }
 impl HeditApp {
-    pub(super) fn shortcut_text(&self, command: Command) -> String {
-        self.quality
-            .config
-            .keybindings
-            .iter()
-            .find(|b| b.command == command)
-            .map_or_else(
-                || command.shortcut(),
-                |b| {
-                    b.shortcut.replace(
-                        "Primary",
-                        if cfg!(target_os = "macos") {
-                            "Cmd"
-                        } else {
-                            "Ctrl"
-                        },
-                    )
-                },
-            )
-    }
-    pub(super) fn overridden(&self, command: Command) -> bool {
-        self.quality
-            .config
-            .keybindings
-            .iter()
-            .any(|b| b.command == command)
-    }
     pub(super) fn filter_overridden_clipboard(&mut self, ctx: &egui::Context) {
         let editor_id = self.editor_id();
         if !ctx.memory(|m| m.has_focus(editor_id)) {
@@ -193,7 +166,8 @@ impl HeditApp {
         }
         let id = self.editor_id();
         let focused = ctx.memory(|m| m.has_focus(id));
-        for binding in self.quality.config.keybindings.clone() {
+        let bindings = self.configured_bindings().to_vec();
+        for binding in bindings {
             if binding.editor_only && !focused {
                 continue;
             }

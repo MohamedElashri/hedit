@@ -451,6 +451,13 @@ fn catalog() -> &'static [Setting] {
         );
         setting!(
             Keys,
+            Choice(&[("hedit", "Hedit"), ("vscode", "VS Code · common commands")]),
+            "keybinding_preset",
+            "Shortcut preset",
+            "Choose Hedit or common VS Code commands. Personal bindings take priority."
+        );
+        setting!(
+            Keys,
             Group(&["keybindings"]),
             "keybindings",
             "Keyboard shortcuts",
@@ -608,6 +615,10 @@ impl HeditApp {
         }
         if key == "terminal_enabled" {
             candidate.terminal_onboarding_complete = true;
+        }
+        if key == "keybinding_preset" {
+            self.chord = None;
+            self.reset_terminal_binding();
         }
         self.settings = candidate;
         self.apply_settings();

@@ -67,12 +67,13 @@ fn consume_keys(ctx: &egui::Context) {
 
 impl HeditApp {
     /// Every active chord: user bindings, then defaults not overridden.
-    fn chords(&self) -> Vec<(Command, KeyboardShortcut, KeyboardShortcut)> {
-        let user = self
-            .quality
-            .config
-            .keybindings
+    fn chords(&self, ctx: &egui::Context) -> Vec<(Command, KeyboardShortcut, KeyboardShortcut)> {
+        let editor_focused =
+            !self.preferences_open && ctx.memory(|m| m.has_focus(self.editor_id()));
+        let bindings = self.configured_bindings();
+        let user = bindings
             .iter()
+            .filter(|b| !b.editor_only || editor_focused)
             .filter(|b| !self.preferences_open || Self::settings_key_command(b.command))
             .filter_map(|b| match parse(&b.shortcut).ok()?.as_slice() {
                 [first, second] => Some((b.command, *first, *second)),
@@ -105,7 +106,7 @@ impl HeditApp {
                 return true;
             }
             let found = self
-                .chords()
+                .chords(ctx)
                 .into_iter()
                 .find(|(_, a, b)| *a == first && matches(b, key, modifiers));
             match found {
@@ -123,7 +124,7 @@ impl HeditApp {
             return true;
         }
         let first = self
-            .chords()
+            .chords(ctx)
             .into_iter()
             .map(|(_, a, _)| a)
             .find(|a| matches(a, key, modifiers));

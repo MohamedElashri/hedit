@@ -414,6 +414,12 @@ fn key_bindings_are_recorded_by_pressing_keys_and_saved() {
     );
     // Reset restores the default.
     app.set_binding(Command::Find, None);
+    assert_eq!(
+        app.shortcut_text(Command::Find),
+        "",
+        "Goto still claims these keys"
+    );
+    app.set_binding(Command::Goto, None);
     assert_eq!(app.shortcut_text(Command::Find), Command::Find.shortcut());
     settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
 }

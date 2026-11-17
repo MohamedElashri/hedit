@@ -103,6 +103,7 @@ mod settings_scope;
 mod settings_store;
 #[cfg(test)]
 mod settings_tests;
+mod shortcut_preset;
 mod snippet_fields;
 mod source_control;
 mod spell_check;
@@ -332,6 +333,7 @@ pub struct HeditApp {
     preferences_page: PreferencesPage,
     settings_browser: settings_browser::State,
     settings_scope: settings_scope::State,
+    shortcut_preset: shortcut_preset::State,
     goto_open: bool,
     goto_focus: bool,
     replace_open: bool,
@@ -538,6 +540,7 @@ impl HeditApp {
             preferences_page: PreferencesPage::Editor,
             settings_browser: settings_browser::State::default(),
             settings_scope: settings_scope::State::default(),
+            shortcut_preset: shortcut_preset::State::default(),
             goto_open: false,
             goto_focus: false,
             replace_open: false,

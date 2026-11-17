@@ -665,13 +665,16 @@ impl HeditApp {
         true
     }
 
+    /// Discard a pending terminal chord after shortcut preferences change.
+    pub(super) fn reset_terminal_binding(&mut self) {
+        self.terminal.binding_prefix = None;
+    }
+
     /// Only global terminal/window bindings may run while a shell has focus.
     /// Editor commands, including their chords, stay with the shell.
     fn terminal_bindings(&mut self, ctx: &egui::Context) -> bool {
         let bindings: Vec<_> = self
-            .quality
-            .config
-            .keybindings
+            .configured_bindings()
             .iter()
             .filter(|b| {
                 !b.editor_only

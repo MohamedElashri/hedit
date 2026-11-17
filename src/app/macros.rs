@@ -81,7 +81,7 @@ impl HeditApp {
                 self.macros.recording = Some(vec![]);
                 self.notice = format!(
                     "Recording a macro… {} stops.",
-                    Command::RecordMacro.shortcut()
+                    self.shortcut_text(Command::RecordMacro)
                 );
             }
         }

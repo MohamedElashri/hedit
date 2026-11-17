@@ -540,7 +540,10 @@ impl HeditApp {
                                     hedit::icons::button(ui, hedit::icons::Icon::Add, "New file")
                                 })
                                 .inner
-                                .on_hover_text(format!("New file · {}", Command::New.shortcut()))
+                                .on_hover_text(format!(
+                                    "New file · {}",
+                                    self.shortcut_text(Command::New)
+                                ))
                                 .clicked()
                             {
                                 action = Some(Command::New);

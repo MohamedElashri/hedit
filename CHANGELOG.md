@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add an optional VS Code shortcut preset with personal-binding priority, shared command hints, conflict suppression and focus-aware chord routing; clarify group file-tab actions and panel labels.
+
 - Bring User and Project settings into one window with preserved drafts and an on-demand formatting-source inspector; protect project saves against concurrent disk or editor changes.
 
 - Add file-location breadcrumbs for editor groups and an optional on-demand Outline, with bounded symbol lists and no scans while hidden.
