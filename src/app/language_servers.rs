@@ -41,6 +41,13 @@ enum Intent {
     Sync,
     Feature(Guard),
 }
+struct ProblemRow {
+    path: PathBuf,
+    encoding: Encoding,
+    position: text::Position,
+    label: String,
+}
+
 struct Diagnostics {
     server: String,
     root: PathBuf,
@@ -59,6 +66,7 @@ pub(super) struct LanguageServers {
     observed: Option<(Vec<Snapshot>, Instant)>,
     diagnostics: BTreeMap<PathBuf, Vec<Diagnostics>>,
     pub(super) problems: bool,
+    problem_rows: Option<Vec<ProblemRow>>,
     pub(super) info: Option<String>,
     filter: String,
     progress: String,
@@ -374,6 +382,7 @@ impl HeditApp {
                 self.languages.pending.clear();
                 self.languages.statuses.clear();
                 self.languages.diagnostics.clear();
+                self.languages.problem_rows = None;
                 return;
             }
         }
@@ -387,7 +396,9 @@ impl HeditApp {
         for event in events {
             self.language_event(ctx, event);
         }
+        let mut changed = false;
         self.languages.diagnostics.retain(|path, sources| {
+            let before = sources.len();
             sources.retain(|diagnostics| {
                 self.workspace.open.iter().any(|b| {
                     b.page
@@ -398,8 +409,12 @@ impl HeditApp {
                         && b.page.info.revision == diagnostics.revision
                 })
             });
+            changed |= before != sources.len();
             !sources.is_empty()
         });
+        if changed {
+            self.languages.problem_rows = None;
+        }
         let _ = self.sync_language_documents(false);
         if !self.languages.installed.is_empty()
             && self.languages.snapshots != self.language_snapshots()
@@ -417,6 +432,7 @@ impl HeditApp {
                 self.languages.listed = false;
                 self.languages.statuses.clear();
                 self.languages.diagnostics.clear();
+                self.languages.problem_rows = None;
             }
             Event::Progress { id, message } => self.languages.progress = format!("{id}: {message}"),
             Event::Status(status) => {
@@ -424,6 +440,7 @@ impl HeditApp {
                     self.languages.snapshots.clear();
                 }
                 if status.state != "Running" {
+                    self.languages.problem_rows = None;
                     self.languages.diagnostics.retain(|_, sources| {
                         sources.retain(|d| d.server != status.id || d.root != status.root);
                         !sources.is_empty()
@@ -462,6 +479,7 @@ impl HeditApp {
                         .is_some_and(|p| Path::new(p) == path)
                         && b.page.info.revision == revision
                 }) {
+                    self.languages.problem_rows = None;
                     let sources = self.languages.diagnostics.entry(path).or_default();
                     sources.retain(|d| d.server != server || d.root != root);
                     if !items.is_empty() {
@@ -1154,7 +1172,7 @@ impl HeditApp {
             self.languages.editor = Some(editor);
         }
     }
-    pub(super) fn language_panels(&mut self, ctx: &egui::Context) {
+    pub(super) fn language_information(&mut self, ctx: &egui::Context) {
         if let Some(content) = &self.languages.info {
             let mut open = true;
             egui::Window::new("Language information")
@@ -1172,60 +1190,70 @@ impl HeditApp {
                 self.focus_editor = true;
             }
         }
-        if !self.languages.problems {
-            return;
+    }
+    pub(super) fn problems_contents(&mut self, ui: &mut egui::Ui) {
+        if self.languages.problem_rows.is_none() {
+            let mut rows = Vec::new();
+            for (path, sources) in &self.languages.diagnostics {
+                for diagnostics in sources {
+                    for item in &diagnostics.items {
+                        let Ok(range) =
+                            serde_json::from_value::<text::Range>(item["range"].clone())
+                        else {
+                            continue;
+                        };
+                        let severity = match item["severity"].as_u64() {
+                            Some(1) => "Error",
+                            Some(2) => "Warning",
+                            _ => "Info",
+                        };
+                        rows.push(ProblemRow {
+                            path: path.clone(),
+                            encoding: diagnostics.encoding,
+                            position: range.start,
+                            label: format!(
+                                "{severity} · {} · {}:{} · {}",
+                                diagnostics.server,
+                                path.file_name().unwrap_or_default().to_string_lossy(),
+                                u64::from(range.start.line) + 1,
+                                item["message"]
+                                    .as_str()
+                                    .unwrap_or("")
+                                    .chars()
+                                    .take(500)
+                                    .collect::<String>()
+                            ),
+                        });
+                    }
+                }
+            }
+            self.languages.problem_rows = Some(rows);
         }
+        let rows = self.languages.problem_rows.as_ref().unwrap();
         let mut jump = None;
-        egui::TopBottomPanel::bottom("language-problems")
-            .resizable(true)
-            .default_height(150.0)
-            .max_height(300.0)
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.strong("Language server problems");
-                    if controls::close_button(ui, "Close problems").clicked() {
-                        self.languages.problems = false;
-                    }
-                });
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    if self.languages.diagnostics.is_empty() {
-                        ui.weak("No diagnostics for open files.");
-                    }
-                    for (path, sources) in &self.languages.diagnostics {
-                        for (diagnostics, item) in sources
-                            .iter()
-                            .flat_map(|d| d.items.iter().map(move |item| (d, item)))
+        if rows.is_empty() {
+            ui.weak("No language-server diagnostics for open files.");
+        }
+        egui::ScrollArea::vertical()
+            .id_salt("language-problems")
+            .show_rows(
+                ui,
+                ui.text_style_height(&egui::TextStyle::Body),
+                rows.len(),
+                |ui, range| {
+                    for index in range {
+                        let row = &rows[index];
+                        if ui
+                            .selectable_label(false, &row.label)
+                            .on_hover_text(row.path.display().to_string())
+                            .clicked()
                         {
-                            let Ok(range) =
-                                serde_json::from_value::<text::Range>(item["range"].clone())
-                            else {
-                                continue;
-                            };
-                            let message = item["message"].as_str().unwrap_or("");
-                            let severity = match item["severity"].as_u64() {
-                                Some(1) => "Error",
-                                Some(2) => "Warning",
-                                _ => "Info",
-                            };
-                            if ui
-                                .selectable_label(
-                                    false,
-                                    format!(
-                                        "{severity} · {} · {}:{} · {}",
-                                        diagnostics.server,
-                                        path.file_name().unwrap_or_default().to_string_lossy(),
-                                        u64::from(range.start.line) + 1,
-                                        message.chars().take(500).collect::<String>()
-                                    ),
-                                )
-                                .clicked()
-                            {
-                                jump = Some((path.clone(), diagnostics.encoding, range.start));
-                            }
+                            jump = Some((row.path.clone(), row.encoding, row.position));
                         }
                     }
-                });
-            });
+                },
+            );
+
         if let Some((path, encoding, position)) = jump {
             if let Some(index) = self.workspace.open.iter().position(|b| {
                 b.page
@@ -1600,7 +1628,7 @@ mod tests {
                     events,
                     ..Default::default()
                 },
-                |ctx| app.language_panels(ctx),
+                |ctx| app.workbench_panel(ctx),
             )
         };
         draw(&mut app, vec![]);

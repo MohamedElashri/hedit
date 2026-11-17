@@ -97,7 +97,7 @@ impl HeditApp {
             Overlay::Preferences => self.preferences_open,
             Overlay::LanguageInfo => self.languages.info.is_some(),
             Overlay::Find => self.find_open,
-            Overlay::Build => self.build.open,
+            Overlay::Build => self.build.open || self.languages.problems,
         }
     }
     pub(super) fn close_overlay(&mut self, ctx: &egui::Context, overlay: Overlay) {
@@ -135,7 +135,7 @@ impl HeditApp {
                 self.find_open = false;
                 self.replace_open = false;
             }
-            Overlay::Build => self.build.open = false,
+            Overlay::Build => self.hide_panel(),
         }
     }
     pub(super) fn transient_overlay_open(&self) -> bool {

@@ -182,8 +182,7 @@ impl Scene {
                 self.app.shortcuts(ctx);
                 self.app.chrome(ctx);
                 self.app.search_panel(ctx);
-                self.app.build_panel(ctx);
-                self.app.terminal_panel(ctx);
+                self.app.workbench_panel(ctx);
                 self.app.editor(ctx);
                 self.app.quality_windows(ctx);
                 self.app.preferences(ctx);
@@ -577,5 +576,36 @@ fn export_sidebar_previews() {
         scene.save(&output, if light { "search-light" } else { "search-dark" });
         scene.app.show_git_sidebar(&scene.ctx);
         scene.save(&output, if light { "scm-light" } else { "scm-dark" });
+    }
+}
+
+#[test]
+#[ignore = "exports unified panel scenes to HEDIT_PREVIEW_DIR"]
+fn export_panel_previews() {
+    let output =
+        PathBuf::from(std::env::var_os("HEDIT_PREVIEW_DIR").expect("set HEDIT_PREVIEW_DIR"));
+    std::fs::create_dir_all(&output).unwrap();
+    let mut scene = Scene::new(false);
+    scene.app.build.name = "Project check".into();
+    scene.app.build.status = "Finished with one warning".into();
+    scene.app.build.output =
+        "Compiling atlas v0.1.0\nsrc/main.rs:9:5: warning: unused variable\nFinished in 0.18s\n"
+            .into();
+    scene.app.build.locations = vec![hedit::build::Location {
+        output_line: 1,
+        file: scene.root.join("src/main.rs"),
+        line: 9,
+        column: Some(5),
+        message: "warning: unused variable".into(),
+    }];
+    scene.app.execute(&scene.ctx, Command::BuildResults);
+    scene.save(&output, "output");
+    scene.app.execute(&scene.ctx, Command::LanguageProblems);
+    scene.save(&output, "problems");
+    #[cfg(feature = "terminal")]
+    {
+        scene.app.choose_terminal(true);
+        scene.app.execute(&scene.ctx, Command::Terminal);
+        scene.save(&output, "terminal");
     }
 }
