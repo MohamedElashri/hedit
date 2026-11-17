@@ -387,8 +387,8 @@ fn project_replacement_edits_open_buffers_unsaved_and_keeps_newer_text() {
     finish_app_job(&mut app, &ctx);
     app.open(&ctx, Some(path.clone()));
     finish_app_job(&mut app, &ctx);
-    app.query = "needle".into();
-    app.replacement = "changed".into();
+    app.quality.folder_query = "needle".into();
+    app.quality.folder_replacement = "changed".into();
     app.folder_search(&ctx, true);
     finish_app_job(&mut app, &ctx);
     app.apply_folder_replacements(&ctx);
@@ -397,8 +397,8 @@ fn project_replacement_edits_open_buffers_unsaved_and_keeps_newer_text() {
     assert_eq!(app.active().page.text, "changed\n");
     assert!(app.active().page.info.dirty);
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "needle\n");
-    app.query = "changed".into();
-    app.replacement = "disk edit".into();
+    app.quality.folder_query = "changed".into();
+    app.quality.folder_replacement = "disk edit".into();
     app.folder_search(&ctx, true);
     finish_app_job(&mut app, &ctx);
     // Typing after the preview keeps the newer text.

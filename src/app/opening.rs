@@ -325,6 +325,7 @@ impl HeditApp {
             }
             self.changed();
             if focus {
+                self.source_control.open = false;
                 self.focus_editor = true;
                 self.finish_preview();
                 self.navigation_mark();

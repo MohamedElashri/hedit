@@ -2,7 +2,37 @@
 use super::*;
 use hedit::icons::{self, Icon};
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum Sidebar {
+    #[default]
+    Files,
+    Search,
+    SourceControl,
+}
+
 impl HeditApp {
+    pub(super) fn show_git_sidebar(&mut self, ctx: &egui::Context) {
+        self.sidebar = Sidebar::SourceControl;
+        self.settings.show_sidebar = true;
+        self.distraction_free = false;
+        self.prepare_source_control(ctx);
+    }
+    pub(super) fn show_search_sidebar(&mut self) {
+        if !self.quality.folder_initialized {
+            if self.quality.folder_query.is_empty() {
+                self.quality.folder_query.clone_from(&self.query);
+            }
+            self.quality.folder_initialized = true;
+        }
+        self.sidebar = Sidebar::Search;
+        self.settings.show_sidebar = true;
+        self.distraction_free = false;
+        self.quality.folders_open = false;
+        self.quality.folder_focus = true;
+        self.focus_editor = false;
+    }
+
     pub(super) fn activity_bar(&mut self, ctx: &egui::Context) {
         if !self.settings.show_activity_bar || self.distraction_free {
             return;
@@ -28,7 +58,7 @@ impl HeditApp {
                         ui,
                         Icon::Files,
                         "Files",
-                        !self.source_control.open && self.settings.show_sidebar,
+                        self.sidebar == Sidebar::Files && self.settings.show_sidebar,
                     )
                     .clicked()
                     {
@@ -40,7 +70,8 @@ impl HeditApp {
                                 ui,
                                 Icon::SourceControl,
                                 "Source Control",
-                                self.source_control.open && self.settings.show_sidebar,
+                                self.sidebar == Sidebar::SourceControl
+                                    && self.settings.show_sidebar,
                             )
                         })
                         .inner
@@ -50,7 +81,12 @@ impl HeditApp {
                     }
                     if ui
                         .add_enabled_ui(self.command_enabled(Command::FindFiles), |ui| {
-                            icons::navigation(ui, Icon::Search, "Find in files", false)
+                            icons::navigation(
+                                ui,
+                                Icon::Search,
+                                "Find in files",
+                                self.sidebar == Sidebar::Search && self.settings.show_sidebar,
+                            )
                         })
                         .inner
                         .clicked()
@@ -72,19 +108,19 @@ impl HeditApp {
             });
         match action {
             Some(Action::Files) => {
-                if !self.source_control.open && self.settings.show_sidebar {
+                if self.sidebar == Sidebar::Files && self.settings.show_sidebar {
                     self.execute(ctx, Command::Sidebar);
                 } else {
-                    self.source_control.open = false;
+                    self.sidebar = Sidebar::Files;
                     self.settings.show_sidebar = true;
                     self.focus_editor = true;
                 }
             }
             Some(Action::Git) => {
-                if self.source_control.open && self.settings.show_sidebar {
+                if self.sidebar == Sidebar::SourceControl && self.settings.show_sidebar {
                     self.execute(ctx, Command::Sidebar);
                 } else {
-                    self.open_source_control(ctx);
+                    self.show_git_sidebar(ctx);
                 }
             }
             Some(Action::Command(command)) => self.execute(ctx, command),
@@ -93,12 +129,16 @@ impl HeditApp {
     }
     pub(super) fn workspace_header(&mut self, ui: &mut egui::Ui, git: bool) -> Option<bool> {
         if !self.settings.show_activity_bar {
-            return controls::workspace_switcher(
+            let selected = controls::workspace_switcher(
                 ui,
                 &self.theme,
                 git,
                 &self.shortcut_text(Command::SourceControl),
             );
+            if selected == Some(false) {
+                self.sidebar = Sidebar::Files;
+            }
+            return selected;
         }
         let m = hedit::ui_style::Metrics::for_ui(ui);
         ui.add_space(4.0);
@@ -162,7 +202,8 @@ mod tests {
             icon(&out, &ctx, Icon::SourceControl).center(),
             size,
         );
-        assert!(app.source_control.open);
+        assert_eq!(app.sidebar, Sidebar::SourceControl);
+        assert!(!app.source_control.open);
         let out = frame_size(&ctx, &mut app, vec![], size);
         click_at(&ctx, &mut app, icon(&out, &ctx, Icon::Files).center(), size);
         assert!(!app.source_control.open);

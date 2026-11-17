@@ -61,7 +61,12 @@ pub(super) const TAB_KEYS: [(Command, Key); 9] = [
 impl HeditApp {
     /// Make a tab the active one, as clicking it does.
     pub(super) fn select_tab(&mut self, index: usize) {
-        if index >= self.workspace.open.len() || index == self.workspace.active {
+        if index >= self.workspace.open.len() {
+            return;
+        }
+        self.source_control.open = false;
+        if index == self.workspace.active {
+            self.focus_editor = true;
             return;
         }
         self.navigation_mark();

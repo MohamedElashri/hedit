@@ -1213,7 +1213,10 @@ impl HeditApp {
     }
     pub(super) fn command_selected(&self, command: Command) -> bool {
         match command {
-            Command::SourceControl => self.source_control.open,
+            Command::SourceControl => {
+                self.sidebar == workbench_navigation::Sidebar::SourceControl
+                    && self.settings.show_sidebar
+            }
             Command::MarkdownSource => {
                 self.active().view.markdown_view == hedit::session::MarkdownView::Source
             }
@@ -1307,6 +1310,7 @@ impl HeditApp {
         }
         if self.source_control.open {
             if command == Command::Close {
+                self.source_control.review_tab = false;
                 self.source_control.open = false;
                 self.focus_editor = true;
                 return;
@@ -1314,6 +1318,7 @@ impl HeditApp {
             if !matches!(
                 command,
                 Command::SourceControl
+                    | Command::FindFiles
                     | Command::GitCommit
                     | Command::GitNextFile
                     | Command::GitPreviousFile
@@ -1370,9 +1375,7 @@ impl HeditApp {
             }
             Command::MarkdownRefresh => self.refresh_markdown(ctx),
             Command::FindFiles => {
-                self.quality.folders_open = true;
-                self.quality.folder_focus = true;
-                self.focus_editor = false;
+                self.show_search_sidebar();
             }
             Command::FindPrevious => self.find_advanced(ctx, true),
             Command::SelectAllMatches => self.select_all_matches(),
@@ -1397,7 +1400,7 @@ impl HeditApp {
             Command::NavForward => self.navigate(ctx, true),
             Command::CompareDisk => self.compare_disk(ctx, false),
             Command::GitDiff => self.compare_disk(ctx, true),
-            Command::SourceControl => self.open_source_control(ctx),
+            Command::SourceControl => self.show_git_sidebar(ctx),
             Command::GitCommit => self.git_submit_commit(ctx),
             Command::GitNextFile => self.source_control.move_review(ctx, true),
             Command::GitPreviousFile => self.source_control.move_review(ctx, false),

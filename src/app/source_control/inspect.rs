@@ -275,6 +275,7 @@ impl HeditApp {
             return;
         }
         let state = &mut self.source_control;
+        state.show_review();
         state.navigate(View::Blame, true);
         state.clear_review();
         state.view = View::Blame;
@@ -291,6 +292,7 @@ impl HeditApp {
             return;
         }
         let state = &mut self.source_control;
+        state.show_review();
         state.navigate(View::History, true);
         state.clear_review();
         state.view = View::History;

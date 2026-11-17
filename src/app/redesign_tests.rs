@@ -39,6 +39,11 @@ fn sidebar_button_hides_and_restores_each_workspace_without_changing_files() {
                 app.set_theme(&ctx, theme.clone());
                 app.settings.show_tab_bar = tabs;
                 app.source_control.open = source_control;
+                app.sidebar = if source_control {
+                    workbench_navigation::Sidebar::SourceControl
+                } else {
+                    workbench_navigation::Sidebar::Files
+                };
                 app.workspace.open[0].page.text = "Keep this unsaved text.".into();
                 app.workspace.edit(0, "").unwrap();
                 for _ in 0..3 {

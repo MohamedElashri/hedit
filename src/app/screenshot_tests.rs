@@ -324,7 +324,7 @@ fn export_readme_screenshots() {
     drop(scene);
 
     let mut scene = Scene::new(false);
-    scene.app.query = "readings".into();
+    scene.app.quality.folder_query = "readings".into();
     scene.app.quality.folders_open = true;
     scene.app.folder_search(&scene.ctx, false);
     scene.wait(|app| app.quality.folder_task.is_none());
@@ -555,4 +555,27 @@ fn export_readme_ssh_screenshot() {
         !scene._directory.path().join("client/session.json").exists(),
         "remote document content never enters local recovery"
     );
+}
+
+#[test]
+#[ignore = "exports persistent sidebar previews to HEDIT_PREVIEW_DIR"]
+fn export_sidebar_previews() {
+    let output =
+        PathBuf::from(std::env::var_os("HEDIT_PREVIEW_DIR").expect("set HEDIT_PREVIEW_DIR"));
+    std::fs::create_dir_all(&output).unwrap();
+    for light in [false, true] {
+        let mut scene = Scene::new(light);
+        scene.app.execute(&scene.ctx, Command::FindFiles);
+        scene.app.quality.folder_query = "readings".into();
+        scene.app.folder_search(&scene.ctx, false);
+        let started = Instant::now();
+        while scene.app.quality.folder_task.is_some() {
+            scene.app.receive(&scene.ctx);
+            assert!(started.elapsed() < Duration::from_secs(20));
+            thread::sleep(Duration::from_millis(5));
+        }
+        scene.save(&output, if light { "search-light" } else { "search-dark" });
+        scene.app.show_git_sidebar(&scene.ctx);
+        scene.save(&output, if light { "scm-light" } else { "scm-dark" });
+    }
 }

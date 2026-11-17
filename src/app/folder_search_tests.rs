@@ -16,12 +16,84 @@ fn fixture(lines: usize) -> (tempfile::TempDir, egui::Context, HeditApp) {
     let ctx = egui::Context::default();
     let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
     app.set_folder(hedit::folder::read_directory(root).unwrap());
-    app.query = "needle".into();
-    app.replacement = "replacement".into();
+    app.quality.folder_query = "needle".into();
+    app.quality.folder_replacement = "replacement".into();
     app.quality.folders_open = true;
     app.folder_search(&ctx, false);
     finish_app_job(&mut app, &ctx);
     (directory, ctx, app)
+}
+
+#[test]
+fn persistent_search_preserves_editor_find_state_and_reuses_grouped_rows() {
+    let (_directory, ctx, mut app) = fixture(1500);
+    app.query = "editor-only".into();
+    app.replacement = "editor replacement".into();
+    app.execute(&ctx, Command::FindFiles);
+    assert!(!app.quality.folders_open, "docked search is not an overlay");
+    assert_eq!(app.sidebar, workbench_navigation::Sidebar::Search);
+    let size = egui::vec2(720.0, 480.0);
+    for _ in 0..4 {
+        frame_size(&ctx, &mut app, vec![], size);
+    }
+    let builds = app.quality.folder_rows.builds;
+    for _ in 0..20 {
+        frame_size(&ctx, &mut app, vec![], size);
+    }
+    assert_eq!(app.quality.folder_rows.builds, builds);
+    frame_size(&ctx, &mut app, vec![egui::Event::Text("x".into())], size);
+    assert_eq!(app.query, "editor-only");
+    assert_eq!(app.replacement, "editor replacement");
+    assert_eq!(app.quality.folder_query, "needlex");
+    frame_size(
+        &ctx,
+        &mut app,
+        vec![super::tests::key(Key::Escape, Modifiers::NONE)],
+        size,
+    );
+    assert_eq!(app.sidebar, workbench_navigation::Sidebar::Search);
+    assert!(app.settings.show_sidebar);
+    frame_size(
+        &ctx,
+        &mut app,
+        vec![egui::Event::Text("draft".into())],
+        size,
+    );
+    assert_eq!(app.active().page.text, "draft");
+    assert_eq!(app.quality.folder_rows.builds, builds);
+    let hits = app.quality.results.hits.len();
+    app.sidebar = workbench_navigation::Sidebar::Files;
+    frame_size(&ctx, &mut app, vec![], size);
+    app.execute(&ctx, Command::FindFiles);
+    frame_size(&ctx, &mut app, vec![], size);
+    assert_eq!(app.quality.results.hits.len(), hits);
+    assert_eq!(app.quality.folder_rows.builds, builds);
+}
+
+#[test]
+fn search_sidebar_keeps_the_document_visible_at_large_ui_sizes() {
+    let (_directory, ctx, mut app) = fixture(40);
+    app.workspace.open[0].page.text = "Keep editing this unsaved note".into();
+    app.workspace.edit(0, "").unwrap();
+    app.execute(&ctx, Command::FindFiles);
+    app.settings.ui_font_size = 20.0;
+    app.settings.ui_density = hedit::ui_style::Density::Comfortable;
+    let size = egui::vec2(720.0, 480.0);
+    for _ in 0..5 {
+        frame_size(&ctx, &mut app, vec![], size);
+    }
+    let out = frame_size(&ctx, &mut app, vec![], size);
+    let side = egui::containers::panel::PanelState::load(&ctx, egui::Id::new("search-sidebar"))
+        .unwrap()
+        .rect;
+    assert!(side.width() < size.x * 0.6);
+    assert!(out
+        .shapes
+        .iter()
+        .any(|s| text_rect(&s.shape, "Keep editing this unsaved note")
+            .is_some_and(|r| r.intersects(s.clip_rect))));
+    assert!(!app.source_control.open);
+    assert_eq!(app.workspace.open.len(), 1);
 }
 
 #[test]
@@ -126,8 +198,8 @@ fn matches_are_highlighted_and_context_is_optional() {
 #[test]
 fn invalid_search_is_reported_inside_the_results_window() {
     let (_directory, ctx, mut app) = fixture(4);
-    app.quality.options.regex = true;
-    app.query = "[".into();
+    app.quality.folder_options.regex = true;
+    app.quality.folder_query = "[".into();
     app.folder_search(&ctx, false);
     finish_app_job(&mut app, &ctx);
     assert!(matches!(
@@ -149,16 +221,16 @@ fn stale_or_incomplete_replacement_previews_cannot_be_applied() {
     let ctx = egui::Context::default();
     let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
     app.set_folder(hedit::folder::read_directory(root).unwrap());
-    app.query = "old".into();
-    app.replacement = "new".into();
+    app.quality.folder_query = "old".into();
+    app.quality.folder_replacement = "new".into();
     app.folder_search(&ctx, true);
     tests::finish_app_job(&mut app, &ctx);
-    app.query = "different".into();
+    app.quality.folder_query = "different".into();
     app.apply_folder_replacements(&ctx);
     assert!(!app.busy);
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "old text\n");
     assert_eq!(app.quality.results.plans.len(), 1);
-    app.query = "old".into();
+    app.quality.folder_query = "old".into();
     app.quality.results.truncated = true;
     app.apply_folder_replacements(&ctx);
     assert!(!app.busy);

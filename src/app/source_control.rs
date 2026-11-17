@@ -65,6 +65,10 @@ struct Reply {
 }
 pub(super) struct SourceControl {
     pub open: bool,
+    pub review_tab: bool,
+    pub reveal_review: bool,
+    sidebar_visible: bool,
+    sidebar_initialized: bool,
     pub view: View,
     pub prompt: Option<Prompt>,
     pub pending: bool,
@@ -104,6 +108,10 @@ impl Default for SourceControl {
         let (tx, rx) = mpsc::channel();
         Self {
             open: false,
+            review_tab: false,
+            reveal_review: false,
+            sidebar_visible: false,
+            sidebar_initialized: false,
             view: View::default(),
             prompt: None,
             pending: false,
@@ -145,6 +153,12 @@ impl Drop for SourceControl {
     }
 }
 impl SourceControl {
+    pub(super) fn show_review(&mut self) {
+        self.open = true;
+        self.review_tab = true;
+        self.reveal_review = true;
+    }
+
     pub(super) fn load(storage: Option<&dyn eframe::Storage>) -> Self {
         let drafts: BTreeMap<String, String> = storage
             .and_then(|s| eframe::get_value(s, "git-commit-drafts"))
@@ -174,7 +188,11 @@ impl SourceControl {
         eframe::set_value(storage, "git-tree-view", &self.tree_view);
     }
     pub(super) fn due(&self) -> Option<Duration> {
-        if self.open && !self.pending && self.root.is_some() && self.prompt.is_none() {
+        if (self.open || self.sidebar_visible)
+            && !self.pending
+            && self.root.is_some()
+            && self.prompt.is_none()
+        {
             Some(if self.refresh {
                 Duration::ZERO
             } else {
@@ -302,6 +320,7 @@ impl SourceControl {
         self.request(ctx, None);
     }
     fn select(&mut self, ctx: &egui::Context, selection: Selection) {
+        self.show_review();
         if self.selection.as_ref() != Some(&selection) {
             self.selection = Some(selection);
             self.diff = None;
@@ -322,9 +341,13 @@ impl SourceControl {
 }
 
 impl HeditApp {
+    #[cfg(test)]
     pub(super) fn open_source_control(&mut self, ctx: &egui::Context) {
         self.close_transient(ctx);
         self.source_control.open = true;
+        self.source_control.review_tab = true;
+        self.source_control.reveal_review = true;
+        self.sidebar = workbench_navigation::Sidebar::SourceControl;
         self.settings.show_sidebar = true;
         self.distraction_free = false;
         self.focus_editor = false;
@@ -333,6 +356,10 @@ impl HeditApp {
                 m.surrender_focus(id);
             }
         });
+        self.prepare_source_control(ctx);
+    }
+    pub(super) fn prepare_source_control(&mut self, ctx: &egui::Context) {
+        self.source_control.sidebar_initialized = true;
         if self.source_control.root.is_none() && !self.source_control.pending {
             let mut directories: Vec<_> = self
                 .workspace
@@ -459,6 +486,13 @@ impl HeditApp {
         });
     }
     pub(super) fn poll_source_control(&mut self, ctx: &egui::Context) {
+        self.source_control.sidebar_visible = self.sidebar
+            == workbench_navigation::Sidebar::SourceControl
+            && self.settings.show_sidebar
+            && !self.distraction_free;
+        if self.source_control.sidebar_visible && !self.source_control.sidebar_initialized {
+            self.prepare_source_control(ctx);
+        }
         while let Ok(reply) = self.source_control.rx.try_recv() {
             let state = &mut self.source_control;
             state.pending = false;
@@ -660,7 +694,6 @@ impl HeditApp {
             )
             .show(ctx, |ui| {
                 if self.workspace_header(ui, true) == Some(false) {
-                    self.source_control.open = false;
                     self.focus_editor = true;
                     ctx.memory_mut(|m| {
                         if let Some(id) = m.focused() {
@@ -737,6 +770,12 @@ impl HeditApp {
                     },
                 );
                 if view != self.source_control.view {
+                    if !matches!(
+                        view,
+                        View::Changes | View::History | View::Branches | View::Stashes
+                    ) {
+                        self.source_control.show_review();
+                    }
                     self.source_control.visit(ctx, view, false);
                 }
                 ui.separator();
@@ -1060,6 +1099,9 @@ impl HeditApp {
                         &commit.subject,
                     )
                 });
+                if click.clicked() {
+                    self.source_control.show_review();
+                }
                 if click.clicked() && !selected {
                     self.source_control.commit = Some(commit.oid.clone());
                     self.source_control.selection = None;

@@ -165,13 +165,25 @@ impl HeditApp {
                         .push_back(PathBuf::from(format!("{}:{line}", path.display())));
                 }
             }
-        } else if self.quality.folders_open
+        } else if (self.quality.folders_open
+            || (self.sidebar == workbench_navigation::Sidebar::Search
+                && self.settings.show_sidebar))
             && folder_search::FIELDS.into_iter().any(field)
             && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter))
         {
             self.folder_search(ctx, self.quality.folder_replace);
         }
 
+        if self.sidebar == workbench_navigation::Sidebar::Search
+            && self.settings.show_sidebar
+            && folder_search::FIELDS.into_iter().any(field)
+            && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape))
+        {
+            if let Some(id) = focused {
+                ctx.memory_mut(|m| m.surrender_focus(id));
+            }
+            self.focus_editor = true;
+        }
         let id = self.editor_id();
         let focused = ctx.memory(|m| m.has_focus(id));
         for binding in self.quality.config.keybindings.clone() {

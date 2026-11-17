@@ -36,6 +36,12 @@ pub(super) struct Quality {
     pub match_status: String,
     pub last_find: Option<LastFind>,
     pub folders_open: bool,
+    pub folder_query: String,
+    pub folder_initialized: bool,
+    pub folder_generation: u64,
+    pub folder_rows: folder_search::Rows,
+    pub folder_replacement: String,
+    pub folder_options: search::Options,
     pub folder_replace: bool,
     pub folder_context: bool,
     pub folder_collapsed: std::collections::HashSet<PathBuf>,
@@ -252,6 +258,7 @@ impl HeditApp {
                 }
             }
             Event::Results(results) => {
+                self.quality.folder_generation = self.quality.folder_generation.wrapping_add(1);
                 self.quality.folder_state = folder_search::State::Ready;
                 self.quality.folder_regex = self
                     .quality
@@ -767,6 +774,7 @@ impl HeditApp {
         if self.busy {
             return;
         }
+        self.quality.folder_generation = self.quality.folder_generation.wrapping_add(1);
         self.quality.results = Default::default();
         self.quality.folder_state = folder_search::State::Searching;
         self.quality.folder_regex = None;
@@ -783,10 +791,10 @@ impl HeditApp {
             .map(|f| PathBuf::from(&f.path))
             .collect::<Vec<_>>();
         let (query, replacement, filter, options) = (
-            self.query.clone(),
-            self.replacement.clone(),
+            self.quality.folder_query.clone(),
+            self.quality.folder_replacement.clone(),
             self.quality.filter.clone(),
-            self.quality.options.clone(),
+            self.quality.folder_options.clone(),
         );
         self.quality.folder_snapshot = Some((query.clone(), filter.clone(), options.clone()));
         self.quality.preview_query = preview.then(|| {

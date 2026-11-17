@@ -159,6 +159,13 @@ Durable-RPC timings include host commits and network trips, not display latency.
 
 ## Workbench navigation
 
+Sidebar selection is independent of the editor surface. A Git review is a
+reusable transient tab, not a document or recovery buffer. Folder search owns
+its query/options separately from in-document Find. Search result grouping is
+cached by result generation, context and collapsed files; only visible rows are
+painted. Hidden sidebars retain state and accept pending results, but do not
+schedule Git refreshes or render their contents.
+
 The optional activity bar uses existing commands and workspace state. Hiding it
 restores the text workspace switcher. Distraction-free mode hides both without
 changing their saved preferences. Shared UI metrics scale status and terminal
