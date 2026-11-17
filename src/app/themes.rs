@@ -349,6 +349,8 @@ impl HeditApp {
     }
 
     pub(super) fn theme_preferences(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        self.workbench_preferences(ui);
+        ui.separator();
         ui.horizontal(|ui| {
             if ui
                 .selectable_label(!self.appearance.customizing, "Themes")

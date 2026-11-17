@@ -3,7 +3,6 @@
 use super::*;
 const MAX_ROWS: usize = 50_000;
 const MAX_BYTES: usize = 8 * 1024 * 1024;
-pub(super) const HEIGHT: f32 = 23.0;
 #[derive(Clone)]
 pub(super) enum Kind {
     Root,

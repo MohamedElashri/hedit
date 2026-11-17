@@ -13,8 +13,13 @@ pub(super) struct Row<'a> {
 
 pub(super) fn show(ui: &mut egui::Ui, theme: &Theme, row: Row<'_>) -> egui::Response {
     ui.push_id(row.path, |ui| {
-        let (rect, response) =
-            ui.allocate_exact_size(egui::vec2(ui.available_width(), 23.0), egui::Sense::click());
+        let (rect, response) = ui.allocate_exact_size(
+            egui::vec2(
+                ui.available_width(),
+                hedit::ui_style::Metrics::for_ui(ui).row,
+            ),
+            egui::Sense::click(),
+        );
         response.widget_info(|| {
             egui::WidgetInfo::selected(
                 egui::WidgetType::SelectableLabel,

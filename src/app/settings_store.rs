@@ -13,7 +13,7 @@ const SNIPPETS_LIMIT: u64 = 4 * 1024 * 1024;
 const MACROS_LIMIT: u64 = 4 * 1024 * 1024;
 /// Write settings this long after the last change, so a dragged slider
 /// becomes one write.
-const SETTLE: Duration = Duration::from_millis(400);
+pub(super) const SETTLE: Duration = Duration::from_millis(400);
 
 #[cfg(test)]
 thread_local! {
@@ -474,10 +474,15 @@ pub(super) fn load_fallback_fonts(tx: mpsc::Sender<Result<Action, String>>, ctx:
 /// Put the editor font first in the monospace family, or restore egui's own,
 /// and let both families fall back to system fonts for other scripts.
 pub(super) fn set_editor_font(ctx: &egui::Context, font: Option<(Vec<u8>, u32)>) {
-    set_fonts(ctx, font, None);
+    set_fonts(ctx, font, None, None);
 }
 
-fn set_fonts(ctx: &egui::Context, font: Option<(Vec<u8>, u32)>, terminal: Option<(Vec<u8>, u32)>) {
+fn set_fonts(
+    ctx: &egui::Context,
+    font: Option<(Vec<u8>, u32)>,
+    terminal: Option<(Vec<u8>, u32)>,
+    ui_font: Option<(Vec<u8>, u32)>,
+) {
     let mut fonts = egui::FontDefinitions::default();
     fonts.font_data.insert(
         "terminal-arabic".into(),
@@ -576,13 +581,41 @@ fn set_fonts(ctx: &egui::Context, font: Option<(Vec<u8>, u32)>, terminal: Option
             .families
             .insert(egui::FontFamily::Name(family.into()), fallback);
     }
+    // A bundled sans-serif keeps workbench metrics predictable across systems.
+    // Custom UI fonts never replace the editor, terminal or reader families.
+    fonts.font_data.insert(
+        "workbench".into(),
+        std::sync::Arc::new(ui_font.map_or_else(
+            || {
+                egui::FontData::from_static(include_bytes!(
+                    "../../assets/fonts/NotoSans-Regular.ttf"
+                ))
+            },
+            |(bytes, index)| egui::FontData {
+                index,
+                ..egui::FontData::from_owned(bytes)
+            },
+        )),
+    );
+    fonts
+        .families
+        .get_mut(&egui::FontFamily::Proportional)
+        .unwrap()
+        .insert(0, "workbench".into());
     ctx.set_fonts(fonts);
 }
 
 impl HeditApp {
     pub(super) fn rebuild_fonts(&mut self, ctx: &egui::Context) {
+        self.tab_strip.invalidate_fonts();
+        ctx.request_repaint();
         self.invalidate_terminal_font();
-        set_fonts(ctx, self.editor_font.clone(), self.terminal_font.clone());
+        set_fonts(
+            ctx,
+            self.editor_font.clone(),
+            self.terminal_font.clone(),
+            self.ui_font.data.clone(),
+        );
     }
     fn apply_terminal_font(&mut self, ctx: &egui::Context) {
         let wanted = self
@@ -618,6 +651,7 @@ impl HeditApp {
     }
     /// Apply the cursor and font settings once they settle.
     pub(super) fn apply_editor_style(&mut self, ctx: &egui::Context) {
+        self.apply_workbench_style(ctx);
         self.apply_terminal_font(ctx);
         let (width, blink) = (self.settings.caret_width, self.settings.caret_blink);
         let cursor = ctx.style().visuals.text_cursor.clone();

@@ -10,6 +10,8 @@ pub(super) struct Cache {
     last_active: Option<(u64, usize)>,
     last_width: f32,
     dirty: bool,
+    font_refresh: u8,
+    height: f32,
 }
 
 fn title_job(
@@ -18,13 +20,14 @@ fn title_job(
     color: Color32,
     muted: Color32,
     italics: bool,
+    font: f32,
 ) -> egui::text::LayoutJob {
     let mut job = egui::text::LayoutJob::default();
     job.append(
         title,
         0.0,
         egui::TextFormat {
-            font_id: egui::FontId::proportional(12.0),
+            font_id: egui::FontId::proportional(font),
             color,
             italics,
             ..Default::default()
@@ -35,7 +38,7 @@ fn title_job(
             &format!(" · {}", hedit::bidi::display(location)),
             0.0,
             egui::TextFormat {
-                font_id: egui::FontId::proportional(11.0),
+                font_id: egui::FontId::proportional((font - 1.0).max(10.0)),
                 color: muted,
                 italics,
                 ..Default::default()
@@ -125,14 +128,22 @@ struct Entry {
     width: f32,
 }
 impl Cache {
+    pub fn invalidate_fonts(&mut self) {
+        // egui installs new definitions on the next pass. Refresh both passes,
+        // including offscreen tabs, before returning to cached geometry.
+        self.font_refresh = 2;
+    }
     pub fn sync(&mut self, ui: &egui::Ui, workspace: &Workspace) {
+        let metrics = hedit::ui_style::Metrics::for_ui(ui);
+        self.height = metrics.tab;
         let font = ui.style().text_styles[&egui::TextStyle::Button].clone();
         let style = (
             font,
             ui.ctx().pixels_per_point(),
             ui.spacing().button_padding,
         );
-        let restyle = self.style.as_ref() != Some(&style);
+        let restyle = self.style.as_ref() != Some(&style) || self.font_refresh > 0;
+        self.font_refresh = self.font_refresh.saturating_sub(1);
         let locations = (self.entries.len() != workspace.open.len()
             || self.entries.iter().zip(&workspace.open).any(|(e, b)| {
                 e.id != b.view.id || e.name != b.view.name || e.path != b.page.info.path
@@ -175,6 +186,7 @@ impl Cache {
                 Color32::WHITE,
                 Color32::GRAY,
                 false,
+                metrics.font,
             ))
             .into_galley(
                 ui,
@@ -184,7 +196,7 @@ impl Cache {
             );
             let width = 20.0
                 + (galley.size().x + ui.spacing().button_padding.x * 2.0).max(96.0)
-                + if close { 24.0 } else { 0.0 };
+                + if close { metrics.control + 2.0 } else { 0.0 };
             let entry = Entry {
                 id: b.view.id,
                 name: b.view.name.clone(),
@@ -233,6 +245,7 @@ impl Cache {
             color,
             muted,
             italics,
+            self.style.as_ref().map_or(13.0, |s| s.0.size),
         )
     }
     pub fn label(&self, i: usize) -> &str {
@@ -245,11 +258,7 @@ impl Cache {
         self.offsets.last().copied().unwrap_or(0.0)
     }
     pub fn height(&self) -> f32 {
-        if self.entries.iter().any(|e| e.close) {
-            28.0
-        } else {
-            26.0
-        }
+        self.height
     }
     pub fn visible(&self, viewport: egui::Rect) -> std::ops::Range<usize> {
         let first = self
@@ -356,6 +365,7 @@ mod tests {
             Color32::WHITE,
             Color32::GRAY,
             true,
+            13.0,
         );
         assert_eq!(job.text, format!("a · {}", hedit::bidi::display("مشروع")));
         assert_eq!(job.sections[1].format.color, Color32::GRAY);

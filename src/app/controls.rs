@@ -17,7 +17,10 @@ pub(super) fn sidebar_button(
     };
     let response = ui.add(
         egui::Button::new("")
-            .min_size(egui::vec2(28.0, 24.0))
+            .min_size(egui::vec2(
+                hedit::ui_style::Metrics::for_ui(ui).control.max(28.0),
+                hedit::ui_style::Metrics::for_ui(ui).control,
+            ))
             .corner_radius(4.0)
             .selected(shown)
             .frame(false),
@@ -248,7 +251,10 @@ pub(super) fn primary_button(
         } else {
             theme.elevated.color()
         })
-        .min_size(egui::vec2(72.0, 28.0)),
+        .min_size(egui::vec2(
+            72.0,
+            hedit::ui_style::Metrics::for_ui(ui).control,
+        )),
     )
 }
 
@@ -265,7 +271,7 @@ pub(super) fn tab_close_button(ui: &mut egui::Ui, dirty: bool) -> egui::Response
 }
 
 fn close_control(ui: &mut egui::Ui, hint: &str, dirty: bool) -> egui::Response {
-    let side = 22.0;
+    let side = hedit::ui_style::Metrics::for_ui(ui).control;
     let (rect, response) = ui.allocate_exact_size(egui::vec2(side, side), egui::Sense::click());
     response
         .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), hint));
@@ -274,7 +280,7 @@ fn close_control(ui: &mut egui::Ui, hint: &str, dirty: bool) -> egui::Response {
         if response.hovered() || response.has_focus() {
             ui.painter().rect_filled(rect, 3.0, visuals.weak_bg_fill);
         }
-        let cross = rect.shrink(5.0);
+        let cross = egui::Rect::from_center_size(rect.center(), egui::vec2(12.0, 12.0));
         let color = if response.hovered() || response.has_focus() {
             visuals.fg_stroke.color
         } else {
@@ -378,7 +384,10 @@ mod tests {
         let mut rect = egui::Rect::NOTHING;
         run(&ctx, vec![], |ui| rect = close_button(ui, "Close").rect);
         assert_eq!(rect.width(), rect.height());
-        assert_eq!(rect.width(), 22.0);
+        assert!(
+            rect.width() >= 22.0,
+            "close targets must stay large enough to hit"
+        );
         let pos = rect.center();
         let button = |pressed| egui::Event::PointerButton {
             pos,

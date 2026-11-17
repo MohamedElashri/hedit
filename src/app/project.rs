@@ -365,17 +365,18 @@ impl HeditApp {
                 row.path == *path && !matches!(row.kind, tree::Kind::Message { .. })
             })
         });
+        let row_height = hedit::ui_style::Metrics::for_ui(ui).row;
         let mut scroll = egui::ScrollArea::vertical()
             .id_salt("folder-tree")
             .auto_shrink([false, false]);
         if let Some(index) = reveal {
-            let stride = tree::HEIGHT + ui.spacing().item_spacing.y;
+            let stride = row_height + ui.spacing().item_spacing.y;
             scroll = scroll.vertical_scroll_offset(
                 (index as f32 * stride - ui.available_height() / 2.0).max(0.0),
             );
             self.project.reveal = None;
         }
-        scroll.show_rows(ui, tree::HEIGHT, tree.rows.len(), |ui, rows| {
+        scroll.show_rows(ui, row_height, tree.rows.len(), |ui, rows| {
             for index in rows {
                 let node = &tree.rows[index];
                 if let tree::Kind::Message { warning } = node.kind {
@@ -385,7 +386,7 @@ impl HeditApp {
                         self.theme.muted
                     };
                     ui.add_sized(
-                        [ui.available_width(), tree::HEIGHT],
+                        [ui.available_width(), row_height],
                         egui::Label::new(RichText::new(&node.name).color(color.color())).truncate(),
                     )
                     .on_hover_text(&node.name);

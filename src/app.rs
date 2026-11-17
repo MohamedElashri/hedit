@@ -118,6 +118,7 @@ mod updates;
 mod user_guide;
 mod view_commands;
 mod wait;
+mod workbench;
 
 use commands::Command;
 use eframe::egui::{self, FontId, Key, Modifiers, RichText};
@@ -166,6 +167,7 @@ enum Action {
     Font(String, Vec<u8>, u32),
     FontFailed(String, String),
     TerminalFont(u64, String, Result<(Vec<u8>, u32), String>),
+    UiFont(u64, String, Result<(Vec<u8>, u32), String>),
     /// Installed font families, for the font picker.
     FontFamilies(Vec<hedit::fonts::Family>),
     /// System fonts for other scripts are ready.
@@ -303,6 +305,7 @@ pub struct HeditApp {
     terminal_font_applied: Option<String>,
     terminal_font_generation: u64,
     terminal_font_loading: Option<u64>,
+    ui_font: workbench::FontState,
     /// Installed font families, once listed.
     font_families: Option<Vec<hedit::fonts::Family>>,
     /// Open the font picker when the families arrive.
@@ -505,6 +508,7 @@ impl HeditApp {
             editor_font_loading: None,
             terminal_font: None,
             terminal_font_applied: None,
+            ui_font: workbench::FontState::default(),
             terminal_font_generation: 0,
             terminal_font_loading: None,
             font_families: None,
@@ -1159,6 +1163,7 @@ impl HeditApp {
                         Action::Font(..)
                         | Action::FontFailed(..)
                         | Action::TerminalFont(..)
+                        | Action::UiFont(..)
                         | Action::FallbackFonts
                         | Action::FontFamilies(_),
                     ) => true,
@@ -1397,6 +1402,9 @@ impl HeditApp {
                         }
                         self.rebuild_fonts(ctx);
                     }
+                }
+                Ok(Action::UiFont(generation, name, result)) => {
+                    self.finish_ui_font(ctx, generation, name, result);
                 }
                 Ok(Action::FontFamilies(families)) => {
                     self.font_families = Some(families);

@@ -525,6 +525,15 @@ Tools. Valid personal changes save after a short delay. Server configuration use
 collapsed until needed. Key bindings retain per-command Reset and Reset all.
 Two-key bindings are supported; `Primary` means Ctrl or macOS Cmd.
 
+### Interface appearance
+
+**Settings → Appearance → Interface** controls `ui_font_face`, `ui_font_size`
+(10–20 logical pixels), and `ui_density` (`compact`, `default`, or `comfortable`).
+The bundled Noto Sans is the default UI font; an installed family or absolute
+font-file path can replace it. These preferences affect menus, tabs and panels
+independently of editor zoom, editor fonts and terminal overrides. Font files
+load in the background, with the built-in font as fallback when unavailable.
+
 ### The settings file
 
 **Open settings.json** opens the editable configuration. Saving applies changes;

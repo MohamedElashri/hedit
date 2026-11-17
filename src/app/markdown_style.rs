@@ -30,7 +30,10 @@ pub(super) fn apply(ui: &mut egui::Ui, theme: &Theme, font_size: f32) {
     ] {
         style.text_styles.insert(name, FontId::new(size, family));
     }
-    style.spacing.item_spacing.y = 0.0;
+    // Document spacing is independent of workbench density.
+    style.spacing.item_spacing = egui::vec2(6.0, 0.0);
+    style.spacing.interact_size.y = 22.0;
+    style.spacing.button_padding = egui::vec2(8.0, 3.0);
     style.visuals.override_text_color = None;
     style.visuals.widgets.noninteractive.fg_stroke.color = theme.text.color();
     style.visuals.widgets.active.fg_stroke.color = theme.text.color();
