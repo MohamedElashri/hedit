@@ -68,15 +68,22 @@ fn consume_keys(ctx: &egui::Context) {
 impl HeditApp {
     /// Every active chord: user bindings, then defaults not overridden.
     fn chords(&self) -> Vec<(Command, KeyboardShortcut, KeyboardShortcut)> {
-        let user = self.quality.config.keybindings.iter().filter_map(|b| {
-            match parse(&b.shortcut).ok()?.as_slice() {
+        let user = self
+            .quality
+            .config
+            .keybindings
+            .iter()
+            .filter(|b| !self.preferences_open || Self::settings_key_command(b.command))
+            .filter_map(|b| match parse(&b.shortcut).ok()?.as_slice() {
                 [first, second] => Some((b.command, *first, *second)),
                 _ => None,
-            }
-        });
+            });
         let defaults = DEFAULT_CHORDS
             .iter()
-            .filter(|(command, _)| !self.overridden(*command))
+            .filter(|(command, _)| {
+                !self.overridden(*command)
+                    && (!self.preferences_open || Self::settings_key_command(*command))
+            })
             .filter_map(|(command, text)| match parse(text).ok()?.as_slice() {
                 [first, second] => Some((*command, *first, *second)),
                 _ => None,

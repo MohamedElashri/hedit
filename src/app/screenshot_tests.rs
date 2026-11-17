@@ -647,3 +647,28 @@ fn export_document_navigation_previews() {
         );
     }
 }
+
+#[test]
+#[ignore = "exports scoped settings to HEDIT_PREVIEW_DIR"]
+fn export_scoped_settings_previews() {
+    let output =
+        PathBuf::from(std::env::var_os("HEDIT_PREVIEW_DIR").expect("set HEDIT_PREVIEW_DIR"));
+    std::fs::create_dir_all(&output).unwrap();
+    for light in [false, true] {
+        let mut scene = Scene::new(light);
+        scene.app.execute(&scene.ctx, Command::ProjectSettings);
+        scene.settle();
+        scene.click("Resolved settings for the active file");
+        scene.settle();
+        scene.save(
+            &output,
+            if light {
+                "project-light"
+            } else {
+                "project-dark"
+            },
+        );
+        scene.app.open_preferences(PreferencesPage::Formatting);
+        scene.save(&output, if light { "user-light" } else { "user-dark" });
+    }
+}

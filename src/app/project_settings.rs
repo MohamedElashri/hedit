@@ -18,6 +18,15 @@ pub(super) struct Editor {
     pub error: Option<String>,
     pub dirty: bool,
     pub saved: bool,
+    baseline: Option<u64>,
+    origin: Option<PathBuf>,
+}
+
+fn settings_fingerprint(value: &Value) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    value.to_string().hash(&mut hasher);
+    hasher.finish()
 }
 
 fn parse(text: &str) -> Result<Defaults, String> {
@@ -267,13 +276,19 @@ impl HeditApp {
         self.quality.settings_open = true;
         self.focus_editor = false;
         let mut error = None;
+        let mut baseline = None;
         let value = self
             .quality
             .project_path
             .as_ref()
             .and_then(
                 |path| match projects::read_json::<Value>(path, 1024 * 1024) {
-                    Ok(value) => value.get("settings").cloned(),
+                    Ok(value) => {
+                        baseline = Some(settings_fingerprint(
+                            value.get("settings").unwrap_or(&Value::Null),
+                        ));
+                        value.get("settings").cloned()
+                    }
                     Err(e) => {
                         error = Some(e);
                         None
@@ -294,6 +309,8 @@ impl HeditApp {
                 ..Default::default()
             },
         };
+        self.quality.project_editor.baseline = baseline;
+        self.quality.project_editor.origin = self.quality.project_path.clone();
     }
 
     pub(super) fn switch_project_settings_view(&mut self, view: View) -> bool {
@@ -338,8 +355,32 @@ impl HeditApp {
 
     pub(super) fn save_project_settings_draft(&mut self) -> Result<(), String> {
         let draft = parse(&self.quality.settings_json)?;
+        if self.quality.project_editor.origin != self.quality.project_path {
+            return Err(
+                "The active project changed. Reload its settings before saving this draft.".into(),
+            );
+        }
         if let Some(path) = &self.quality.project_path {
+            if self.quality.project_editor.baseline.is_none() {
+                return Err("Reload the saved project settings before applying this draft.".into());
+            }
+            let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
+            if self.workspace.open.iter().any(|b| {
+                b.page.info.dirty
+                    && b.page.info.path.as_deref().is_some_and(|p| {
+                        std::fs::canonicalize(p).unwrap_or_else(|_| PathBuf::from(p)) == resolved
+                    })
+            }) {
+                return Err(
+                    "Save or discard edits in the project file before applying this draft.".into(),
+                );
+            }
             let mut definition: Value = projects::read_json(path, 1024 * 1024)?;
+            if self.quality.project_editor.baseline.is_some_and(|base| {
+                base != settings_fingerprint(definition.get("settings").unwrap_or(&Value::Null))
+            }) {
+                return Err("Project settings changed on disk. Reload the saved values before applying this draft.".into());
+            }
             let settings =
                 serde_json::from_str(&self.quality.settings_json).map_err(|e| e.to_string())?;
             definition
@@ -350,6 +391,8 @@ impl HeditApp {
             serde_json::from_value::<projects::Project>(definition.clone())
                 .map_err(|e| e.to_string())?;
             projects::atomic_json(path, &definition)?;
+            self.quality.project_editor.baseline =
+                Some(settings_fingerprint(&definition["settings"]));
         }
         self.quality.project_settings = draft.clone();
         self.quality.project_editor.draft = draft;
@@ -365,7 +408,6 @@ impl HeditApp {
     pub(super) fn project_settings_window(&mut self, ctx: &egui::Context) {
         let mut open = true;
         let mut close = false;
-        let mut save = false;
         let size = egui::vec2(
             (ctx.screen_rect().width() - 64.0).min(740.0),
             (ctx.screen_rect().height() - 100.0).min(440.0),
@@ -384,111 +426,128 @@ impl HeditApp {
                     .corner_radius(8),
             )
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    for (view, label) in [(View::Gui, "GUI"), (View::Json, "JSON")] {
-                        if ui
-                            .selectable_label(self.quality.project_editor.view == view, label)
-                            .clicked()
-                        {
-                            self.switch_project_settings_view(view);
-                        }
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if self.quality.project_editor.dirty {
-                            ui.weak("Unsaved changes");
-                        } else if self.quality.project_editor.saved {
-                            ui.weak("Saved");
-                        }
-                    });
-                });
-                ui.separator();
-                let error_height = if self.quality.project_editor.error.is_some() {
-                    56.0
-                } else {
-                    0.0
-                };
-                let body_height = (ui.available_height() - 44.0 - error_height).max(60.0);
-                let gui = self.quality.project_editor.view == View::Gui;
-                let mut changed = false;
-                egui::ScrollArea::both()
-                    .id_salt(("project-settings-body", gui))
-                    .max_height(body_height)
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        if gui {
-                            changed = self.quality.project_editor.gui(ui);
-                        } else {
-                            let response = ui.add(
-                                egui::TextEdit::multiline(&mut self.quality.settings_json)
-                                    .id(egui::Id::new("project-settings-json"))
-                                    .code_editor()
-                                    .desired_width(f32::INFINITY)
-                                    .desired_rows(14),
-                            );
-                            if response.changed() {
-                                self.quality.project_editor.dirty = true;
-                                self.quality.project_editor.saved = false;
-                                self.quality.project_editor.error = None;
-                            }
-                        }
-                    });
-                if changed {
-                    self.sync_project_settings_gui();
-                }
-                if let Some(error) = &self.quality.project_editor.error {
-                    egui::ScrollArea::vertical()
-                        .id_salt("project-settings-error")
-                        .max_height(48.0)
-                        .show(ui, |ui| {
-                            ui.add(
-                                egui::Label::new(
-                                    RichText::new(error).color(self.theme.error.color()),
-                                )
-                                .wrap(),
-                            );
-                        });
-                }
-                ui.separator();
-                ui.horizontal(|ui| {
-                    let label = self.quality.project_path.as_ref().map_or(
-                        "Current workspace".into(),
-                        |p| {
-                            p.file_name()
-                                .unwrap_or_default()
-                                .to_string_lossy()
-                                .into_owned()
-                        },
-                    );
-                    ui.add(egui::Label::new(RichText::new(label).small().weak()).truncate())
-                        .on_hover_text(
-                            self.quality.project_path.as_ref().map_or(
-                                "Save a project to share these settings in a .hedit-project file."
-                                    .into(),
-                                |p| p.display().to_string(),
-                            ),
-                        );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        save = controls::primary_button(
-                            ui,
-                            &self.theme,
-                            "Save settings",
-                            !self.busy && !self.closing,
-                        )
-                        .clicked();
-                        close = ui
-                            .add_sized([72.0, 28.0], egui::Button::new("Close"))
-                            .clicked();
-                    });
-                });
+                close = self.project_settings_contents(ui, false);
             });
         self.quality.settings_open = open && !close;
         if !self.quality.settings_open {
             self.focus_editor = true;
         }
+    }
+    pub(super) fn project_settings_contents(&mut self, ui: &mut egui::Ui, inline: bool) -> bool {
+        let mut close = false;
+        let mut save = false;
+        ui.horizontal(|ui| {
+            for (view, label) in [(View::Gui, "GUI"), (View::Json, "JSON")] {
+                if ui
+                    .selectable_label(self.quality.project_editor.view == view, label)
+                    .clicked()
+                {
+                    self.switch_project_settings_view(view);
+                }
+            }
+            if ui
+                .small_button(if self.quality.project_editor.dirty {
+                    "Discard draft and reload"
+                } else {
+                    "Reload draft"
+                })
+                .on_hover_text(
+                    "Replace this draft with saved values. Choose Save settings to apply them.",
+                )
+                .clicked()
+            {
+                self.open_project_settings();
+                self.quality.settings_open = !inline;
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if self.quality.project_editor.dirty {
+                    ui.weak("Unsaved changes");
+                } else if self.quality.project_editor.saved {
+                    ui.weak("Saved");
+                }
+            });
+        });
+        ui.separator();
+        let error_height = if self.quality.project_editor.error.is_some() {
+            56.0
+        } else {
+            0.0
+        };
+        let body_height = (ui.available_height() - 44.0 - error_height).max(60.0);
+        let gui = self.quality.project_editor.view == View::Gui;
+        let mut changed = false;
+        egui::ScrollArea::both()
+            .id_salt(("project-settings-body", gui))
+            .max_height(body_height)
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                if gui {
+                    changed = self.quality.project_editor.gui(ui);
+                } else {
+                    let response = ui.add(
+                        egui::TextEdit::multiline(&mut self.quality.settings_json)
+                            .id(egui::Id::new("project-settings-json"))
+                            .code_editor()
+                            .desired_width(f32::INFINITY)
+                            .desired_rows(14),
+                    );
+                    if response.changed() {
+                        self.quality.project_editor.dirty = true;
+                        self.quality.project_editor.saved = false;
+                        self.quality.project_editor.error = None;
+                    }
+                }
+            });
+        if changed {
+            self.sync_project_settings_gui();
+        }
+        if let Some(error) = &self.quality.project_editor.error {
+            egui::ScrollArea::vertical()
+                .id_salt("project-settings-error")
+                .max_height(48.0)
+                .show(ui, |ui| {
+                    ui.add(
+                        egui::Label::new(RichText::new(error).color(self.theme.error.color()))
+                            .wrap(),
+                    );
+                });
+        }
+        ui.separator();
+        ui.horizontal(|ui| {
+            let label =
+                self.quality
+                    .project_path
+                    .as_ref()
+                    .map_or("Current workspace".into(), |p| {
+                        p.file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .into_owned()
+                    });
+            ui.add(egui::Label::new(RichText::new(label).small().weak()).truncate())
+                .on_hover_text(self.quality.project_path.as_ref().map_or(
+                    "Save a project to share these settings in a .hedit-project file.".into(),
+                    |p| p.display().to_string(),
+                ));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                save = controls::primary_button(
+                    ui,
+                    &self.theme,
+                    "Save settings",
+                    !self.busy && !self.closing,
+                )
+                .clicked();
+                close = ui
+                    .add_sized([72.0, 28.0], egui::Button::new("Close"))
+                    .clicked();
+            });
+        });
+
         if save {
             if let Err(error) = self.save_project_settings_draft() {
                 self.quality.project_editor.error = Some(error);
             }
         }
+        close
     }
 }

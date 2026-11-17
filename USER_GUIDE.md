@@ -526,6 +526,17 @@ modified files offer **Compare changes…**, keeping replaced editor text in Und
 ## Settings
 
 **Preferences → Settings…** (**Ctrl+,**) opens a resizable settings window.
+Choose **User** for shared preferences or **Project** for workspace formatting and
+language overrides. Switching scopes preserves the project draft. **Save settings**
+applies that draft; **Discard draft and reload** replaces it with saved values.
+Ctrl+S saves the visible scope and Ctrl+W closes Settings without closing a file.
+Project saves refuse conflicting disk changes or an unsaved project-file buffer.
+
+Expand **Resolved settings for the active file** in Project or User → Formatting
+to see the saved defaults and their winning sources, including language overrides
+and `.editorconfig`. Click an `.editorconfig` source to open it; **Refresh sources**
+rereads external changes. The inspector runs only while expanded. File detection
+and per-file indentation choices can differ from these formatting defaults.
 Search by setting name, description, or JSON key; searches span categories, and
 selecting a category narrows the results. Focus a category and use **Up/Down**,
 **Home** or **End** to navigate without leaving the keyboard. **Modified** shows values that differ
