@@ -308,7 +308,11 @@ The installer is served from `main`; keep published asset names compatible.
 The engine derives from [rsedit](https://github.com/goodappsstore/rsedit), commit
 `63a9ee4966d3fe1cfcd7d4af70e963e10aa297ff`. Preserve its [MIT notice](LICENSE) and
 all bundled font/dictionary/renderer/palette notices under `assets/`, including
-the math color table's LPPL license.
+the math color table's LPPL license. Workbench icons derive from pinned Microsoft
+Codicons SVGs; preserve their CC-BY-4.0 license and attribution in
+`assets/licenses/codicons-NOTICE.txt`. Their source revision and hashes are in
+`assets/icons/codicons/provenance.json`. Icons use bounded, cached native SVG
+rasterization and never depend on the selected text font.
 
 Local patches: [Markdown](vendor/egui_commonmark/PATCH.md),
 [Ghostty build](vendor/libghostty-vt-sys/PATCH.md). Text-renderer patches share row

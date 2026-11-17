@@ -12,16 +12,18 @@ fn app() -> (tempfile::TempDir, egui::Context, HeditApp) {
     (directory, ctx, app)
 }
 
-fn sidebar_toggle(output: &egui::FullOutput) -> egui::Rect {
+fn sidebar_toggle(ctx: &egui::Context, output: &egui::FullOutput) -> egui::Rect {
     output
         .shapes
         .iter()
         .find_map(|shape| match &shape.shape {
-            egui::Shape::Rect(rect)
-                if rect.rect.size() == egui::vec2(16.0, 14.0) && rect.stroke.width == 1.3 =>
+            egui::Shape::Mesh(mesh)
+                if hedit::icons::Icon::Sidebar.matches_texture(ctx, mesh.texture_id)
+                    || hedit::icons::Icon::SidebarOff.matches_texture(ctx, mesh.texture_id) =>
             {
-                assert!(shape.clip_rect.contains_rect(rect.rect));
-                Some(rect.rect)
+                let rect = mesh.calc_bounds();
+                assert!(shape.clip_rect.contains_rect(rect));
+                Some(rect)
             }
             _ => None,
         })
@@ -43,7 +45,7 @@ fn sidebar_button_hides_and_restores_each_workspace_without_changing_files() {
                     frame_size(&ctx, &mut app, vec![], SIZE);
                 }
                 let output = frame_size(&ctx, &mut app, vec![], SIZE);
-                let toggle = sidebar_toggle(&output);
+                let toggle = sidebar_toggle(&ctx, &output);
                 let file = output
                     .shapes
                     .iter()
@@ -65,7 +67,7 @@ fn sidebar_button_hides_and_restores_each_workspace_without_changing_files() {
                     )
                     .is_some()
                 }));
-                assert_eq!(sidebar_toggle(&output), toggle);
+                assert_eq!(sidebar_toggle(&ctx, &output), toggle);
                 click_at(&ctx, &mut app, toggle.center(), SIZE);
                 assert!(app.settings.show_sidebar);
                 assert_eq!(app.source_control.open, source_control);
@@ -98,7 +100,7 @@ fn sidebar_button_restores_the_sidebar_from_distraction_free_mode() {
         }
         assert!(!app.command_selected(Command::Sidebar));
         let output = frame_size(&ctx, &mut app, vec![], SIZE);
-        click_at(&ctx, &mut app, sidebar_toggle(&output).center(), SIZE);
+        click_at(&ctx, &mut app, sidebar_toggle(&ctx, &output).center(), SIZE);
         assert!(!app.distraction_free);
         assert!(app.settings.show_sidebar);
         assert!(app.command_selected(Command::Sidebar));

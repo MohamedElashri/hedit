@@ -1,0 +1,117 @@
+{
+  "source": "https://github.com/microsoft/vscode-codicons",
+  "revision": "8d1826a9bce0a52283ecaeb63499c149e97a4f14",
+  "modification": "Fill and stroke colors normalized to white for runtime theme tinting.",
+  "icons": [
+    {
+      "name": "files",
+      "upstream_sha256": "0dd44db0b3d654216ab9ac7130e55dc9113bffad4d8debfdb25f80e556d9f1e6",
+      "embedded_sha256": "e68ad0141012fded7cf76ed18d915a96c142f9ac8f51705d60a38d5d0e992c3c"
+    },
+    {
+      "name": "search",
+      "upstream_sha256": "ea26083bb6dd49a42a1a6fe13cd9613022442a002f11c8247476c32b7eab7dfe",
+      "embedded_sha256": "6598399344ec2f3466d5518bd1a0749671b27439a29a6ae0b3378c034ba62d79"
+    },
+    {
+      "name": "source-control",
+      "upstream_sha256": "c713daf14e7ce871e0d80f7c1ad6732aa14b3a57dcfa02a294fc7d30ece800ba",
+      "embedded_sha256": "7a69d6a91e99c2a4522dbce0f9bb00f662fb0f14bbcba8eb4a112fa2a3837489"
+    },
+    {
+      "name": "terminal",
+      "upstream_sha256": "bf5fc03cccc11da088c2339eb30c06f2fb583fd1a1f1880d0512e06bf36b3290",
+      "embedded_sha256": "dbdd6153f954da5a5148f1a25dbb23924ce95fdd1e970a2b22538790dbac48ea"
+    },
+    {
+      "name": "settings-gear",
+      "upstream_sha256": "fc7d0ccb2d7a74e74e37ce1ba833e31fef326f9e07ce5f74bc17acb64c087669",
+      "embedded_sha256": "2ab44d7f167237b868fa2f3cfb4d54f1e2e8fdf360a0da9d9b44d7cb952ac61e"
+    },
+    {
+      "name": "close",
+      "upstream_sha256": "6876f88fdc070323f1f0aa9e52c5b3c8e7fa73a839b4f5544d8999c51dbbb876",
+      "embedded_sha256": "d652ae088c387f74d3dc5fae0c5ddd4a4abf82143942f53aeaf4eed28099c3e7"
+    },
+    {
+      "name": "add",
+      "upstream_sha256": "2f67796c7a4506dbec770919ae1cf57759aa0f37a3f971edcda73b45e89c4ee0",
+      "embedded_sha256": "120671cb899d194b361a3a9748dc32deb8661cefdb4c23a90a29e8511b468321"
+    },
+    {
+      "name": "chevron-down",
+      "upstream_sha256": "d98010cf4a4a2f830da7d7686535295fe224b8d5e4c1e92fb79913329af4e47b",
+      "embedded_sha256": "4d00853d814094a450d48b2fb00d01ac967594ea57770acaf90028d29308bfe9"
+    },
+    {
+      "name": "chevron-right",
+      "upstream_sha256": "f57be224b89aab6a03908b726ffa643f32e6709119b780eba486005180772bf2",
+      "embedded_sha256": "0bbeab241b7c40506ffdaf70a65af387278cb48c573175e3f400d958b3f3ed40"
+    },
+    {
+      "name": "chevron-up",
+      "upstream_sha256": "f26867f525724604cc1eb0afbea90d4bea9c962db84eb07030df7bdc51115635",
+      "embedded_sha256": "5a35e2bf7e462a9bd3ed748e97925d613d750fc11e3b105b007a903b19f89c17"
+    },
+    {
+      "name": "ellipsis",
+      "upstream_sha256": "e993dba6f9d71feb33e85400ce881822559b435f002abe0254358923a8cf1cf3",
+      "embedded_sha256": "32b05d9fee11e2f806f6b5300c9b36fd4d5d1f9f842f7f8752f2731229d6f874"
+    },
+    {
+      "name": "refresh",
+      "upstream_sha256": "b2c8746f438a50cee7f710c1d2e35bb5eea1cc735dc66ac43fa118baab01fee3",
+      "embedded_sha256": "cf19e78aac224f29d3df1238f610face9cfbaf5e883fa9bcf0dbae89da31eebf"
+    },
+    {
+      "name": "folder",
+      "upstream_sha256": "f1eae6f443ee2f95b99ee74f0f2d07c03d7b4f1bade49b3f3783c97e9a5b9b5b",
+      "embedded_sha256": "5527c2fe4fa56530c7705e9012b215535ae11ead5ad9563700f82149112ca621"
+    },
+    {
+      "name": "folder-opened",
+      "upstream_sha256": "9e57f643bf6660c31f5bcc057e4933c44ec7367a814c5074285d8d2ae1092ec8",
+      "embedded_sha256": "45b3cffcfb844aa50964b40c82bd24350fe472b758499c97024cceb78c3b5fb9"
+    },
+    {
+      "name": "file",
+      "upstream_sha256": "8d85e1e13c99e0b303442631ec01238b1aeb64a4e9e3a2949f12a60f0def71ae",
+      "embedded_sha256": "e7381c825079ada7a8f4e2ab0f0df466ef26ce2edef696bcc771545fde74339d"
+    },
+    {
+      "name": "split-horizontal",
+      "upstream_sha256": "329ac127b76c970e283e8c573b71e6cafd8f555c9198d9b41ab2cb99ad88d9bc",
+      "embedded_sha256": "9147ef8323d5ac97afa0dbec94a76bca954e454c4191db0c0352e71d96466ac3"
+    },
+    {
+      "name": "layout-sidebar-left",
+      "upstream_sha256": "534df9174d0e50e6b4b7c3a96d991dea39391d6b7ba288144c7da6cadc0d3dad",
+      "embedded_sha256": "4dd905e62f8f4bf3632f9fd860f01277aeeea048f62cc0dd83aceb6efe836e0f"
+    },
+    {
+      "name": "layout-sidebar-left-off",
+      "upstream_sha256": "7c84b404f5fd6a7514b7bf6e12b92b9a47ebad8e071cb7a241addc4d8b2c43e1",
+      "embedded_sha256": "d29e66b61dd8d1d066c4e0335fa46dc21aec018a9f497bc045b2a455df1482cc"
+    },
+    {
+      "name": "check",
+      "upstream_sha256": "58e1762d74142ee78ee2422ae46498c1059e4f4812f9c7514e422a1f8d80235d",
+      "embedded_sha256": "86cb789db6bd473645eff5c0e48da3af4a175aa475e4e1b2e44b4e5e703906c4"
+    },
+    {
+      "name": "warning",
+      "upstream_sha256": "e3e4cb7573830716be647b7c930595daca925dd6c2bc3ff99a5b2a6b087cc060",
+      "embedded_sha256": "7d01077aa519726e5317de4831cf632f65c6731b78b04f70bdfa2b6fa07b5cce"
+    },
+    {
+      "name": "error",
+      "upstream_sha256": "cd674cb138f6e5cef9795b4429e1d31501309c1b87d2db99cd0969dab09cda9d",
+      "embedded_sha256": "5156a2087ba59c457b66b191bab10cb0caf9d9f7252dbbf78245fe8bcc8fc73b"
+    },
+    {
+      "name": "debug",
+      "upstream_sha256": "230cc1a3b2511b52f9a18bc6e3ab755dff888533445fd665107f053169114202",
+      "embedded_sha256": "e00d534e5be1ee178ad7bead3ae153d0b3e2173b68f128f0286463a91cfcf5aa"
+    }
+  ]
+}

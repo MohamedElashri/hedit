@@ -50,6 +50,10 @@ fn last_blank_tab_has_no_close_button_and_ignores_close_actions() {
     let tabs = egui::containers::panel::PanelState::load(&ctx, egui::Id::new("tabs"))
         .unwrap()
         .rect;
+    assert!(!output.shapes.iter().any(|s| matches!(&s.shape,
+        egui::Shape::Mesh(mesh) if hedit::icons::Icon::Close.matches_texture(&ctx, mesh.texture_id)
+            && tabs.contains_rect(mesh.calc_bounds())
+    )));
     let tab = output
         .shapes
         .iter()
@@ -86,9 +90,10 @@ fn last_blank_tab_has_no_close_button_and_ignores_close_actions() {
     let tabs = egui::containers::panel::PanelState::load(&ctx, egui::Id::new("tabs"))
         .unwrap()
         .rect;
-    assert!(output.shapes.iter().filter(|s| matches!(&s.shape,
-        egui::Shape::LineSegment { points, stroke } if stroke.width == 1.7 && points.iter().all(|p| tabs.contains(*p))
-    )).count() >= 2);
+    assert_eq!(output.shapes.iter().filter(|s| matches!(&s.shape,
+        egui::Shape::Mesh(mesh) if hedit::icons::Icon::Close.matches_texture(&ctx, mesh.texture_id)
+            && tabs.contains_rect(mesh.calc_bounds())
+    )).count(), 2);
     app.execute(&ctx, Command::CloseAll);
     assert_eq!(app.workspace.open.len(), 1);
     assert_eq!(app.active().view.id, id);

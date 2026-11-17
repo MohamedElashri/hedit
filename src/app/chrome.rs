@@ -504,10 +504,10 @@ impl HeditApp {
                             }
                             ui.add_space(total - self.tab_strip.offset(visible.end));
                             if ui
-                                .add_enabled(
-                                    !self.busy && !self.closing,
-                                    egui::Button::new("+").frame(false),
-                                )
+                                .add_enabled_ui(!self.busy && !self.closing, |ui| {
+                                    hedit::icons::button(ui, hedit::icons::Icon::Add, "New file")
+                                })
+                                .inner
                                 .on_hover_text(format!("New file · {}", Command::New.shortcut()))
                                 .clicked()
                             {

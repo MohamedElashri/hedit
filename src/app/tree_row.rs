@@ -36,80 +36,40 @@ pub(super) fn show(ui: &mut egui::Ui, theme: &Theme, row: Row<'_>) -> egui::Resp
             let left = rect.left() + row.depth.min(32) as f32 * 12.0;
             let cy = rect.center().y;
             let color = theme.muted.color();
-            let stroke = egui::Stroke::new(1.2_f32, color);
+            use hedit::icons::Icon;
             if row.directory {
-                let chevron = if row.expanded {
-                    vec![
-                        egui::pos2(left + 1.0, cy - 2.0),
-                        egui::pos2(left + 5.0, cy + 2.0),
-                        egui::pos2(left + 9.0, cy - 2.0),
-                    ]
+                (if row.expanded {
+                    Icon::ChevronDown
                 } else {
-                    vec![
-                        egui::pos2(left + 3.0, cy - 4.0),
-                        egui::pos2(left + 7.0, cy),
-                        egui::pos2(left + 3.0, cy + 4.0),
-                    ]
-                };
-                ui.painter().add(egui::Shape::line(
-                    chevron,
-                    egui::Stroke::new(1.2_f32, theme.muted.color()),
-                ));
-                let x = left + 14.0;
-                let y = cy - 6.0;
-                let fill = color.gamma_multiply(0.22);
-                for (origin, size) in [
-                    (egui::pos2(x, y), egui::vec2(7.0, 5.0)),
-                    (egui::pos2(x, y + 2.0), egui::vec2(15.0, 10.0)),
-                ] {
-                    ui.painter().rect(
-                        egui::Rect::from_min_size(origin, size),
-                        1.0,
-                        fill,
-                        stroke,
-                        egui::StrokeKind::Inside,
-                    );
-                }
+                    Icon::ChevronRight
+                })
+                .paint(
+                    ui,
+                    egui::Rect::from_min_size(egui::pos2(left, cy - 6.0), egui::vec2(12.0, 12.0)),
+                    color,
+                );
+            }
+            let icon = if row.directory {
                 if row.expanded {
-                    ui.painter().add(egui::Shape::convex_polygon(
-                        vec![
-                            egui::pos2(x + 2.0, y + 5.0),
-                            egui::pos2(x + 17.0, y + 5.0),
-                            egui::pos2(x + 14.0, y + 12.0),
-                            egui::pos2(x - 1.0, y + 12.0),
-                        ],
-                        color.gamma_multiply(0.32),
-                        stroke,
-                    ));
+                    Icon::FolderOpen
+                } else {
+                    Icon::Folder
                 }
             } else {
-                let x = left + 16.0;
-                let y = cy - 7.0;
-                ui.painter().add(egui::Shape::closed_line(
-                    vec![
-                        egui::pos2(x, y),
-                        egui::pos2(x + 7.0, y),
-                        egui::pos2(x + 11.0, y + 4.0),
-                        egui::pos2(x + 11.0, y + 14.0),
-                        egui::pos2(x, y + 14.0),
-                    ],
-                    stroke,
-                ));
-                ui.painter().add(egui::Shape::line(
-                    vec![
-                        egui::pos2(x + 7.0, y),
-                        egui::pos2(x + 7.0, y + 4.0),
-                        egui::pos2(x + 11.0, y + 4.0),
-                    ],
-                    stroke,
-                ));
-                for dy in [7.0, 10.0] {
-                    ui.painter().line_segment(
-                        [egui::pos2(x + 3.0, y + dy), egui::pos2(x + 8.0, y + dy)],
-                        stroke,
-                    );
-                }
-            }
+                Icon::File
+            };
+            icon.paint(
+                ui,
+                egui::Rect::from_min_size(
+                    egui::pos2(left + 14.0, cy - 8.0),
+                    egui::vec2(16.0, 16.0),
+                ),
+                if row.selected {
+                    theme.text.color()
+                } else {
+                    color
+                },
+            );
             let name = hedit::bidi::display(row.name);
             let name = if row.symlink {
                 format!("{name} ↗")
