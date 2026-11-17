@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## [0.5.3] - 2026-11-17
+
+### Fixed
+
+- Distinguish tabs with matching filenames using muted, shortest unique parent-folder paths. Update the hints when files are renamed, saved elsewhere, opened or closed.
+- Include file locations in accessible tab and close-button labels, and show the SSH host and full remote path on hover.
+
 ## [0.5.2] - 2026-11-17
 
 - Redesign Settings with global search, category filters, a Modified filter, per-setting resets, validation feedback and a resizable layout.
