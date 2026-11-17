@@ -8,6 +8,9 @@ pub(super) const SETTINGS_FILE: &str = "settings.json";
 pub(super) const KEYBINDINGS_FILE: &str = "keybindings.json";
 pub(super) const SNIPPETS_FILE: &str = "snippets.json";
 pub(super) const MACROS_FILE: &str = "macros.json";
+const KEYBINDINGS_LIMIT: u64 = 1024 * 1024;
+const SNIPPETS_LIMIT: u64 = 4 * 1024 * 1024;
+const MACROS_LIMIT: u64 = 4 * 1024 * 1024;
 /// Write settings this long after the last change, so a dragged slider
 /// becomes one write.
 const SETTLE: Duration = Duration::from_millis(400);
@@ -188,17 +191,17 @@ pub(super) fn load(
             errors.push(format!("Cannot create {}: {error}", snippets.display()));
         }
     }
-    match projects::read_json(&dir.join(KEYBINDINGS_FILE), 1024 * 1024) {
+    match projects::read_json(&dir.join(KEYBINDINGS_FILE), KEYBINDINGS_LIMIT) {
         Ok(bindings) => config.keybindings = bindings,
         Err(error) => errors.push(format!("{KEYBINDINGS_FILE}: {error}")),
     }
-    match projects::read_json(&dir.join(SNIPPETS_FILE), 4 * 1024 * 1024) {
+    match projects::read_json(&dir.join(SNIPPETS_FILE), SNIPPETS_LIMIT) {
         Ok(snippets) => config.snippets = snippets,
         Err(error) => errors.push(format!("{SNIPPETS_FILE}: {error}")),
     }
     // Created only once a macro is saved.
     if dir.join(MACROS_FILE).exists() {
-        match projects::read_json(&dir.join(MACROS_FILE), 4 * 1024 * 1024) {
+        match projects::read_json(&dir.join(MACROS_FILE), MACROS_LIMIT) {
             Ok(macros) => config.macros = macros,
             Err(error) => errors.push(format!("{MACROS_FILE}: {error}")),
         }
@@ -377,6 +380,24 @@ impl HeditApp {
     }
     /// Save key bindings and snippets to their files.
     pub(super) fn save_config(&mut self, config: Config) -> Result<(), String> {
+        // Validate all files before replacing any of them, including JSON
+        // escaping and indentation in the exact format used by atomic_json.
+        fn check_size(value: &impl serde::Serialize, limit: u64, name: &str) -> Result<(), String> {
+            if serde_json::to_vec_pretty(value)
+                .map_err(|e| e.to_string())?
+                .len() as u64
+                > limit
+            {
+                return Err(format!(
+                    "{name} exceeds its {} MiB file limit.",
+                    limit / (1024 * 1024)
+                ));
+            }
+            Ok(())
+        }
+        check_size(&config.keybindings, KEYBINDINGS_LIMIT, KEYBINDINGS_FILE)?;
+        check_size(&config.snippets, SNIPPETS_LIMIT, SNIPPETS_FILE)?;
+        check_size(&config.macros, MACROS_LIMIT, MACROS_FILE)?;
         if let Some(dir) = &self.settings_files.dir {
             projects::atomic_json(&dir.join(KEYBINDINGS_FILE), &config.keybindings)?;
             projects::atomic_json(&dir.join(SNIPPETS_FILE), &config.snippets)?;

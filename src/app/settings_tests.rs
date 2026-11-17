@@ -183,6 +183,48 @@ fn failed_config_writes_remain_pending_and_retry_after_storage_recovers() {
 }
 
 #[test]
+fn oversized_config_files_are_rejected_before_any_preferences_are_replaced() {
+    let directory = tempfile::tempdir().unwrap();
+    let (_ctx, mut app) = app_in(directory.path(), None);
+    let config = directory.path().join("config");
+    let files = ["keybindings.json", "snippets.json", "macros.json"];
+    let original: Vec<_> = files
+        .iter()
+        .map(|name| std::fs::read(config.join(name)).ok())
+        .collect();
+    let previous = app.quality.config.clone();
+    for (index, file) in files.iter().enumerate() {
+        let mut candidate = previous.clone();
+        candidate.keybindings.push(quality::Binding {
+            command: Command::Save,
+            shortcut: "Primary+Alt+S".into(),
+            editor_only: false,
+        });
+        match index {
+            0 => candidate.keybindings[0].shortcut = "x".repeat(1024 * 1024),
+            1 => candidate.snippets[0].body = "\"".repeat(2 * 1024 * 1024),
+            _ => candidate.macros.push(macros::Macro {
+                name: "large".into(),
+                steps: vec![macros::Step::Text("x".repeat(4 * 1024 * 1024))],
+            }),
+        }
+        let error = app
+            .save_config(candidate)
+            .expect_err("saved config that cannot be reloaded");
+        assert!(error.contains(file), "{error}");
+        assert_eq!(app.quality.config, previous);
+        for (name, bytes) in files.iter().zip(&original) {
+            assert_eq!(
+                &std::fs::read(config.join(name)).ok(),
+                bytes,
+                "{name} changed while rejecting {file}"
+            );
+        }
+    }
+    settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
+}
+
+#[test]
 fn a_broken_settings_file_is_reported_and_never_overwritten() {
     let directory = tempfile::tempdir().unwrap();
     let config = directory.path().join("config");
