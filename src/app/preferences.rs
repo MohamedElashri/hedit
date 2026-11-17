@@ -1,7 +1,5 @@
 use super::*;
 
-use hedit::settings::{Settings, MAX_COLUMN};
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PreferencesPage {
     General,
@@ -30,7 +28,7 @@ impl PreferencesPage {
         Self::LanguageServers,
         Self::Recovery,
     ];
-    fn title(self) -> &'static str {
+    pub(super) fn title(self) -> &'static str {
         match self {
             Self::General => "General",
             Self::Terminal => "Terminal",
@@ -45,13 +43,19 @@ impl PreferencesPage {
             Self::Recovery => "Recovery",
         }
     }
-    fn available(self) -> bool {
+    pub(super) fn available(self) -> bool {
         self != Self::Tools || hedit::debugger::LOCAL_TOOLS_SUPPORTED
     }
 }
 
 /// A row of a settings page: a fixed-width label, then the control.
 pub(super) fn row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
+    if ui.available_width() < 460.0 {
+        ui.label(label);
+        add(ui);
+        ui.add_space(4.0);
+        return;
+    }
     ui.horizontal(|ui| {
         ui.allocate_ui_with_layout(
             egui::vec2(170.0, 20.0),
@@ -71,17 +75,6 @@ pub(super) fn section(ui: &mut egui::Ui, title: &str) {
     ui.add_space(2.0);
 }
 
-/// Parse a comma-separated column list such as `80, 120`.
-fn parse_columns(text: &str) -> Option<Vec<u16>> {
-    let mut columns: Vec<u16> = text
-        .split([',', ' '])
-        .filter(|s| !s.is_empty())
-        .map(|s| s.parse().ok().filter(|&c| (1..=MAX_COLUMN).contains(&c)))
-        .collect::<Option<_>>()?;
-    columns.sort_unstable();
-    columns.dedup();
-    (columns.len() <= 8).then_some(columns)
-}
 impl HeditApp {
     pub(super) fn open_preferences(&mut self, page: PreferencesPage) {
         if !self.preferences_open {
@@ -92,6 +85,11 @@ impl HeditApp {
         } else {
             PreferencesPage::General
         };
+        self.settings_browser.query.clear();
+        self.settings_browser.modified = false;
+        self.settings_browser.category = None;
+        self.settings_browser.reset_scroll = true;
+        self.settings_browser.focus_search = page != PreferencesPage::LanguageServers;
         self.preferences_open = true;
         self.focus_editor = false;
     }
@@ -99,64 +97,170 @@ impl HeditApp {
         if self.preferences_open {
             let before = self.theme.clone();
             let mut open = true;
-            let body_height = (ctx.screen_rect().height() - 190.0).clamp(190.0, 520.0);
-            let width = (ctx.screen_rect().width() - 64.0).clamp(540.0, 780.0);
+            let available =
+                (ctx.screen_rect().size() - egui::vec2(32.0, 80.0)).max(egui::vec2(320.0, 240.0));
             egui::Window::new("Settings")
                 .id(egui::Id::new("preferences"))
                 .open(&mut open)
-                .fixed_size(egui::vec2(width, body_height + 74.0))
-                .resizable(false)
+                .default_size(egui::vec2(960.0, 680.0).min(available))
+                .min_size(egui::vec2(520.0, 320.0).min(available))
+                .max_size(available)
+                .resizable(true)
                 .collapsible(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        let width = (ui.available_width() - 150.0).max(120.0);
+                        let search = ui.add(
+                            egui::TextEdit::singleline(&mut self.settings_browser.query)
+                                .id(egui::Id::new("settings-search"))
+                                .hint_text("Search settings by name or key…")
+                                .desired_width(width)
+                                .char_limit(256),
+                        );
+                        if std::mem::take(&mut self.settings_browser.focus_search) {
+                            search.request_focus();
+                        }
+                        let changed = search.changed();
+                        let modified = ui
+                            .checkbox(&mut self.settings_browser.modified, "Modified")
+                            .changed();
+                        if ui.small_button("Clear").clicked() {
+                            self.settings_browser.query.clear();
+                            self.settings_browser.modified = false;
+                            self.settings_browser.category = None;
+                            self.settings_browser.reset_scroll = true;
+                        }
+                        if changed || modified {
+                            self.settings_browser.category = None;
+                            self.settings_browser.reset_scroll = true;
+                        }
+                    });
+                    ui.small(
+                        if self.preferences_page == PreferencesPage::LanguageServers
+                            && !self.settings_search_active()
+                        {
+                            self.workspace
+                                .remote
+                                .as_ref()
+                                .map(|r| {
+                                    format!("Language servers · SSH host: {}", r.config.target.host)
+                                })
+                                .unwrap_or_else(|| "Language servers · This computer".into())
+                        } else {
+                            "User settings · This computer · Applies across projects".into()
+                        },
+                    );
+                    ui.separator();
+                    let searching = self.settings_search_active();
+                    let counts = if searching {
+                        self.settings_category_counts()
+                    } else {
+                        [0; 11]
+                    };
+                    let body_height = (ui.available_height() - 35.0).max(120.0);
                     ui.horizontal_top(|ui| {
                         ui.set_height(body_height);
                         ui.vertical(|ui| {
-                            ui.set_width(130.0);
-                            ui.add_space(8.0);
-                            for page in PreferencesPage::ALL {
-                                if !page.available() {
-                                    continue;
-                                }
-                                if ui
-                                    .add_sized(
-                                        [130.0, 26.0],
-                                        egui::Button::new(page.title())
-                                            .selected(self.preferences_page == page),
-                                    )
-                                    .clicked()
-                                {
-                                    self.preferences_page = page;
-                                }
-                            }
+                            ui.set_width(150.0);
+                            egui::ScrollArea::vertical()
+                                .id_salt("settings-categories")
+                                .max_height(body_height)
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    if searching
+                                        && ui
+                                            .add_sized(
+                                                [145.0, 28.0],
+                                                egui::Button::new("All results").selected(
+                                                    self.settings_browser.category.is_none(),
+                                                ),
+                                            )
+                                            .clicked()
+                                    {
+                                        self.settings_browser.category = None;
+                                        self.settings_browser.reset_scroll = true;
+                                    }
+                                    for page in PreferencesPage::ALL {
+                                        if !page.available() {
+                                            continue;
+                                        }
+                                        let label = if searching {
+                                            format!("{} ({})", page.title(), counts[page as usize])
+                                        } else {
+                                            page.title().into()
+                                        };
+                                        let selected = if searching {
+                                            self.settings_browser.category == Some(page)
+                                        } else {
+                                            self.preferences_page == page
+                                        };
+                                        if ui
+                                            .add_sized(
+                                                [145.0, 28.0],
+                                                egui::Button::new(label).selected(selected),
+                                            )
+                                            .clicked()
+                                        {
+                                            self.preferences_page = page;
+                                            self.settings_browser.category =
+                                                searching.then_some(page);
+                                            self.settings_browser.reset_scroll = true;
+                                        }
+                                    }
+                                });
                         });
                         ui.separator();
                         ui.vertical(|ui| {
-                            ui.set_min_width(350.0);
-                            ui.heading(self.preferences_page.title());
-                            ui.add_space(10.0);
-                            egui::ScrollArea::vertical()
-                                .id_salt(("preferences-body", self.preferences_page as u8))
-                                .max_height(body_height - 40.0)
-                                .show(ui, |ui| match self.preferences_page {
-                                    PreferencesPage::General => self.general_preferences(ui),
-                                    PreferencesPage::Terminal => self.terminal_preferences(ui),
-                                    PreferencesPage::Editor => self.editor_preferences(ui),
-                                    PreferencesPage::Formatting => self.formatting_preferences(ui),
-                                    PreferencesPage::Folders => self.folder_preferences(ui),
-                                    PreferencesPage::Keys => self.key_preferences(ui, ctx),
-                                    PreferencesPage::Snippets => self.snippet_preferences(ui),
-                                    PreferencesPage::Appearance => self.theme_preferences(ui, ctx),
-                                    PreferencesPage::Tools => self.tool_preferences(ui),
-                                    PreferencesPage::LanguageServers => {
-                                        self.language_preferences(ui)
+                            ui.set_width(ui.available_width().max(0.0));
+                            ui.heading(if searching && self.settings_browser.category.is_none() {
+                                "Search results"
+                            } else {
+                                self.preferences_page.title()
+                            });
+                            ui.add_space(8.0);
+                            let mut scroll = egui::ScrollArea::vertical()
+                                .id_salt((
+                                    "preferences-body",
+                                    self.preferences_page as u8,
+                                    searching,
+                                ))
+                                .max_height(body_height - 34.0)
+                                .auto_shrink([false, false]);
+                            if std::mem::take(&mut self.settings_browser.reset_scroll) {
+                                scroll = scroll.vertical_scroll_offset(0.0);
+                            }
+                            scroll.show(ui, |ui| {
+                                if searching {
+                                    self.settings_catalog(ui, self.settings_browser.category);
+                                } else {
+                                    match self.preferences_page {
+                                        PreferencesPage::General => self.general_preferences(ui),
+                                        PreferencesPage::Terminal => self.terminal_preferences(ui),
+                                        PreferencesPage::Editor => self.editor_preferences(ui),
+                                        PreferencesPage::Formatting => {
+                                            self.formatting_preferences(ui)
+                                        }
+                                        PreferencesPage::Folders => self.folder_preferences(ui),
+                                        PreferencesPage::Keys => self.key_preferences(ui, ctx),
+                                        PreferencesPage::Snippets => self.snippet_preferences(ui),
+                                        PreferencesPage::Appearance => {
+                                            self.theme_preferences(ui, ctx)
+                                        }
+                                        PreferencesPage::Tools => self.tool_preferences(ui),
+                                        PreferencesPage::LanguageServers => {
+                                            self.language_preferences(ui)
+                                        }
+                                        PreferencesPage::Recovery => {
+                                            self.recovery_preferences(ui, ctx)
+                                        }
                                     }
-                                    PreferencesPage::Recovery => self.recovery_preferences(ui, ctx),
-                                });
+                                }
+                            });
                         });
                     });
                     ui.separator();
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         if ui
                             .add_enabled(
                                 self.settings_files.dir.is_some(),
@@ -170,7 +274,17 @@ impl HeditApp {
                         {
                             self.open_settings_file(ctx);
                         }
-                        ui.weak("Changes save automatically.");
+                        ui.weak(
+                            if self.preferences_page == PreferencesPage::LanguageServers
+                                && !searching
+                            {
+                                "Server edits use Save configuration."
+                            } else if self.settings_files.broken {
+                                "Fix settings.json to resume saving."
+                            } else {
+                                "Valid changes save automatically."
+                            },
+                        );
                     });
                 });
             self.preferences_open &= open;
@@ -237,223 +351,25 @@ impl HeditApp {
         self.user_guide(ctx);
     }
     fn general_preferences(&mut self, ui: &mut egui::Ui) {
-        let s = &mut self.settings;
-        section(ui, "Window");
-        ui.checkbox(&mut s.show_tab_bar, "Show tab bar");
-        ui.checkbox(&mut s.show_status_bar, "Show status bar");
-        ui.checkbox(&mut s.show_sidebar, "Show sidebar");
-        let folders = ui.checkbox(&mut s.show_folders, "Show folders in the sidebar");
-        ui.add_space(14.0);
-        if ui.button("Restore defaults").clicked() {
-            let d = Settings::default();
-            let s = &mut self.settings;
-            (
-                s.show_tab_bar,
-                s.show_status_bar,
-                s.show_sidebar,
-                s.show_folders,
-            ) = (
-                d.show_tab_bar,
-                d.show_status_bar,
-                d.show_sidebar,
-                d.show_folders,
-            );
-            self.sync_folder_view();
-        } else if folders.changed() {
-            // Same as View → Side bar → Show folders: showing them shows the sidebar.
-            self.settings.show_sidebar |= self.settings.show_folders;
-            self.sync_folder_view();
-        }
+        self.settings_catalog(ui, Some(PreferencesPage::General));
     }
     fn editor_preferences(&mut self, ui: &mut egui::Ui) {
-        let s = &mut self.settings;
-        section(ui, "Text");
-        let _ = s;
-        row(ui, "Font", |ui| self.font_setting(ui));
-        let s = &mut self.settings;
-        row(ui, "Font name or file", |ui| {
-            ui.add(
-                egui::TextEdit::singleline(&mut s.font_face)
-                    .hint_text("Built-in (Hack)")
-                    .desired_width(240.0),
-            )
-            .on_hover_text(
-                "An installed font family, such as JetBrains Mono, or a .ttf/.otf/.ttc path",
-            );
-        });
-        ui.label(
-            RichText::new(font_picker::SAMPLE)
-                .font(FontId::monospace(s.font_size))
-                .color(self.theme.text.color()),
-        );
-        ui.weak("Characters the font lacks, such as Arabic or CJK, come from system fonts.");
-        row(ui, "Font size", |ui| {
-            ui.add(
-                egui::Slider::new(&mut s.font_size, hedit::settings::FONT_SIZES)
-                    .step_by(1.0)
-                    .suffix(" px"),
-            );
-        });
-        ui.weak(format!(
-            "{} and {} also change it while you work.",
-            Command::ZoomIn.shortcut(),
-            Command::ZoomOut.shortcut()
-        ));
-        row(ui, "Line spacing", |ui| {
-            ui.add(
-                egui::Slider::new(&mut s.line_padding, 0.0..=20.0)
-                    .step_by(1.0)
-                    .suffix(" px"),
-            );
-        });
-        row(ui, "Cursor width", |ui| {
-            ui.add(
-                egui::Slider::new(&mut s.caret_width, 1.0..=4.0)
-                    .step_by(0.5)
-                    .suffix(" px"),
-            );
-        });
-        ui.checkbox(&mut s.caret_blink, "Blink the cursor");
-        ui.checkbox(&mut s.scroll_past_end, "Scroll past the last line");
-        ui.checkbox(&mut s.line_numbers, "Show line numbers");
-        ui.checkbox(&mut s.highlight_line, "Highlight the current line");
-        ui.checkbox(&mut s.draw_white_space, "Show whitespace");
-        ui.checkbox(&mut s.draw_indent_guides, "Show indentation guides");
-        ui.checkbox(&mut s.show_minimap, "Show minimap");
-        section(ui, "Wrapping and rulers");
-        ui.checkbox(&mut s.word_wrap, "Wrap long lines");
-        row(ui, "Wrap at column", |ui| {
-            ui.add_enabled(
-                s.word_wrap,
-                egui::DragValue::new(&mut s.wrap_width).range(0..=MAX_COLUMN),
-            );
-            ui.weak(if s.wrap_width == 0 {
-                "0 wraps at the window edge"
-            } else {
-                "columns"
-            });
-        });
-        row(ui, "Rulers", |ui| {
-            let id = ui.make_persistent_id("rulers-text");
-            let mut text = ui.data_mut(|d| {
-                d.get_temp::<String>(id).unwrap_or_else(|| {
-                    s.rulers
-                        .iter()
-                        .map(u16::to_string)
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                })
-            });
-            let response = ui.add(
-                egui::TextEdit::singleline(&mut text)
-                    .desired_width(120.0)
-                    .hint_text("80, 120"),
-            );
-            let parsed = parse_columns(&text);
-            if response.changed() {
-                if let Some(columns) = &parsed {
-                    s.rulers = columns.clone();
+        egui::Frame::group(ui.style())
+            .inner_margin(12)
+            .show(ui, |ui| {
+                ui.strong("Editor font preview");
+                if self.editor_font_loading.is_some() {
+                    ui.weak("Loading editor font…");
                 }
-            }
-            if response.lost_focus() || !response.has_focus() {
-                ui.data_mut(|d| d.remove::<String>(id));
-            } else {
-                ui.data_mut(|d| d.insert_temp(id, text));
-            }
-            if parsed.is_none() {
-                ui.colored_label(self.theme.warning.color(), "Use up to 8 columns, 1–400");
-            }
-        });
-        section(ui, "Typing");
-        let s = &mut self.settings;
-        ui.checkbox(
-            &mut s.auto_indent,
-            "Keep the indentation of the previous line",
-        );
-        ui.checkbox(
-            &mut s.smart_indent,
-            "Indent after an opening bracket or colon",
-        );
-        ui.checkbox(
-            &mut s.smart_backspace,
-            "Backspace removes one indentation level",
-        );
-        ui.checkbox(
-            &mut s.trim_automatic_white_space,
-            "Remove indentation left on lines that stay empty",
-        );
-        ui.checkbox(
-            &mut s.copy_with_empty_selection,
-            "Copy and cut the whole line when nothing is selected",
-        );
-        ui.checkbox(
-            &mut s.auto_match_enabled,
-            "Close brackets and quotes automatically",
-        );
-        ui.checkbox(&mut s.match_brackets, "Highlight matching brackets");
-        ui.checkbox(
-            &mut s.match_selection,
-            "Outline other occurrences of the selected word",
-        );
-        ui.checkbox(&mut s.auto_complete, "Suggest completions while typing");
-        ui.add_enabled(
-            s.auto_complete,
-            egui::Checkbox::new(
-                &mut s.auto_complete_commit_on_tab,
-                "Accept completions with Tab only; Enter starts a new line",
-            ),
-        );
-        ui.checkbox(
-            &mut s.show_definitions,
-            "Show definitions when the pointer rests on a name",
-        );
-        ui.checkbox(
-            &mut s.spell_check,
-            "Check spelling in prose, comments, and strings",
-        );
-        ui.horizontal(|ui| {
-            ui.label("Change markers compare with");
-            for (value, label) in [
-                ("auto", "Git, else the saved file"),
-                ("saved", "The saved file"),
-                ("off", "Nothing (off)"),
-            ] {
-                ui.radio_value(&mut s.mini_diff, value.to_owned(), label);
-            }
-        });
-        ui.add_space(14.0);
-        if ui.button("Restore defaults").clicked() {
-            let d = Settings::default();
-            let s = &mut self.settings;
-            s.font_size = d.font_size;
-            s.font_face = d.font_face;
-            s.line_padding = d.line_padding;
-            s.caret_width = d.caret_width;
-            s.caret_blink = d.caret_blink;
-            s.scroll_past_end = d.scroll_past_end;
-            s.line_numbers = d.line_numbers;
-            s.highlight_line = d.highlight_line;
-            s.draw_white_space = d.draw_white_space;
-            s.draw_indent_guides = d.draw_indent_guides;
-            s.show_minimap = d.show_minimap;
-            s.word_wrap = d.word_wrap;
-            s.wrap_width = d.wrap_width;
-            s.rulers = d.rulers;
-            s.auto_indent = d.auto_indent;
-            s.smart_indent = d.smart_indent;
-            s.smart_backspace = d.smart_backspace;
-            s.auto_match_enabled = d.auto_match_enabled;
-            s.match_brackets = d.match_brackets;
-            s.match_selection = d.match_selection;
-            s.auto_complete = d.auto_complete;
-            s.auto_complete_delay = d.auto_complete_delay;
-            s.auto_complete_commit_on_tab = d.auto_complete_commit_on_tab;
-            s.show_definitions = d.show_definitions;
-            s.spell_check = d.spell_check;
-            s.trim_automatic_white_space = d.trim_automatic_white_space;
-            s.copy_with_empty_selection = d.copy_with_empty_selection;
-            s.mini_diff = d.mini_diff;
-        }
+                self.font_setting(ui);
+                ui.label(
+                    RichText::new(font_picker::SAMPLE)
+                        .font(FontId::monospace(self.settings.font_size))
+                        .color(self.theme.text.color()),
+                );
+            });
+        ui.add_space(8.0);
+        self.settings_catalog(ui, Some(PreferencesPage::Editor));
     }
     fn tool_preferences(&mut self, ui: &mut egui::Ui) {
         if !hedit::debugger::LOCAL_TOOLS_SUPPORTED {

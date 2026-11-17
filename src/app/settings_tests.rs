@@ -266,3 +266,45 @@ fn settings_choose_themes_by_name() {
     assert_eq!(app.appearance.dark.name, "One Dark");
     settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
 }
+
+#[test]
+fn editor_font_results_trim_names_and_failures_preserve_document_jobs() {
+    let dir = tempfile::tempdir().unwrap();
+    let (ctx, mut app) = app_in(dir.path(), None);
+    let bytes = include_bytes!("../../assets/fonts/NotoSans-Regular.ttf").to_vec();
+    app.settings.font_face = " selected font ".into();
+    app.busy = true;
+    let focus = egui::Id::new("document-job");
+    app.job_editor_focus = Some(focus);
+    app.tx
+        .send(Ok(Action::Font("selected font".into(), bytes, 0)))
+        .unwrap();
+    app.receive(&ctx);
+    assert!(
+        app.editor_font.is_some(),
+        "a trimmed font result must match the selected family"
+    );
+    app.tx
+        .send(Ok(Action::FontFailed(
+            "selected font".into(),
+            "missing font".into(),
+        )))
+        .unwrap();
+    app.receive(&ctx);
+    assert!(app.busy);
+    assert_eq!(app.job_editor_focus, Some(focus));
+    assert!(app.editor_font.is_none());
+    assert!(app.notice.contains("missing font"));
+    let notice = app.notice.clone();
+    app.tx
+        .send(Ok(Action::FontFailed(
+            "old selection".into(),
+            "stale failure".into(),
+        )))
+        .unwrap();
+    app.receive(&ctx);
+    assert_eq!(app.notice, notice);
+    assert!(app.busy);
+    app.busy = false;
+    settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
+}

@@ -522,7 +522,10 @@ impl HeditApp {
             .terminal_font
             .as_ref()
             .map(|font| font.face.trim().to_owned());
-        if wanted == self.terminal_font_applied || self.settings_files.changed_at.is_some() {
+        if wanted == self.terminal_font_applied
+            || self.settings_files.changed_at.is_some()
+            || self.terminal_font_loading.is_some()
+        {
             return;
         }
         self.terminal_font_applied = wanted.clone();
@@ -533,6 +536,7 @@ impl HeditApp {
             return;
         };
         let generation = self.terminal_font_generation;
+        self.terminal_font_loading = Some(generation);
         let tx = self.tx.clone();
         let ctx = ctx.clone();
         thread::spawn(move || {
@@ -553,7 +557,9 @@ impl HeditApp {
             });
         }
         // Wait for typing in the font field to settle before searching.
-        if self.font_applied == self.settings.font_face || self.settings_files.changed_at.is_some()
+        if self.font_applied == self.settings.font_face
+            || self.settings_files.changed_at.is_some()
+            || self.editor_font_loading.is_some()
         {
             return;
         }
@@ -564,13 +570,15 @@ impl HeditApp {
             self.rebuild_fonts(ctx);
             return;
         }
+        self.editor_font_loading = Some(name.clone());
         let tx = self.tx.clone();
         let ctx = ctx.clone();
         thread::spawn(move || {
-            let result = hedit::fonts::load(&name)
-                .map(|(bytes, index)| Action::Font(name.clone(), bytes, index))
-                .map_err(|e| format!("Font “{name}”: {e} Using the built-in font."));
-            let _ = tx.send(result);
+            let action = match hedit::fonts::load(&name) {
+                Ok((bytes, index)) => Action::Font(name, bytes, index),
+                Err(error) => Action::FontFailed(name, error),
+            };
+            let _ = tx.send(Ok(action));
             ctx.request_repaint();
         });
     }

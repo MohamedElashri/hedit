@@ -49,7 +49,7 @@ struct Diagnostics {
 #[derive(Default)]
 pub(super) struct LanguageServers {
     pub(super) service: Option<Service>,
-    installed: Vec<Installed>,
+    pub(super) installed: Vec<Installed>,
     statuses: BTreeMap<(String, PathBuf), Status>,
     pending: HashMap<u64, Intent>,
     next: u64,
@@ -141,8 +141,12 @@ impl Configuration {
         };
         registration.environment =
             serde_json::from_str(&self.environment).map_err(|e| format!("Environment: {e}"))?;
-        let arguments: Vec<String> =
-            serde_json::from_str(&self.arguments).map_err(|e| format!("Arguments: {e}"))?;
+        let external = !self.executable.trim().is_empty();
+        let arguments: Vec<String> = if self.override_arguments || external {
+            serde_json::from_str(&self.arguments).map_err(|e| format!("Arguments: {e}"))?
+        } else {
+            vec![]
+        };
         registration.arguments = self.override_arguments.then_some(arguments.clone());
         registration.external = if self.executable.trim().is_empty() {
             None
@@ -399,6 +403,9 @@ impl HeditApp {
             }
             Event::Progress { id, message } => self.languages.progress = format!("{id}: {message}"),
             Event::Status(status) => {
+                if status.state == "Failed" {
+                    self.languages.snapshots.clear();
+                }
                 if status.state != "Running" {
                     self.languages.diagnostics.retain(|_, sources| {
                         sources.retain(|d| d.server != status.id || d.root != status.root);
@@ -784,13 +791,6 @@ impl HeditApp {
         }
     }
     pub(super) fn language_preferences(&mut self, ui: &mut egui::Ui) {
-        let target = self
-            .workspace
-            .remote
-            .as_ref()
-            .map(|r| format!("SSH host: {}", r.config.target.host))
-            .unwrap_or_else(|| "This computer".into());
-        ui.label(RichText::new(target).strong());
         if self.workspace.remote.is_some() && self.languages.service.is_none() {
             ui.weak("Allow execution in the SSH bar to manage language servers on the host.");
             return;
@@ -825,10 +825,26 @@ impl HeditApp {
                 }
             });
         }
+        if self.languages.progress.is_empty() && self.languages.managing() {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Applying server changes…");
+            });
+        }
         if let Some(error) = &self.languages.error {
             ui.colored_label(self.theme.warning.color(), error);
         }
-        self.language_configuration_editor(ui);
+        if self.languages.editor.is_some() {
+            self.language_configuration_editor(ui);
+            return;
+        }
+        ui.horizontal_wrapped(|ui| {
+            ui.weak(format!(
+                "{} configured servers",
+                self.languages.installed.len()
+            ));
+            ui.weak("Choose Configure for launch, features and advanced settings.");
+        });
         let mut entries: Vec<_> = manager::catalog()
             .into_iter()
             .map(|c| {
@@ -1017,11 +1033,30 @@ impl HeditApp {
             return;
         };
         let mut keep = true;
+        let mut save = false;
         let busy = self.languages.managing();
         ui.group(|ui| {
             ui.strong(format!("Configure {}", if editor.id.is_empty() { "external server" } else { &editor.id }));
             ui.add_enabled_ui(!busy, |ui| {
+                ui.horizontal(|ui| {
+                    save |= ui.button("Save configuration").clicked();
+                    if ui.button("Cancel editing").clicked() { keep = false; }
+                });
                 if editor.new { ui.label("Server ID"); ui.text_edit_singleline(&mut editor.id); }
+                ui.checkbox(&mut editor.registration.enabled, "Enabled by default");
+                if let Some(path) = self.active().page.info.path.as_ref().map(PathBuf::from) {
+                    let root = self.language_root(&path);
+                    let key = root.to_string_lossy().into_owned();
+                    let mut choice = editor.registration.workspaces.get(&key).copied();
+                    egui::ComboBox::from_id_salt("editing-server-workspace")
+                        .selected_text(match choice { None => "Workspace: use default", Some(true) => "Workspace: enabled", Some(false) => "Workspace: disabled" })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut choice, None, "Use default");
+                            ui.selectable_value(&mut choice, Some(true), "Enabled");
+                            ui.selectable_value(&mut choice, Some(false), "Disabled");
+                        });
+                    if let Some(enabled) = choice { editor.registration.workspaces.insert(key, enabled); } else { editor.registration.workspaces.remove(&key); }
+                }
                 ui.label("Language IDs (comma separated)");
                 ui.text_edit_singleline(&mut editor.languages);
                 ui.label("Executable path (empty uses managed installation)");
@@ -1042,14 +1077,18 @@ impl HeditApp {
                     ui.checkbox(&mut features.definition, "Definition"); ui.checkbox(&mut features.references, "References");
                     ui.checkbox(&mut features.formatting, "Formatting"); ui.checkbox(&mut features.diagnostics, "Diagnostics");
                 });
-                ui.checkbox(&mut editor.override_arguments, "Override default launch arguments");
+                if editor.executable.trim().is_empty() { ui.checkbox(&mut editor.override_arguments, "Override default launch arguments"); }
+                if ui.small_button("Use preset arguments").clicked() {
+                    editor.arguments = serde_json::to_string_pretty(&editor.registration.managed.as_ref().map(|r| r.arguments.clone()).unwrap_or_else(|| manager::default_arguments(&editor.id))).unwrap();
+                    editor.override_arguments = false;
+                }
                 ui.add_enabled_ui(editor.override_arguments || !editor.executable.trim().is_empty(), |ui| {
                     ui.label("Arguments (JSON array, for example [\"--stdio\"])");
                     ui.add(egui::TextEdit::multiline(&mut editor.arguments).desired_width(f32::INFINITY).desired_rows(2).code_editor());
                 });
+                egui::CollapsingHeader::new("Advanced launch and project settings").id_salt(("advanced-lsp", &editor.id)).show(ui, |ui| {
                 ui.label("Server settings (JSON object)");
                 ui.add(egui::TextEdit::multiline(&mut editor.settings).desired_width(f32::INFINITY).desired_rows(4).code_editor());
-                egui::CollapsingHeader::new("Advanced launch and project settings").id_salt(("advanced-lsp", &editor.id)).show(ui, |ui| {
                     ui.label("Initialization options (JSON object)");
                     ui.small("{} sends empty options; blank uses Server settings for compatibility.");
                     ui.add(egui::TextEdit::multiline(&mut editor.initialization).desired_width(f32::INFINITY).desired_rows(4).code_editor());
@@ -1060,19 +1099,28 @@ impl HeditApp {
                     ui.small("Files or directories relative to a project root. Empty uses language defaults. Search stays inside the workspace.");
                 });
                 ui.horizontal(|ui| {
-                    if ui.button("Save configuration").clicked() {
-                        match editor.registration() {
-                            Ok(registration) => {
-                                self.languages.error = None;
-                                if let Err(e) = self.languages.send(Operation::Configure { id: editor.id.clone(), registration: Box::new(registration) }, Intent::Save(editor.id.clone())) { self.languages.error = Some(e); }
-                            }
-                            Err(e) => self.languages.error = Some(e),
-                        }
-                    }
+                    save |= ui.button("Save configuration").clicked();
                     if ui.button("Cancel editing").clicked() { keep = false; }
                 });
             });
         });
+        if keep && save {
+            match editor.registration() {
+                Ok(registration) => {
+                    self.languages.error = None;
+                    if let Err(e) = self.languages.send(
+                        Operation::Configure {
+                            id: editor.id.clone(),
+                            registration: Box::new(registration),
+                        },
+                        Intent::Save(editor.id.clone()),
+                    ) {
+                        self.languages.error = Some(e);
+                    }
+                }
+                Err(e) => self.languages.error = Some(e),
+            }
+        }
         if keep {
             self.languages.editor = Some(editor);
         }
@@ -1702,6 +1750,41 @@ mod tests {
             }
             assert!(shown, "missing C++ status: {expected}");
         }
+    }
+    #[test]
+    fn server_configuration_save_is_visible_without_scrolling_at_minimum_size() {
+        let (_dir, ctx, mut app) = app();
+        app.open_preferences(PreferencesPage::LanguageServers);
+        app.languages.editor = Some(Configuration::new(
+            "ty".into(),
+            manager::preset("ty"),
+            false,
+        ));
+        for _ in 0..3 {
+            frame_size(&ctx, &mut app, vec![], egui::vec2(720.0, 480.0));
+        }
+        let output = frame_size(&ctx, &mut app, vec![], egui::vec2(720.0, 480.0));
+        assert!(output
+            .shapes
+            .iter()
+            .any(
+                |shape| super::super::tests::text_rect(&shape.shape, "Save configuration")
+                    .is_some_and(|rect| shape.clip_rect.contains(rect.center()))
+            ));
+    }
+    #[test]
+    fn unused_managed_arguments_do_not_block_restoring_defaults() {
+        let mut editor = Configuration::new("ty".into(), manager::preset("ty"), false);
+        editor.arguments = "unfinished JSON".into();
+        assert!(editor.registration().unwrap().arguments.is_none());
+        editor.override_arguments = true;
+        assert!(editor.registration().is_err());
+        editor.override_arguments = false;
+        editor.executable = std::env::current_exe().unwrap().display().to_string();
+        assert!(
+            editor.registration().is_err(),
+            "external commands still validate their active arguments"
+        );
     }
     #[test]
     fn paged_documents_and_unsaved_notes_do_not_enter_lsp_snapshots() {

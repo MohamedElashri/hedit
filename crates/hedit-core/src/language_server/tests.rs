@@ -1100,3 +1100,108 @@ fn session_limit_prioritizes_servers_and_reconciles_new_priorities() {
         .iter()
         .any(|e| matches!(e, Event::Status(s) if s.id == "i" && s.state == "Running")));
 }
+
+#[test]
+fn session_cap_keeps_focused_companions_before_background_projects() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let manager = Manager::new(root.join("servers"));
+    let mut primary = registration(&[]);
+    primary.priority = 100;
+    manager.configure("fixture", primary).unwrap();
+    manager.configure("companion", registration(&[])).unwrap();
+    let mut documents = vec![];
+    for name in ["z-focused", "a", "b", "c", "d", "e", "f", "g", "h"] {
+        let project = root.join(name);
+        std::fs::create_dir(&project).unwrap();
+        documents.push(Document {
+            path: project.join("main.rs"),
+            root: project,
+            language: "rust".into(),
+            revision: 1,
+            text: "fo".into(),
+            dirty: false,
+        });
+    }
+    let service = Service::start(manager.root().to_owned(), Arc::new(|| {}));
+    service.submit(1, Operation::Sync { documents }).unwrap();
+    let (result, events) = wait(&service, 1);
+    result.unwrap();
+    assert!(events.iter().any(|e| matches!(e, Event::Status(s) if s.state == "Running" && s.root == root.join("z-focused"))));
+    assert!(events.iter().any(|e| matches!(e, Event::Status(s) if s.id == "companion" && s.state == "Running" && s.root == root.join("z-focused"))), "active file companions must not be displaced by background servers");
+    assert!(events.iter().any(
+        |e| matches!(e, Event::Status(s) if s.state == "Limited" && s.root == root.join("h"))
+    ));
+}
+#[test]
+fn changing_the_session_cap_never_restarts_a_crashed_server_implicitly() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let manager = Manager::new(root.join("servers"));
+    let record = root.join("crash.jsonl");
+    let mut bad = registration(&["--crash-on-open", "--record", record.to_str().unwrap()]);
+    bad.priority = 100;
+    manager.configure("bad", bad.clone()).unwrap();
+    for i in 0..8 {
+        manager
+            .configure(&format!("good-{i}"), registration(&[]))
+            .unwrap();
+    }
+    let service = Service::start(manager.root().to_owned(), Arc::new(|| {}));
+    let documents = vec![Document {
+        path: root.join("main.rs"),
+        root: root.clone(),
+        language: "rust".into(),
+        revision: 1,
+        text: "fo".into(),
+        dirty: false,
+    }];
+    service
+        .submit(
+            1,
+            Operation::Sync {
+                documents: documents.clone(),
+            },
+        )
+        .unwrap();
+    let (_, mut events) = wait(&service, 1);
+    let until = Instant::now() + Duration::from_secs(5);
+    while !events
+        .iter()
+        .any(|e| matches!(e, Event::Status(s) if s.id == "bad" && s.state == "Failed"))
+    {
+        assert!(Instant::now() < until);
+        events.extend(service.poll());
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    // Another window may change priorities while the crashed server is stopped.
+    for (ticket, priority) in [(2, -100), (3, 100)] {
+        bad.priority = priority;
+        manager.configure("bad", bad.clone()).unwrap();
+        service
+            .submit(
+                ticket,
+                Operation::Sync {
+                    documents: documents.clone(),
+                },
+            )
+            .unwrap();
+        let (result, events) = wait(&service, ticket);
+        result.unwrap();
+        assert!(!events
+            .iter()
+            .any(|e| matches!(e, Event::Status(s) if s.id == "bad" && s.state == "Starting")));
+    }
+    let records: Vec<Value> = std::fs::read_to_string(record)
+        .unwrap()
+        .lines()
+        .map(|s| serde_json::from_str(s).unwrap())
+        .collect();
+    assert_eq!(
+        records
+            .iter()
+            .filter(|v| v["method"] == "initialize")
+            .count(),
+        1
+    );
+}

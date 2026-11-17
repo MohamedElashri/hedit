@@ -544,26 +544,37 @@ impl Worker {
                     .push(index);
             }
         }
-        // Apply the session cap deterministically, including when higher-priority
-        // registrations are enabled after lower-priority sessions are running.
-        let mut keys: Vec<_> = wanted.keys().cloned().collect();
+        // Retain crash suppression for all still-open projects, including ones
+        // temporarily excluded by the session cap. A cap change is not a restart.
+        self.failed.retain(|key| wanted.contains_key(key));
+        let mut keys: Vec<_> = wanted
+            .keys()
+            .filter(|key| !self.failed.contains(*key))
+            .cloned()
+            .collect();
         let priority = |id: &str| {
             registered
                 .iter()
                 .find(|r| r.id == id)
                 .map_or(0, |r| r.registration.priority)
         };
-        keys.sort_by(|a, b| priority(&b.0).cmp(&priority(&a.0)).then_with(|| a.cmp(b)));
+        keys.sort_by(|a, b| {
+            wanted[a][0]
+                .cmp(&wanted[b][0])
+                .then_with(|| priority(&b.0).cmp(&priority(&a.0)))
+                .then_with(|| a.cmp(b))
+        });
+        let selected_keys: Vec<_> = keys.iter().take(8).cloned().collect();
+        let selected: HashSet<_> = selected_keys.iter().cloned().collect();
         for key in keys.into_iter().skip(8) {
-            wanted.remove(&key);
             emit(Self::status(
                 &key,
                 "Limited",
                 "At most eight language-server sessions can run per workspace.",
             ));
         }
+        wanted.retain(|key, _| selected.contains(key));
         self.documents = documents;
-        self.failed.retain(|key| wanted.contains_key(key));
         let obsolete: Vec<_> = self
             .sessions
             .keys()
@@ -576,7 +587,8 @@ impl Worker {
                 emit(Self::status(&key, "Stopped", ""));
             }
         }
-        for (key, docs) in wanted {
+        for key in selected_keys {
+            let docs = wanted.remove(&key).unwrap();
             manager::check_cancel(cancel)?;
             if !self.sessions.contains_key(&key) && !self.failed.contains(&key) {
                 if self.sessions.len() >= 8 {

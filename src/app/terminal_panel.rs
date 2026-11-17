@@ -82,6 +82,9 @@ impl HeditApp {
     fn terminal_appearance_preferences(&mut self, ui: &mut egui::Ui) {
         use hedit::settings::{TerminalColors, TerminalFont};
         preferences::section(ui, "Font");
+        if self.terminal_font_loading.is_some() {
+            ui.weak("Loading terminal font…");
+        }
         let mut inherited = self.settings.terminal_font.is_none();
         if ui
             .checkbox(&mut inherited, "Use app font and size")
@@ -136,6 +139,17 @@ impl HeditApp {
         if ui.checkbox(&mut inherited, "Use app colors").changed() {
             self.settings.terminal_colors =
                 (!inherited).then(|| TerminalColors::from_theme(&self.theme));
+        }
+        if (self.settings.terminal_font.is_some() || self.settings.terminal_colors.is_some())
+            && ui
+                .small_button("Reset terminal appearance")
+                .on_hover_text(
+                    "Use the app font and colors; keep terminal sessions and enablement.",
+                )
+                .clicked()
+        {
+            self.settings.terminal_font = None;
+            self.settings.terminal_colors = None;
         }
         if let Some(colors) = &mut self.settings.terminal_colors {
             egui::ComboBox::from_id_salt("terminal-color-preset")
@@ -283,7 +297,7 @@ impl HeditApp {
         }
     }
 
-    fn sync_terminal(&mut self) {
+    pub(super) fn sync_terminal(&mut self) {
         if !self.settings.terminal_enabled {
             self.focus_editor |= self.terminal.open;
             self.terminal = TerminalState::default();

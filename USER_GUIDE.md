@@ -312,7 +312,7 @@ servers, installation source/version, workspace status, failures, and logs
   Removing a registration preserves external executables. **Configure** can also override a built-in server.
 - **Control:** installed, enabled, and running are separate states. Change defaults
   or choose **Use default**, **Enabled**, or **Disabled** for the current workspace.
-  **Configure** provides feature switches and priority. Advanced settings include
+  **Configure** opens a dedicated detail view for feature switches and priority. Advanced settings include
   environment overrides (a JSON object of strings), project root markers (files or
   directories), and initialization options separate from runtime server settings.
   Presets scaffold the server's settings namespace (for example, LuaLS uses
@@ -341,7 +341,7 @@ not start servers. Multiple enabled servers can share a file. Each action uses
 the highest-priority server that supports it and has that feature enabled; ties
 use server-ID order. Diagnostics are combined and labeled by server. Python
 defaults pair ty for language intelligence with Ruff for linting and formatting.
-The session cap also favors higher priorities. Rename, code actions, semantic
+The session cap favors focused documents, then server priority. Rename, code actions, semantic
 highlighting, server-supplied snippets/commands, and unsolicited workspace edits are not yet
 supported.
 
@@ -505,10 +505,24 @@ modified files offer **Compare changes…**, keeping replaced editor text in Und
 
 ## Settings
 
-**Preferences → Settings…** (**Ctrl+,**) groups General, Terminal, Editor,
-Formatting, Folders & Search, Appearance, Key Bindings, Snippets, Recovery, and
-Linux CUDA Tools. Changes save immediately. General/Editor/Formatting/Folders &
-Search offer Restore defaults; key bindings offer per-command Reset and Reset all.
+**Preferences → Settings…** (**Ctrl+,**) opens a resizable settings window.
+Search by setting name, description, or JSON key; searches span categories, and
+selecting a category narrows the results. **Modified** shows values that differ
+from defaults. Common settings show their default and offer an individual
+**Reset**. Invalid edits display an explanation and keep the last valid value;
+incomplete list entries remain available to correct after changing focus.
+
+The scope label distinguishes personal preferences on this computer from
+language-server settings on an SSH host. User preferences apply across projects;
+project settings, per-language rules and `.editorconfig` can override formatting.
+Formatting save rules offer **Inherit**, **Enabled**, and **Disabled**, including
+explicitly disabling a rule inherited from the user defaults.
+
+Categories include General, Terminal, Editor, Formatting, Folders & Search,
+Appearance, Key Bindings, Snippets, Language Servers, Recovery and Linux CUDA
+Tools. Valid personal changes save after a short delay. Server configuration uses
+**Save configuration** in its dedicated detail view; advanced JSON options are
+collapsed until needed. Key bindings retain per-command Reset and Reset all.
 Two-key bindings are supported; `Primary` means Ctrl or macOS Cmd.
 
 ### The settings file

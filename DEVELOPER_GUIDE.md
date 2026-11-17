@@ -157,6 +157,22 @@ pinned keys, and agent authentication. Stop only test-owned jobs; remove their
 state/locks afterwards. Agent approval must complete within startup's 15 seconds.
 Durable-RPC timings include host commits and network trips, not display latency.
 
+## Settings UI
+
+`src/app/settings_browser.rs` contains searchable preference metadata and validated
+controls. Keep every persisted user preference discoverable by its JSON key;
+complex editors link to their category. Onboarding bookkeeping is excluded.
+Search and Modified filters share the same catalog, and reset uses the serialized
+default value so optional formatting rules retain their inherit/true/false states.
+Validate edits before applying them and preserve text drafts while focused or
+invalid; otherwise list separators disappear while users type. User settings and
+host-side server configuration have distinct scope and save behavior.
+
+Keep both category navigation and content scrollable inside the viewport, with
+search and the footer outside those scroll regions. The minimum-window and
+pointer-reset tests cover geometry and interaction. The ignored
+`export_settings_browser` test exports previews to `HEDIT_PREVIEW_DIR`.
+
 ## Language-server architecture and tests
 
 `crates/hedit-core/src/language_server/` owns the server catalog, managed package
@@ -171,9 +187,9 @@ leases prevent changes while another window owns a server. Installs verify
 upstream digests, stage/extract with path and size limits, then atomically publish
 an exact receipt. Keep external executable ownership separate from managed files.
 Multiple servers may own the same document. Route each request by supported and
-enabled feature, descending priority, then server ID; use the same priority policy
-for the eight-session cap. Keep diagnostics keyed by server/project as well as
-path, and clear only the affected source. Launch environment, arguments, root
+enabled feature, descending priority, then server ID. The eight-session cap first
+favors focused documents, then server priority, and starts selected sessions in
+that order. Keep diagnostics keyed by server/project as well as path, and clear only the affected source. Launch environment, arguments, root
 markers, initialization options, and runtime settings are separate persisted
 controls. Missing initialization options retain compatibility with older settings.
 Catalog presets include external-only servers; an empty repository forbids a

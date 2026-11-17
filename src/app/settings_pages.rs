@@ -4,39 +4,6 @@ use super::quality::Binding;
 use super::*;
 use hedit::settings::{FormatSettings, Settings};
 
-/// A multi-line list of glob patterns, one per line, edited as text.
-fn pattern_list(ui: &mut egui::Ui, id: &str, patterns: &mut Vec<String>, warning: egui::Color32) {
-    let id = ui.make_persistent_id(id);
-    let mut text = ui.data_mut(|d| {
-        d.get_temp::<String>(id)
-            .unwrap_or_else(|| patterns.join("\n"))
-    });
-    let response = ui.add(
-        egui::TextEdit::multiline(&mut text)
-            .font(egui::TextStyle::Monospace)
-            .desired_rows(4)
-            .desired_width(f32::INFINITY),
-    );
-    let parsed: Vec<String> = text
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .map(String::from)
-        .collect();
-    let error = hedit::folder::validate_excludes(&parsed, &[]).err();
-    if response.changed() && error.is_none() {
-        *patterns = parsed;
-    }
-    if response.has_focus() {
-        ui.data_mut(|d| d.insert_temp(id, text));
-    } else {
-        ui.data_mut(|d| d.remove::<String>(id));
-    }
-    if let Some(error) = error {
-        ui.colored_label(warning, error);
-    }
-}
-
 /// Controls for one set of formatting rules.
 fn format_fields(ui: &mut egui::Ui, id: &str, f: &mut FormatSettings) {
     const KEEP: &str = "Keep each file's";
@@ -63,19 +30,31 @@ fn format_fields(ui: &mut egui::Ui, id: &str, f: &mut FormatSettings) {
                 }
             });
     });
-    let mut trim = f.trim_trailing_white_space_on_save == Some(true);
-    if ui
-        .checkbox(&mut trim, "Trim trailing whitespace on save")
-        .changed()
-    {
-        f.trim_trailing_white_space_on_save = trim.then_some(true);
-    }
-    let mut newline = f.ensure_newline_at_eof_on_save == Some(true);
-    if ui
-        .checkbox(&mut newline, "End the file with a newline on save")
-        .changed()
-    {
-        f.ensure_newline_at_eof_on_save = newline.then_some(true);
+    for (key, label, value) in [
+        (
+            "trim",
+            "Trim trailing whitespace on save",
+            &mut f.trim_trailing_white_space_on_save,
+        ),
+        (
+            "newline",
+            "End the file with a newline on save",
+            &mut f.ensure_newline_at_eof_on_save,
+        ),
+    ] {
+        row(ui, label, |ui| {
+            egui::ComboBox::from_id_salt((id, key))
+                .selected_text(match value {
+                    None => "Inherit file / project",
+                    Some(true) => "Enabled",
+                    Some(false) => "Disabled",
+                })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(value, None, "Inherit file / project");
+                    ui.selectable_value(value, Some(true), "Enabled");
+                    ui.selectable_value(value, Some(false), "Disabled");
+                });
+        });
     }
     row(ui, "Line endings on save", |ui| {
         egui::ComboBox::from_id_salt((id, "eol"))
@@ -186,36 +165,7 @@ impl HeditApp {
         }
     }
     pub(super) fn folder_preferences(&mut self, ui: &mut egui::Ui) {
-        let warning = self.theme.warning.color();
-        section(ui, "Hidden folders");
-        ui.weak("One name or pattern per line, such as node_modules or *.egg-info. Matching folders are left out of the folder tree, Go to file, and Find in folders.");
-        pattern_list(
-            ui,
-            "folder-excludes",
-            &mut self.settings.folder_exclude_patterns,
-            warning,
-        );
-        section(ui, "Hidden files");
-        pattern_list(
-            ui,
-            "file-excludes",
-            &mut self.settings.file_exclude_patterns,
-            warning,
-        );
-        section(ui, "Find");
-        ui.weak("New searches start with these options; changes in the Find bar are remembered.");
-        ui.checkbox(&mut self.quality.options.case_sensitive, "Case sensitive");
-        ui.checkbox(&mut self.quality.options.regex, "Regular expressions");
-        ui.checkbox(&mut self.quality.options.whole_word, "Whole words");
-        ui.add_space(14.0);
-        if ui.button("Restore defaults").clicked() {
-            let d = Settings::default();
-            self.settings.folder_exclude_patterns = d.folder_exclude_patterns;
-            self.settings.file_exclude_patterns = d.file_exclude_patterns;
-            self.quality.options.case_sensitive = d.find_case_sensitive;
-            self.quality.options.regex = d.find_regex;
-            self.quality.options.whole_word = d.find_whole_word;
-        }
+        self.settings_catalog(ui, Some(PreferencesPage::Folders));
     }
     pub(super) fn key_preferences(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.weak("Click a shortcut, then press the new keys. Esc cancels. Unbinding removes a shortcut entirely.");
@@ -496,5 +446,83 @@ impl HeditApp {
                 self.quality.config.snippets = hedit::intelligence::default_snippets();
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod formatting_override_tests {
+    use super::super::tests::text_rect;
+    use super::*;
+    fn draw(
+        ctx: &egui::Context,
+        rules: &mut FormatSettings,
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
+        ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, 500.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| format_fields(ui, "test", rules));
+            },
+        )
+    }
+    fn click(ctx: &egui::Context, rules: &mut FormatSettings, pos: egui::Pos2) {
+        draw(
+            ctx,
+            rules,
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Modifiers::NONE,
+                },
+            ],
+        );
+        draw(
+            ctx,
+            rules,
+            vec![egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: Modifiers::NONE,
+            }],
+        );
+    }
+    #[test]
+    fn formatting_controls_can_explicitly_disable_inherited_save_rules() {
+        let ctx = egui::Context::default();
+        let mut rules = FormatSettings {
+            trim_trailing_white_space_on_save: Some(true),
+            ensure_newline_at_eof_on_save: Some(true),
+            ..FormatSettings::default()
+        };
+        draw(&ctx, &mut rules, vec![]);
+        let output = draw(&ctx, &mut rules, vec![]);
+        let enabled = output
+            .shapes
+            .iter()
+            .find_map(|s| text_rect(&s.shape, "Enabled"))
+            .unwrap()
+            .center();
+        click(&ctx, &mut rules, enabled);
+        let output = draw(&ctx, &mut rules, vec![]);
+        let disabled = output
+            .shapes
+            .iter()
+            .find_map(|s| text_rect(&s.shape, "Disabled"))
+            .unwrap()
+            .center();
+        click(&ctx, &mut rules, disabled);
+        assert_eq!(rules.trim_trailing_white_space_on_save, Some(false));
+        assert_eq!(rules.ensure_newline_at_eof_on_save, Some(true));
     }
 }

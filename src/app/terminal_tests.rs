@@ -1002,3 +1002,43 @@ fn terminal_font_loads_without_changing_the_editor_and_survives_editor_font_chan
     assert!(!app.terminal.open);
     settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
 }
+
+#[test]
+fn terminal_font_loading_is_single_flight_and_then_loads_the_latest_selection() {
+    let dir = tempfile::tempdir().unwrap();
+    let (ctx, mut app) = app_in(dir.path());
+    app.terminal_font_loading = Some(7);
+    app.terminal_font_generation = 7;
+    app.terminal_font_applied = Some("older face".into());
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/fonts/NotoSans-Regular.ttf");
+    app.settings.terminal_font = Some(hedit::settings::TerminalFont {
+        face: path.display().to_string(),
+        size: 18.0,
+    });
+    for _ in 0..5 {
+        app.apply_editor_style(&ctx);
+    }
+    assert_eq!(
+        app.terminal_font_generation, 7,
+        "a second load must wait for the in-flight request"
+    );
+    app.tx
+        .send(Ok(Action::TerminalFont(
+            7,
+            "older face".into(),
+            Err("obsolete".into()),
+        )))
+        .unwrap();
+    app.receive(&ctx);
+    app.apply_editor_style(&ctx);
+    assert_eq!(app.terminal_font_generation, 8);
+    let until = Instant::now() + Duration::from_secs(5);
+    while app.terminal_font.is_none() {
+        app.receive(&ctx);
+        assert!(Instant::now() < until);
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(app.terminal_font_loading.is_none());
+    assert!(!app.notice.contains("obsolete"));
+    settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
+}

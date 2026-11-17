@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Redesign Settings with global search, category filtering, modified values, per-setting resets, validation feedback and a resizable layout.
+- Simplify language-server configuration with dedicated detail views, explicit scope and advanced options on demand.
+- Preserve explicit disabled formatting overrides and incomplete settings drafts.
+- Keep failed language servers stopped across session-limit changes and keep focused documents and companion servers ahead of background projects.
+- Limit terminal font loading to one request at a time and apply the latest selected face.
+- Keep document jobs intact when editor fonts fail to load, ignore stale font errors and accept surrounding whitespace in font selections.
+
 - Add verified managed ty, Ruff, LuaLS and Tombi installs, plus external presets for Go and common web and shell servers.
 - Add per-feature language-server controls, priority, launch arguments, environment overrides, project root markers and initialization options.
 - Run companion servers per document and combine their diagnostics with predictable feature routing.
