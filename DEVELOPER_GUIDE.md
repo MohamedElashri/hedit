@@ -377,3 +377,13 @@ dirty project-file buffers before merging unknown JSON keys. Formatting provenan
 uses the same resolver as open/save, with source allocation enabled only for the
 inspector. A single background worker resolves the visible file; context keys reject
 stale results and an explicit refresh rereads external EditorConfig changes.
+
+### Shortcut resolution
+
+`shortcut_preset` resolves personal bindings before the optional common-command
+preset, then suppresses defaults whose keys or chord prefixes are claimed. Its
+cache rebuilds only when the preset or personal bindings change. Menus, palette,
+settings, chords and terminal routing share that result. Context routing still
+restricts shell and settings input; `editor_only` applies to chords as well as
+single keys. Keep local-only availability in `Command::requires_local` so menus
+and execution agree for SSH workspaces.

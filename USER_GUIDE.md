@@ -643,6 +643,17 @@ For remote flags, see [SSH workspaces](#ssh-remote-workspaces).
 ## Keyboard shortcuts
 
 
+Choose **Settings → Key Bindings → Shortcut preset** for Hedit or **VS Code ·
+common commands** (`keybinding_preset`: `hedit` or `vscode`). Existing settings keep
+Hedit. The optional preset maps sidebar visibility, build, symbols, Problems,
+Output, splitting, group focus and document formatting to the corresponding
+[VS Code shortcuts](https://code.visualstudio.com/docs/reference/default-keybindings),
+including platform differences. Other commands retain Hedit bindings. Personal
+bindings take priority; conflicting default shortcuts are suppressed and shown
+as unbound. Menus, the palette and tooltips show effective shortcuts. Reset restores
+the selected preset; switching presets preserves `keybindings.json`. Shell focus
+keeps editor shortcuts with the terminal, and editor-only chords stay out of Settings.
+
 Change any shortcut under **Settings → Key Bindings**. Two-key shortcuts such as
 **Ctrl+K, Ctrl+D** mean: press the first, then the second.
 

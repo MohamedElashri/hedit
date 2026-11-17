@@ -139,6 +139,15 @@ impl Default for TerminalColors {
     }
 }
 
+/// Optional common-command mappings; personal keybindings always take priority.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KeybindingPreset {
+    #[default]
+    Hedit,
+    Vscode,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -146,6 +155,7 @@ pub struct Settings {
     pub ui_font_face: String,
     pub ui_font_size: f32,
     pub ui_density: crate::ui_style::Density,
+    pub keybinding_preset: KeybindingPreset,
     // Editor
     /// A font family name or font file path; empty uses the built-in font.
     pub font_face: String,
@@ -257,6 +267,7 @@ impl Default for Settings {
             ui_font_face: String::new(),
             ui_font_size: 13.0,
             ui_density: crate::ui_style::Density::default(),
+            keybinding_preset: KeybindingPreset::default(),
             font_face: String::new(),
             font_size: 14.0,
             line_padding: 0.0,
@@ -586,5 +597,22 @@ mod workbench_tests {
             ..Settings::default()
         };
         assert!(direct.validate().is_err());
+    }
+}
+
+#[cfg(test)]
+mod preset_tests {
+    use super::*;
+    #[test]
+    fn shortcut_presets_are_explicit_and_older_settings_keep_hedit_defaults() {
+        assert_eq!(
+            Settings::parse("{}").unwrap().0.keybinding_preset,
+            KeybindingPreset::Hedit
+        );
+        let (settings, warnings) = Settings::parse(r#"{"keybinding_preset":"vscode"}"#).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(settings.keybinding_preset, KeybindingPreset::Vscode);
+        assert_eq!(Settings::parse(&settings.to_json()).unwrap().0, settings);
+        assert!(Settings::parse(r#"{"keybinding_preset":"unknown"}"#).is_err());
     }
 }

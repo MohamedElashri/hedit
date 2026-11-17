@@ -169,6 +169,29 @@ impl HeditApp {
         self.settings_catalog(ui, Some(PreferencesPage::Folders));
     }
     pub(super) fn key_preferences(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        use hedit::settings::KeybindingPreset;
+        preferences::row(ui, "Shortcut preset", |ui| {
+            egui::ComboBox::from_id_salt("keybinding-preset")
+                .selected_text(match self.settings.keybinding_preset {
+                    KeybindingPreset::Hedit => "Hedit",
+                    KeybindingPreset::Vscode => "VS Code · common commands",
+                })
+                .show_ui(ui, |ui| {
+                    for (value, label) in [
+                        (KeybindingPreset::Hedit, "Hedit"),
+                        (KeybindingPreset::Vscode, "VS Code · common commands"),
+                    ] {
+                        if ui
+                            .selectable_value(&mut self.settings.keybinding_preset, value, label)
+                            .changed()
+                        {
+                            self.chord = None;
+                            self.reset_terminal_binding();
+                        }
+                    }
+                });
+        });
+        ui.weak("Personal bindings take priority. Reset restores the selected preset. Other commands keep Hedit bindings.");
         ui.weak("Click a shortcut, then press the new keys. Esc cancels. Unbinding removes a shortcut entirely.");
         ui.add_space(4.0);
         ui.add(
@@ -238,7 +261,7 @@ impl HeditApp {
                         if clash {
                             ui.colored_label(self.theme.warning.color(), "⚠");
                         }
-                        if self.overridden(*command) && ui.small_button("Reset").clicked() {
+                        if self.personally_bound(*command) && ui.small_button("Reset").clicked() {
                             change = Some((*command, None));
                         }
                         if !shortcut.is_empty() && ui.small_button("Unbind").clicked() {
@@ -267,6 +290,24 @@ impl HeditApp {
     /// Set a command's shortcut (`None` restores its default), unbinding any
     /// other command that used the same keys.
     pub(super) fn set_binding(&mut self, command: Command, shortcut: Option<String>) {
+        let others: Vec<Command> =
+            shortcut
+                .as_ref()
+                .filter(|s| !s.is_empty())
+                .map_or_else(Vec::new, |shortcut| {
+                    let keys = chords::parse(shortcut).unwrap_or_default();
+                    Command::ALL
+                        .iter()
+                        .copied()
+                        .filter(|&other| {
+                            other != command
+                                && shortcut_preset::bindings_collide(
+                                    &keys,
+                                    &self.shortcut_text(other),
+                                )
+                        })
+                        .collect()
+                });
         let bindings = &mut self.quality.config.keybindings;
         let editor_only = bindings
             .iter()
@@ -283,12 +324,7 @@ impl HeditApp {
                 editor_only,
             };
             self.quality.config.keybindings.push(label);
-            let taken = self.shortcut_text(command);
-            let others: Vec<Command> = Command::ALL
-                .iter()
-                .copied()
-                .filter(|&c| c != command && self.shortcut_text(c) == taken)
-                .collect();
+            let taken = shortcut_preset::display(&shortcut);
             for other in others {
                 self.quality
                     .config

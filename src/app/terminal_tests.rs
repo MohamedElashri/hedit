@@ -288,6 +288,22 @@ fn terminal_hide_keeps_session_and_disabling_ends_it_without_editing_buffer() {
         .flat_map(|r| r.iter().map(|c| c.text.as_str()))
         .collect();
     assert!(text.contains("PRESERVED_SESSION"));
+    // Preset editor/workbench shortcuts remain shell input while it has focus.
+    app.settings.keybinding_preset = hedit::settings::KeybindingPreset::Vscode;
+    let sidebar = app.settings.show_sidebar;
+    let _ = ctx.run(
+        egui::RawInput {
+            focused: true,
+            events: vec![key(Key::B, Modifiers::COMMAND)],
+            ..Default::default()
+        },
+        |ctx| {
+            ctx.memory_mut(|m| m.request_focus(egui::Id::new("integrated-terminal-input")));
+            app.shortcuts(ctx);
+        },
+    );
+    assert_eq!(app.settings.show_sidebar, sidebar);
+    assert!(app.terminal.open);
     // A rebound toggle works while the shell has focus, including a chord.
     app.quality.config.keybindings = vec![quality::Binding {
         command: Command::Terminal,

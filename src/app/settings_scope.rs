@@ -105,11 +105,8 @@ impl HeditApp {
         if self.handle_chords(ctx) {
             return;
         }
-        for binding in self
-            .quality
-            .config
-            .keybindings
-            .clone()
+        let bindings = self.configured_bindings().to_vec();
+        for binding in bindings
             .into_iter()
             .filter(|b| !b.editor_only && Self::settings_key_command(b.command))
         {
