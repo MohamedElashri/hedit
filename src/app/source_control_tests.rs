@@ -43,6 +43,7 @@ fn fixture() -> (tempfile::TempDir, egui::Context, HeditApp, Git) {
     let ctx = egui::Context::default();
     ctx.style_mut(|s| s.scroll_animation = egui::style::ScrollAnimation::none());
     let mut app = HeditApp::from_context(&ctx, None, workspace, errors, vec![]);
+    app.settings.show_activity_bar = false;
     app.open_source_control(&ctx);
     finish_git(&ctx, &mut app);
     (directory, ctx, app, git)
@@ -1124,6 +1125,7 @@ fn shortcut_close_and_commit_drafts_preserve_editor_state() {
 #[test]
 fn workspace_switcher_preserves_drafts_and_files_across_themes_and_small_sidebars() {
     let (_directory, ctx, mut app, _git) = fixture();
+    app.settings.show_activity_bar = false;
     app.source_control.draft = "Keep my commit message".into();
     let id = app.active().view.id;
     for theme in ["Hedit Ink", "Hedit Paper"] {
@@ -2346,4 +2348,31 @@ fn cancelling_a_running_commit_keeps_the_review_visible_and_allows_retry() {
     assert_ne!(git.command(&root, &["rev-parse", "HEAD"]).unwrap(), before);
     assert!(app.source_control.draft.is_empty());
     assert!(app.source_control.error.is_none());
+}
+
+#[test]
+fn activity_bar_switches_workspaces_without_losing_commit_drafts() {
+    let (_directory, ctx, mut app, _git) = fixture();
+    app.settings.show_activity_bar = true;
+    app.source_control.draft = "Keep my activity bar draft".into();
+    let id = app.active().view.id;
+    for icon in [hedit::icons::Icon::Files, hedit::icons::Icon::SourceControl] {
+        frame(&ctx, &mut app, vec![]);
+        let out = frame(&ctx, &mut app, vec![]);
+        let rect = out
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Mesh(mesh) if icon.matches_texture(&ctx, mesh.texture_id) => {
+                    Some(mesh.calc_bounds())
+                }
+                _ => None,
+            })
+            .unwrap();
+        super::super::tests::click_at(&ctx, &mut app, rect.center(), egui::vec2(1280.0, 820.0));
+    }
+    finish_git(&ctx, &mut app);
+    assert!(app.source_control.open);
+    assert_eq!(app.active().view.id, id);
+    assert_eq!(app.source_control.draft, "Keep my activity bar draft");
 }

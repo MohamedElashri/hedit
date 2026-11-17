@@ -119,6 +119,7 @@ mod user_guide;
 mod view_commands;
 mod wait;
 mod workbench;
+mod workbench_navigation;
 
 use commands::Command;
 use eframe::egui::{self, FontId, Key, Modifiers, RichText};
@@ -4157,7 +4158,7 @@ mod tests {
                     assert!((side.bottom() - status.top()).abs() <= 1.0);
                     assert!(!tabs.intersect(side).is_positive());
                 } else {
-                    assert_eq!(tabs.left(), 0.0);
+                    assert_eq!(tabs.left(), panel("activity-bar").right());
                 }
             }
         }

@@ -128,11 +128,17 @@ fn markdown_styled_text_and_link_punctuation_wrap_as_continuous_prose() {
         .rows
         .iter()
         .all(|row| !row.text().trim_start().starts_with(',')));
-    assert!(paragraph
+    let link_at = paragraph.text().find("references").unwrap();
+    let link = paragraph
         .job
         .sections
         .iter()
-        .any(|s| s.format.color == app.theme.accent.color()));
+        .find(|s| s.byte_range.contains(&link_at))
+        .unwrap()
+        .format
+        .color;
+    assert_ne!(link, app.theme.text.color());
+    assert!(Theme::contrast(Rgb::new(link.r(), link.g(), link.b()), app.theme.surface) >= 4.5);
     assert_eq!(app.active().page.text, source);
 }
 
@@ -157,7 +163,16 @@ fn markdown_display_equations_are_centered_and_keep_following_paragraphs_separat
             })
         })
         .unwrap();
-    assert!((equation.center().x - 748.0).abs() < 24.0, "{equation:?}");
+    let viewport = output
+        .shapes
+        .iter()
+        .find(|s| text_rect(&s.shape, "Before the equation.").is_some())
+        .unwrap()
+        .clip_rect;
+    assert!(
+        (equation.center().x - viewport.center().x).abs() < 12.0,
+        "{equation:?} in {viewport:?}"
+    );
     assert!(equation.top() > rect(&output, "Before the equation.").bottom());
     assert!(rect(&output, "After the equation.").top() > equation.bottom());
 }

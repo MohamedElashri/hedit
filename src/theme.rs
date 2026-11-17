@@ -237,8 +237,8 @@ const BUILTINS: &[Builtin] = &[
     // background surface panel elevated border text muted accent selection selection_text
     // warning error success | comment keyword string number cuda function type constant operator property preprocessor
     Builtin { name: INK, dark: true, colors: [
-        "#303030", "#383838", "#262626", "#424242", "#454545", "#D8DEE9", "#A0A0A0", "#E9B56B", "#4B5668", "#F5F5F5",
-        "#E9B56B", "#EC7B85", "#A6C88A",
+        "#1F1F1F", "#202020", "#181818", "#2D2D30", "#2B2B2B", "#D4D4D4", "#9D9D9D", "#0078D4", "#264F78", "#FFFFFF",
+        "#CCA700", "#F14C4C", "#73C991",
         "#909090", "#C5A5D9", "#A6C88A", "#D6AA78", "#78C4CC", "#83B6DE", "#E3C68F", "#D6AA78", "#C5A5D9", "#C5A5D9", "#C5A5D9"] },
     Builtin { name: "One Dark", dark: true, colors: [
         "#282C34", "#2C313A", "#21252B", "#333842", "#3E4451", "#ABB2BF", "#8B929E", "#528BFF", "#3E4451", "#E6E9EF",
@@ -281,8 +281,8 @@ const BUILTINS: &[Builtin] = &[
         "#F6C177", "#EB6F92", "#9CCFD8",
         "#6E6A86", "#31748F", "#F6C177", "#EBBCBA", "#9CCFD8", "#EBBCBA", "#9CCFD8", "#EBBCBA", "#908CAA", "#C4A7E7", "#EB6F92"] },
     Builtin { name: PAPER, dark: false, colors: [
-        "#FAFAFA", "#F2F2F2", "#E8E8E8", "#DDDDDD", "#CECECE", "#383838", "#686868", "#8B5C18", "#D6E2F0", "#273444",
-        "#8B5C18", "#AA3540", "#357544",
+        "#FFFFFF", "#FFFFFF", "#F3F3F3", "#ECECEC", "#E5E5E5", "#1F1F1F", "#616161", "#005FB8", "#ADD6FF", "#000000",
+        "#8B6900", "#C42B1C", "#16825D",
         "#787878", "#7952A3", "#50782D", "#A05A2C", "#197885", "#2868A5", "#876320", "#A05A2C", "#7952A3", "#383838", "#7952A3"] },
     Builtin { name: "One Light", dark: false, colors: [
         "#FAFAFA", "#F0F0F1", "#EAEAEB", "#E5E5E6", "#DBDBDC", "#383A42", "#696C77", "#526FFF", "#E5E5E6", "#232324",
@@ -512,14 +512,23 @@ impl Theme {
         file.persist(path).map_err(|e| e.to_string())?;
         crate::session::sync_directory(parent)
     }
-    /// The fill under a hovered or open menu entry or button: the surface tinted
-    /// toward the accent, so it stands out on both the menu bar and popups.
+    /// Neutral control and menu hover surface, shared across the workbench.
     pub fn hover(&self) -> Rgb {
-        let mix = |surface: u8, accent: u8| {
-            (surface as f32 + (accent as f32 - surface as f32) * 0.3).round() as u8
-        };
-        let (s, a) = (self.surface.0, self.accent.0);
-        Rgb([mix(s[0], a[0]), mix(s[1], a[1]), mix(s[2], a[2])])
+        // Keep neutral hover surfaces visible on both the panel and editor.
+        // Custom themes retain their elevated role whenever it is readable.
+        for step in 0..=20 {
+            let t = step as f32 / 20.0;
+            let hover = Rgb(std::array::from_fn(|i| {
+                (self.elevated.0[i] as f32 * (1.0 - t) + self.text.0[i] as f32 * t).round() as u8
+            }));
+            if Self::contrast(hover, self.surface) >= 1.2
+                && Self::contrast(hover, self.panel) >= 1.2
+                && Self::contrast(self.text, hover) >= 3.0
+            {
+                return hover;
+            }
+        }
+        self.elevated
     }
     /// A readable foreground for primary actions, including user-defined accents.
     pub fn accent_text(&self) -> Rgb {

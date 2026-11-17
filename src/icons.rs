@@ -106,16 +106,26 @@ fn rasterize(icon: Icon, pixels: u32) -> Result<egui::ColorImage, String> {
 
 /// Flat toolbar action with a predictable hit target and visible keyboard focus.
 pub fn button(ui: &mut egui::Ui, icon: Icon, label: &str) -> egui::Response {
-    control(ui, icon, label, None)
+    control(ui, icon, label, None, None)
 }
 pub fn toggle(ui: &mut egui::Ui, icon: Icon, label: &str, selected: bool) -> egui::Response {
-    control(ui, icon, label, Some(selected))
+    control(ui, icon, label, Some(selected), None)
 }
-fn control(ui: &mut egui::Ui, icon: Icon, label: &str, state: Option<bool>) -> egui::Response {
+pub fn navigation(ui: &mut egui::Ui, icon: Icon, label: &str, selected: bool) -> egui::Response {
+    let side = crate::ui_style::Metrics::for_ui(ui).control.max(36.0);
+    control(ui, icon, label, Some(selected), Some((side, 24.0)))
+}
+fn control(
+    ui: &mut egui::Ui,
+    icon: Icon,
+    label: &str,
+    state: Option<bool>,
+    size: Option<(f32, f32)>,
+) -> egui::Response {
     let selected = state.unwrap_or(false);
     let m = crate::ui_style::Metrics::for_ui(ui);
-    let (_, response) =
-        ui.allocate_exact_size(egui::vec2(m.control, m.control), egui::Sense::click());
+    let (side, glyph) = size.unwrap_or((m.control, m.icon));
+    let (_, response) = ui.allocate_exact_size(egui::vec2(side, side), egui::Sense::click());
     response.widget_info(|| match state {
         Some(selected) => {
             egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), selected, label)
@@ -142,7 +152,7 @@ fn control(ui: &mut egui::Ui, icon: Icon, label: &str, state: Option<bool>) -> e
     };
     icon.paint(
         ui,
-        egui::Rect::from_center_size(response.rect.center(), egui::vec2(m.icon, m.icon)),
+        egui::Rect::from_center_size(response.rect.center(), egui::vec2(glyph, glyph)),
         color,
     );
     response.on_hover_text(label)

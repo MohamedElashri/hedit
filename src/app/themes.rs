@@ -45,17 +45,21 @@ const LEGACY_INK: &str = "#10161F #161E29 #131A24 #202B39 #2B3949 #DCE6F0 #8DA0B
 const LEGACY_PAPER: &str = "#FAF8F3 #F0EEE8 #F4F2EC #E5E7DF #CCD2CB #243832 #556B62 #147568 #D1E8DE #163E33
     #8B5918 #AA3540 #287847 #59776B #7354A3 #426D26 #95552A #147568 #243832 #243832 #95552A #243832 #7354A3 #7354A3";
 
+const PRE_WORKBENCH_INK: &str = "#303030 #383838 #262626 #424242 #454545 #D8DEE9 #A0A0A0 #E9B56B #4B5668 #F5F5F5 #E9B56B #EC7B85 #A6C88A #909090 #C5A5D9 #A6C88A #D6AA78 #78C4CC #83B6DE #E3C68F #D6AA78 #C5A5D9 #C5A5D9 #C5A5D9";
+const PRE_WORKBENCH_PAPER: &str = "#FAFAFA #F2F2F2 #E8E8E8 #DDDDDD #CECECE #383838 #686868 #8B5C18 #D6E2F0 #273444 #8B5C18 #AA3540 #357544 #787878 #7952A3 #50782D #A05A2C #197885 #2868A5 #876320 #A05A2C #7952A3 #383838 #7952A3";
+
 pub(super) fn refresh_saved_theme(theme: Theme) -> Theme {
     let legacy = match (theme.name.as_str(), theme.dark) {
-        (catalog::INK, true) => LEGACY_INK,
-        (catalog::PAPER, false) => LEGACY_PAPER,
+        (catalog::INK, true) => [LEGACY_INK, PRE_WORKBENCH_INK],
+        (catalog::PAPER, false) => [LEGACY_PAPER, PRE_WORKBENCH_PAPER],
         _ => return theme,
     };
-    if Role::ALL
-        .into_iter()
-        .zip(legacy.split_whitespace())
-        .all(|(role, color)| theme.color(role).hex() == color)
-    {
+    if legacy.iter().any(|legacy| {
+        Role::ALL
+            .into_iter()
+            .zip(legacy.split_whitespace())
+            .all(|(role, color)| theme.color(role).hex() == color)
+    }) {
         catalog::builtin(&theme.name).expect("built-in default")
     } else {
         theme
@@ -1044,6 +1048,8 @@ mod migration_tests {
         for (key, name, colors) in [
             ("theme_dark", catalog::INK, LEGACY_INK),
             ("theme_light", catalog::PAPER, LEGACY_PAPER),
+            ("theme_dark", catalog::INK, PRE_WORKBENCH_INK),
+            ("theme_light", catalog::PAPER, PRE_WORKBENCH_PAPER),
         ] {
             let mut old = catalog::builtin(name).unwrap();
             for (role, color) in Role::ALL.into_iter().zip(colors.split_whitespace()) {

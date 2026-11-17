@@ -659,13 +659,7 @@ impl HeditApp {
                     .inner_margin(egui::Margin::symmetric(8, 10)),
             )
             .show(ctx, |ui| {
-                if controls::workspace_switcher(
-                    ui,
-                    &theme,
-                    true,
-                    &self.shortcut_text(Command::SourceControl),
-                ) == Some(false)
-                {
+                if self.workspace_header(ui, true) == Some(false) {
                     self.source_control.open = false;
                     self.focus_editor = true;
                     ctx.memory_mut(|m| {

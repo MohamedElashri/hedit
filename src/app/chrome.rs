@@ -249,6 +249,7 @@ impl HeditApp {
             self.execute(ctx, command);
         }
         self.status_bar(ctx);
+        self.activity_bar(ctx);
         self.buffer_sidebar(ctx);
         self.tabs(ctx);
     }
@@ -350,12 +351,7 @@ impl HeditApp {
                                         } else {
                                             theme.panel.color()
                                         })
-                                        .corner_radius(egui::CornerRadius {
-                                            nw: 5,
-                                            ne: 5,
-                                            sw: 0,
-                                            se: 0,
-                                        })
+                                        .corner_radius(0)
                                         .inner_margin(egui::Margin::symmetric(10, 3))
                                         .show(ui, |ui| {
                                             ui.push_id(buffer.page.info.id, |ui| {
@@ -498,6 +494,13 @@ impl HeditApp {
                                             });
                                         });
                                 });
+                                if active {
+                                    ui.painter().hline(
+                                        shown.response.rect.x_range(),
+                                        shown.response.rect.top() + 0.5,
+                                        egui::Stroke::new(1.0_f32, theme.accent.color()),
+                                    );
+                                }
                                 if self.tab_strip.measured(index, shown.response.rect.width()) {
                                     ui.ctx().request_repaint();
                                 }
@@ -550,6 +553,7 @@ impl HeditApp {
         if !self.settings.show_status_bar || self.distraction_free {
             return;
         }
+        let font = (self.settings.ui_font_size - 1.0).max(10.0);
         let mut status_action = None;
         let theme = self.theme.clone();
         egui::TopBottomPanel::bottom("status")
@@ -560,105 +564,120 @@ impl HeditApp {
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    let buffer = &self.workspace.open[self.workspace.active];
-                    let source_index =
-                        self.projections[self.panes.focused].source_index(&buffer.page.text);
-                    let (line, col) = source_index.line_column(
-                        &buffer.page.text,
-                        buffer.view.head,
-                        buffer.view.tab_size.unwrap_or(4) as usize,
-                    );
-                    let (line, col) = (line + 1, col + 1);
-                    ui.label(
-                        RichText::new(format!(
-                            "{}Line {line}, Column {col}",
-                            if buffer.page.info.paged { "Page " } else { "" }
-                        ))
-                        .size(11.0),
-                    )
-                    .on_hover_text(format!(
-                        "{} · {}",
-                        buffer.view.name,
-                        format_bytes(buffer.page.info.size)
-                    ));
-                    if !buffer.view.selections.is_empty() {
-                        ui.label(
-                            RichText::new(format!("{} cursors", buffer.view.selections.len() + 1))
-                                .size(10.0)
-                                .color(theme.accent.color()),
-                        );
-                    }
-                    if buffer.follow {
-                        ui.label(
-                            RichText::new("READ ONLY · FOLLOWING")
-                                .size(10.0)
-                                .color(theme.accent.color()),
-                        );
-                    }
-                    if self.busy {
-                        ui.spinner();
-                        if ui.small_button("Cancel").clicked() {
-                            self.cancel.store(true, Ordering::Relaxed);
-                        }
-                    }
-                    // Show each new notice briefly, like Sublime's status messages.
-                    if self.notice_shown.0 != self.notice {
-                        self.notice_shown = (self.notice.clone(), Instant::now());
-                    }
-                    let age = self.notice_shown.1.elapsed();
-                    if age < NOTICE_TIME && self.notice != "Ready." {
-                        ui.separator();
-                        let width = (ui.available_width() - 340.0).max(0.0);
-                        ui.add_sized(
-                            [width, 18.0],
-                            egui::Label::new(
-                                RichText::new(&self.notice)
-                                    .size(11.0)
-                                    .color(theme.muted.color()),
+                    let right = (340.0 * font / 11.0).min(ui.available_width() * 0.75);
+                    let left =
+                        (ui.available_width() - right - ui.spacing().item_spacing.x).max(60.0);
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(left, 0.0),
+                        egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true),
+                        |ui| {
+                            let buffer = &self.workspace.open[self.workspace.active];
+                            let source_index = self.projections[self.panes.focused]
+                                .source_index(&buffer.page.text);
+                            let (line, col) = source_index.line_column(
+                                &buffer.page.text,
+                                buffer.view.head,
+                                buffer.view.tab_size.unwrap_or(4) as usize,
+                            );
+                            let (line, col) = (line + 1, col + 1);
+                            ui.label(
+                                RichText::new(format!(
+                                    "{}Line {line}, Column {col}",
+                                    if buffer.page.info.paged { "Page " } else { "" }
+                                ))
+                                .size(font),
                             )
-                            .truncate(),
-                        )
-                        .on_hover_text(&self.notice);
-                        ctx.request_repaint_after(NOTICE_TIME - age);
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let remote = self.workspace.remote.as_ref().map(|r| r.status());
-                        let (label, color) = if let Some((connected, _, pending, _)) = &remote {
-                            if !connected {
-                                (
-                                    "Disconnected · pending edits remain in memory",
-                                    theme.warning,
-                                )
-                            } else if *pending > 0 {
-                                ("Waiting for durable SSH host receipts", theme.warning)
-                            } else {
-                                ("Recovery durable on SSH host", theme.muted)
+                            .on_hover_text(format!(
+                                "{} · {}",
+                                buffer.view.name,
+                                format_bytes(buffer.page.info.size)
+                            ));
+                            if !buffer.view.selections.is_empty() {
+                                ui.label(
+                                    RichText::new(format!(
+                                        "{} cursors",
+                                        buffer.view.selections.len() + 1
+                                    ))
+                                    .size((font - 1.0).max(10.0))
+                                    .color(theme.accent.color()),
+                                );
                             }
-                        } else if self.closing {
-                            ("Finishing recovery…", theme.warning)
-                        } else if self.checkpoint_pending {
-                            ("Checkpointing…", theme.warning)
-                        } else if self.persisted == self.generation {
-                            ("Recovery up to date", theme.muted)
-                        } else {
-                            ("Recovery pending", theme.warning)
-                        };
-                        if ui
-                            .add(
-                                egui::Button::new(
-                                    RichText::new("●").size(9.0).color(color.color()),
+                            if buffer.follow {
+                                ui.label(
+                                    RichText::new("READ ONLY · FOLLOWING")
+                                        .size((font - 1.0).max(10.0))
+                                        .color(theme.accent.color()),
+                                );
+                            }
+                            if self.busy {
+                                ui.spinner();
+                                if ui.small_button("Cancel").clicked() {
+                                    self.cancel.store(true, Ordering::Relaxed);
+                                }
+                            }
+                            // Show each new notice briefly, like Sublime's status messages.
+                            if self.notice_shown.0 != self.notice {
+                                self.notice_shown = (self.notice.clone(), Instant::now());
+                            }
+                            let age = self.notice_shown.1.elapsed();
+                            if age < NOTICE_TIME && self.notice != "Ready." {
+                                ui.separator();
+                                let width = ui.available_width().max(0.0);
+                                ui.add_sized(
+                                    [width, font + 8.0],
+                                    egui::Label::new(
+                                        RichText::new(&self.notice)
+                                            .size(font)
+                                            .color(theme.muted.color()),
+                                    )
+                                    .truncate(),
                                 )
-                                .frame(false),
-                            )
-                            .on_hover_text(format!("{label} · Recovery settings"))
-                            .clicked()
-                        {
-                            self.open_preferences(PreferencesPage::Recovery);
-                        }
-                        self.language_menu(ui);
-                        self.language_status_button(ui);
-                        self.status_menus(ui, &mut status_action);
-                    });
+                                .on_hover_text(&self.notice);
+                                ctx.request_repaint_after(NOTICE_TIME - age);
+                            }
+                        },
+                    );
+                    ui.with_layout(
+                        egui::Layout::right_to_left(egui::Align::Center).with_main_wrap(true),
+                        |ui| {
+                            let remote = self.workspace.remote.as_ref().map(|r| r.status());
+                            let (label, color) = if let Some((connected, _, pending, _)) = &remote {
+                                if !connected {
+                                    (
+                                        "Disconnected · pending edits remain in memory",
+                                        theme.warning,
+                                    )
+                                } else if *pending > 0 {
+                                    ("Waiting for durable SSH host receipts", theme.warning)
+                                } else {
+                                    ("Recovery durable on SSH host", theme.muted)
+                                }
+                            } else if self.closing {
+                                ("Finishing recovery…", theme.warning)
+                            } else if self.checkpoint_pending {
+                                ("Checkpointing…", theme.warning)
+                            } else if self.persisted == self.generation {
+                                ("Recovery up to date", theme.muted)
+                            } else {
+                                ("Recovery pending", theme.warning)
+                            };
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        RichText::new("●").size(9.0).color(color.color()),
+                                    )
+                                    .frame(false),
+                                )
+                                .on_hover_text(format!("{label} · Recovery settings"))
+                                .clicked()
+                            {
+                                self.open_preferences(PreferencesPage::Recovery);
+                            }
+                            self.language_menu(ui);
+                            self.language_status_button(ui);
+                            self.status_menus(ui, &mut status_action);
+                        },
+                    );
                 });
             });
         if let Some(command) = status_action {
@@ -669,7 +688,12 @@ impl HeditApp {
     fn status_menus(&self, ui: &mut egui::Ui, action: &mut Option<Command>) {
         let muted = self.theme.muted.color();
         let small = |text: String| {
-            egui::Button::new(RichText::new(text).size(11.0).color(muted)).frame(false)
+            egui::Button::new(
+                RichText::new(text)
+                    .size((self.settings.ui_font_size - 1.0).max(10.0))
+                    .color(muted),
+            )
+            .frame(false)
         };
         let info = &self.active().page.info;
         if ui
@@ -746,7 +770,7 @@ impl HeditApp {
         let response = ui.add(
             egui::Button::new(
                 RichText::new(format!("{} ⏷", language.label()))
-                    .size(11.0)
+                    .size((self.settings.ui_font_size - 1.0).max(10.0))
                     .color(
                         if selected.is_some() {
                             self.theme.accent
@@ -898,13 +922,7 @@ impl HeditApp {
             )
             .show(ctx, |ui| {
                 ui.set_min_width(ui.available_width());
-                if controls::workspace_switcher(
-                    ui,
-                    &theme,
-                    false,
-                    &self.shortcut_text(Command::SourceControl),
-                ) == Some(true)
-                {
+                if self.workspace_header(ui, false) == Some(true) {
                     self.open_source_control(ctx);
                 }
                 ui.add_space(8.0);
@@ -916,7 +934,7 @@ impl HeditApp {
                                 "CLOSED FILES    {}",
                                 self.workspace.closed.len()
                             ))
-                            .size(10.0)
+                            .size(hedit::ui_style::Metrics::for_ui(ui).small)
                             .color(theme.muted.color()),
                         )
                         .frame(false),
@@ -941,7 +959,10 @@ impl HeditApp {
                     .inner_margin(egui::Margin::symmetric(10, 6)),
             )
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
+                // Wrap whole controls; wrapping checkbox text into the remaining
+                // few pixels can grow a narrow panel beyond the viewport.
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                ui.horizontal_wrapped(|ui| {
                     ui.label("Find");
                     let width = (ui.available_width() - 225.0).max(100.0);
                     let input_id = egui::Id::new(FIND_INPUT);
@@ -963,6 +984,7 @@ impl HeditApp {
                         response.request_focus();
                         self.find_focus = false;
                     }
+                    wrap_search_control(ui, "Find next", 0.0);
                     let clicked = ui
                         .add_enabled(!self.busy && !self.closing, egui::Button::new("Find next"))
                         .clicked();
@@ -986,6 +1008,11 @@ impl HeditApp {
                     if options.iter().any(|r| r.changed()) {
                         self.find_as_you_type(ctx);
                     }
+                    wrap_search_control(
+                        ui,
+                        "Selection only",
+                        ui.spacing().icon_width + ui.spacing().icon_spacing,
+                    );
                     let selection_changed = ui.add_enabled_ui(self.quality.scope.is_some(), |ui| {
                         ui.checkbox(&mut self.quality.selection_only, "Selection only")
                             .changed()
@@ -993,6 +1020,7 @@ impl HeditApp {
                     if selection_changed.inner {
                         self.find_as_you_type(ctx);
                     }
+                    wrap_search_control(ui, "Previous", 0.0);
                     if ui
                         .add_enabled(!self.busy, egui::Button::new("Previous"))
                         .clicked()
@@ -1038,6 +1066,7 @@ impl HeditApp {
                             self.find(ctx);
                             response.request_focus();
                         }
+                        wrap_search_control(ui, "Replace selected", 0.0);
                         if ui
                             .add_enabled(
                                 self.command_enabled(Command::Replace),
@@ -1048,6 +1077,7 @@ impl HeditApp {
                             self.replace_selection();
                             self.focus_editor = false;
                         }
+                        wrap_search_control(ui, "Replace all", 0.0);
                         if ui
                             .add_enabled(
                                 self.command_enabled(Command::Replace),
@@ -1322,5 +1352,24 @@ impl HeditApp {
                 ui.close_menu();
             }
         }
+    }
+}
+
+// Enabled scopes paint their child before the wrapping parent allocates it.
+// Move the cursor first so compound controls never paint past the right edge.
+fn wrap_search_control(ui: &mut egui::Ui, label: &str, extra: f32) {
+    let width = egui::WidgetText::from(label)
+        .into_galley(
+            ui,
+            Some(egui::TextWrapMode::Extend),
+            f32::INFINITY,
+            egui::TextStyle::Button,
+        )
+        .size()
+        .x
+        + 2.0 * ui.spacing().button_padding.x
+        + extra;
+    if ui.available_size_before_wrap().x < width {
+        ui.end_row();
     }
 }

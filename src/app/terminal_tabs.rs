@@ -2,9 +2,6 @@
 use super::*;
 use hedit::icons::Icon;
 
-const HEIGHT: f32 = 30.0;
-const CONTROL: f32 = 26.0;
-
 #[derive(Default)]
 pub(super) struct Actions {
     pub activate: Option<usize>,
@@ -19,9 +16,11 @@ pub(super) struct Actions {
 }
 
 pub(super) fn bar(ui: &mut egui::Ui, state: &mut TerminalState, theme: &Theme) -> Actions {
+    let metrics = hedit::ui_style::Metrics::for_ui(ui);
+    let control = metrics.control;
     let mut actions = Actions::default();
     let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), HEIGHT),
+        egui::vec2(ui.available_width(), metrics.tab),
         egui::Sense::hover(),
     );
     ui.interact(
@@ -35,7 +34,7 @@ pub(super) fn bar(ui: &mut egui::Ui, state: &mut TerminalState, theme: &Theme) -
         rect.bottom() - 0.5,
         egui::Stroke::new(1.0_f32, theme.border.color()),
     );
-    let controls_width = CONTROL * 3.0 + 8.0;
+    let controls_width = control * 3.0 + 8.0;
     let tabs_rect = egui::Rect::from_min_max(
         rect.min + egui::vec2(4.0, 0.0),
         egui::pos2(
@@ -127,14 +126,14 @@ pub(super) fn bar(ui: &mut egui::Ui, state: &mut TerminalState, theme: &Theme) -
     });
     controls.scope(|ui| {
         ui.spacing_mut().button_padding = egui::vec2(6.0, 2.0);
-        ui.spacing_mut().interact_size = egui::vec2(CONTROL, CONTROL);
+        ui.spacing_mut().interact_size = egui::vec2(control, control);
         ui.visuals_mut().widgets.inactive.weak_bg_fill = egui::Color32::TRANSPARENT;
         ui.visuals_mut().widgets.inactive.bg_stroke = egui::Stroke::NONE;
         let response = egui::menu::menu_custom_button(
             ui,
             egui::Button::new("")
                 .frame(false)
-                .min_size(egui::vec2(CONTROL, CONTROL)),
+                .min_size(egui::vec2(control, control)),
             |ui| {
                 ui.set_max_width(300.0);
                 ui.weak("Terminal tabs");
@@ -225,10 +224,11 @@ fn tab_button(
         title,
         index,
     } = view;
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, HEIGHT), egui::Sense::hover());
+    let metrics = hedit::ui_style::Metrics::for_ui(ui);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, metrics.tab), egui::Sense::hover());
     let close_rect = egui::Rect::from_center_size(
-        egui::pos2(rect.right() - 15.0, rect.center().y),
-        egui::vec2(22.0, 22.0),
+        egui::pos2(rect.right() - metrics.control / 2.0 - 4.0, rect.center().y),
+        egui::vec2(metrics.control, metrics.control),
     );
     let body = egui::Rect::from_min_max(rect.min, egui::pos2(close_rect.left(), rect.bottom()));
     let response = ui.interact(
@@ -244,12 +244,14 @@ fn tab_button(
         rect.min + egui::vec2(1.0, 3.0),
         rect.max - egui::vec2(1.0, 0.0),
     );
-    let rounding = egui::CornerRadius {
-        nw: 4,
-        ne: 4,
-        sw: 0,
-        se: 0,
-    };
+    let rounding = egui::CornerRadius::ZERO;
+    if active {
+        ui.painter().hline(
+            background.x_range(),
+            background.top(),
+            egui::Stroke::new(1.0_f32, theme.accent.color()),
+        );
+    }
     if active || hovered || response.has_focus() {
         ui.painter().rect_filled(
             background,
@@ -299,7 +301,7 @@ fn tab_button(
     };
     let mut job = egui::text::LayoutJob::simple_singleline(
         hedit::bidi::display(title).into_owned(),
-        FontId::proportional(12.0),
+        FontId::proportional(metrics.small),
         color,
     );
     job.wrap.max_width = (body.width() - 26.0).max(1.0);
@@ -398,7 +400,8 @@ fn icon_button(
     hint: &str,
     icon: Icon,
 ) -> egui::Response {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(CONTROL, CONTROL), egui::Sense::hover());
+    let control = hedit::ui_style::Metrics::for_ui(ui).control;
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(control, control), egui::Sense::hover());
     let response = ui.interact(rect, egui::Id::new(id), egui::Sense::click());
     response.widget_info(|| {
         egui::WidgetInfo::labeled(
