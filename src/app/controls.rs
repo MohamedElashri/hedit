@@ -6,70 +6,27 @@ use super::*;
 /// is hidden. Use a regular button for keyboard activation and focus feedback.
 pub(super) fn sidebar_button(
     ui: &mut egui::Ui,
-    theme: &Theme,
+    _theme: &Theme,
     shown: bool,
     shortcut: &str,
 ) -> egui::Response {
+    use hedit::icons::{self, Icon};
     let label = if shown {
         "Hide sidebar"
     } else {
         "Show sidebar"
     };
-    let response = ui.add(
-        egui::Button::new("")
-            .min_size(egui::vec2(
-                hedit::ui_style::Metrics::for_ui(ui).control.max(28.0),
-                hedit::ui_style::Metrics::for_ui(ui).control,
-            ))
-            .corner_radius(4.0)
-            .selected(shown)
-            .frame(false),
-    );
-    response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), shown, label)
-    });
-    if ui.is_rect_visible(response.rect) {
-        if !shown && (response.hovered() || response.has_focus()) {
-            ui.painter()
-                .rect_filled(response.rect, 4.0, theme.hover().color());
-        }
-        if response.has_focus() {
-            ui.painter().rect_stroke(
-                response.rect,
-                4.0,
-                egui::Stroke::new(1.0_f32, theme.accent.color()),
-                egui::StrokeKind::Inside,
-            );
-        }
-        let icon = egui::Rect::from_center_size(response.rect.center(), egui::vec2(16.0, 14.0));
-        let color = if shown || response.hovered() || response.has_focus() {
-            theme.text.color()
-        } else {
-            theme.muted.color()
-        };
-        let stroke = egui::Stroke::new(1.3_f32, color);
-        let split = icon.left() + 5.0;
+    icons::toggle(
+        ui,
         if shown {
-            ui.painter().rect_filled(
-                egui::Rect::from_min_max(
-                    icon.left_top() + egui::vec2(1.5, 1.5),
-                    egui::pos2(split - 1.0, icon.bottom() - 1.5),
-                ),
-                0.5,
-                color,
-            );
-        }
-        ui.painter()
-            .rect_stroke(icon, 2.0, stroke, egui::StrokeKind::Inside);
-        ui.painter().line_segment(
-            [
-                egui::pos2(split, icon.top()),
-                egui::pos2(split, icon.bottom()),
-            ],
-            stroke,
-        );
-    }
-    response.on_hover_text(format!("{label} · {shortcut}"))
+            Icon::Sidebar
+        } else {
+            Icon::SidebarOff
+        },
+        label,
+        shown,
+    )
+    .on_hover_text(format!("{label} · {shortcut}"))
 }
 
 /// The same workspace selector in Files and Source Control. Labels stay visible
@@ -80,27 +37,45 @@ pub(super) fn workspace_switcher(
     git: bool,
     shortcut: &str,
 ) -> Option<bool> {
-    let (rect, _) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), 32.0), egui::Sense::hover());
-    ui.painter().rect_filled(rect, 5.0, theme.surface.color());
-    ui.painter().rect_stroke(
-        rect,
-        5.0,
-        egui::Stroke::new(1.0_f32, theme.border.color()),
-        egui::StrokeKind::Inside,
+    use hedit::icons::Icon;
+    let m = hedit::ui_style::Metrics::for_ui(ui);
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), m.toolbar),
+        egui::Sense::hover(),
     );
-    let split = rect.left() + rect.width() * 0.37;
-    let compact = rect.width() < 190.0;
+    let width = |text: &str| {
+        ui.fonts(|f| {
+            f.layout_no_wrap(
+                text.into(),
+                FontId::proportional(m.font),
+                theme.text.color(),
+            )
+            .size()
+            .x
+        })
+    };
+    let file_width = width("Files");
+    let source_label = if rect.width() >= file_width + width("Source Control") + 32.0 {
+        "Source Control"
+    } else {
+        "Git"
+    };
+    let show_icons = rect.width() >= file_width + width(source_label) + 32.0 + 44.0;
+    let first_width =
+        (file_width + 16.0 + if show_icons { 22.0 } else { 0.0 }).min(rect.width() * 0.6);
+    let split = rect.left() + first_width;
     let mut changed = None;
-    for (source, label, part) in [
+    for (source, label, icon, part) in [
         (
             false,
             "Files",
+            Icon::Files,
             egui::Rect::from_min_max(rect.min, egui::pos2(split, rect.bottom())),
         ),
         (
             true,
-            if compact { "Git" } else { "Source Control" },
+            source_label,
+            Icon::SourceControl,
             egui::Rect::from_min_max(egui::pos2(split, rect.top()), rect.max),
         ),
     ] {
@@ -117,16 +92,26 @@ pub(super) fn workspace_switcher(
                 label,
             )
         });
-        let active = source == git;
-        if active || response.hovered() || response.has_focus() {
+        let active = git == source;
+        if response.hovered() {
+            ui.painter().rect_filled(part, 0.0, theme.hover().color());
+        }
+        if active {
             ui.painter().rect_filled(
-                part.shrink(2.0),
-                3.0,
-                if active {
-                    theme.selection.color()
-                } else {
-                    theme.hover().color()
-                },
+                egui::Rect::from_min_max(
+                    egui::pos2(part.left() + 6.0, part.bottom() - 2.0),
+                    egui::pos2(part.right() - 6.0, part.bottom()),
+                ),
+                0.0,
+                theme.accent.color(),
+            );
+        }
+        if response.has_focus() {
+            ui.painter().rect_stroke(
+                part.shrink(1.0),
+                2.0,
+                egui::Stroke::new(1.0_f32, theme.accent.color()),
+                egui::StrokeKind::Inside,
             );
         }
         let color = if active {
@@ -134,83 +119,41 @@ pub(super) fn workspace_switcher(
         } else {
             theme.muted.color()
         };
-        let font = FontId::proportional(12.0);
-        let galley = ui.painter().layout_no_wrap(label.into(), font, color);
-        let icon = part.width() > 62.0;
-        let width = galley.size().x + if icon { 22.0 } else { 0.0 };
-        let left = part.center().x - width / 2.0;
-        if icon {
-            let origin = egui::pos2(left, part.center().y - 8.0);
-            let stroke = egui::Stroke::new(1.4_f32, color);
-            if source {
-                let a = origin + egui::vec2(3.0, 2.0);
-                let b = origin + egui::vec2(3.0, 14.0);
-                let c = origin + egui::vec2(13.0, 3.0);
-                ui.painter().line_segment([a, b], stroke);
-                ui.painter().line_segment([b, c], stroke);
-                for point in [a, b, c] {
-                    ui.painter().circle_filled(point, 2.3, color);
-                }
-            } else {
-                ui.painter().rect_stroke(
-                    egui::Rect::from_min_size(
-                        origin + egui::vec2(4.0, 1.0),
-                        egui::vec2(10.0, 12.0),
-                    ),
-                    1.0,
-                    stroke,
-                    egui::StrokeKind::Inside,
-                );
-                ui.painter().line_segment(
-                    [
-                        origin + egui::vec2(1.0, 4.0),
-                        origin + egui::vec2(1.0, 15.0),
-                    ],
-                    stroke,
-                );
-                ui.painter().line_segment(
-                    [
-                        origin + egui::vec2(1.0, 15.0),
-                        origin + egui::vec2(11.0, 15.0),
-                    ],
-                    stroke,
-                );
-            }
-        }
-        ui.painter().galley(
-            egui::pos2(
-                left + if icon { 22.0 } else { 0.0 },
-                part.center().y - galley.size().y / 2.0,
-            ),
-            galley,
-            color,
-        );
-        if response.has_focus() {
-            ui.painter().rect_stroke(
-                part.shrink(2.0),
-                3.0,
-                egui::Stroke::new(1.0_f32, theme.accent.color()),
-                egui::StrokeKind::Inside,
+        let show_icon = show_icons;
+        let left = part.left() + 8.0;
+        if show_icon {
+            icon.paint(
+                ui,
+                egui::Rect::from_center_size(
+                    egui::pos2(left + 8.0, part.center().y),
+                    egui::vec2(16.0, 16.0),
+                ),
+                color,
             );
         }
-        let keyboard = response.has_focus()
-            && ui.input_mut(|i| {
-                i.consume_key(Modifiers::NONE, Key::Enter)
-                    || i.consume_key(Modifiers::NONE, Key::Space)
-            });
-        if ui.is_enabled() && (response.clicked() || keyboard) && !active {
+        let text_left = left + if show_icon { 22.0 } else { 0.0 };
+        let galley = egui::WidgetText::from(RichText::new(label).size(m.font)).into_galley(
+            ui,
+            Some(egui::TextWrapMode::Truncate),
+            (part.right() - text_left - 6.0).max(0.0),
+            egui::TextStyle::Button,
+        );
+        ui.painter()
+            .with_clip_rect(part.intersect(ui.clip_rect()))
+            .galley(
+                egui::pos2(text_left, part.center().y - galley.size().y / 2.0),
+                galley,
+                color,
+            );
+        if response.clicked() {
             changed = Some(source);
         }
-        response.on_hover_text(if source {
-            format!("Source Control · {shortcut}")
-        } else {
-            "Files · return to the editor".into()
-        });
+        response.on_hover_text(format!("{label} · {shortcut}"));
     }
     changed
 }
 
-/// Compact identity shared by the About and Update windows.
+/// A shared panel heading and explanation.
 pub(super) fn info_header(
     ui: &mut egui::Ui,
     theme: &Theme,
@@ -222,7 +165,11 @@ pub(super) fn info_header(
         brand::paint(ui, 48.0, theme.accent.color(), theme.muted.color());
         ui.add_space(4.0);
         ui.vertical(|ui| {
-            ui.label(RichText::new(title).size(22.0).strong());
+            ui.label(
+                RichText::new(title)
+                    .size(hedit::ui_style::Metrics::for_ui(ui).font + 5.0)
+                    .strong(),
+            );
             ui.label(RichText::new(subtitle).small().color(theme.muted.color()));
         });
         if loading {
@@ -242,7 +189,7 @@ pub(super) fn primary_button(
     ui.add_enabled(
         enabled,
         egui::Button::new(RichText::new(label).color(if enabled {
-            theme.background.color()
+            theme.accent_text().color()
         } else {
             theme.muted.color()
         }))
@@ -280,7 +227,7 @@ fn close_control(ui: &mut egui::Ui, hint: &str, dirty: bool) -> egui::Response {
         if response.hovered() || response.has_focus() {
             ui.painter().rect_filled(rect, 3.0, visuals.weak_bg_fill);
         }
-        let cross = egui::Rect::from_center_size(rect.center(), egui::vec2(12.0, 12.0));
+        let cross = egui::Rect::from_center_size(rect.center(), egui::vec2(16.0, 16.0));
         let color = if response.hovered() || response.has_focus() {
             visuals.fg_stroke.color
         } else {
@@ -289,11 +236,7 @@ fn close_control(ui: &mut egui::Ui, hint: &str, dirty: bool) -> egui::Response {
         if dirty && !response.hovered() && !response.has_focus() {
             ui.painter().circle_filled(rect.center(), 3.0, color);
         } else {
-            let stroke = egui::Stroke::new(1.7_f32, color);
-            ui.painter()
-                .line_segment([cross.left_top(), cross.right_bottom()], stroke);
-            ui.painter()
-                .line_segment([cross.right_top(), cross.left_bottom()], stroke);
+            hedit::icons::Icon::Close.paint(ui, cross, color);
         }
     }
     response
@@ -326,7 +269,7 @@ pub(super) fn dialog_buttons(
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let primary = egui::Button::new(RichText::new(confirm).color(if enabled {
-                theme.background.color()
+                theme.accent_text().color()
             } else {
                 theme.muted.color()
             }))
@@ -426,17 +369,9 @@ mod tests {
         });
         assert!(!output.shapes.iter().any(|s| matches!(&s.shape,
             egui::Shape::Circle(circle) if circle.center == rect.center())));
-        assert_eq!(
-            output
-                .shapes
-                .iter()
-                .filter(|s| matches!(&s.shape,
-            egui::Shape::LineSegment { points, stroke } if stroke.width == 1.7
-                && (points[1].x - points[0].x).abs() == 12.0
-                && (points[1].y - points[0].y).abs() == 12.0))
-                .count(),
-            2
-        );
+        assert!(output.shapes.iter().any(|s| matches!(&s.shape,
+            egui::Shape::Mesh(mesh) if hedit::icons::Icon::Close.matches_texture(&ctx,mesh.texture_id)
+                && original.contains_rect(mesh.calc_bounds()))));
     }
 
     #[test]

@@ -1,0 +1,7 @@
+Codicons SVG icons
+Copyright Microsoft and contributors.
+Source: https://github.com/microsoft/vscode-codicons
+Revision: 8d1826a9bce0a52283ecaeb63499c149e97a4f14
+Licensed under Creative Commons Attribution 4.0 International.
+See codicons-CC-BY-4.0.txt.
+Modifications: SVG fill and stroke colors normalized to white for runtime theme tinting.

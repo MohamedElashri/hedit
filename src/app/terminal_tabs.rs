@@ -1,5 +1,6 @@
 //! Compact terminal chrome: one row, with secondary controls in menus.
 use super::*;
+use hedit::icons::Icon;
 
 const HEIGHT: f32 = 30.0;
 const CONTROL: f32 = 26.0;
@@ -120,7 +121,7 @@ pub(super) fn bar(ui: &mut egui::Ui, state: &mut TerminalState, theme: &Theme) -
             theme,
             "terminal-new-tab",
             "New terminal tab · Ctrl+Shift+T (Cmd+Shift+T on macOS)",
-            Icon::Plus,
+            Icon::Add,
         )
         .clicked();
     });
@@ -129,8 +130,12 @@ pub(super) fn bar(ui: &mut egui::Ui, state: &mut TerminalState, theme: &Theme) -
         ui.spacing_mut().interact_size = egui::vec2(CONTROL, CONTROL);
         ui.visuals_mut().widgets.inactive.weak_bg_fill = egui::Color32::TRANSPARENT;
         ui.visuals_mut().widgets.inactive.bg_stroke = egui::Stroke::NONE;
-        let response = ui
-            .menu_button("…", |ui| {
+        let response = egui::menu::menu_custom_button(
+            ui,
+            egui::Button::new("")
+                .frame(false)
+                .min_size(egui::vec2(CONTROL, CONTROL)),
+            |ui| {
                 ui.set_max_width(300.0);
                 ui.weak("Terminal tabs");
                 egui::ScrollArea::vertical()
@@ -163,8 +168,14 @@ pub(super) fn bar(ui: &mut egui::Ui, state: &mut TerminalState, theme: &Theme) -
                     actions.hide = true;
                     ui.close_menu();
                 }
-            })
-            .response;
+            },
+        )
+        .response;
+        Icon::More.paint(
+            ui,
+            egui::Rect::from_center_size(response.rect.center(), egui::vec2(16.0, 16.0)),
+            theme.muted.color(),
+        );
         response.widget_info(|| {
             egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Terminal actions")
         });
@@ -175,7 +186,7 @@ pub(super) fn bar(ui: &mut egui::Ui, state: &mut TerminalState, theme: &Theme) -
         theme,
         "terminal-hide",
         "Hide terminal · Ctrl+` (Control+` on macOS)",
-        Icon::Down,
+        Icon::ChevronDown,
     )
     .clicked();
     actions
@@ -319,19 +330,15 @@ fn tab_button(
             ui.painter()
                 .rect_filled(close_rect, 3.0, theme.hover().color());
         }
-        let stroke = egui::Stroke::new(
-            1.3_f32,
-            if close.hovered() {
+        Icon::Close.paint(
+            ui,
+            egui::Rect::from_center_size(close_rect.center(), egui::vec2(16.0, 16.0)),
+            if close.hovered() || close.has_focus() {
                 theme.text.color()
             } else {
                 theme.muted.color()
             },
         );
-        let cross = close_rect.shrink(7.0);
-        ui.painter()
-            .line_segment([cross.left_top(), cross.right_bottom()], stroke);
-        ui.painter()
-            .line_segment([cross.right_top(), cross.left_bottom()], stroke);
         if close.clicked() || close.clicked_by(egui::PointerButton::Middle) {
             actions.close = Some(index);
         }
@@ -384,11 +391,6 @@ fn tab_menu(ui: &mut egui::Ui, tab: &mut TerminalTab, index: usize, actions: &mu
     }
 }
 
-enum Icon {
-    Plus,
-    Down,
-}
-
 fn icon_button(
     ui: &mut egui::Ui,
     theme: &Theme,
@@ -415,35 +417,10 @@ fn icon_button(
     } else {
         theme.muted.color()
     };
-    let stroke = egui::Stroke::new(1.4_f32, color);
-    let center = rect.center();
-    match icon {
-        Icon::Plus => {
-            ui.painter().line_segment(
-                [center - egui::vec2(4.5, 0.0), center + egui::vec2(4.5, 0.0)],
-                stroke,
-            );
-            ui.painter().line_segment(
-                [center - egui::vec2(0.0, 4.5), center + egui::vec2(0.0, 4.5)],
-                stroke,
-            );
-        }
-        Icon::Down => {
-            ui.painter().line_segment(
-                [
-                    center + egui::vec2(-4.0, -2.0),
-                    center + egui::vec2(0.0, 2.0),
-                ],
-                stroke,
-            );
-            ui.painter().line_segment(
-                [
-                    center + egui::vec2(0.0, 2.0),
-                    center + egui::vec2(4.0, -2.0),
-                ],
-                stroke,
-            );
-        }
-    }
+    icon.paint(
+        ui,
+        egui::Rect::from_center_size(rect.center(), egui::vec2(16.0, 16.0)),
+        color,
+    );
     response.on_hover_text(hint)
 }

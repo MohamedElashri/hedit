@@ -8,6 +8,7 @@ pub mod debugger;
 pub mod editing;
 pub mod file_reference;
 pub mod fonts;
+pub mod icons;
 pub mod intelligence;
 pub mod ipc;
 pub mod markup;

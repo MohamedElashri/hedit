@@ -521,6 +521,16 @@ impl Theme {
         let (s, a) = (self.surface.0, self.accent.0);
         Rgb([mix(s[0], a[0]), mix(s[1], a[1]), mix(s[2], a[2])])
     }
+    /// A readable foreground for primary actions, including user-defined accents.
+    pub fn accent_text(&self) -> Rgb {
+        let black = Rgb::new(0, 0, 0);
+        let white = Rgb::new(255, 255, 255);
+        if Self::contrast(white, self.accent) >= Self::contrast(black, self.accent) {
+            white
+        } else {
+            black
+        }
+    }
     pub fn contrast(a: Rgb, b: Rgb) -> f32 {
         let (a, b) = (a.luminance(), b.luminance());
         (a.max(b) + 0.05) / (a.min(b) + 0.05)
@@ -574,7 +584,8 @@ impl Theme {
             w.fg_stroke = Stroke::new(1.0_f32, self.text.color());
             w.corner_radius = egui::CornerRadius::same(2);
         }
-        v.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, self.accent.color());
+        v.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, self.border.color());
+        v.widgets.active.bg_stroke = Stroke::new(1.0_f32, self.accent.color());
         // Menus drop button strokes, so hover and open states need a visible fill.
         v.widgets.hovered.weak_bg_fill = self.hover().color();
         v.widgets.open.weak_bg_fill = self.hover().color();

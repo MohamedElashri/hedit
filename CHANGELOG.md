@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Use one embedded, font-independent icon family and consistent toolbar actions across file tabs, sidebars, trees and terminals, with readable primary actions and keyboard focus.
+
 - Add independent workbench font, size and density controls with shared tab, tree and button metrics, while preserving editor, terminal and document typography.
 
 ## [0.5.3] - 2026-11-17

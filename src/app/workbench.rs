@@ -279,13 +279,21 @@ mod tests {
             if settings {
                 app.open_preferences(PreferencesPage::Appearance);
             }
+            let mut textures = std::collections::HashMap::new();
             for _ in 0..4 {
-                super::super::tests::frame_size(&ctx, &mut app, vec![], size);
+                let out = super::super::tests::frame_size(&ctx, &mut app, vec![], size);
+                for (id, delta) in &out.textures_delta.set {
+                    if let egui::ImageData::Color(image) = &delta.image {
+                        if delta.pos.is_none() {
+                            textures.insert(*id, (**image).clone());
+                        }
+                    }
+                }
             }
             let out = super::super::tests::frame_size(&ctx, &mut app, vec![], size);
             std::fs::write(
                 target.join(format!("{name}.ppm")),
-                super::super::rtl_tests::rasterize(&ctx, out, size, 1.5),
+                super::super::rtl_tests::rasterize_with_textures(&ctx, out, size, 1.5, &textures),
             )
             .unwrap();
         }
