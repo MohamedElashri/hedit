@@ -492,6 +492,13 @@ from Source also refreshes. Find/Replace/Go to line/search results expose source
 | Font | **Preferences → Editor font…** filters installed fonts by family/script. **Ctrl++ / Ctrl+- / Ctrl+0** changes/resets size |
 | Editor details | **View → Editor** toggles numbers, current-line highlight, whitespace, guides, minimap, tabs, and status bar |
 
+Search and Source Control stay beside the document while you switch tools.
+Search inputs, results and commit drafts survive sidebar switches. Selecting a
+changed file opens a reusable **Git review** tab; select a file tab to resume
+editing, or close the review without closing your document. Search has its own
+query and options, separate from Find within the current file. Search's **More…**
+menu can detach it into a window.
+
 The activity bar provides Files, Source Control, Find in files and Settings.
 Click the active Files or Source Control icon to hide its sidebar. Turn off
 `show_activity_bar` in Settings to restore the text workspace switcher.

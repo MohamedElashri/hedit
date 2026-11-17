@@ -220,6 +220,7 @@ pub struct HeditApp {
     _requests: RequestWatch,
     quality: quality::Quality,
     source_control: source_control::SourceControl,
+    sidebar: workbench_navigation::Sidebar,
     workspace: Workspace,
     project: project::ProjectBrowser,
     tx: Sender<Result<Action, String>>,
@@ -441,6 +442,9 @@ impl HeditApp {
             _requests: RequestWatch::start(ctx, workspace.store.directory().to_owned()),
             quality: Default::default(),
             source_control: source_control::SourceControl::load(storage),
+            sidebar: storage
+                .and_then(|s| eframe::get_value(s, "workbench-sidebar"))
+                .unwrap_or_default(),
             project,
             workspace,
             tx,
@@ -735,7 +739,7 @@ impl HeditApp {
             {
                 let id = buffer.view.id;
                 if let Some(index) = self.workspace.open.iter().position(|b| b.view.id == id) {
-                    self.workspace.active = index;
+                    self.select_tab(index);
                     if let Some((line, column)) = location {
                         self.jump_to_line(ctx, line as usize, Some(column as usize));
                     }
@@ -1187,6 +1191,7 @@ impl HeditApp {
                         .iter()
                         .position(|b| b.page.info.id == id)
                     {
+                        self.source_control.open = false;
                         self.workspace.active = index;
                         self.changed();
                         self.focus_editor = true;
@@ -1215,6 +1220,9 @@ impl HeditApp {
                 Ok(Action::Add(doc, page, cursor)) => {
                     let result = self.workspace.add(*doc, page);
                     if result.is_ok() {
+                        if !background {
+                            self.source_control.open = false;
+                        }
                         let buffer = &mut self.workspace.open[self.workspace.active];
                         buffer.view.anchor = cursor;
                         buffer.view.head = cursor;
@@ -1268,6 +1276,9 @@ impl HeditApp {
                         .iter()
                         .position(|b| b.page.info.id == id)
                     {
+                        if !reloaded {
+                            self.source_control.open = false;
+                        }
                         self.workspace.active = index;
                         if !reloaded && selection.is_some() {
                             self.reveal_markdown_source(ctx);
@@ -3855,6 +3866,7 @@ impl eframe::App for HeditApp {
             return;
         }
         self.source_control.save(storage);
+        eframe::set_value(storage, "workbench-sidebar", &self.sidebar);
         eframe::set_value(storage, "recent_projects", &self.quality.recent);
         eframe::set_value(storage, "recent_files", &self.recent_files);
         eframe::set_value(storage, "project_path", &self.quality.project_path);

@@ -254,9 +254,6 @@ impl HeditApp {
         self.tabs(ctx);
     }
     fn tabs(&mut self, ctx: &egui::Context) {
-        if self.source_control.open {
-            return;
-        }
         if !self.settings.show_tab_bar || self.distraction_free {
             return;
         }
@@ -301,13 +298,23 @@ impl HeditApp {
                                 None,
                             );
                         }
-                        ui.set_min_size(egui::vec2(total + 28.0, self.tab_strip.height()));
+                        ui.set_min_size(egui::vec2(
+                            total
+                                + 28.0
+                                + if self.source_control.review_tab {
+                                    160.0
+                                } else {
+                                    0.0
+                                },
+                            self.tab_strip.height(),
+                        ));
                         ui.spacing_mut().item_spacing.x = 2.0;
                         ui.horizontal(|ui| {
                             ui.add_space(self.tab_strip.offset(visible.start));
                             for index in visible.clone() {
                                 let buffer = &self.workspace.open[index];
-                                let active = index == self.workspace.active;
+                                let active =
+                                    index == self.workspace.active && !self.source_control.open;
                                 let can_close = self.workspace.can_close(index);
                                 let title = self.tab_strip.title(
                                     index,
@@ -506,6 +513,25 @@ impl HeditApp {
                                 }
                             }
                             ui.add_space(total - self.tab_strip.offset(visible.end));
+                            if self.source_control.review_tab {
+                                ui.horizontal(|ui| {
+                                    let review =
+                                        ui.selectable_label(self.source_control.open, "Git review");
+                                    if std::mem::take(&mut self.source_control.reveal_review) {
+                                        review.scroll_to_me(Some(egui::Align::Max));
+                                    }
+                                    if review.clicked() {
+                                        self.source_control.open = true;
+                                        self.focus_editor = false;
+                                    }
+                                    if controls::close_button(ui, "Close Git review").clicked() {
+                                        self.source_control.open = false;
+                                        self.source_control.review_tab = false;
+                                        self.focus_editor = true;
+                                    }
+                                });
+                            }
+
                             if ui
                                 .add_enabled_ui(!self.busy && !self.closing, |ui| {
                                     hedit::icons::button(ui, hedit::icons::Icon::Add, "New file")
@@ -906,7 +932,11 @@ impl HeditApp {
         if !self.settings.show_sidebar || self.distraction_free {
             return;
         }
-        if self.source_control.open {
+        if self.sidebar == workbench_navigation::Sidebar::Search {
+            self.folder_search_sidebar(ctx);
+            return;
+        }
+        if self.sidebar == workbench_navigation::Sidebar::SourceControl {
             self.source_control_sidebar(ctx);
             return;
         }
@@ -923,7 +953,7 @@ impl HeditApp {
             .show(ctx, |ui| {
                 ui.set_min_width(ui.available_width());
                 if self.workspace_header(ui, false) == Some(true) {
-                    self.open_source_control(ctx);
+                    self.show_git_sidebar(ctx);
                 }
                 ui.add_space(8.0);
                 ui.spacing_mut().item_spacing.y = 0.0;

@@ -965,8 +965,8 @@ fn replace_in_folders_edits_open_files_unsaved_and_undoes_disk_files() {
     app.set_selections(vec![hedit::advanced::Selection::caret(0)]);
     type_text(&ctx, &mut app, "old ");
     assert!(app.active().page.info.dirty);
-    app.query = "old".into();
-    app.replacement = "new".into();
+    app.quality.folder_query = "old".into();
+    app.quality.folder_replacement = "new".into();
     app.folder_search(&ctx, true);
     finish_app_job(&mut app, &ctx);
     assert_eq!(app.quality.results.hits.len(), 3);
@@ -1017,7 +1017,7 @@ fn f4_goes_through_folder_matches_after_a_search() {
     let ctx = egui::Context::default();
     let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
     app.set_folder(hedit::folder::read_directory(root.clone()).unwrap());
-    app.query = "needle".into();
+    app.quality.folder_query = "needle".into();
     app.folder_search(&ctx, false);
     finish_app_job(&mut app, &ctx);
     assert!(app.command_enabled(Command::NextResult));
@@ -1281,8 +1281,8 @@ fn undo_replacements_leaves_files_edited_since_alone() {
     let ctx = egui::Context::default();
     let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
     app.set_folder(hedit::folder::read_directory(root.clone()).unwrap());
-    app.query = "old".into();
-    app.replacement = "new".into();
+    app.quality.folder_query = "old".into();
+    app.quality.folder_replacement = "new".into();
     app.folder_search(&ctx, true);
     finish_app_job(&mut app, &ctx);
     app.apply_folder_replacements(&ctx);

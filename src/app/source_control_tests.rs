@@ -48,6 +48,54 @@ fn fixture() -> (tempfile::TempDir, egui::Context, HeditApp, Git) {
     finish_git(&ctx, &mut app);
     (directory, ctx, app, git)
 }
+
+#[test]
+fn sidebar_navigation_preserves_documents_and_review_is_an_explicit_reusable_tab() {
+    let (_directory, ctx, mut app, _git) = fixture();
+    app.source_control.open = false;
+    app.source_control.review_tab = false;
+    app.workspace.open[0].page.text = "Keep this unsaved editor text".into();
+    app.workspace.edit(0, "").unwrap();
+    app.source_control.draft = "Keep this message".into();
+    let count = app.workspace.open.len();
+    app.execute(&ctx, Command::SourceControl);
+    assert!(!app.source_control.open);
+    let out = frame(&ctx, &mut app, vec![]);
+    assert!(visible(&out, "Keep this unsaved editor text"));
+    click_label(&ctx, &mut app, "main.rs");
+    finish_git(&ctx, &mut app);
+    assert!(app.source_control.open && app.source_control.review_tab);
+    frame(&ctx, &mut app, vec![]);
+    let out = frame(&ctx, &mut app, vec![]);
+    assert!(visible(&out, "Git review"));
+    app.select_tab(app.workspace.active);
+    assert!(!app.source_control.open && app.source_control.review_tab);
+    assert_eq!(app.sidebar, workbench_navigation::Sidebar::SourceControl);
+    assert_eq!(app.active().page.text, "Keep this unsaved editor text");
+    click_label(&ctx, &mut app, "Git review");
+    assert!(app.source_control.open);
+    let root = app.source_control.root.clone().unwrap();
+    app.open(&ctx, Some(root.join("main.rs")));
+    finish_app_job(&mut app, &ctx);
+    assert!(!app.source_control.open && app.source_control.review_tab);
+    assert_eq!(
+        app.active().page.info.path.as_deref(),
+        root.join("main.rs").to_str()
+    );
+    click_label(&ctx, &mut app, "Git review");
+    app.open(&ctx, Some(root.join("main.rs")));
+    finish_app_job(&mut app, &ctx);
+    assert!(
+        !app.source_control.open,
+        "Opening an already open file leaves review"
+    );
+    click_label(&ctx, &mut app, "Git review");
+    app.execute(&ctx, Command::Close);
+    assert!(!app.source_control.review_tab);
+    assert_eq!(app.workspace.open.len(), count + 1);
+    assert!(app.workspace.closed.is_empty());
+    assert_eq!(app.source_control.draft, "Keep this message");
+}
 fn finish_git(ctx: &egui::Context, app: &mut HeditApp) {
     let start = Instant::now();
     loop {
@@ -984,7 +1032,7 @@ fn sidebar_stages_and_commits_saved_files_and_preserves_the_editor() {
     assert!(app.source_control.draft.is_empty());
     assert_eq!(app.active().page.info.revision, revision);
     click_label(&ctx, &mut app, "Files");
-    assert!(!app.source_control.open);
+    assert_eq!(app.sidebar, workbench_navigation::Sidebar::Files);
     assert!(
         app.workspace.closed.is_empty(),
         "Git view must not create Closed Files entries"
@@ -1112,7 +1160,8 @@ fn shortcut_close_and_commit_drafts_preserve_editor_state() {
         &mut app,
         vec![key(Key::G, Modifiers::COMMAND | Modifiers::SHIFT)],
     );
-    assert!(app.source_control.open);
+    assert_eq!(app.sidebar, workbench_navigation::Sidebar::SourceControl);
+    assert!(!app.source_control.open);
     assert!(!app.goto_open);
     finish_git(&ctx, &mut app);
     app.source_control.draft.clear();
@@ -1131,7 +1180,7 @@ fn workspace_switcher_preserves_drafts_and_files_across_themes_and_small_sidebar
     for theme in ["Hedit Ink", "Hedit Paper"] {
         app.set_theme(&ctx, hedit::theme::builtin(theme).unwrap());
         click_label(&ctx, &mut app, "Files");
-        assert!(!app.source_control.open);
+        assert_eq!(app.sidebar, workbench_navigation::Sidebar::Files);
         // Repaint after the mode switch so the Files panel has settled.
         frame(&ctx, &mut app, vec![]);
         click_label(&ctx, &mut app, "Source Control");

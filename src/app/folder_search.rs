@@ -38,9 +38,16 @@ fn field(
     .inner
 }
 
-fn file_row(ui: &mut egui::Ui, theme: &Theme, label: &str, selected: bool) -> egui::Response {
+fn file_row(
+    ui: &mut egui::Ui,
+    theme: &Theme,
+    label: &str,
+    selected: bool,
+    icon: Option<hedit::icons::Icon>,
+) -> egui::Response {
+    let metrics = hedit::ui_style::Metrics::for_ui(ui);
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), ROW_HEIGHT),
+        egui::vec2(ui.available_width(), ROW_HEIGHT.max(metrics.row)),
         egui::Sense::click(),
     );
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
@@ -52,13 +59,23 @@ fn file_row(ui: &mut egui::Ui, theme: &Theme, label: &str, selected: bool) -> eg
         theme.panel.color()
     };
     ui.painter().rect_filled(rect, 2.0, fill);
+    if let Some(icon) = icon {
+        icon.paint(
+            ui,
+            egui::Rect::from_center_size(
+                rect.left_center() + egui::vec2(12.0, 0.0),
+                egui::vec2(12.0, 12.0),
+            ),
+            theme.muted.color(),
+        );
+    }
     ui.painter()
         .with_clip_rect(rect.intersect(ui.clip_rect()))
         .text(
-            rect.left_center() + egui::vec2(8.0, 0.0),
+            rect.left_center() + egui::vec2(if icon.is_some() { 26.0 } else { 8.0 }, 0.0),
             egui::Align2::LEFT_CENTER,
             label,
-            FontId::proportional(13.0),
+            FontId::proportional(metrics.small),
             if selected {
                 theme.selection_text.color()
             } else {
@@ -66,6 +83,23 @@ fn file_row(ui: &mut egui::Ui, theme: &Theme, label: &str, selected: bool) -> eg
             },
         );
     response
+}
+
+#[derive(Clone, Copy)]
+enum Row {
+    File(usize),
+    Line(usize, usize),
+}
+#[derive(Default)]
+pub(super) struct Rows {
+    generation: u64,
+    context: bool,
+    collapsed: std::collections::HashSet<PathBuf>,
+    rows: Vec<Row>,
+    height: f32,
+    row_height: f32,
+    #[cfg(test)]
+    pub builds: usize,
 }
 
 pub(super) struct Task {
@@ -79,6 +113,204 @@ impl Drop for Task {
 }
 
 impl HeditApp {
+    pub(super) fn folder_search_sidebar(&mut self, ctx: &egui::Context) {
+        let theme = self.theme.clone();
+        egui::SidePanel::left("search-sidebar")
+            .default_width(310.0)
+            .min_width(230.0)
+            .max_width((ctx.screen_rect().width() * 0.45).max(230.0))
+            .frame(egui::Frame::new().fill(theme.panel.color()).inner_margin(8))
+            .show(ctx, |ui| self.folder_sidebar_content(ui, ctx));
+    }
+
+    fn folder_sidebar_content(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let metrics = hedit::ui_style::Metrics::for_ui(ui);
+        let roots: Vec<_> = self
+            .workspace
+            .folders
+            .iter()
+            .map(|f| PathBuf::from(&f.path))
+            .collect();
+        let searching = self.quality.folder_task.is_some();
+        let mut run = false;
+        let mut apply = false;
+        ui.horizontal(|ui| {
+            ui.strong("Search");
+            ui.menu_button("More…", |ui| {
+                if ui.button("Files").clicked() {
+                    self.sidebar = workbench_navigation::Sidebar::Files;
+                    ui.close_menu();
+                }
+                if ui
+                    .add_enabled(
+                        self.command_enabled(Command::SourceControl),
+                        egui::Button::new("Source Control"),
+                    )
+                    .clicked()
+                {
+                    self.show_git_sidebar(ctx);
+                    ui.close_menu();
+                }
+                if ui
+                    .checkbox(&mut self.quality.folder_context, "Context")
+                    .changed()
+                {
+                    self.quality.result_shown = None;
+                }
+                if ui.button("Open search window").clicked() {
+                    self.sidebar = workbench_navigation::Sidebar::Files;
+                    self.quality.folders_open = true;
+                    self.quality.folder_focus = true;
+                    ui.close_menu();
+                }
+            });
+        });
+        // Large UI fonts must leave results reachable in a small window.
+        egui::ScrollArea::vertical()
+            .id_salt("search-sidebar-controls")
+            .max_height((ui.available_height() * 0.65).max(40.0))
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                let response = ui.add(
+                    egui::TextEdit::singleline(&mut self.quality.folder_query)
+                        .id(egui::Id::new(FIELDS[0]))
+                        .hint_text("Search folders")
+                        .desired_width(f32::INFINITY),
+                );
+                if std::mem::take(&mut self.quality.folder_focus) {
+                    response.request_focus();
+                }
+                ui.checkbox(&mut self.quality.folder_replace, "Replace");
+                if self.quality.folder_replace {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.quality.folder_replacement)
+                            .id(egui::Id::new(FIELDS[1]))
+                            .hint_text("Replacement text")
+                            .desired_width(f32::INFINITY),
+                    );
+                }
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.quality.filter)
+                        .id(egui::Id::new(FIELDS[2]))
+                        .hint_text("Files, e.g. *.rs, *.cu")
+                        .desired_width(f32::INFINITY),
+                );
+                ui.horizontal_wrapped(|ui| {
+                    ui.checkbox(&mut self.quality.folder_options.regex, "Regex");
+                    ui.checkbox(
+                        &mut self.quality.folder_options.case_sensitive,
+                        "Match case",
+                    );
+                    ui.checkbox(&mut self.quality.folder_options.whole_word, "Whole words");
+                });
+                if searching {
+                    if ui.button("Cancel search").clicked() {
+                        self.quality
+                            .folder_task
+                            .as_ref()
+                            .unwrap()
+                            .cancel
+                            .store(true, Ordering::Relaxed);
+                    }
+                } else {
+                    run = controls::primary_button(
+                        ui,
+                        &self.theme,
+                        if self.quality.folder_replace {
+                            "Preview"
+                        } else {
+                            "Find all"
+                        },
+                        !self.busy
+                            && !self.closing
+                            && !self.quality.folder_query.is_empty()
+                            && !roots.is_empty(),
+                    )
+                    .clicked();
+                }
+                if self.quality.folder_replace && !self.quality.results.plans.is_empty() {
+                    let count = self
+                        .quality
+                        .results
+                        .plans
+                        .iter()
+                        .filter(|p| p.selected)
+                        .count();
+                    apply = controls::primary_button(
+                        ui,
+                        &self.theme,
+                        &format!("Apply to {count} files"),
+                        !self.busy
+                            && !self.closing
+                            && self.folder_preview_valid()
+                            && !self.quality.results.truncated
+                            && count > 0,
+                    )
+                    .clicked();
+                }
+                if !self.quality.replace_undo.is_empty() && ui.button("Undo replacements").clicked()
+                {
+                    self.undo_folder_replacements(ctx);
+                }
+                if roots.is_empty() && ui.button("Open folder…").clicked() {
+                    self.open_folder(ctx);
+                }
+                match &self.quality.folder_state {
+                    State::Failed(error) => {
+                        ui.colored_label(self.theme.error.color(), error);
+                    }
+                    State::Cancelled => {
+                        ui.weak("Search cancelled");
+                    }
+                    _ => {}
+                }
+                if self
+                    .quality
+                    .folder_snapshot
+                    .as_ref()
+                    .is_some_and(|(q, f, o)| {
+                        q != &self.quality.folder_query
+                            || f != &self.quality.filter
+                            || o != &self.quality.folder_options
+                    })
+                {
+                    ui.weak("Search changed. Find all to refresh.");
+                }
+            });
+        ui.separator();
+        ui.label(format!(
+            "{} matches · {} files",
+            self.quality.results.hits.len(),
+            self.quality.results.files.len()
+        ));
+        if self.quality.results.truncated {
+            ui.colored_label(self.theme.warning.color(), "Result limit reached");
+        }
+        let height = (ui.available_height() - metrics.small * 1.6 - metrics.gap).max(0.0);
+        if self.quality.folder_replace && !self.quality.results.plans.is_empty() {
+            self.replacement_review(ui, &roots, height);
+        } else {
+            self.folder_result_rows(ui, &roots, height);
+        }
+        ui.add(
+            egui::Label::new(
+                RichText::new(format!(
+                    "{} folders · {} skipped",
+                    roots.len(),
+                    self.quality.results.skipped
+                ))
+                .small(),
+            )
+            .truncate(),
+        );
+        if run {
+            self.folder_search(ctx, self.quality.folder_replace);
+        }
+        if apply {
+            self.apply_folder_replacements(ctx);
+        }
+    }
+
     pub(super) fn receive_folder_search(&mut self, ctx: &egui::Context) {
         let result = self
             .quality
@@ -131,10 +363,10 @@ impl HeditApp {
                 .preview_query
                 .as_ref()
                 .is_some_and(|(q, r, f, o)| {
-                    q == &self.query
-                        && r == &self.replacement
+                    q == &self.quality.folder_query
+                        && r == &self.quality.folder_replacement
                         && f == &self.quality.filter
-                        && o == &self.quality.options
+                        && o == &self.quality.folder_options
                 })
     }
 
@@ -167,7 +399,7 @@ impl HeditApp {
                 ui.horizontal(|ui| {
                     ui.add_sized([48.0, 26.0], egui::Label::new("Find").halign(egui::Align::LEFT));
                     let response = ui.add_sized([(ui.available_width() - 106.0).max(120.0), 26.0],
-                        egui::TextEdit::singleline(&mut self.query).id(egui::Id::new(FIELDS[0]))
+                        egui::TextEdit::singleline(&mut self.quality.folder_query).id(egui::Id::new(FIELDS[0]))
                             .hint_text("Search text or regular expression"));
                     if self.quality.folder_focus {
                         response.request_focus();
@@ -180,17 +412,17 @@ impl HeditApp {
                     } else {
                         run = controls::primary_button(ui, &self.theme,
                             if self.quality.folder_replace { "Preview" } else { "Find all" },
-                            !self.busy && !self.closing && !self.query.is_empty() && !roots.is_empty()).clicked();
+                            !self.busy && !self.closing && !self.quality.folder_query.is_empty() && !roots.is_empty()).clicked();
                     }
                 });
                 if self.quality.folder_replace {
-                    field(ui, "Replace", FIELDS[1], &mut self.replacement, "Replacement text (empty deletes matches)");
+                    field(ui, "Replace", FIELDS[1], &mut self.quality.folder_replacement, "Replacement text (empty deletes matches)");
                 }
                 field(ui, "Files", FIELDS[2], &mut self.quality.filter, "All files, or patterns such as *.rs, *.cu");
                 ui.horizontal(|ui| {
-                    ui.checkbox(&mut self.quality.options.regex, "Regex");
-                    ui.checkbox(&mut self.quality.options.case_sensitive, "Match case");
-                    ui.checkbox(&mut self.quality.options.whole_word, "Whole words");
+                    ui.checkbox(&mut self.quality.folder_options.regex, "Regex");
+                    ui.checkbox(&mut self.quality.folder_options.case_sensitive, "Match case");
+                    ui.checkbox(&mut self.quality.folder_options.whole_word, "Whole words");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.toggle_value(&mut self.quality.folder_replace, "Replace");
                     });
@@ -227,7 +459,7 @@ impl HeditApp {
                     });
                 });
                 if !self.quality.folder_replace && matches!(self.quality.folder_state, State::Ready)
-                    && self.quality.folder_snapshot.as_ref().is_some_and(|(q, f, o)| q != &self.query || f != &self.quality.filter || o != &self.quality.options) {
+                    && self.quality.folder_snapshot.as_ref().is_some_and(|(q, f, o)| q != &self.quality.folder_query || f != &self.quality.filter || o != &self.quality.folder_options) {
                     ui.colored_label(self.theme.warning.color(), "Search changed. Find all to refresh results.");
                 }
                 // The footer never scrolls out of view, even with long results.
@@ -308,16 +540,18 @@ impl HeditApp {
     }
 
     fn folder_result_rows(&mut self, ui: &mut egui::Ui, roots: &[PathBuf], height: f32) {
-        enum Row {
-            File(usize),
-            Line(usize, usize),
-        }
         let current = self
             .quality
             .result_current
             .and_then(|i| self.quality.results.hits.get(i))
             .map(|h| (h.path.clone(), h.line));
-        let scroll = self.quality.result_current != self.quality.result_shown;
+        let row_height = ROW_HEIGHT.max(hedit::ui_style::Metrics::for_ui(ui).row);
+        let cache = &mut self.quality.folder_rows;
+        let scroll = self.quality.result_current != self.quality.result_shown
+            || cache.row_height != row_height
+            || cache.height != height;
+        cache.row_height = row_height;
+        cache.height = height;
         self.quality.result_shown = self.quality.result_current;
         if scroll {
             if let Some((path, _)) = &current {
@@ -325,26 +559,41 @@ impl HeditApp {
             }
         }
         let files = &self.quality.results.files;
-        let mut rows = vec![];
-        let mut target = None;
-        for (f, file) in files.iter().enumerate() {
-            rows.push(Row::File(f));
-            if self.quality.folder_collapsed.contains(&file.path) {
-                continue;
-            }
-            for (l, line) in file.lines.iter().enumerate() {
-                if !self.quality.folder_context && line.column.is_none() {
+        let rebuild = cache.generation != self.quality.folder_generation
+            || cache.context != self.quality.folder_context
+            || cache.collapsed != self.quality.folder_collapsed;
+        if rebuild {
+            cache.rows.clear();
+            for (f, file) in files.iter().enumerate() {
+                cache.rows.push(Row::File(f));
+                if self.quality.folder_collapsed.contains(&file.path) {
                     continue;
                 }
-                if current
-                    .as_ref()
-                    .is_some_and(|(p, n)| p == &file.path && *n == line.line)
-                {
-                    target = Some(rows.len());
+                for (l, line) in file.lines.iter().enumerate() {
+                    if self.quality.folder_context || line.column.is_some() {
+                        cache.rows.push(Row::Line(f, l));
+                    }
                 }
-                rows.push(Row::Line(f, l));
+            }
+            cache.generation = self.quality.folder_generation;
+            cache.context = self.quality.folder_context;
+            cache.collapsed.clone_from(&self.quality.folder_collapsed);
+            #[cfg(test)]
+            {
+                cache.builds += 1;
             }
         }
+        let rows = &cache.rows;
+        let target = scroll
+            .then(|| {
+                rows.iter().position(|row| match row {
+                    Row::Line(f, l) => current.as_ref().is_some_and(|(path, line)| {
+                        path == &files[*f].path && *line == files[*f].lines[*l].line
+                    }),
+                    _ => false,
+                })
+            })
+            .flatten();
         let regex = self.quality.folder_regex.as_ref();
         let mut area = egui::ScrollArea::vertical()
             .id_salt("folder-hits")
@@ -353,12 +602,12 @@ impl HeditApp {
         if scroll {
             if let Some(row) = target {
                 area =
-                    area.vertical_scroll_offset((row as f32 * ROW_HEIGHT - height * 0.35).max(0.0));
+                    area.vertical_scroll_offset((row as f32 * row_height - height * 0.35).max(0.0));
             }
         }
         let mut clicked = None;
         ui.spacing_mut().item_spacing.y = 0.0;
-        area.show_rows(ui, ROW_HEIGHT, rows.len(), |ui, visible| {
+        area.show_rows(ui, row_height, rows.len(), |ui, visible| {
             for row in &rows[visible] {
                 match *row {
                     Row::File(f) => {
@@ -366,12 +615,21 @@ impl HeditApp {
                         let collapsed = self.quality.folder_collapsed.contains(&file.path);
                         let name = hedit::folder::display_path(roots, &file.path);
                         let label = format!(
-                            "{} {name}  ·  {} {}",
-                            if collapsed { "▸" } else { "▾" },
+                            "{name}  ·  {} {}",
                             file.count,
                             if file.count == 1 { "match" } else { "matches" }
                         );
-                        let response = file_row(ui, &self.theme, &label, false);
+                        let response = file_row(
+                            ui,
+                            &self.theme,
+                            &label,
+                            false,
+                            Some(if collapsed {
+                                hedit::icons::Icon::ChevronRight
+                            } else {
+                                hedit::icons::Icon::ChevronDown
+                            }),
+                        );
                         if response.clicked() {
                             if collapsed {
                                 self.quality.folder_collapsed.remove(&file.path);
@@ -388,7 +646,7 @@ impl HeditApp {
                             .as_ref()
                             .is_some_and(|(p, n)| p == &file.path && *n == line.line);
                         let (rect, response) = ui.allocate_exact_size(
-                            egui::vec2(ui.available_width(), ROW_HEIGHT),
+                            egui::vec2(ui.available_width(), row_height),
                             egui::Sense::click(),
                         );
                         response.widget_info(|| {
@@ -539,6 +797,7 @@ impl HeditApp {
                                             &self.theme,
                                             &label,
                                             self.quality.preview_diff == Some(i),
+                                            None,
                                         )
                                         .on_hover_text(plan.path.display().to_string())
                                         .clicked()
