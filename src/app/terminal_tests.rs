@@ -421,6 +421,44 @@ fn terminal_frame_size(
 
 #[cfg(feature = "terminal")]
 #[test]
+fn terminal_header_scales_without_changing_shell_or_terminal_typography() {
+    use hedit::ui_style::{Density, Metrics};
+    let directory = tempfile::tempdir().unwrap();
+    let (ctx, mut app) = app_in(directory.path());
+    app.choose_terminal(true);
+    app.new_terminal(&ctx);
+    let id = app.terminal.tabs[0].id;
+    let terminal_font = app.terminal_font_id();
+    let size = egui::vec2(720.0, 480.0);
+    for font in [10.0, 13.0, 20.0] {
+        for density in [Density::Compact, Density::Default, Density::Comfortable] {
+            app.settings.ui_font_size = font;
+            app.settings.ui_density = density;
+            for _ in 0..3 {
+                terminal_frame_size(&ctx, &mut app, vec![], Modifiers::NONE, size);
+            }
+            let bar = ctx
+                .read_response(egui::Id::new("terminal-tab-bar"))
+                .unwrap()
+                .rect;
+            assert_eq!(bar.height(), Metrics::new(font, density).tab);
+            for action in [
+                egui::Id::new("terminal-new-tab"),
+                egui::Id::new("terminal-hide"),
+                egui::Id::new(("terminal-tab-close", id)),
+            ] {
+                let rect = ctx.read_response(action).unwrap().rect;
+                assert!(bar.contains_rect(rect) && rect.width() >= 22.0 && rect.height() >= 22.0);
+            }
+            assert_eq!(app.terminal.tabs[0].id, id);
+            assert_eq!(app.terminal_font_id(), terminal_font);
+        }
+    }
+    settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
+}
+
+#[cfg(feature = "terminal")]
+#[test]
 fn terminal_tabs_switch_close_restart_and_route_their_own_input() {
     let directory = tempfile::tempdir().unwrap();
     let (ctx, mut app) = app_in(directory.path());

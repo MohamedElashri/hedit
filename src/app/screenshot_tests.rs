@@ -402,6 +402,29 @@ fn export_readme_screenshots() {
 }
 
 #[test]
+#[ignore = "exports the workbench Settings scenes to HEDIT_PREVIEW_DIR"]
+fn export_workbench_settings_screenshots() {
+    let output =
+        PathBuf::from(std::env::var_os("HEDIT_PREVIEW_DIR").expect("set HEDIT_PREVIEW_DIR"));
+    std::fs::create_dir_all(&output).unwrap();
+    for light in [false, true] {
+        Scene::new(light).save(
+            &output,
+            if light {
+                "screenshot-light"
+            } else {
+                "screenshot-dark"
+            },
+        );
+    }
+    let mut scene = Scene::new(false);
+    scene.app.open_preferences(PreferencesPage::Appearance);
+    scene.save(&output, "themes");
+    scene.app.settings_browser.query = "ui_font".into();
+    scene.save(&output, "settings");
+}
+
+#[test]
 #[ignore = "writes a real checkpoint/restart/closed-note recovery demo to HEDIT_PREVIEW_DIR"]
 fn export_readme_recovery_demo() {
     let output =

@@ -277,24 +277,35 @@ impl HeditApp {
         self.project.poll();
         ui.add_space(16.0);
         ui.horizontal(|ui| {
-            ui.label(
-                RichText::new("FOLDERS")
-                    .size(10.0)
-                    .strong()
-                    .color(self.theme.muted.color()),
-            );
-            if ui
-                .add(egui::Button::new("+").frame(false))
-                .on_hover_text("Add folders to workspace")
+            let metrics = hedit::ui_style::Metrics::for_ui(ui);
+            let label_width =
+                (ui.available_width() - 3.0 * metrics.control - 3.0 * ui.spacing().item_spacing.x)
+                    .max(0.0);
+            if label_width >= 2.0 * metrics.font {
+                ui.allocate_ui_with_layout(
+                    egui::vec2(label_width, metrics.control),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.set_min_width(label_width);
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new("FOLDERS")
+                                    .size(metrics.small)
+                                    .strong()
+                                    .color(self.theme.muted.color()),
+                            )
+                            .truncate(),
+                        )
+                        .on_hover_text("Folders");
+                    },
+                );
+            }
+            if hedit::icons::button(ui, hedit::icons::Icon::Add, "Add folders to workspace")
                 .clicked()
             {
                 self.open_folder(ui.ctx());
             }
-            if ui
-                .add(egui::Button::new("↻").frame(false))
-                .on_hover_text("Refresh folders")
-                .clicked()
-            {
+            if hedit::icons::button(ui, hedit::icons::Icon::Refresh, "Refresh folders").clicked() {
                 self.refresh_folder();
             }
             if controls::close_button(

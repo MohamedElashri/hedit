@@ -18,6 +18,77 @@ pub(super) fn family_detail(family: &hedit::fonts::Family) -> String {
 pub(super) const SAMPLE: &str = "Aa Bb 0O 1lI {}[]=> العربية עברית 日本語 한국어";
 
 impl HeditApp {
+    /// Use the shared background inventory without loading each family for preview.
+    pub(super) fn ui_font_choice(&mut self, ui: &mut egui::Ui) -> Option<String> {
+        self.request_font_families(ui.ctx());
+        let id = egui::Id::new("ui-font-filter");
+        let mut filter: String = ui.data(|d| d.get_temp(id)).unwrap_or_default();
+        let mut choice = None;
+        egui::ComboBox::from_id_salt("installed-ui-font")
+            .selected_text("Choose installed font…")
+            .width(ui.available_width().min(360.0))
+            .height(240.0)
+            .truncate()
+            .show_ui(ui, |ui| {
+                ui.set_max_width(360.0);
+                ui.add(
+                    egui::TextEdit::singleline(&mut filter)
+                        .id(egui::Id::new("ui-font-filter-input"))
+                        .hint_text("Filter fonts by family or script")
+                        .desired_width(f32::INFINITY),
+                );
+                if ui
+                    .selectable_label(
+                        self.settings.ui_font_face.is_empty(),
+                        "Built-in (Noto Sans)",
+                    )
+                    .clicked()
+                {
+                    choice = Some(String::new());
+                }
+                match &self.font_families {
+                    None => {
+                        ui.weak("Listing installed fonts…");
+                    }
+                    Some(families) => {
+                        let mut matches = 0;
+                        for family in families {
+                            let detail = family_detail(family);
+                            if !filter.is_empty()
+                                && hedit::folder::fuzzy_match(
+                                    &format!("{} {detail}", family.name),
+                                    &filter,
+                                )
+                                .is_none()
+                            {
+                                continue;
+                            }
+                            matches += 1;
+                            if ui
+                                .add(
+                                    egui::Button::new(&family.name)
+                                        .selected(self.settings.ui_font_face == family.name)
+                                        .frame(false)
+                                        .truncate(),
+                                )
+                                .on_hover_text(detail)
+                                .clicked()
+                            {
+                                choice = Some(family.name.clone());
+                            }
+                        }
+                        if matches == 0 {
+                            ui.weak("No matching installed fonts.");
+                        }
+                    }
+                }
+                if choice.is_some() {
+                    ui.close_menu();
+                }
+            });
+        ui.data_mut(|d| d.insert_temp(id, filter));
+        choice
+    }
     /// List installed families off the UI thread, once.
     pub(super) fn request_font_families(&mut self, ctx: &egui::Context) {
         if self.font_families.is_some() || self.fonts_listing {

@@ -95,6 +95,7 @@ mod rtl_tests;
 #[cfg(test)]
 mod screenshot_tests;
 mod settings_browser;
+mod settings_navigation;
 mod settings_pages;
 mod settings_store;
 #[cfg(test)]
