@@ -1318,6 +1318,13 @@ impl HeditApp {
             if !matches!(
                 command,
                 Command::SourceControl
+                    | Command::BuildResults
+                    | Command::LanguageProblems
+                    | Command::Terminal
+                    | Command::NewTerminal
+                    | Command::CloseTerminal
+                    | Command::NextTerminal
+                    | Command::PreviousTerminal
                     | Command::FindFiles
                     | Command::GitCommit
                     | Command::GitNextFile
@@ -1481,7 +1488,7 @@ impl HeditApp {
                 self.palette_index = 0;
             }
             Command::CancelBuild => self.cancel_build(),
-            Command::BuildResults => self.build.open = !self.build.open,
+            Command::BuildResults => self.toggle_panel(workbench_panel::Panel::Output),
             Command::Terminal => self.toggle_terminal(ctx),
             Command::TerminalSettings => self.open_preferences(PreferencesPage::Terminal),
             Command::NewTerminal => self.new_terminal(ctx),
@@ -1866,7 +1873,7 @@ impl HeditApp {
                     self.notice = "Configure a language server for this file first.".into();
                 }
             }
-            Command::LanguageProblems => self.languages.problems = !self.languages.problems,
+            Command::LanguageProblems => self.toggle_panel(workbench_panel::Panel::Problems),
             Command::LanguageRestart => self.restart_language_servers(),
             Command::Checkpoint => self.checkpoint(ctx),
             Command::UserGuide => {

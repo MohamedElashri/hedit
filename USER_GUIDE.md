@@ -379,6 +379,15 @@ Automatic. The 58 formats include common programming languages, CUDA, web/config
 formats, Markdown, LaTeX, CSV, and logs. Embedded languages and multiline strings
 use syntax definitions; large files show quick colors before full highlighting.
 
+## Bottom panel
+
+**Problems**, **Output**, and **Terminal** share one resizable bottom panel.
+Choose a tab to keep the editor visible while reviewing diagnostics, build output,
+or a shell. Problems combines build locations and language-server diagnostics;
+click a row to navigate. Output retains the latest build and its Cancel action.
+The close button hides the panel without stopping a build or shell. Escape hides
+Problems or Output; while focused in Terminal, Escape goes to the shell.
+
 ## Integrated terminal
 
 Enable **Preferences → Settings → Terminal**, then **Tools → Toggle terminal**

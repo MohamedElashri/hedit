@@ -38,6 +38,20 @@ pub(super) struct TerminalTab {
     palette: Option<Option<[hedit::theme::Rgb; 16]>>,
 }
 
+impl TerminalState {
+    pub(super) fn release_input(&mut self) {
+        self.binding_prefix = None;
+        #[cfg(feature = "terminal")]
+        {
+            self.focus = false;
+            self.dragged_tab = None;
+            if let Some(tab) = self.tabs.get_mut(self.active) {
+                tab.preedit.clear();
+            }
+        }
+    }
+}
+
 #[cfg(feature = "terminal")]
 impl TerminalState {
     pub(super) fn active_session(&self) -> Option<&hedit::terminal::Session> {
@@ -49,7 +63,7 @@ impl TerminalState {
     }
 }
 
-fn input_id() -> egui::Id {
+pub(super) fn input_id() -> egui::Id {
     egui::Id::new("integrated-terminal-input")
 }
 
@@ -390,7 +404,9 @@ impl HeditApp {
             if self.terminal.tabs.is_empty() {
                 self.new_terminal(ctx);
             }
-            self.terminal.open = !self.terminal.tabs.is_empty();
+            if !self.terminal.tabs.is_empty() {
+                self.set_panel(super::workbench_panel::Panel::Terminal);
+            }
             self.terminal.focus = self.terminal.open;
             self.focus_editor = !self.terminal.open;
         }
@@ -467,7 +483,7 @@ impl HeditApp {
                         palette: None,
                     });
                     self.terminal.active = self.terminal.tabs.len() - 1;
-                    self.terminal.open = true;
+                    self.set_panel(super::workbench_panel::Panel::Terminal);
                     self.terminal.focus = true;
                     self.terminal.binding_prefix = None;
                     self.focus_editor = false;
@@ -526,7 +542,7 @@ impl HeditApp {
                 (self.terminal.active + if forward { 1 } else { count - 1 }) % count;
             self.terminal.focus = true;
             self.terminal.binding_prefix = None;
-            self.terminal.open = true;
+            self.set_panel(super::workbench_panel::Panel::Terminal);
             self.focus_editor = false;
         }
         #[cfg(not(feature = "terminal"))]
@@ -728,14 +744,11 @@ impl HeditApp {
         used
     }
 
-    pub(super) fn terminal_panel(&mut self, ctx: &egui::Context) {
-        if !self.settings.terminal_enabled || !self.terminal.open {
-            return;
-        }
+    pub(super) fn terminal_contents(&mut self, ui: &mut egui::Ui) {
         #[cfg(feature = "terminal")]
-        self.draw_terminal(ctx);
+        self.draw_terminal(ui);
         #[cfg(not(feature = "terminal"))]
-        let _ = ctx;
+        ui.weak("Terminal support is not included in this build.");
     }
 }
 
@@ -950,8 +963,8 @@ mod surface {
             });
         }
 
-        pub(super) fn draw_terminal(&mut self, ctx: &egui::Context) {
-            let mut actions = tabs::Actions::default();
+        pub(super) fn draw_terminal(&mut self, ui: &mut egui::Ui) {
+            let ctx = &ui.ctx().clone();
             let surface_theme = self.terminal_surface_theme();
             let terminal_font = self.terminal_font_id();
             let palette = self
@@ -959,76 +972,69 @@ mod surface {
                 .terminal_colors
                 .as_ref()
                 .and_then(|colors| colors.ansi);
-            egui::TopBottomPanel::bottom("terminal-panel")
-                .resizable(true)
-                .default_height(250.0)
-                .height_range(90.0..=(ctx.screen_rect().height() * 0.65).max(100.0))
-                .frame(egui::Frame::new().fill(self.theme.surface.color()))
-                .show(ctx, |ui| {
-                    ui.spacing_mut().item_spacing.y = 0.0;
-                    actions = tabs::bar(ui, &mut self.terminal, &self.theme);
-                    if actions.new {
-                        self.new_terminal(ctx);
-                    }
-                    if let Some(index) = actions.activate {
-                        self.terminal.tabs[self.terminal.active].preedit.clear();
-                        self.terminal.active = index;
-                        self.terminal.focus = true;
-                        self.terminal.binding_prefix = None;
-                    }
-                    if let Some((id, target)) = actions.reorder {
-                        let active = self.terminal.tabs[self.terminal.active].id;
-                        if let Some(source) = self.terminal.tabs.iter().position(|tab| tab.id == id)
-                        {
-                            let tab = self.terminal.tabs.remove(source);
-                            let target = target.min(self.terminal.tabs.len());
-                            self.terminal.tabs.insert(target, tab);
-                            self.terminal.active = self
-                                .terminal
-                                .tabs
-                                .iter()
-                                .position(|tab| tab.id == active)
-                                .unwrap_or(0);
-                            self.terminal.focus = true;
-                        }
-                    }
-                    let font_data = if self.settings.terminal_font.is_some() {
-                        self.terminal_font.as_ref()
-                    } else {
-                        self.editor_font.as_ref()
-                    };
-                    let TerminalState {
-                        tabs,
-                        active,
-                        renderer,
-                        focus,
-                        ..
-                    } = &mut self.terminal;
-                    if let Some(tab) = tabs.get_mut(*active) {
-                        tab.seen = tab.session.output_generation;
-                        egui::Frame::new()
-                            .inner_margin(egui::Margin::symmetric(12, 6))
-                            .fill(surface_theme.surface.color())
-                            .show(ui, |ui| {
-                                draw_surface(
-                                    ui,
-                                    tab,
-                                    renderer,
-                                    focus,
-                                    SurfaceStyle {
-                                        theme: &surface_theme,
-                                        font: terminal_font.clone(),
-                                        bidi: self.settings.terminal_bidi,
-                                        editor: font_data,
-                                        palette: palette.as_ref(),
-                                    },
-                                );
-                            });
-                        if ctx.memory(|m| m.has_focus(input_id())) {
-                            self.focus_editor = false;
-                        }
-                    }
-                });
+            ui.spacing_mut().item_spacing.y = 0.0;
+            let actions = tabs::bar(ui, &mut self.terminal, &self.theme);
+            if actions.new {
+                self.new_terminal(ctx);
+            }
+            if let Some(index) = actions.activate {
+                self.terminal.tabs[self.terminal.active].preedit.clear();
+                self.terminal.active = index;
+                self.terminal.focus = true;
+                self.terminal.binding_prefix = None;
+            }
+            if let Some((id, target)) = actions.reorder {
+                let active = self.terminal.tabs[self.terminal.active].id;
+                if let Some(source) = self.terminal.tabs.iter().position(|tab| tab.id == id) {
+                    let tab = self.terminal.tabs.remove(source);
+                    let target = target.min(self.terminal.tabs.len());
+                    self.terminal.tabs.insert(target, tab);
+                    self.terminal.active = self
+                        .terminal
+                        .tabs
+                        .iter()
+                        .position(|tab| tab.id == active)
+                        .unwrap_or(0);
+                    self.terminal.focus = true;
+                }
+            }
+            let font_data = if self.settings.terminal_font.is_some() {
+                self.terminal_font.as_ref()
+            } else {
+                self.editor_font.as_ref()
+            };
+            let TerminalState {
+                tabs,
+                active,
+                renderer,
+                focus,
+                ..
+            } = &mut self.terminal;
+            if let Some(tab) = tabs.get_mut(*active) {
+                tab.seen = tab.session.output_generation;
+                egui::Frame::new()
+                    .inner_margin(egui::Margin::symmetric(12, 6))
+                    .fill(surface_theme.surface.color())
+                    .show(ui, |ui| {
+                        draw_surface(
+                            ui,
+                            tab,
+                            renderer,
+                            focus,
+                            SurfaceStyle {
+                                theme: &surface_theme,
+                                font: terminal_font.clone(),
+                                bidi: self.settings.terminal_bidi,
+                                editor: font_data,
+                                palette: palette.as_ref(),
+                            },
+                        );
+                    });
+                if ctx.memory(|m| m.has_focus(input_id())) {
+                    self.focus_editor = false;
+                }
+            }
+
             if actions.hide {
                 self.terminal.dragged_tab = None;
                 if let Some(tab) = self.terminal.tabs.get_mut(self.terminal.active) {

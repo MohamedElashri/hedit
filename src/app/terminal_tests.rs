@@ -149,7 +149,7 @@ fn terminal_hide_keeps_session_and_disabling_ends_it_without_editing_buffer() {
     };
     let _ = ctx.run(input, |ctx| {
         app.chrome(ctx);
-        app.terminal_panel(ctx);
+        app.workbench_panel(ctx);
         app.editor(ctx);
     });
     // Wait for a real command response before sending control keys. On Windows
@@ -243,6 +243,35 @@ fn terminal_hide_keeps_session_and_disabling_ends_it_without_editing_buffer() {
         "interrupting must leave the interactive shell running"
     );
     assert_eq!(app.active().page.text, before);
+    let session_id = app.terminal.tabs[0].id;
+    app.execute(&ctx, Command::LanguageProblems);
+    assert!(app.languages.problems && !app.terminal.open);
+    app.terminal
+        .active_session_mut()
+        .unwrap()
+        .write(b"echo HIDDEN_PANEL_OUTPUT\r".to_vec())
+        .unwrap();
+    let until = Instant::now() + Duration::from_secs(10);
+    loop {
+        app.poll_terminal(&ctx);
+        let grid = app.terminal.active_session_mut().unwrap().grid().unwrap();
+        let lines: Vec<String> = grid
+            .rows
+            .iter()
+            .map(|row| row.iter().map(|c| c.text.as_str()).collect())
+            .collect();
+        if lines
+            .iter()
+            .any(|line| line.trim() == "HIDDEN_PANEL_OUTPUT")
+        {
+            break;
+        }
+        assert!(Instant::now() < until, "hidden shell output did not drain");
+        thread::sleep(Duration::from_millis(10));
+    }
+    app.execute(&ctx, Command::Terminal);
+    assert!(app.terminal.open && !app.languages.problems);
+    assert_eq!(app.terminal.tabs[0].id, session_id);
     app.terminal
         .active_session_mut()
         .unwrap()
@@ -361,7 +390,7 @@ fn export_terminal_previews() {
                 },
                 |ctx| {
                     app.chrome(ctx);
-                    app.terminal_panel(ctx);
+                    app.workbench_panel(ctx);
                     app.editor(ctx);
                     app.preferences(ctx);
                     app.terminal_onboarding(ctx);
@@ -413,7 +442,7 @@ fn terminal_frame_size(
         |ctx| {
             app.shortcuts(ctx);
             app.chrome(ctx);
-            app.terminal_panel(ctx);
+            app.workbench_panel(ctx);
             app.editor(ctx);
         },
     )
