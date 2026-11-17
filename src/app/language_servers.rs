@@ -1214,7 +1214,7 @@ impl HeditApp {
                                         "{severity} · {} · {}:{} · {}",
                                         diagnostics.server,
                                         path.file_name().unwrap_or_default().to_string_lossy(),
-                                        range.start.line + 1,
+                                        u64::from(range.start.line) + 1,
                                         message.chars().take(500).collect::<String>()
                                     ),
                                 )
@@ -1572,6 +1572,63 @@ mod tests {
             }),
         );
         assert!(!app.languages.diagnostics.contains_key(&path));
+    }
+    #[test]
+    fn malformed_diagnostic_line_numbers_cannot_crash_or_move_the_editor() {
+        let (_dir, ctx, mut app) = app();
+        let path = PathBuf::from(app.active().page.info.path.as_ref().unwrap());
+        app.language_event(&ctx, Event::Diagnostics {
+            server: "fixture".into(),
+            root: app.language_root(&path),
+            path,
+            revision: app.active().page.info.revision,
+            encoding: Encoding::Utf16,
+            items: vec![json!({
+                "range":{"start":{"line":u32::MAX,"character":0},"end":{"line":u32::MAX,"character":0}},
+                "severity":2,"message":"unexpected line"
+            })],
+        });
+        app.languages.problems = true;
+        let draw = |app: &mut HeditApp, events| {
+            ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1280.0, 820.0),
+                    )),
+                    focused: true,
+                    events,
+                    ..Default::default()
+                },
+                |ctx| app.language_panels(ctx),
+            )
+        };
+        draw(&mut app, vec![]);
+        let output = draw(&mut app, vec![]);
+        let label = "Warning · fixture · main.rs:4294967296 · unexpected line";
+        let position = output
+            .shapes
+            .iter()
+            .find_map(|shape| super::super::tests::text_rect(&shape.shape, label))
+            .expect("diagnostic row is visible")
+            .center();
+        let head = app.active().view.head;
+        for pressed in [true, false] {
+            draw(
+                &mut app,
+                vec![
+                    egui::Event::PointerMoved(position),
+                    egui::Event::PointerButton {
+                        pos: position,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+        assert_eq!(app.active().view.head, head);
+        assert_eq!(app.active().page.text, "fo");
     }
     #[test]
     fn language_hover_and_problems_are_available_from_commands() {
