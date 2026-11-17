@@ -94,6 +94,7 @@ mod row_index;
 mod rtl_tests;
 #[cfg(test)]
 mod screenshot_tests;
+mod settings_browser;
 mod settings_pages;
 mod settings_store;
 #[cfg(test)]
@@ -163,6 +164,8 @@ enum Action {
     /// A font loaded for the `font_face` setting.
     /// A font for `font_face`: its name, file bytes, and face index.
     Font(String, Vec<u8>, u32),
+    FontFailed(String, String),
+    TerminalFont(u64, String, Result<(Vec<u8>, u32), String>),
     /// Installed font families, for the font picker.
     FontFamilies(Vec<hedit::fonts::Family>),
     /// System fonts for other scripts are ready.
@@ -295,6 +298,11 @@ pub struct HeditApp {
     font_applied: String,
     /// The `font_face` font file, kept to rebuild the fonts when fallbacks load.
     editor_font: Option<(Vec<u8>, u32)>,
+    editor_font_loading: Option<String>,
+    terminal_font: Option<(Vec<u8>, u32)>,
+    terminal_font_applied: Option<String>,
+    terminal_font_generation: u64,
+    terminal_font_loading: Option<u64>,
     /// Installed font families, once listed.
     font_families: Option<Vec<hedit::fonts::Family>>,
     /// Open the font picker when the families arrive.
@@ -311,6 +319,7 @@ pub struct HeditApp {
     distraction_free: bool,
     fullscreen: bool,
     preferences_page: PreferencesPage,
+    settings_browser: settings_browser::State,
     goto_open: bool,
     goto_focus: bool,
     replace_open: bool,
@@ -493,6 +502,11 @@ impl HeditApp {
             goto_origin: None,
             font_applied: String::new(),
             editor_font: None,
+            editor_font_loading: None,
+            terminal_font: None,
+            terminal_font_applied: None,
+            terminal_font_generation: 0,
+            terminal_font_loading: None,
             font_families: None,
             font_picker_pending: false,
             fonts_listing: false,
@@ -505,6 +519,7 @@ impl HeditApp {
             distraction_free: false,
             fullscreen: false,
             preferences_page: PreferencesPage::Editor,
+            settings_browser: settings_browser::State::default(),
             goto_open: false,
             goto_focus: false,
             replace_open: false,
@@ -1140,7 +1155,13 @@ impl HeditApp {
                     Ok(Action::Quality(event)) => {
                         matches!(&**event, quality::Event::GitMarkers(..))
                     }
-                    Ok(Action::Font(..) | Action::FallbackFonts | Action::FontFamilies(_)) => true,
+                    Ok(
+                        Action::Font(..)
+                        | Action::FontFailed(..)
+                        | Action::TerminalFont(..)
+                        | Action::FallbackFonts
+                        | Action::FontFamilies(_),
+                    ) => true,
                     _ => false,
                 };
             let restore_focus = if !side {
@@ -1337,9 +1358,44 @@ impl HeditApp {
                 }
                 Ok(Action::ThemeImported(theme)) => self.add_imported_theme(ctx, theme),
                 Ok(Action::Font(name, bytes, index)) => {
-                    if self.settings.font_face == name {
+                    if self.editor_font_loading.as_deref() == Some(&name) {
+                        self.editor_font_loading = None;
+                    }
+                    if self.settings.font_face.trim() == name {
                         self.editor_font = Some((bytes, index));
-                        settings_store::set_editor_font(ctx, self.editor_font.clone());
+                        self.rebuild_fonts(ctx);
+                    }
+                }
+                Ok(Action::FontFailed(name, error)) => {
+                    if self.editor_font_loading.as_deref() == Some(&name) {
+                        self.editor_font_loading = None;
+                    }
+                    if self.settings.font_face.trim() == name {
+                        self.editor_font = None;
+                        self.rebuild_fonts(ctx);
+                        self.notice = format!("Font “{name}”: {error} Using the built-in font.");
+                    }
+                }
+                Ok(Action::TerminalFont(generation, name, result)) => {
+                    if self.terminal_font_loading == Some(generation) {
+                        self.terminal_font_loading = None;
+                    }
+                    if generation == self.terminal_font_generation
+                        && self
+                            .settings
+                            .terminal_font
+                            .as_ref()
+                            .is_some_and(|font| font.face.trim() == name)
+                    {
+                        match result {
+                            Ok(font) => self.terminal_font = Some(font),
+                            Err(error) => {
+                                self.terminal_font = None;
+                                self.notice =
+                                    format!("Terminal font: {error} Using the built-in font.");
+                            }
+                        }
+                        self.rebuild_fonts(ctx);
                     }
                 }
                 Ok(Action::FontFamilies(families)) => {
@@ -1350,7 +1406,7 @@ impl HeditApp {
                     }
                 }
                 Ok(Action::FallbackFonts) => {
-                    settings_store::set_editor_font(ctx, self.editor_font.clone());
+                    self.rebuild_fonts(ctx);
                 }
                 Ok(Action::OpenFailed(error)) => {
                     self.quality.preview_request = false;
@@ -5359,8 +5415,11 @@ mod tests {
         click_label(&ctx, &mut app, "Settings…");
         assert!(app.preferences_open);
         click_label(&ctx, &mut app, "Editor");
-        click_label(&ctx, &mut app, "Wrap long lines");
+        click_label(&ctx, &mut app, "Search settings by name or key…");
+        frame(&ctx, &mut app, vec![egui::Event::Text("word_wrap".into())]);
+        click_label(&ctx, &mut app, "Enabled");
         assert!(app.settings.word_wrap);
+        click_label(&ctx, &mut app, "Clear");
         click_label(&ctx, &mut app, "Appearance");
         app.appearance.query = "paper".into();
         click_label(&ctx, &mut app, "Hedit Paper");

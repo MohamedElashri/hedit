@@ -35,6 +35,7 @@ pub(super) struct TerminalTab {
     seen: u64,
     selection_start: Option<(u16, u32)>,
     scroll_remainder: f32,
+    palette: Option<Option<[hedit::theme::Rgb; 16]>>,
 }
 
 #[cfg(feature = "terminal")]
@@ -53,6 +54,237 @@ fn input_id() -> egui::Id {
 }
 
 impl HeditApp {
+    pub(super) fn invalidate_terminal_font(&mut self) {
+        #[cfg(feature = "terminal")]
+        {
+            self.terminal.renderer = Default::default();
+        }
+    }
+
+    pub(super) fn terminal_font_id(&self) -> FontId {
+        match &self.settings.terminal_font {
+            Some(font) => FontId::new(font.size, egui::FontFamily::Name("hedit-terminal".into())),
+            None => FontId::monospace(self.settings.font_size),
+        }
+    }
+    pub(super) fn terminal_surface_theme(&self) -> Theme {
+        let mut theme = self.theme.clone();
+        theme.accent = theme.text;
+        if let Some(colors) = &self.settings.terminal_colors {
+            theme.text = colors.foreground;
+            theme.surface = colors.background;
+            theme.accent = colors.cursor;
+            theme.selection = colors.selection;
+            theme.selection_text = colors.selection_text;
+        }
+        theme
+    }
+    fn terminal_appearance_preferences(&mut self, ui: &mut egui::Ui) {
+        use hedit::settings::{TerminalColors, TerminalFont};
+        preferences::section(ui, "Font");
+        if self.terminal_font_loading.is_some() {
+            ui.weak("Loading terminal font…");
+        }
+        let mut inherited = self.settings.terminal_font.is_none();
+        if ui
+            .checkbox(&mut inherited, "Use app font and size")
+            .changed()
+        {
+            self.settings.terminal_font = (!inherited).then(|| TerminalFont {
+                face: String::new(),
+                size: self.settings.font_size,
+            });
+            self.settings_browser.terminal_font_draft = None;
+            self.settings_browser.terminal_font_error = None;
+            if let Some(font) = &mut self.settings.terminal_font {
+                let candidate = TerminalFont {
+                    face: self.settings.font_face.clone(),
+                    size: font.size,
+                };
+                match candidate.validate() {
+                    Ok(()) => *font = candidate,
+                    Err(error) => {
+                        self.settings_browser.terminal_font_draft = Some(candidate.face);
+                        self.settings_browser.terminal_font_error = Some(error);
+                    }
+                }
+            }
+        }
+        if self.settings.terminal_font.is_some() {
+            self.request_font_families(ui.ctx());
+            let font = self.settings.terminal_font.as_mut().unwrap();
+            let previous_face = font.face.clone();
+            let mut picked_face = false;
+            egui::ComboBox::from_id_salt("terminal-font-family")
+                .selected_text(if font.face.is_empty() {
+                    "Built-in (Hack)"
+                } else {
+                    &font.face
+                })
+                .width(250.0)
+                .height(220.0)
+                .show_ui(ui, |ui| {
+                    picked_face |= ui
+                        .selectable_value(&mut font.face, String::new(), "Built-in (Hack)")
+                        .clicked();
+                    if let Some(families) = &self.font_families {
+                        for family in families {
+                            picked_face |= ui
+                                .selectable_value(
+                                    &mut font.face,
+                                    family.name.clone(),
+                                    format!(
+                                        "{} · {}",
+                                        family.name,
+                                        font_picker::family_detail(family)
+                                    ),
+                                )
+                                .clicked();
+                        }
+                    } else {
+                        ui.weak("Listing installed fonts…");
+                    }
+                });
+            if picked_face {
+                match font.validate() {
+                    Ok(()) => {
+                        self.settings_browser.terminal_font_draft = None;
+                        self.settings_browser.terminal_font_error = None;
+                    }
+                    Err(error) => {
+                        self.settings_browser.terminal_font_draft =
+                            Some(std::mem::replace(&mut font.face, previous_face));
+                        self.settings_browser.terminal_font_error = Some(error);
+                    }
+                }
+            }
+            let mut face = self
+                .settings_browser
+                .terminal_font_draft
+                .clone()
+                .unwrap_or_else(|| font.face.clone());
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut face)
+                    .id(egui::Id::new("terminal-font-face"))
+                    .hint_text("Font family or absolute font-file path")
+                    .desired_width(340.0)
+                    .char_limit(4096),
+            );
+            if response.changed() {
+                let candidate = TerminalFont {
+                    face: face.clone(),
+                    size: font.size,
+                };
+                match candidate.validate() {
+                    Ok(()) => {
+                        font.face = face.clone();
+                        self.settings_browser.terminal_font_error = None;
+                    }
+                    Err(error) => self.settings_browser.terminal_font_error = Some(error),
+                }
+            }
+            self.settings_browser.terminal_font_draft = (response.has_focus()
+                || self.settings_browser.terminal_font_error.is_some())
+            .then_some(face);
+            if let Some(error) = &self.settings_browser.terminal_font_error {
+                ui.colored_label(self.theme.warning.color(), error);
+            }
+            preferences::row(ui, "Size", |ui| {
+                ui.add(
+                    egui::DragValue::new(&mut font.size)
+                        .range(8.0..=40.0)
+                        .suffix(" pt"),
+                );
+            });
+            ui.weak("Monospace fonts keep terminal columns aligned.");
+        }
+        preferences::section(ui, "Colors");
+        let mut inherited = self.settings.terminal_colors.is_none();
+        if ui.checkbox(&mut inherited, "Use app colors").changed() {
+            self.settings.terminal_colors =
+                (!inherited).then(|| TerminalColors::from_theme(&self.theme));
+        }
+        if (self.settings.terminal_font.is_some() || self.settings.terminal_colors.is_some())
+            && ui
+                .small_button("Reset terminal appearance")
+                .on_hover_text(
+                    "Use the app font and colors; keep terminal sessions and enablement.",
+                )
+                .clicked()
+        {
+            self.settings.terminal_font = None;
+            self.settings.terminal_colors = None;
+            self.settings_browser.terminal_font_draft = None;
+            self.settings_browser.terminal_font_error = None;
+        }
+        if let Some(colors) = &mut self.settings.terminal_colors {
+            egui::ComboBox::from_id_salt("terminal-color-preset")
+                .selected_text("Copy colors from a theme…")
+                .width(250.0)
+                .show_ui(ui, |ui| {
+                    if ui.button("Current app colors").clicked() {
+                        *colors = TerminalColors::from_theme(&self.theme);
+                    }
+                    for theme in hedit::theme::builtins() {
+                        if ui.button(&theme.name).clicked() {
+                            *colors = TerminalColors::from_theme(theme);
+                            colors.ansi = Some(TerminalColors::theme_palette(theme));
+                        }
+                    }
+                });
+            egui::Grid::new("terminal-color-fields")
+                .num_columns(2)
+                .show(ui, |ui| {
+                    for (label, color) in [
+                        ("Foreground", &mut colors.foreground),
+                        ("Background", &mut colors.background),
+                        ("Cursor", &mut colors.cursor),
+                        ("Selection", &mut colors.selection),
+                        ("Selected text", &mut colors.selection_text),
+                    ] {
+                        ui.label(label);
+                        ui.color_edit_button_srgb(&mut color.0);
+                        ui.end_row();
+                    }
+                });
+            let mut ansi = colors.ansi.is_some();
+            if ui.checkbox(&mut ansi, "Custom ANSI palette").changed() {
+                colors.ansi = ansi.then(|| TerminalColors::theme_palette(&self.theme));
+            }
+            if let Some(palette) = &mut colors.ansi {
+                egui::Grid::new("terminal-ansi-fields")
+                    .num_columns(4)
+                    .show(ui, |ui| {
+                        let names = [
+                            "Black", "Red", "Green", "Yellow", "Blue", "Magenta", "Cyan", "White",
+                        ];
+                        for index in 0..8 {
+                            ui.label(names[index]);
+                            ui.color_edit_button_srgb(&mut palette[index].0);
+                            ui.label(format!("Bright {}", names[index].to_lowercase()));
+                            ui.color_edit_button_srgb(&mut palette[index + 8].0);
+                            ui.end_row();
+                        }
+                    });
+            }
+        }
+        let theme = self.terminal_surface_theme();
+        let font = self.terminal_font_id();
+        ui.add_space(8.0);
+        egui::Frame::new()
+            .fill(theme.surface.color())
+            .inner_margin(10)
+            .show(ui, |ui| {
+                ui.label(
+                    RichText::new("$ hello_world --color\nAa Bb 0O 1lI {}[]=>")
+                        .font(font)
+                        .color(theme.text.color()),
+                );
+            });
+        ui.weak(
+            "Appearance changes apply to local and SSH terminals without restarting their shells.",
+        );
+    }
     pub(super) fn terminal_preferences(&mut self, ui: &mut egui::Ui) {
         ui.label("Run your local shell inside hedit, starting in the current project folder.");
         ui.add_space(8.0);
@@ -74,6 +306,7 @@ impl HeditApp {
             "Bidirectional text and Arabic shaping",
         );
         ui.weak("Display Arabic and Hebrew in reading order. Turn this off for applications that already arrange bidirectional text themselves.");
+        self.terminal_appearance_preferences(ui);
         if !cfg!(feature = "terminal") {
             ui.label("This build does not include terminal support. Use a build with the terminal feature to enable it.");
         }
@@ -130,7 +363,7 @@ impl HeditApp {
         }
     }
 
-    fn sync_terminal(&mut self) {
+    pub(super) fn sync_terminal(&mut self) {
         if !self.settings.terminal_enabled {
             self.focus_editor |= self.terminal.open;
             self.terminal = TerminalState::default();
@@ -231,6 +464,7 @@ impl HeditApp {
                         seen: 0,
                         selection_start: None,
                         scroll_remainder: 0.0,
+                        palette: None,
                     });
                     self.terminal.active = self.terminal.tabs.len() - 1;
                     self.terminal.open = true;
@@ -308,6 +542,7 @@ impl HeditApp {
             }) {
                 Ok(session) => {
                     tab.session = session;
+                    tab.palette = None;
                     tab.seen = 0;
                     tab.selection_start = None;
                     tab.preedit.clear();
@@ -717,6 +952,13 @@ mod surface {
 
         pub(super) fn draw_terminal(&mut self, ctx: &egui::Context) {
             let mut actions = tabs::Actions::default();
+            let surface_theme = self.terminal_surface_theme();
+            let terminal_font = self.terminal_font_id();
+            let palette = self
+                .settings
+                .terminal_colors
+                .as_ref()
+                .and_then(|colors| colors.ansi);
             egui::TopBottomPanel::bottom("terminal-panel")
                 .resizable(true)
                 .default_height(250.0)
@@ -750,6 +992,11 @@ mod surface {
                             self.terminal.focus = true;
                         }
                     }
+                    let font_data = if self.settings.terminal_font.is_some() {
+                        self.terminal_font.as_ref()
+                    } else {
+                        self.editor_font.as_ref()
+                    };
                     let TerminalState {
                         tabs,
                         active,
@@ -761,6 +1008,7 @@ mod surface {
                         tab.seen = tab.session.output_generation;
                         egui::Frame::new()
                             .inner_margin(egui::Margin::symmetric(12, 6))
+                            .fill(surface_theme.surface.color())
                             .show(ui, |ui| {
                                 draw_surface(
                                     ui,
@@ -768,10 +1016,11 @@ mod surface {
                                     renderer,
                                     focus,
                                     SurfaceStyle {
-                                        theme: &self.theme,
-                                        font_size: self.settings.font_size,
+                                        theme: &surface_theme,
+                                        font: terminal_font.clone(),
                                         bidi: self.settings.terminal_bidi,
-                                        editor: self.editor_font.as_ref(),
+                                        editor: font_data,
+                                        palette: palette.as_ref(),
                                     },
                                 );
                             });
@@ -814,9 +1063,10 @@ mod surface {
 
     struct SurfaceStyle<'a> {
         theme: &'a Theme,
-        font_size: f32,
+        font: FontId,
         bidi: bool,
         editor: Option<&'a (Vec<u8>, u32)>,
+        palette: Option<&'a [hedit::theme::Rgb; 16]>,
     }
 
     fn draw_surface(
@@ -828,13 +1078,14 @@ mod surface {
     ) {
         let SurfaceStyle {
             theme,
-            font_size,
+            font,
             bidi,
             editor,
+            palette,
         } = style;
         let ctx = ui.ctx().clone();
         let session = &mut tab.session;
-        let font = FontId::monospace(font_size);
+        let font_size = font.size;
         let cell = ui.fonts(|f| {
             egui::vec2(
                 f.glyph_width(&font, ' ').max(1.0),
@@ -877,6 +1128,26 @@ mod surface {
         let _ = session
             .vt
             .set_default_bg_color(Some(rgb(theme.surface.color())));
+        let _ = session
+            .vt
+            .set_default_cursor_color(Some(rgb(theme.accent.color())));
+        let selected_palette = palette.copied();
+        if tab.palette != Some(selected_palette) {
+            let colors = palette.map(|colors| {
+                let mut result = libghostty_vt::style::Palette::default();
+                for (index, color) in colors.iter().enumerate() {
+                    result.set(
+                        libghostty_vt::style::PaletteIndex(index as _),
+                        rgb(color.color()),
+                    );
+                }
+                result
+            });
+            match session.vt.set_default_color_palette(colors) {
+                Ok(_) => tab.palette = Some(selected_palette),
+                Err(error) => session.status = format!("Terminal colors: {error}"),
+            }
+        }
         if response.hovered() {
             let scroll = ctx.input(|i| i.smooth_scroll_delta.y);
             if scroll.abs() > 0.0 {
@@ -1005,6 +1276,13 @@ mod surface {
             }
         }
         if response.has_focus() && session.running {
+            let cursor_color = session
+                .vt
+                .cursor_color()
+                .ok()
+                .flatten()
+                .map(color)
+                .unwrap_or(theme.accent.color());
             if let Some((x, y)) = grid.cursor {
                 if let (Some(row), Some(cells)) =
                     (layout.get(y as usize), grid.rows.get(y as usize))
@@ -1041,13 +1319,13 @@ mod surface {
                     if rtl {
                         painter.line_segment(
                             [pos, pos + egui::vec2(0.0, cell.y)],
-                            egui::Stroke::new(1.5_f32, theme.text.color()),
+                            egui::Stroke::new(1.5_f32, cursor_color),
                         );
                     } else {
                         painter.rect_stroke(
                             egui::Rect::from_min_size(pos, cell),
                             0.0,
-                            egui::Stroke::new(1.0_f32, theme.text.color()),
+                            egui::Stroke::new(1.0_f32, cursor_color),
                             egui::StrokeKind::Inside,
                         );
                     }
@@ -1063,6 +1341,7 @@ mod surface {
         }
         if c.selected {
             bg = theme.selection.color();
+            fg = theme.selection_text.color();
         }
         if c.style.faint {
             fg = fg.lerp_to_gamma(bg, 0.5);

@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+## [0.5.2] - 2026-11-17
+
+- Redesign Settings with global search, category filters, a Modified filter, per-setting resets, validation feedback and a resizable layout.
+- Add verified managed ty, Ruff, LuaLS and Tombi installs in Settings and the CLI, plus external presets for Go and common web, shell, Python and TOML servers.
+- Add per-feature language-server controls, priority, launch arguments, environment overrides, project root markers and separate initialization options and server settings.
+- Simplify server configuration with dedicated detail views, explicit computer/SSH-host scope and workspace overrides.
+- Run companion servers per document, combine their diagnostics and route actions by supported feature and priority. Favor focused documents at the session limit and preserve crash suppression until an explicit restart.
+- Add optional terminal font, size, colors and ANSI palette independent of the app, applied to running local and SSH shells.
+- Preserve incomplete and invalid settings drafts, support explicit disabled formatting overrides and keep invalid terminal font edits out of live preferences.
+- Keep font loading single-flight, apply the latest selection and preserve document jobs when a font fails to load.
+- Discard pending language-server results after server management or syntax changes, and discard formatting after indentation options change.
+- Clear diagnostics when documents leave or restart a server session, preserve unaffected sources and handle extreme diagnostic line numbers safely.
+- Retry failed preference writes, keep saved files within their reload limits and preserve unreadable key binding, snippet and macro files until repaired. Unrelated preference edits only replace their own files.
+- Advance the SSH protocol to version 4 for the expanded server controls. SSH workspaces require the matching v0.5.2 helper; update the host helper alongside the editor.
+
 ## [0.5.1] - 2026-11-16
 
 - Add language-server management in Settings and the CLI, with verified rust-analyzer/clangd installs and external server configuration.

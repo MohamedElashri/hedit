@@ -8,6 +8,9 @@ pub(super) const SETTINGS_FILE: &str = "settings.json";
 pub(super) const KEYBINDINGS_FILE: &str = "keybindings.json";
 pub(super) const SNIPPETS_FILE: &str = "snippets.json";
 pub(super) const MACROS_FILE: &str = "macros.json";
+const KEYBINDINGS_LIMIT: u64 = 1024 * 1024;
+const SNIPPETS_LIMIT: u64 = 4 * 1024 * 1024;
+const MACROS_LIMIT: u64 = 4 * 1024 * 1024;
 /// Write settings this long after the last change, so a dragged slider
 /// becomes one write.
 const SETTLE: Duration = Duration::from_millis(400);
@@ -188,17 +191,17 @@ pub(super) fn load(
             errors.push(format!("Cannot create {}: {error}", snippets.display()));
         }
     }
-    match projects::read_json(&dir.join(KEYBINDINGS_FILE), 1024 * 1024) {
+    match projects::read_json(&dir.join(KEYBINDINGS_FILE), KEYBINDINGS_LIMIT) {
         Ok(bindings) => config.keybindings = bindings,
         Err(error) => errors.push(format!("{KEYBINDINGS_FILE}: {error}")),
     }
-    match projects::read_json(&dir.join(SNIPPETS_FILE), 4 * 1024 * 1024) {
+    match projects::read_json(&dir.join(SNIPPETS_FILE), SNIPPETS_LIMIT) {
         Ok(snippets) => config.snippets = snippets,
         Err(error) => errors.push(format!("{SNIPPETS_FILE}: {error}")),
     }
     // Created only once a macro is saved.
     if dir.join(MACROS_FILE).exists() {
-        match projects::read_json(&dir.join(MACROS_FILE), 4 * 1024 * 1024) {
+        match projects::read_json(&dir.join(MACROS_FILE), MACROS_LIMIT) {
             Ok(macros) => config.macros = macros,
             Err(error) => errors.push(format!("{MACROS_FILE}: {error}")),
         }
@@ -243,13 +246,21 @@ impl HeditApp {
             return;
         }
         self.settings_files.changed_at = None;
-        self.settings_files.saved = self.settings.clone();
         let (Some(path), false) = (self.settings_path(), self.settings_files.broken) else {
+            self.settings_files.saved = self.settings.clone();
             return;
         };
         match self.settings.save(&path) {
-            Ok(()) => self.settings_files.stamp = stamp(&path),
-            Err(error) => self.error = Some(format!("Cannot save settings: {error}")),
+            Ok(()) => {
+                self.settings_files.saved = self.settings.clone();
+                self.settings_files.stamp = stamp(&path);
+            }
+            Err(error) => {
+                // Keep the last confirmed state and retry after a delay. A
+                // transient storage failure must not discard pending edits.
+                self.settings_files.changed_at = Some(Instant::now());
+                self.error = Some(format!("Cannot save settings: {error}"));
+            }
         }
     }
     /// How long until pending settings, key bindings, or snippets are written.
@@ -303,9 +314,12 @@ impl HeditApp {
         }
         self.settings_files.config_changed_at = None;
         let config = self.quality.config.clone();
-        self.settings_files.config_saved = config.clone();
-        if let Err(error) = self.save_config(config) {
-            self.error = Some(format!("Cannot save key bindings or snippets: {error}"));
+        match self.save_config(config.clone()) {
+            Ok(()) => self.settings_files.config_saved = config,
+            Err(error) => {
+                self.settings_files.config_changed_at = Some(Instant::now());
+                self.error = Some(format!("Cannot save key bindings or snippets: {error}"));
+            }
         }
     }
     /// Apply settings that other parts of the app copy at startup.
@@ -366,10 +380,64 @@ impl HeditApp {
     }
     /// Save key bindings and snippets to their files.
     pub(super) fn save_config(&mut self, config: Config) -> Result<(), String> {
+        // Validate all files before replacing any of them, including JSON
+        // escaping and indentation in the exact format used by atomic_json.
+        fn check_size(value: &impl serde::Serialize, limit: u64, name: &str) -> Result<(), String> {
+            if serde_json::to_vec_pretty(value)
+                .map_err(|e| e.to_string())?
+                .len() as u64
+                > limit
+            {
+                return Err(format!(
+                    "{name} exceeds its {} MiB file limit.",
+                    limit / (1024 * 1024)
+                ));
+            }
+            Ok(())
+        }
+        check_size(&config.keybindings, KEYBINDINGS_LIMIT, KEYBINDINGS_FILE)?;
+        check_size(&config.snippets, SNIPPETS_LIMIT, SNIPPETS_FILE)?;
+        check_size(&config.macros, MACROS_LIMIT, MACROS_FILE)?;
+        let bindings_changed = config.keybindings != self.settings_files.config_saved.keybindings;
+        let snippets_changed = config.snippets != self.settings_files.config_saved.snippets;
+        let macros_changed = config.macros != self.settings_files.config_saved.macros;
         if let Some(dir) = &self.settings_files.dir {
-            projects::atomic_json(&dir.join(KEYBINDINGS_FILE), &config.keybindings)?;
-            projects::atomic_json(&dir.join(SNIPPETS_FILE), &config.snippets)?;
-            if !config.macros.is_empty() || dir.join(MACROS_FILE).exists() {
+            fn preserve_invalid<T: serde::de::DeserializeOwned>(
+                path: &Path,
+                limit: u64,
+            ) -> Result<(), String> {
+                match std::fs::symlink_metadata(path) {
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+                    _ => (),
+                }
+                projects::read_json::<T>(path, limit).map(|_| ()).map_err(|error| format!(
+                    "{} was preserved because it could not be read. Fix the file before saving changes to it: {error}", path.display()
+                ))
+            }
+            // Only replace files this edit changes. In particular, defaults
+            // shown after a parse error must never overwrite the corrupt file.
+            if bindings_changed {
+                preserve_invalid::<Vec<quality::Binding>>(
+                    &dir.join(KEYBINDINGS_FILE),
+                    KEYBINDINGS_LIMIT,
+                )?;
+            }
+            if snippets_changed {
+                preserve_invalid::<Vec<hedit::intelligence::Snippet>>(
+                    &dir.join(SNIPPETS_FILE),
+                    SNIPPETS_LIMIT,
+                )?;
+            }
+            if macros_changed {
+                preserve_invalid::<Vec<macros::Macro>>(&dir.join(MACROS_FILE), MACROS_LIMIT)?;
+            }
+            if bindings_changed {
+                projects::atomic_json(&dir.join(KEYBINDINGS_FILE), &config.keybindings)?;
+            }
+            if snippets_changed {
+                projects::atomic_json(&dir.join(SNIPPETS_FILE), &config.snippets)?;
+            }
+            if macros_changed {
                 projects::atomic_json(&dir.join(MACROS_FILE), &config.macros)?;
             }
         }
@@ -406,6 +474,10 @@ pub(super) fn load_fallback_fonts(tx: mpsc::Sender<Result<Action, String>>, ctx:
 /// Put the editor font first in the monospace family, or restore egui's own,
 /// and let both families fall back to system fonts for other scripts.
 pub(super) fn set_editor_font(ctx: &egui::Context, font: Option<(Vec<u8>, u32)>) {
+    set_fonts(ctx, font, None);
+}
+
+fn set_fonts(ctx: &egui::Context, font: Option<(Vec<u8>, u32)>, terminal: Option<(Vec<u8>, u32)>) {
     let mut fonts = egui::FontDefinitions::default();
     fonts.font_data.insert(
         "terminal-arabic".into(),
@@ -419,6 +491,18 @@ pub(super) fn set_editor_font(ctx: &egui::Context, font: Option<(Vec<u8>, u32)>)
             .entry(family)
             .or_default()
             .push("terminal-arabic".into());
+    }
+    // Keep a terminal family independent of editor font changes.
+    let mut terminal_family = fonts.families[&egui::FontFamily::Monospace].clone();
+    if let Some((bytes, index)) = terminal {
+        fonts.font_data.insert(
+            "terminal-custom".into(),
+            std::sync::Arc::new(egui::FontData {
+                index,
+                ..egui::FontData::from_owned(bytes)
+            }),
+        );
+        terminal_family.insert(0, "terminal-custom".into());
     }
     // Characters the chosen font lacks, such as Latin letters in an Arabic-only
     // font, fall through to the built-in font and then the system fallbacks.
@@ -447,7 +531,12 @@ pub(super) fn set_editor_font(ctx: &egui::Context, font: Option<(Vec<u8>, u32)>)
         for family in [egui::FontFamily::Monospace, egui::FontFamily::Proportional] {
             fonts.families.entry(family).or_default().push(name.clone());
         }
+        terminal_family.push(name.clone());
     }
+    fonts.families.insert(
+        egui::FontFamily::Name("hedit-terminal".into()),
+        terminal_family,
+    );
     fonts.font_data.insert(
         "reader-symbols".into(),
         std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
@@ -491,8 +580,45 @@ pub(super) fn set_editor_font(ctx: &egui::Context, font: Option<(Vec<u8>, u32)>)
 }
 
 impl HeditApp {
+    pub(super) fn rebuild_fonts(&mut self, ctx: &egui::Context) {
+        self.invalidate_terminal_font();
+        set_fonts(ctx, self.editor_font.clone(), self.terminal_font.clone());
+    }
+    fn apply_terminal_font(&mut self, ctx: &egui::Context) {
+        let wanted = self
+            .settings
+            .terminal_font
+            .as_ref()
+            .map(|font| font.face.trim().to_owned());
+        if wanted == self.terminal_font_applied
+            || self
+                .settings_files
+                .changed_at
+                .is_some_and(|at| at.elapsed() < SETTLE)
+            || self.terminal_font_loading.is_some()
+        {
+            return;
+        }
+        self.terminal_font_applied = wanted.clone();
+        self.terminal_font_generation = self.terminal_font_generation.wrapping_add(1);
+        self.terminal_font = None;
+        self.rebuild_fonts(ctx);
+        let Some(name) = wanted.filter(|name| !name.is_empty()) else {
+            return;
+        };
+        let generation = self.terminal_font_generation;
+        self.terminal_font_loading = Some(generation);
+        let tx = self.tx.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            let result = hedit::fonts::load(&name);
+            let _ = tx.send(Ok(Action::TerminalFont(generation, name, result)));
+            ctx.request_repaint();
+        });
+    }
     /// Apply the cursor and font settings once they settle.
     pub(super) fn apply_editor_style(&mut self, ctx: &egui::Context) {
+        self.apply_terminal_font(ctx);
         let (width, blink) = (self.settings.caret_width, self.settings.caret_blink);
         let cursor = ctx.style().visuals.text_cursor.clone();
         if cursor.stroke.width != width || cursor.blink != blink {
@@ -502,7 +628,12 @@ impl HeditApp {
             });
         }
         // Wait for typing in the font field to settle before searching.
-        if self.font_applied == self.settings.font_face || self.settings_files.changed_at.is_some()
+        if self.font_applied == self.settings.font_face
+            || self
+                .settings_files
+                .changed_at
+                .is_some_and(|at| at.elapsed() < SETTLE)
+            || self.editor_font_loading.is_some()
         {
             return;
         }
@@ -510,16 +641,18 @@ impl HeditApp {
         let name = self.font_applied.trim().to_owned();
         if name.is_empty() {
             self.editor_font = None;
-            set_editor_font(ctx, None);
+            self.rebuild_fonts(ctx);
             return;
         }
+        self.editor_font_loading = Some(name.clone());
         let tx = self.tx.clone();
         let ctx = ctx.clone();
         thread::spawn(move || {
-            let result = hedit::fonts::load(&name)
-                .map(|(bytes, index)| Action::Font(name.clone(), bytes, index))
-                .map_err(|e| format!("Font “{name}”: {e} Using the built-in font."));
-            let _ = tx.send(result);
+            let action = match hedit::fonts::load(&name) {
+                Ok((bytes, index)) => Action::Font(name, bytes, index),
+                Err(error) => Action::FontFailed(name, error),
+            };
+            let _ = tx.send(Ok(action));
             ctx.request_repaint();
         });
     }

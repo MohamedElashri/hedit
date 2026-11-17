@@ -107,6 +107,198 @@ fn changes_are_written_after_they_settle_and_reloaded_after_outside_edits() {
 }
 
 #[test]
+fn failed_settings_writes_remain_pending_and_retry_after_storage_recovers() {
+    let directory = tempfile::tempdir().unwrap();
+    let (ctx, mut app) = app_in(directory.path(), None);
+    let path = app.settings_path().unwrap();
+    let saved = app.settings_files.saved.clone();
+    std::fs::remove_file(&path).unwrap();
+    std::fs::create_dir(&path).unwrap();
+    app.settings.word_wrap = !saved.word_wrap;
+    app.settings.terminal_font = Some(hedit::settings::TerminalFont::default());
+    app.flush_settings();
+    assert!(app
+        .error
+        .as_deref()
+        .is_some_and(|e| e.contains("Cannot save settings")));
+    assert_eq!(
+        app.settings_files.saved, saved,
+        "a failed write was marked saved"
+    );
+    assert!(app
+        .settings_due()
+        .is_some_and(|delay| delay > Duration::ZERO));
+    app.settings_files.changed_at = Some(Instant::now() - Duration::from_secs(1));
+    app.font_applied = "previous font".into();
+    app.apply_editor_style(&ctx);
+    assert_eq!(
+        app.font_applied, app.settings.font_face,
+        "failed saving blocked editor font changes"
+    );
+    assert_eq!(
+        app.terminal_font_applied.as_deref(),
+        Some(""),
+        "failed saving blocked terminal font changes"
+    );
+    std::fs::remove_dir(&path).unwrap();
+    app.persist_settings();
+    let (loaded, _) = hedit::settings::Settings::load(&path).unwrap();
+    assert_eq!(loaded.word_wrap, !saved.word_wrap);
+    assert_eq!(app.settings_files.saved, app.settings);
+    assert!(app.settings_due().is_none());
+    settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
+}
+
+#[test]
+fn failed_config_writes_remain_pending_and_retry_after_storage_recovers() {
+    let directory = tempfile::tempdir().unwrap();
+    let (_ctx, mut app) = app_in(directory.path(), None);
+    let path = directory.path().join("config/snippets.json");
+    let saved = app.settings_files.config_saved.clone();
+    assert!(!saved.snippets.is_empty());
+    std::fs::remove_file(&path).unwrap();
+    std::fs::create_dir(&path).unwrap();
+    app.quality.config.snippets.clear();
+    app.flush_settings();
+    assert!(app
+        .error
+        .as_deref()
+        .is_some_and(|e| e.contains("Cannot save key bindings or snippets")));
+    assert_eq!(
+        app.settings_files.config_saved, saved,
+        "a partial config write was marked saved"
+    );
+    assert!(app
+        .settings_due()
+        .is_some_and(|delay| delay > Duration::ZERO));
+    std::fs::remove_dir(&path).unwrap();
+    app.settings_files.config_changed_at = Some(Instant::now() - Duration::from_secs(1));
+    app.persist_settings();
+    let snippets: Vec<hedit::intelligence::Snippet> =
+        hedit::projects::read_json(&path, 4 * 1024 * 1024).unwrap();
+    assert!(snippets.is_empty());
+    assert_eq!(app.settings_files.config_saved, app.quality.config);
+    assert!(app.settings_due().is_none());
+    settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
+}
+
+#[test]
+fn oversized_config_files_are_rejected_before_any_preferences_are_replaced() {
+    let directory = tempfile::tempdir().unwrap();
+    let (_ctx, mut app) = app_in(directory.path(), None);
+    let config = directory.path().join("config");
+    let files = ["keybindings.json", "snippets.json", "macros.json"];
+    let original: Vec<_> = files
+        .iter()
+        .map(|name| std::fs::read(config.join(name)).ok())
+        .collect();
+    let previous = app.quality.config.clone();
+    for (index, file) in files.iter().enumerate() {
+        let mut candidate = previous.clone();
+        candidate.keybindings.push(quality::Binding {
+            command: Command::Save,
+            shortcut: "Primary+Alt+S".into(),
+            editor_only: false,
+        });
+        match index {
+            0 => candidate.keybindings[0].shortcut = "x".repeat(1024 * 1024),
+            1 => candidate.snippets[0].body = "\"".repeat(2 * 1024 * 1024),
+            _ => candidate.macros.push(macros::Macro {
+                name: "large".into(),
+                steps: vec![macros::Step::Text("x".repeat(4 * 1024 * 1024))],
+            }),
+        }
+        let error = app
+            .save_config(candidate)
+            .expect_err("saved config that cannot be reloaded");
+        assert!(error.contains(file), "{error}");
+        assert_eq!(app.quality.config, previous);
+        for (name, bytes) in files.iter().zip(&original) {
+            assert_eq!(
+                &std::fs::read(config.join(name)).ok(),
+                bytes,
+                "{name} changed while rejecting {file}"
+            );
+        }
+    }
+    settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
+}
+
+#[test]
+fn corrupt_config_files_survive_unrelated_edits_and_resume_saving_after_repair() {
+    for (index, name) in ["keybindings.json", "snippets.json", "macros.json"]
+        .into_iter()
+        .enumerate()
+    {
+        let directory = tempfile::tempdir().unwrap();
+        let config = directory.path().join("config");
+        std::fs::create_dir(&config).unwrap();
+        let path = config.join(name);
+        let broken = b"[{ corrupt configuration worth preserving";
+        std::fs::write(&path, broken).unwrap();
+        let (_ctx, mut app) = app_in(directory.path(), None);
+        assert!(app
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains(name)));
+        let fallback = match index {
+            0 => serde_json::to_value(&app.quality.config.keybindings).unwrap(),
+            1 => serde_json::to_value(&app.quality.config.snippets).unwrap(),
+            _ => serde_json::to_value(&app.quality.config.macros).unwrap(),
+        };
+        if index == 0 {
+            app.quality.config.snippets[0].description = "unrelated snippet edit".into();
+        } else {
+            app.set_binding(Command::Save, Some("Primary+Alt+S".into()));
+        }
+        app.flush_settings();
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            broken,
+            "unrelated edit overwrote {name}"
+        );
+        assert_eq!(
+            app.settings_files.config_saved, app.quality.config,
+            "unrelated changes did not save"
+        );
+        let expected = match index {
+            0 => {
+                app.set_binding(Command::Save, Some("Primary+Alt+S".into()));
+                serde_json::to_value(&app.quality.config.keybindings).unwrap()
+            }
+            1 => {
+                app.quality.config.snippets[0].description = "pending snippet edit".into();
+                serde_json::to_value(&app.quality.config.snippets).unwrap()
+            }
+            _ => {
+                app.quality.config.macros.push(macros::Macro {
+                    name: "pending macro".into(),
+                    steps: vec![macros::Step::Text("text".into())],
+                });
+                serde_json::to_value(&app.quality.config.macros).unwrap()
+            }
+        };
+        app.flush_settings();
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            broken,
+            "editing fallback data overwrote {name}"
+        );
+        assert!(app
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("preserved")));
+        std::fs::write(&path, serde_json::to_vec(&fallback).unwrap()).unwrap();
+        app.flush_settings();
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved, expected);
+        assert!(app.settings_due().is_none());
+        settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
+    }
+}
+
+#[test]
 fn a_broken_settings_file_is_reported_and_never_overwritten() {
     let directory = tempfile::tempdir().unwrap();
     let config = directory.path().join("config");
@@ -264,5 +456,47 @@ fn settings_choose_themes_by_name() {
     assert!(app.appearance.follow_system);
     assert_eq!(app.appearance.light.name, "GitHub Light");
     assert_eq!(app.appearance.dark.name, "One Dark");
+    settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
+}
+
+#[test]
+fn editor_font_results_trim_names_and_failures_preserve_document_jobs() {
+    let dir = tempfile::tempdir().unwrap();
+    let (ctx, mut app) = app_in(dir.path(), None);
+    let bytes = include_bytes!("../../assets/fonts/NotoSans-Regular.ttf").to_vec();
+    app.settings.font_face = " selected font ".into();
+    app.busy = true;
+    let focus = egui::Id::new("document-job");
+    app.job_editor_focus = Some(focus);
+    app.tx
+        .send(Ok(Action::Font("selected font".into(), bytes, 0)))
+        .unwrap();
+    app.receive(&ctx);
+    assert!(
+        app.editor_font.is_some(),
+        "a trimmed font result must match the selected family"
+    );
+    app.tx
+        .send(Ok(Action::FontFailed(
+            "selected font".into(),
+            "missing font".into(),
+        )))
+        .unwrap();
+    app.receive(&ctx);
+    assert!(app.busy);
+    assert_eq!(app.job_editor_focus, Some(focus));
+    assert!(app.editor_font.is_none());
+    assert!(app.notice.contains("missing font"));
+    let notice = app.notice.clone();
+    app.tx
+        .send(Ok(Action::FontFailed(
+            "old selection".into(),
+            "stale failure".into(),
+        )))
+        .unwrap();
+    app.receive(&ctx);
+    assert_eq!(app.notice, notice);
+    assert!(app.busy);
+    app.busy = false;
     settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
 }

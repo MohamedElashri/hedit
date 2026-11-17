@@ -65,6 +65,70 @@ fn terminal_settings_are_available_and_render_in_all_builds() {
     frame(&ctx, &mut app, vec![]);
 }
 
+#[test]
+fn invalid_terminal_font_drafts_do_not_block_other_settings_or_reach_disk() {
+    let directory = tempfile::tempdir().unwrap();
+    let (ctx, mut app) = app_in(directory.path());
+    app.choose_terminal(false);
+    app.settings.terminal_font = Some(hedit::settings::TerminalFont::default());
+    app.open_preferences(PreferencesPage::Terminal);
+    for _ in 0..3 {
+        frame(&ctx, &mut app, vec![]);
+    }
+    ctx.memory_mut(|m| m.request_focus(egui::Id::new("terminal-font-face")));
+    // The limit is in bytes, while TextEdit's character limit counts scalars.
+    frame(&ctx, &mut app, vec![egui::Event::Paste("界".repeat(2000))]);
+    assert!(
+        app.settings.validate().is_ok(),
+        "invalid font text reached live settings"
+    );
+    assert!(app.settings.terminal_font.as_ref().unwrap().face.is_empty());
+    app.set_browser_value("font_size", serde_json::json!(20.0))
+        .unwrap();
+    app.flush_settings();
+    let (saved, _) = hedit::settings::Settings::load(&app.settings_path().unwrap()).unwrap();
+    assert_eq!(saved.font_size, 20.0);
+    assert!(saved.terminal_font.unwrap().face.is_empty());
+    app.open_preferences(PreferencesPage::General);
+    frame(&ctx, &mut app, vec![]);
+    app.open_preferences(PreferencesPage::Terminal);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![]);
+    let output = frame(&ctx, &mut app, vec![]);
+    assert!(
+        output.shapes.iter().any(|shape| super::tests::text_rect(
+            &shape.shape,
+            "terminal_font needs a valid font name/path and a size between 8 and 40."
+        )
+        .is_some()),
+        "invalid draft lost its visible error after navigation"
+    );
+    super::tests::click_label(&ctx, &mut app, "Built-in (Hack)");
+    let output = frame(&ctx, &mut app, vec![]);
+    let choice = output
+        .shapes
+        .iter()
+        .filter_map(|shape| {
+            super::tests::text_rect(&shape.shape, "Built-in (Hack)")
+                .filter(|rect| shape.clip_rect.contains(rect.center()))
+        })
+        .next_back()
+        .expect("the built-in font choice is visible");
+    super::tests::click_at(&ctx, &mut app, choice.center(), egui::vec2(1280.0, 820.0));
+    assert!(app.settings_browser.terminal_font_error.is_none());
+    assert!(app
+        .settings_browser
+        .terminal_font_draft
+        .as_ref()
+        .is_none_or(String::is_empty));
+    // Reset also discards an invalid draft while keeping the app usable.
+    ctx.memory_mut(|m| m.request_focus(egui::Id::new("terminal-font-face")));
+    frame(&ctx, &mut app, vec![egui::Event::Paste("界".repeat(2000))]);
+    super::tests::click_label(&ctx, &mut app, "Use app font and size");
+    assert!(app.settings.terminal_font.is_none());
+    settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
+}
+
 #[cfg(feature = "terminal")]
 #[test]
 fn terminal_hide_keeps_session_and_disabling_ends_it_without_editing_buffer() {
@@ -231,7 +295,15 @@ fn export_terminal_previews() {
     let (ctx, mut app) = app_in(directory.path());
     let size = egui::vec2(1100.0, 760.0);
     let mut textures = std::collections::HashMap::new();
-    for name in ["onboarding", "panel", "settings", "compact", "light"] {
+    for name in [
+        "onboarding",
+        "panel",
+        "settings",
+        "compact",
+        "light",
+        "custom",
+        "custom-settings",
+    ] {
         if name == "panel" {
             app.choose_terminal(true);
             app.toggle_terminal(&ctx);
@@ -258,6 +330,21 @@ fn export_terminal_previews() {
         if name == "light" {
             app.terminal.tabs[0].name = "Project".into();
             app.set_theme(&ctx, hedit::theme::builtin(hedit::theme::PAPER).unwrap());
+        }
+        if matches!(name, "custom" | "custom-settings") {
+            app.settings.terminal_font = Some(hedit::settings::TerminalFont {
+                face: String::new(),
+                size: 18.0,
+            });
+            let dark = hedit::theme::builtin(hedit::theme::INK).unwrap();
+            app.settings.terminal_colors = Some(hedit::settings::TerminalColors {
+                ansi: Some(hedit::settings::TerminalColors::theme_palette(&dark)),
+                ..hedit::settings::TerminalColors::from_theme(&dark)
+            });
+            app.apply_editor_style(&ctx);
+            if name == "custom-settings" {
+                app.open_preferences(PreferencesPage::Terminal);
+            }
         }
         let size = if name == "compact" {
             egui::vec2(480.0, 600.0)
@@ -720,5 +807,302 @@ fn compact_terminal_tabs_support_pointer_creation_reordering_and_middle_close() 
         close.right() <= new.left(),
         "overflow scrolling must reveal the active tab's close button: close={close:?}, new={new:?}"
     );
+    settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
+}
+
+#[test]
+fn terminal_appearance_is_independent_and_inheritance_can_be_restored() {
+    use hedit::settings::{TerminalColors, TerminalFont};
+    let directory = tempfile::tempdir().unwrap();
+    let (ctx, mut app) = app_in(directory.path());
+    let editor_font = app.settings.font_face.clone();
+    let editor_size = app.settings.font_size;
+    let editor_theme = app.theme.clone();
+    assert_eq!(app.terminal_font_id(), FontId::monospace(editor_size));
+    assert_eq!(app.terminal_surface_theme().surface, editor_theme.surface);
+    app.settings.terminal_font = Some(TerminalFont {
+        face: String::new(),
+        size: 24.0,
+    });
+    app.settings.terminal_colors = Some(TerminalColors::from_theme(
+        &hedit::theme::builtin(hedit::theme::PAPER).unwrap(),
+    ));
+    app.apply_editor_style(&ctx);
+    assert_eq!(app.terminal_font_id().size, 24.0);
+    assert_eq!(
+        app.terminal_font_id().family,
+        egui::FontFamily::Name("hedit-terminal".into())
+    );
+    assert_eq!(app.settings.font_face, editor_font);
+    assert_eq!(app.settings.font_size, editor_size);
+    assert_eq!(app.theme.to_json(), editor_theme.to_json());
+    app.settings.terminal_colors.as_mut().unwrap().background = hedit::theme::Rgb::new(12, 13, 14);
+    let override_background = app.terminal_surface_theme().surface;
+    let new_theme = hedit::theme::builtin(hedit::theme::PAPER).unwrap();
+    app.set_theme(&ctx, new_theme);
+    assert_eq!(app.terminal_surface_theme().surface, override_background);
+    assert!(!app.terminal.open);
+    #[cfg(feature = "terminal")]
+    assert!(app.terminal.tabs.is_empty());
+    app.settings.terminal_font = None;
+    app.settings.terminal_colors = None;
+    app.apply_editor_style(&ctx);
+    assert_eq!(app.terminal_font_id(), FontId::monospace(editor_size));
+    assert_eq!(app.terminal_surface_theme().surface, app.theme.surface);
+    app.settings
+        .save(&directory.path().join("config/settings.json"))
+        .unwrap();
+    drop(app);
+    let (_, app) = app_in(directory.path());
+    assert!(app.settings.terminal_font.is_none());
+    assert!(app.settings.terminal_colors.is_none());
+    settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
+}
+
+#[test]
+fn stale_terminal_font_results_do_not_replace_a_new_selection() {
+    use hedit::settings::TerminalFont;
+    let directory = tempfile::tempdir().unwrap();
+    let (ctx, mut app) = app_in(directory.path());
+    app.settings.terminal_font = Some(TerminalFont {
+        face: "current".into(),
+        size: 20.0,
+    });
+    app.terminal_font_generation = 2;
+    app.busy = true;
+    app.job_editor_focus = Some(egui::Id::new("busy-editor"));
+    let notice = app.notice.clone();
+    app.tx
+        .send(Ok(Action::TerminalFont(
+            1,
+            "old".into(),
+            Err("stale error".into()),
+        )))
+        .unwrap();
+    app.receive(&ctx);
+    assert!(app.busy);
+    assert_eq!(app.job_editor_focus, Some(egui::Id::new("busy-editor")));
+    assert_eq!(app.notice, notice);
+    assert!(app.terminal_font.is_none());
+    app.settings.terminal_font = None;
+    app.tx
+        .send(Ok(Action::TerminalFont(
+            2,
+            "current".into(),
+            Err("disabled error".into()),
+        )))
+        .unwrap();
+    app.receive(&ctx);
+    assert!(app.busy);
+    assert_eq!(app.job_editor_focus, Some(egui::Id::new("busy-editor")));
+    assert_eq!(app.notice, notice);
+    assert!(app.terminal_font.is_none());
+    app.settings.terminal_font = Some(TerminalFont {
+        face: "current".into(),
+        size: 20.0,
+    });
+    app.tx
+        .send(Ok(Action::TerminalFont(
+            2,
+            "current".into(),
+            Err("cannot load selected font".into()),
+        )))
+        .unwrap();
+    app.receive(&ctx);
+    assert!(app.busy);
+    assert_eq!(app.job_editor_focus, Some(egui::Id::new("busy-editor")));
+    assert!(app.notice.contains("cannot load selected font"));
+    app.busy = false;
+    settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
+}
+
+#[cfg(feature = "terminal")]
+#[test]
+fn terminal_custom_colors_and_font_apply_live_without_replacing_the_shell() {
+    use hedit::{
+        settings::{TerminalColors, TerminalFont},
+        theme::Rgb,
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let (ctx, mut app) = app_in(directory.path());
+    app.choose_terminal(true);
+    app.new_terminal(&ctx);
+    terminal_frame(&ctx, &mut app, vec![], Modifiers::NONE);
+    let id = app.terminal.tabs[0].id;
+    let original = app.terminal.active_session().unwrap().vt.cols().unwrap();
+    let mut colors = TerminalColors::from_theme(&app.theme);
+    colors.foreground = Rgb::new(201, 202, 203);
+    colors.background = Rgb::new(11, 12, 13);
+    colors.cursor = Rgb::new(100, 101, 102);
+    let mut palette = TerminalColors::theme_palette(&app.theme);
+    palette[1] = Rgb::new(220, 30, 40);
+    colors.ansi = Some(palette);
+    app.settings.terminal_colors = Some(colors.clone());
+    app.settings.terminal_font = Some(TerminalFont {
+        face: String::new(),
+        size: 26.0,
+    });
+    app.apply_editor_style(&ctx);
+    terminal_frame(&ctx, &mut app, vec![], Modifiers::NONE);
+    let session = app.terminal.active_session_mut().unwrap();
+    assert!(
+        session.vt.cols().unwrap() < original,
+        "larger font must resize the existing PTY"
+    );
+    session.vt.reset();
+    session
+        .vt
+        .vt_write(b"\x1b[2J\x1b[Hplain \x1b[31mred \x1b[38;2;9;8;7mtruecolor\x1b[0m");
+    let grid = session.grid().unwrap();
+    let rgb = |c: libghostty_vt::style::RgbColor| [c.r, c.g, c.b];
+    assert_eq!(rgb(grid.rows[0][0].foreground), colors.foreground.0);
+    assert_eq!(rgb(grid.rows[0][0].background), colors.background.0);
+    assert_eq!(rgb(grid.rows[0][6].foreground), palette[1].0);
+    assert_eq!(rgb(grid.rows[0][10].foreground), [9, 8, 7]);
+    assert_eq!(
+        rgb(session.vt.cursor_color().unwrap().unwrap()),
+        colors.cursor.0
+    );
+    assert_eq!(app.terminal.tabs[0].id, id);
+    assert_eq!(app.terminal.tabs.len(), 1);
+    assert!(app.terminal.active_session().unwrap().running);
+    // Application palette overrides survive preference changes.
+    app.terminal
+        .active_session_mut()
+        .unwrap()
+        .vt
+        .vt_write(b"\x1b]4;1;rgb:01/02/03\x1b\\");
+    app.settings
+        .terminal_colors
+        .as_mut()
+        .unwrap()
+        .ansi
+        .as_mut()
+        .unwrap()[1] = Rgb::new(33, 44, 55);
+    terminal_frame(&ctx, &mut app, vec![], Modifiers::NONE);
+    app.terminal
+        .active_session_mut()
+        .unwrap()
+        .vt
+        .vt_write(b"\x1b[H\x1b[31mX");
+    assert_eq!(
+        rgb(app
+            .terminal
+            .active_session_mut()
+            .unwrap()
+            .grid()
+            .unwrap()
+            .rows[0][0]
+            .foreground),
+        [1, 2, 3]
+    );
+    app.settings.terminal_font = None;
+    app.settings.terminal_colors = None;
+    app.apply_editor_style(&ctx);
+    terminal_frame(&ctx, &mut app, vec![], Modifiers::NONE);
+    let session = app.terminal.active_session_mut().unwrap();
+    assert_eq!(session.vt.cols().unwrap(), original);
+    assert_eq!(rgb(session.grid().unwrap().background), app.theme.surface.0);
+    assert_eq!(app.terminal.tabs[0].id, id);
+    settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
+}
+
+#[test]
+fn terminal_font_loads_without_changing_the_editor_and_survives_editor_font_changes() {
+    use hedit::settings::TerminalFont;
+    let directory = tempfile::tempdir().unwrap();
+    let (ctx, mut app) = app_in(directory.path());
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/fonts/NotoSans-Regular.ttf");
+    app.settings.terminal_font = Some(TerminalFont {
+        face: path.display().to_string(),
+        size: 20.0,
+    });
+    app.apply_editor_style(&ctx);
+    let until = Instant::now() + Duration::from_secs(5);
+    while app.terminal_font.is_none() {
+        app.receive(&ctx);
+        assert!(
+            Instant::now() < until,
+            "terminal font did not load: {}",
+            app.notice
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+    let measure = |app: &HeditApp| {
+        let mut widths = None;
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            widths = Some(ctx.fonts(|fonts| {
+                (
+                    fonts.glyph_width(&app.terminal_font_id(), 'i'),
+                    fonts.glyph_width(&app.terminal_font_id(), 'W'),
+                    fonts.glyph_width(&FontId::monospace(20.0), 'i'),
+                    fonts.glyph_width(&FontId::monospace(20.0), 'W'),
+                )
+            }));
+        });
+        widths.unwrap()
+    };
+    let before = measure(&app);
+    assert!(
+        before.0 < before.1,
+        "the selected terminal face must be used"
+    );
+    assert_eq!(
+        before.2, before.3,
+        "the editor retains its built-in monospace face"
+    );
+    app.settings.font_face = "test-editor".into();
+    app.tx
+        .send(Ok(Action::Font(
+            "test-editor".into(),
+            include_bytes!("../../assets/fonts/NotoSans-SemiBold.ttf").to_vec(),
+            0,
+        )))
+        .unwrap();
+    app.receive(&ctx);
+    let after = measure(&app);
+    assert_eq!((before.0, before.1), (after.0, after.1));
+    assert!(after.2 < after.3, "the editor font changed independently");
+    assert!(!app.terminal.open);
+    settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
+}
+
+#[test]
+fn terminal_font_loading_is_single_flight_and_then_loads_the_latest_selection() {
+    let dir = tempfile::tempdir().unwrap();
+    let (ctx, mut app) = app_in(dir.path());
+    app.terminal_font_loading = Some(7);
+    app.terminal_font_generation = 7;
+    app.terminal_font_applied = Some("older face".into());
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/fonts/NotoSans-Regular.ttf");
+    app.settings.terminal_font = Some(hedit::settings::TerminalFont {
+        face: path.display().to_string(),
+        size: 18.0,
+    });
+    for _ in 0..5 {
+        app.apply_editor_style(&ctx);
+    }
+    assert_eq!(
+        app.terminal_font_generation, 7,
+        "a second load must wait for the in-flight request"
+    );
+    app.tx
+        .send(Ok(Action::TerminalFont(
+            7,
+            "older face".into(),
+            Err("obsolete".into()),
+        )))
+        .unwrap();
+    app.receive(&ctx);
+    app.apply_editor_style(&ctx);
+    assert_eq!(app.terminal_font_generation, 8);
+    let until = Instant::now() + Duration::from_secs(5);
+    while app.terminal_font.is_none() {
+        app.receive(&ctx);
+        assert!(Instant::now() < until);
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(app.terminal_font_loading.is_none());
+    assert!(!app.notice.contains("obsolete"));
     settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
 }

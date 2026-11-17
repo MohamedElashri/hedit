@@ -55,21 +55,24 @@ fn wait(service: &Service, ticket: u64) -> (Result<Value, String>, Vec<Event>) {
     let start = Instant::now();
     let mut events = vec![];
     loop {
+        let mut completed = None;
         for e in service.poll() {
             match &e {
                 Event::Result { ticket: t, result } if *t == ticket => {
-                    return (result.clone(), events)
+                    completed = Some(result.clone())
                 }
                 Event::Response { ticket: t, result } if *t == ticket => {
-                    return (
+                    completed = Some(
                         result
                             .clone()
                             .and_then(|r| serde_json::to_value(r).map_err(|e| e.to_string())),
-                        events,
                     )
                 }
                 _ => events.push(e),
             }
+        }
+        if let Some(result) = completed {
+            return (result, events);
         }
         assert!(
             start.elapsed() < Duration::from_secs(8),
@@ -377,6 +380,7 @@ fn manager_rejects_invalid_ids_configurations_and_forged_receipts() {
         source: "fake".into(),
         directory: "install-fake".into(),
         executable: "server".into(),
+        arguments: vec![],
     });
     manager.configure("fixture", r).unwrap();
     assert!(manager.read("fixture").unwrap().unwrap().managed.is_none());
@@ -590,6 +594,83 @@ fn reopening_a_document_resets_its_server_lifecycle_before_reusing_versions() {
     {
         assert_eq!(message["params"]["textDocument"]["text"], source);
     }
+}
+#[test]
+fn removing_one_document_clears_its_diagnostics_without_stopping_the_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let manager = Manager::new(dir.path().join("servers"));
+    manager.configure("fixture", registration(&[])).unwrap();
+    let service = Service::start(manager.root().to_owned(), Arc::new(|| {}));
+    let document = |name: &str| Document {
+        path: dir.path().join(name),
+        root: dir.path().to_owned(),
+        language: "rust".into(),
+        revision: 1,
+        text: "fo".into(),
+        dirty: true,
+    };
+    let mut first = document("first.rs");
+    let second = document("second.rs");
+    service
+        .submit(
+            1,
+            Operation::Sync {
+                documents: vec![first.clone(), second.clone()],
+            },
+        )
+        .unwrap();
+    wait(&service, 1).0.unwrap();
+    // Round-trip a request so the server has consumed both didOpen messages.
+    service
+        .submit(
+            2,
+            Operation::Request {
+                path: second.path.clone(),
+                revision: 1,
+                scalar: 0,
+                feature: Feature::Hover,
+                tab_size: 4,
+                spaces: true,
+            },
+        )
+        .unwrap();
+    wait(&service, 2).0.unwrap();
+    // Change the syntax without changing the text revision. The second file
+    // keeps the same server/project session alive.
+    first.language = "toml".into();
+    service
+        .submit(
+            3,
+            Operation::Sync {
+                documents: vec![first.clone(), second.clone()],
+            },
+        )
+        .unwrap();
+    let (result, events) = wait(&service, 3);
+    result.unwrap();
+    assert!(
+        events.iter().any(|e| matches!(e, Event::Diagnostics {
+        server, path, revision: 1, items, ..
+    } if server == "fixture" && *path == first.path && items.is_empty())),
+        "no diagnostic invalidation: {events:?}"
+    );
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e, Event::Status(s) if s.state == "Stopped")));
+    service
+        .submit(
+            4,
+            Operation::Request {
+                path: second.path,
+                revision: 1,
+                scalar: 0,
+                feature: Feature::Hover,
+                tab_size: 4,
+                spaces: true,
+            },
+        )
+        .unwrap();
+    wait(&service, 4).0.unwrap();
 }
 #[test]
 fn crashes_do_not_loop_and_restart_is_explicit() {
@@ -825,4 +906,379 @@ fn raw_server_settings_are_returned_for_the_registered_configuration_section() {
     assert!(records
         .iter()
         .any(|v| v["id"] == "configuration" && v["result"][0]["enabled"] == true));
+}
+
+#[test]
+fn companion_servers_route_by_feature_and_priority_with_independent_launch_settings() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let project = root.join("project");
+    std::fs::create_dir_all(project.join("src")).unwrap();
+    std::fs::write(project.join("project.marker"), "").unwrap();
+    let manager = Manager::new(root.join("servers"));
+    let mut registrations = vec![];
+    for (id, priority) in [("a", 100), ("b", 0)] {
+        let record = root.join(format!("{id}.jsonl"));
+        let mut r = registration(&["--record", record.to_str().unwrap(), "--label", id]);
+        r.priority = priority;
+        r.root_markers = vec!["project.marker".into()];
+        r.environment
+            .insert("HEDIT_LSP_TEST_FLAG".into(), format!("env-{id}"));
+        r.initialization_options = Some(json!({"initializeOnly": id}));
+        r.configuration = json!({"fixture":{"configurationOnly": id}});
+        if id == "a" {
+            r.features.formatting = false;
+            r.features.diagnostics = false;
+        }
+        manager.configure(id, r.clone()).unwrap();
+        registrations.push(r);
+    }
+    let service = Service::start(manager.root().to_owned(), Arc::new(|| {}));
+    let document = Document {
+        path: project.join("src/main.rs"),
+        root: root.clone(),
+        language: "rust".into(),
+        revision: 1,
+        text: "fo".into(),
+        dirty: true,
+    };
+    service
+        .submit(
+            1,
+            Operation::Sync {
+                documents: vec![document.clone()],
+            },
+        )
+        .unwrap();
+    let (_, mut events) = wait(&service, 1);
+    let running: std::collections::BTreeSet<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Status(s) if s.state == "Running" => Some(s.id.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(running, ["a", "b"].into_iter().collect());
+    let request = |feature| Operation::Request {
+        path: document.path.clone(),
+        revision: 1,
+        scalar: 2,
+        feature,
+        tab_size: 4,
+        spaces: true,
+    };
+    service.submit(2, request(Feature::Hover)).unwrap();
+    let (reply, more) = wait(&service, 2);
+    events.extend(more);
+    assert_eq!(reply.unwrap()["value"]["contents"]["value"], "a");
+    service.submit(3, request(Feature::Formatting)).unwrap();
+    let (result, more) = wait(&service, 3);
+    result.unwrap();
+    events.extend(more);
+    // Poll until B's diagnostics are observed; A must remain muted.
+    let until = Instant::now() + Duration::from_secs(5);
+    let mut sources = std::collections::BTreeSet::new();
+    loop {
+        for event in events.drain(..).chain(service.poll()) {
+            if let Event::Diagnostics { server, items, .. } = event {
+                assert!(items.iter().all(|d| d["message"] != "obsolete diagnostic"));
+                sources.insert(server);
+            }
+        }
+        if sources.contains("b") {
+            break;
+        }
+        assert!(Instant::now() < until);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(sources, ["b".to_owned()].into_iter().collect());
+    // Disable the higher-priority feature and fall back to the companion.
+    registrations[0].features.hover = false;
+    service
+        .submit(
+            4,
+            Operation::Configure {
+                id: "a".into(),
+                registration: Box::new(registrations[0].clone()),
+            },
+        )
+        .unwrap();
+    wait(&service, 4).0.unwrap();
+    service.submit(5, request(Feature::Hover)).unwrap();
+    assert_eq!(
+        wait(&service, 5).0.unwrap()["value"]["contents"]["value"],
+        "b"
+    );
+    // Equal priority is deterministic by ID regardless of HashMap order.
+    registrations[0].priority = 0;
+    registrations[0].features.hover = true;
+    service
+        .submit(
+            6,
+            Operation::Configure {
+                id: "a".into(),
+                registration: Box::new(registrations[0].clone()),
+            },
+        )
+        .unwrap();
+    wait(&service, 6).0.unwrap();
+    service.submit(7, request(Feature::Hover)).unwrap();
+    assert_eq!(
+        wait(&service, 7).0.unwrap()["value"]["contents"]["value"],
+        "a"
+    );
+    for (ticket, id) in [(8, "a"), (9, "b")] {
+        service
+            .submit(ticket, Operation::Stop { id: id.into() })
+            .unwrap();
+        wait(&service, ticket).0.unwrap();
+    }
+    for id in ["a", "b"] {
+        let records: Vec<Value> = std::fs::read_to_string(root.join(format!("{id}.jsonl")))
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert!(records
+            .iter()
+            .any(|v| v["method"] == "fixture/environment"
+                && v["params"]["value"] == format!("env-{id}")));
+        let initialize = records
+            .iter()
+            .find(|v| v["method"] == "initialize")
+            .unwrap();
+        assert_eq!(
+            initialize["params"]["rootUri"],
+            text::uri(&project).unwrap()
+        );
+        assert_eq!(
+            initialize["params"]["initializationOptions"],
+            json!({"initializeOnly":id})
+        );
+        assert!(records
+            .iter()
+            .any(|v| v["method"] == "workspace/didChangeConfiguration"
+                && v["params"]["settings"]["fixture"]["configurationOnly"] == id));
+        assert_eq!(
+            records
+                .iter()
+                .any(|v| v["method"] == "textDocument/formatting"),
+            id == "b"
+        );
+    }
+}
+#[test]
+fn registration_options_are_validated_and_legacy_initialization_remains_compatible() {
+    let legacy: Registration =
+        serde_json::from_value(json!({"languages":["rust"],"configuration":{"old":true}})).unwrap();
+    assert!(legacy.features.completion && legacy.features.diagnostics);
+    assert_eq!(legacy.priority, 0);
+    assert!(legacy.initialization_options.is_none());
+    for (key, value) in [
+        ("environment", json!({"BAD=KEY":"x"})),
+        ("environment", json!({"":"x"})),
+        ("environment", json!({"KEY":"bad\u{0}value"})),
+        ("arguments", json!(["bad\u{0}argument"])),
+        ("root_markers", json!(["../outside"])),
+        ("root_markers", json!(["/absolute"])),
+        ("initialization_options", json!([])),
+    ] {
+        let mut value_r = serde_json::to_value(&legacy).unwrap();
+        value_r[key] = value;
+        let r: Registration = serde_json::from_value(value_r).unwrap();
+        assert!(manager::validate(&r).is_err(), "{key}: {r:?}");
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let manager = Manager::new(dir.path().join("servers"));
+    let mut r = registration(&[]);
+    r.arguments = Some(launch(&["--label", "override"]).arguments);
+    manager.configure("fixture", r).unwrap();
+    let (launch, _) = manager.launch("fixture").unwrap();
+    assert!(launch
+        .arguments
+        .ends_with(&["--label".into(), "override".into()]));
+}
+
+#[test]
+fn session_limit_prioritizes_servers_and_reconciles_new_priorities() {
+    let dir = tempfile::tempdir().unwrap();
+    let manager = Manager::new(dir.path().join("servers"));
+    for id in ["a", "b", "c", "d", "e", "f", "g", "h", "i"] {
+        let mut r = registration(&[]);
+        r.priority = if id == "a" { 0 } else { 1 };
+        manager.configure(id, r).unwrap();
+    }
+    let service = Service::start(manager.root().to_owned(), Arc::new(|| {}));
+    service
+        .submit(
+            1,
+            Operation::Sync {
+                documents: vec![Document {
+                    path: dir.path().join("main.rs"),
+                    root: dir.path().into(),
+                    language: "rust".into(),
+                    revision: 1,
+                    text: "fo".into(),
+                    dirty: false,
+                }],
+            },
+        )
+        .unwrap();
+    let (result, events) = wait(&service, 1);
+    result.unwrap();
+    let running: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Status(s) if s.state == "Running" => Some(s.id.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(running.len(), 8);
+    assert!(!running.contains(&"a"));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, Event::Status(s) if s.id == "a" && s.state == "Limited")));
+    let mut a = manager.read("a").unwrap().unwrap();
+    a.priority = 20;
+    service
+        .submit(
+            2,
+            Operation::Configure {
+                id: "a".into(),
+                registration: Box::new(a),
+            },
+        )
+        .unwrap();
+    let (result, events) = wait(&service, 2);
+    result.unwrap();
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, Event::Status(s) if s.id == "a" && s.state == "Running")));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, Event::Status(s) if s.id == "i" && s.state == "Stopped")));
+    let mut b = manager.read("b").unwrap().unwrap();
+    b.features = serde_json::from_value(json!({"completion":false,"hover":false,"definition":false,"references":false,"formatting":false,"diagnostics":false})).unwrap();
+    service
+        .submit(
+            3,
+            Operation::Configure {
+                id: "b".into(),
+                registration: Box::new(b),
+            },
+        )
+        .unwrap();
+    let (result, events) = wait(&service, 3);
+    result.unwrap();
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, Event::Status(s) if s.id == "b" && s.state == "Stopped")));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, Event::Status(s) if s.id == "i" && s.state == "Running")));
+}
+
+#[test]
+fn session_cap_keeps_focused_companions_before_background_projects() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let manager = Manager::new(root.join("servers"));
+    let mut primary = registration(&[]);
+    primary.priority = 100;
+    manager.configure("fixture", primary).unwrap();
+    manager.configure("companion", registration(&[])).unwrap();
+    let mut documents = vec![];
+    for name in ["z-focused", "a", "b", "c", "d", "e", "f", "g", "h"] {
+        let project = root.join(name);
+        std::fs::create_dir(&project).unwrap();
+        documents.push(Document {
+            path: project.join("main.rs"),
+            root: project,
+            language: "rust".into(),
+            revision: 1,
+            text: "fo".into(),
+            dirty: false,
+        });
+    }
+    let service = Service::start(manager.root().to_owned(), Arc::new(|| {}));
+    service.submit(1, Operation::Sync { documents }).unwrap();
+    let (result, events) = wait(&service, 1);
+    result.unwrap();
+    assert!(events.iter().any(|e| matches!(e, Event::Status(s) if s.state == "Running" && s.root == root.join("z-focused"))));
+    assert!(events.iter().any(|e| matches!(e, Event::Status(s) if s.id == "companion" && s.state == "Running" && s.root == root.join("z-focused"))), "active file companions must not be displaced by background servers");
+    assert!(events.iter().any(
+        |e| matches!(e, Event::Status(s) if s.state == "Limited" && s.root == root.join("h"))
+    ));
+}
+#[test]
+fn changing_the_session_cap_never_restarts_a_crashed_server_implicitly() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let manager = Manager::new(root.join("servers"));
+    let record = root.join("crash.jsonl");
+    let mut bad = registration(&["--crash-on-open", "--record", record.to_str().unwrap()]);
+    bad.priority = 100;
+    manager.configure("bad", bad.clone()).unwrap();
+    for i in 0..8 {
+        manager
+            .configure(&format!("good-{i}"), registration(&[]))
+            .unwrap();
+    }
+    let service = Service::start(manager.root().to_owned(), Arc::new(|| {}));
+    let documents = vec![Document {
+        path: root.join("main.rs"),
+        root: root.clone(),
+        language: "rust".into(),
+        revision: 1,
+        text: "fo".into(),
+        dirty: false,
+    }];
+    service
+        .submit(
+            1,
+            Operation::Sync {
+                documents: documents.clone(),
+            },
+        )
+        .unwrap();
+    let (_, mut events) = wait(&service, 1);
+    let until = Instant::now() + Duration::from_secs(5);
+    while !events
+        .iter()
+        .any(|e| matches!(e, Event::Status(s) if s.id == "bad" && s.state == "Failed"))
+    {
+        assert!(Instant::now() < until);
+        events.extend(service.poll());
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    // Another window may change priorities while the crashed server is stopped.
+    for (ticket, priority) in [(2, -100), (3, 100)] {
+        bad.priority = priority;
+        manager.configure("bad", bad.clone()).unwrap();
+        service
+            .submit(
+                ticket,
+                Operation::Sync {
+                    documents: documents.clone(),
+                },
+            )
+            .unwrap();
+        let (result, events) = wait(&service, ticket);
+        result.unwrap();
+        assert!(!events
+            .iter()
+            .any(|e| matches!(e, Event::Status(s) if s.id == "bad" && s.state == "Starting")));
+    }
+    let records: Vec<Value> = std::fs::read_to_string(record)
+        .unwrap()
+        .lines()
+        .map(|s| serde_json::from_str(s).unwrap())
+        .collect();
+    assert_eq!(
+        records
+            .iter()
+            .filter(|v| v["method"] == "initialize")
+            .count(),
+        1
+    );
 }

@@ -77,6 +77,34 @@ fn settings_round_trip_through_a_commented_file() {
 }
 
 #[test]
+fn settings_cannot_save_a_file_larger_than_their_reload_limit() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("settings.json");
+    let initial = Settings::default();
+    initial.save(&path).unwrap();
+    let original = std::fs::read(&path).unwrap();
+    let oversized = Settings {
+        added_words: vec!["word".into(); 120_000],
+        ..initial.clone()
+    };
+    // Compact input fits the loader; pretty printing must not create an
+    // unreadable settings file on the next automatic save.
+    let compact = serde_json::to_string(&oversized).unwrap();
+    assert!(compact.len() < hedit::settings::FILE_LIMIT as usize);
+    assert!(oversized.to_json().len() > hedit::settings::FILE_LIMIT as usize);
+    assert!(
+        Settings::parse(&compact).is_err(),
+        "accepted settings that cannot round-trip"
+    );
+    assert!(
+        oversized.save(&path).is_err(),
+        "published an unreadable settings file"
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+    assert_eq!(Settings::load(&path).unwrap().0, initial);
+}
+
+#[test]
 fn custom_build_systems_load_without_a_false_unknown_setting_warning() {
     let (settings, warnings) = Settings::parse(
         r#"{
@@ -218,4 +246,42 @@ fn installed_fonts_list_and_load_with_their_face() {
     let (bytes, _) = hedit::fonts::load(&family.name).unwrap();
     assert!(!bytes.is_empty());
     assert!(hedit::fonts::load("No Such Font Family").is_err());
+}
+
+#[test]
+fn terminal_appearance_is_optional_roundtrips_and_validates_colors_and_font_size() {
+    use hedit::{
+        settings::{TerminalColors, TerminalFont},
+        theme::{Rgb, Theme},
+    };
+    let (legacy, warnings) = Settings::parse(r#"{"font_size": 18}"#).unwrap();
+    assert!(warnings.is_empty());
+    assert!(legacy.terminal_font.is_none() && legacy.terminal_colors.is_none());
+    assert!(!legacy.to_json().contains("terminal_font"));
+    assert!(!legacy.to_json().contains("terminal_colors"));
+    let settings = Settings {
+        terminal_font: Some(TerminalFont {
+            face: "Example Mono".into(),
+            size: 22.0,
+        }),
+        terminal_colors: Some(TerminalColors {
+            foreground: Rgb::new(210, 220, 230),
+            ansi: Some([Rgb::new(10, 20, 30); 16]),
+            ..TerminalColors::from_theme(&Theme::default())
+        }),
+        ..legacy
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("settings.json");
+    settings.save(&file).unwrap();
+    assert_eq!(Settings::load(&file).unwrap(), (settings, vec![]));
+    for input in [
+        r#"{"terminal_font":{"size":7}}"#,
+        r#"{"terminal_font":{"size":41}}"#,
+        r#"{"terminal_font":{"face":"bad\nname"}}"#,
+        r#"{"terminal_colors":{"foreground":"wrong"}}"#,
+        r##"{"terminal_colors":{"ansi":["#000000"]}}"##,
+    ] {
+        assert!(Settings::parse(input).is_err(), "{input}");
+    }
 }

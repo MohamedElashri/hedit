@@ -86,12 +86,14 @@ Multiple cursors, snippets, word completion, folding, split panes, background
 project search, and paged log viewing support everyday editing. Customize themes,
 fonts, and keys; edit Arabic/Hebrew and legacy encodings. CUDA highlighting works
 everywhere, with local CUDA tools on Linux.
+Search Settings by name or key, filter modified values, and reset individual preferences.
 
 Language servers can be installed, configured, restarted, and removed in
-**Settings → Language Servers**. Managed rust-analyzer/clangd packages and external
-servers provide completion, diagnostics, navigation, hover information, and
+**Settings → Language Servers**. Managed Rust, C/C++, Python, Lua and TOML servers
+and external-server presets provide completion, diagnostics, navigation, hover information, and
 formatting for local or trusted SSH workspaces.
-[Setup and supported features](USER_GUIDE.md#language-servers).
+[Setup and supported features](USER_GUIDE.md#language-servers). Terminal fonts and
+colors can optionally be customized separately from the app.
 
 ## Looks
 

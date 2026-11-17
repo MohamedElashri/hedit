@@ -8,6 +8,7 @@ import time
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--record')
+parser.add_argument('--label')
 parser.add_argument('--encoding', default='utf-16')
 parser.add_argument('--fragment', action='store_true')
 parser.add_argument('--crash-on-open', action='store_true')
@@ -15,6 +16,9 @@ parser.add_argument('--hang-initialize', action='store_true')
 parser.add_argument('--unsupported-definitions', action='store_true')
 args = parser.parse_args()
 record = open(args.record, 'a', encoding='utf-8') if args.record else None
+if record:
+    record.write(json.dumps({'method': 'fixture/environment', 'params': {'value': os.environ.get('HEDIT_LSP_TEST_FLAG')}}) + '\n')
+    record.flush()
 
 def send(value):
     data = json.dumps(dict(jsonrpc='2.0', **value), ensure_ascii=False).encode('utf-8')
@@ -82,7 +86,7 @@ while True:
             'textEdit': {'range': {'start': dict(pos, character=max(0, pos['character'] - 2)), 'end': pos}, 'newText': 'format_value'},
         }], 'isIncomplete': False}})
     elif method == 'textDocument/hover':
-        send({'id': request_id, 'result': {'contents': {'kind': 'plaintext', 'value': 'Fixture hover information'}}})
+        send({'id': request_id, 'result': {'contents': {'kind': 'plaintext', 'value': args.label or 'Fixture hover information'}}})
     elif method == 'test/diagnostics':
         send({'method': 'textDocument/publishDiagnostics', 'params': params})
         send({'id': request_id, 'result': True})

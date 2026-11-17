@@ -2,7 +2,7 @@
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::io::{self, Read, Write};
 
-pub const VERSION: u32 = 3;
+pub const VERSION: u32 = 4;
 pub const MAX_FRAME: usize = 64 * 1024;
 pub const MAX_INSERT: usize = 8 * 1024 * 1024;
 pub const MAX_DOCUMENT: usize = 8 * 1024 * 1024;
