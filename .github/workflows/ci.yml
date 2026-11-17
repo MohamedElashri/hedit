@@ -18,9 +18,10 @@ on:
         default: false
 permissions:
   contents: read
-# A newer push to the same branch or pull request replaces an older run.
+# Replace older runs from the same caller workflow and branch or pull request.
+# Reusable release checks must not cancel the normal CI run for that branch.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 env:
   CARGO_TERM_COLOR: always
