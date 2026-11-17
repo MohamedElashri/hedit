@@ -202,6 +202,8 @@ pub(super) enum Command {
     Switcher,
     Palette,
     Sidebar,
+    Breadcrumbs,
+    Outline,
     FolderSidebar,
     Wrap,
     LineNumbers,
@@ -429,6 +431,8 @@ impl Command {
         Self::Goto,
         Self::Switcher,
         Self::Sidebar,
+        Self::Breadcrumbs,
+        Self::Outline,
         Self::FolderSidebar,
         Self::Wrap,
         Self::LineNumbers,
@@ -698,6 +702,8 @@ impl Command {
             Self::Switcher => "Go to file…",
             Self::Palette => "Command palette…",
             Self::Sidebar => "Show sidebar",
+            Self::Breadcrumbs => "Show breadcrumbs",
+            Self::Outline => "Show Outline",
             Self::FolderSidebar => "Show folders in the sidebar",
             Self::Wrap => "Word wrap",
             Self::LineNumbers => "Show line numbers",
@@ -1239,6 +1245,8 @@ impl HeditApp {
             Command::Columns4 => self.panes.mode == 4,
             Command::Rows3 => self.panes.mode == 5,
             Command::Grid => self.panes.mode == 6,
+            Command::Breadcrumbs => self.settings.show_breadcrumbs && !self.distraction_free,
+            Command::Outline => self.settings.show_outline && !self.distraction_free,
             Command::Sidebar => self.settings.show_sidebar && !self.distraction_free,
             Command::FolderSidebar => self.settings.show_sidebar && self.settings.show_folders,
             Command::Tabs => self.settings.show_tab_bar,
@@ -1353,6 +1361,8 @@ impl HeditApp {
                     | Command::ResetZoom
                     | Command::LineNumbers
                     | Command::Sidebar
+                    | Command::Breadcrumbs
+                    | Command::Outline
                     | Command::StatusBar
                     | Command::Fullscreen
                     | Command::DistractionFree
@@ -1806,6 +1816,25 @@ impl HeditApp {
                     self.settings.show_sidebar = true;
                 }
                 self.sync_folder_view();
+            }
+            Command::Breadcrumbs => {
+                self.settings.show_breadcrumbs = !self.command_selected(Command::Breadcrumbs);
+                if self.settings.show_breadcrumbs {
+                    self.distraction_free = false;
+                }
+            }
+            Command::Outline => {
+                self.settings.show_outline = !self.command_selected(Command::Outline);
+                if self.settings.show_outline {
+                    self.distraction_free = false;
+                    self.document_navigation.focus_query = !self.source_control.open;
+                    if !self.source_control.open {
+                        self.focus_editor = false;
+                    }
+                } else {
+                    self.focus_editor = true;
+                    ctx.memory_mut(|m| m.surrender_focus(egui::Id::new("outline-filter")));
+                }
             }
             Command::Tabs => self.settings.show_tab_bar = !self.settings.show_tab_bar,
             Command::StatusBar => self.settings.show_status_bar = !self.settings.show_status_bar,

@@ -673,6 +673,7 @@ impl HeditApp {
     pub(super) fn pane_layout(&mut self, ui: &mut egui::Ui) {
         self.sync_groups();
         if self.panes.mode == 0 {
+            self.document_breadcrumbs(ui);
             self.editor_pane(ui, 0);
             self.save_group_cursor();
             return;
@@ -719,6 +720,7 @@ impl HeditApp {
                     if self.review_in_group(number) {
                         self.source_control_contents(ui);
                     } else {
+                        self.document_breadcrumbs(ui);
                         self.editor_pane(ui, number);
                     }
                     if ui.input(|i| i.pointer.any_released()) && ui.rect_contains_pointer(before) {

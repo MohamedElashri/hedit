@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add file-location breadcrumbs for editor groups and an optional on-demand Outline, with bounded symbol lists and no scans while hidden.
+
 - Give editor groups independent tab strips, order and cursor state while sharing documents, undo and recovery; move tabs between groups and keep Git reviews in their group.
 
 - Share one resizable bottom panel across Problems, Output and Terminal, preserving hidden builds, diagnostics and shell sessions.

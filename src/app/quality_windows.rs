@@ -184,6 +184,13 @@ impl HeditApp {
             }
             self.focus_editor = true;
         }
+        if self.settings.show_outline
+            && field("outline-filter")
+            && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape))
+        {
+            ctx.memory_mut(|m| m.surrender_focus(egui::Id::new("outline-filter")));
+            self.focus_editor = true;
+        }
         let id = self.editor_id();
         let focused = ctx.memory(|m| m.has_focus(id));
         for binding in self.quality.config.keybindings.clone() {

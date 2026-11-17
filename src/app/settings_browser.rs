@@ -85,6 +85,14 @@ fn catalog() -> &'static [Setting] {
             "Show activity bar",
             "Keep Files, Source Control, Search and Settings navigation beside the sidebar."
         );
+        setting!(General,Bool,"show_breadcrumbs","Show breadcrumbs","Show the file location above each editor group; click a segment to reveal it in Files.");
+        setting!(
+            General,
+            Bool,
+            "show_outline",
+            "Show Outline",
+            "Show a bounded, on-demand symbol list for the active document."
+        );
         setting!(Editor, Text, "font_face", "Font family or file", "Use an installed font family or an absolute font-file path. Empty selects built-in Hack.");
         setting!(
             Editor,

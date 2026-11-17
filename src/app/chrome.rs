@@ -254,6 +254,7 @@ impl HeditApp {
         self.activity_bar(ctx);
         self.buffer_sidebar(ctx);
         self.tabs(ctx);
+        self.document_outline(ctx);
     }
     fn tabs(&mut self, ctx: &egui::Context) {
         if !self.settings.show_tab_bar || self.distraction_free || self.panes.mode != 0 {
@@ -1329,6 +1330,8 @@ impl HeditApp {
             "Editor",
             &[
                 Command::Tabs,
+                Command::Breadcrumbs,
+                Command::Outline,
                 Command::StatusBar,
                 Command::LineNumbers,
                 Command::CurrentLine,
