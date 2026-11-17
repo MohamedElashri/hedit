@@ -2451,3 +2451,26 @@ fn git_review_stays_in_its_group_while_another_group_edits_the_shared_document()
     assert!(!app.source_control.review_tab);
     assert!(app.active().page.text.contains("prefix "));
 }
+
+#[test]
+fn sidebar_confirmation_is_visible_without_an_active_git_review() {
+    let (_directory, ctx, mut app, _git) = fixture();
+    app.source_control.open = false;
+    app.source_control.review_tab = false;
+    let id = app.active().view.id;
+    app.git_confirm(
+        "Drop stash",
+        "Confirm from the sidebar".into(),
+        Operation::DropStash {
+            name: "stash@{0}".into(),
+            oid: "placeholder".into(),
+        },
+    );
+    frame(&ctx, &mut app, vec![]);
+    let out = frame(&ctx, &mut app, vec![]);
+    assert!(visible(&out, "Confirm from the sidebar"));
+    click_label(&ctx, &mut app, "Cancel");
+    assert!(app.source_control.prompt.is_none());
+    assert!(!app.source_control.open);
+    assert_eq!(app.active().view.id, id);
+}
