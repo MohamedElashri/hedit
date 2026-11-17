@@ -338,3 +338,13 @@ Local patches: [Markdown](vendor/egui_commonmark/PATCH.md),
 [Ghostty build](vendor/libghostty-vt-sys/PATCH.md). Text-renderer patches share row
 meshes, bound viewport submission, and index cursor/glyph lookups. Preserve their
 normal-gate parity tests, or remove patches and corresponding tests together.
+
+### Shared bottom panel
+
+`app/workbench_panel.rs` owns the shared bottom region; Problems, Output and
+Terminal select one content renderer. Visibility flags never own worker lifetimes.
+Build and PTY polling run independently of layout, so hidden tabs drain output
+and report completion. Only the selected tab performs layout. Output line ranges
+and formatted language diagnostics are cached until their source changes; rows
+are virtualized. Switching away clears terminal composition and shortcut prefixes
+without replacing the PTY or touching editor undo.

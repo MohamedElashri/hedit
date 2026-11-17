@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Share one resizable bottom panel across Problems, Output and Terminal, preserving hidden builds, diagnostics and shell sessions.
+
 - Keep Search and Source Control in persistent sidebars beside the editor, with independent search inputs, reusable Git review tabs and cached result grouping.
 
 - Refine Settings with responsive search and category sizing, flat aligned rows, keyboard category navigation, and a searchable installed UI-font chooser.

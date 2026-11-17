@@ -19,6 +19,7 @@ pub(super) struct BuildState {
     pending: bool,
     pub name: String,
     pub output: String,
+    output_rows: Option<(usize, Vec<std::ops::Range<usize>>)>,
     /// Bytes of `output` already searched for locations.
     parsed: usize,
     parsed_lines: usize,
@@ -130,6 +131,7 @@ impl HeditApp {
                     status: format!("Building with {}…", system.name),
                     ..Default::default()
                 };
+                self.set_panel(super::workbench_panel::Panel::Output);
             }
             Err(error) => self.error = Some(error),
         }
@@ -231,9 +233,9 @@ impl HeditApp {
         };
         self.go_to_location(next);
     }
-    fn go_to_location(&mut self, index: usize) {
+    pub(super) fn go_to_location(&mut self, index: usize) {
         self.build.current = Some(index);
-        self.build.open = true;
+        self.set_panel(super::workbench_panel::Panel::Output);
         let location = &self.build.locations[index];
         let column = location.column.map_or(String::new(), |c| format!(":{c}"));
         self.pending_paths.push_back(PathBuf::from(format!(
@@ -245,89 +247,88 @@ impl HeditApp {
             self.notice = location.message.clone();
         }
     }
-    /// The build results panel above the status bar.
-    pub(super) fn build_panel(&mut self, ctx: &egui::Context) {
-        if !self.build.open {
-            return;
-        }
+    /// Only the selected output tab is laid out; jobs are polled separately.
+    pub(super) fn build_contents(&mut self, ui: &mut egui::Ui) {
         let mut jump = None;
-        let mut close = false;
         let mut cancel = false;
-        egui::TopBottomPanel::bottom("build-panel")
-            .resizable(true)
-            .default_height(180.0)
-            .height_range(80.0..=(ctx.screen_rect().height() * 0.6).max(100.0))
-            .frame(
-                egui::Frame::new()
-                    .fill(self.theme.surface.color())
-                    .inner_margin(egui::Margin::symmetric(12, 6)),
-            )
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(&self.build.name).strong());
-                    if self.build.running() {
-                        ui.spinner();
-                    }
-                    ui.label(RichText::new(&self.build.status).color(self.theme.muted.color()));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        close = controls::close_button(ui, "Hide build results · Esc").clicked();
-                        if self.build.running() {
-                            cancel = ui.button("Cancel").clicked();
-                        }
-                    });
-                });
-                let lines: Vec<&str> = self.build.output.lines().collect();
-                let current_line = self
-                    .build
-                    .current
-                    .map(|i| self.build.locations[i].output_line);
-                let row = ui.text_style_height(&egui::TextStyle::Monospace) + 2.0;
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .stick_to_bottom(self.build.running())
-                    .show_rows(ui, row, lines.len(), |ui, range| {
-                        for n in range {
-                            let location =
-                                self.build.locations.iter().position(|l| l.output_line == n);
-                            let backdrop = ui.painter().add(egui::Shape::Noop);
-                            let mut text = RichText::new(lines[n]).monospace();
-                            if location.is_some() {
-                                text = text.color(self.theme.warning.color());
-                            }
-                            let response = ui.add(
-                                egui::Label::new(text)
-                                    .sense(if location.is_some() {
-                                        egui::Sense::click()
-                                    } else {
-                                        egui::Sense::hover()
-                                    })
-                                    .truncate(),
-                            );
-                            if current_line == Some(n) {
-                                ui.painter().set(
-                                    backdrop,
-                                    egui::Shape::rect_filled(
-                                        response.rect,
-                                        2.0,
-                                        self.theme.selection.color(),
-                                    ),
-                                );
-                            }
-                            if let Some(index) = location {
-                                if response
-                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                    .clicked()
-                                {
-                                    jump = Some(index);
-                                }
-                            }
-                        }
-                    });
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(&self.build.name).strong());
+            if self.build.running() {
+                ui.spinner();
+            }
+            ui.label(RichText::new(&self.build.status).color(self.theme.muted.color()));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if self.build.running() {
+                    cancel = ui.button("Cancel").clicked();
+                }
             });
-        if close {
-            self.build.open = false;
-            self.focus_editor = true;
+        });
+        if self
+            .build
+            .output_rows
+            .as_ref()
+            .is_none_or(|(len, _)| *len != self.build.output.len())
+        {
+            let mut offset = 0;
+            let rows = self
+                .build
+                .output
+                .split_inclusive('\n')
+                .map(|line| {
+                    let start = offset;
+                    offset += line.len();
+                    start..start + line.trim_end_matches(['\r', '\n']).len()
+                })
+                .collect();
+            self.build.output_rows = Some((self.build.output.len(), rows));
         }
+        let rows = &self.build.output_rows.as_ref().unwrap().1;
+        let current_line = self
+            .build
+            .current
+            .and_then(|i| self.build.locations.get(i))
+            .map(|location| location.output_line);
+        let row = ui.text_style_height(&egui::TextStyle::Monospace) + 2.0;
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .stick_to_bottom(self.build.running())
+            .show_rows(ui, row, rows.len(), |ui, range| {
+                for n in range {
+                    let location = self.build.locations.iter().position(|l| l.output_line == n);
+                    let backdrop = ui.painter().add(egui::Shape::Noop);
+                    let mut text = RichText::new(&self.build.output[rows[n].clone()]).monospace();
+                    if location.is_some() {
+                        text = text.color(self.theme.warning.color());
+                    }
+                    let response = ui.add(
+                        egui::Label::new(text)
+                            .sense(if location.is_some() {
+                                egui::Sense::click()
+                            } else {
+                                egui::Sense::hover()
+                            })
+                            .truncate(),
+                    );
+                    if current_line == Some(n) {
+                        ui.painter().set(
+                            backdrop,
+                            egui::Shape::rect_filled(
+                                response.rect,
+                                2.0,
+                                self.theme.selection.color(),
+                            ),
+                        );
+                    }
+                    if let Some(index) = location {
+                        if response
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked()
+                        {
+                            jump = Some(index);
+                        }
+                    }
+                }
+            });
         if cancel {
             self.cancel_build();
         }

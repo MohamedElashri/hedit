@@ -352,13 +352,17 @@ fn ctrl_b_saves_builds_and_f4_visits_errors() {
         std::fs::read_to_string(&file).unwrap(),
         "line one\nline two!\nline three\n"
     );
+    app.execute(&ctx, Command::LanguageProblems);
     let started = Instant::now();
     while app.build.running() {
         assert!(started.elapsed() < Duration::from_secs(10));
         thread::sleep(Duration::from_millis(10));
         app.poll_build();
     }
-    assert!(app.build.open);
+    assert!(
+        app.languages.problems && !app.build.open,
+        "Build completion keeps the selected panel"
+    );
     assert!(
         app.build.output.contains("tool.py:2:4: warning: two"),
         "{:?} {:?} {:?} pending",
@@ -1242,7 +1246,7 @@ fn resting_the_pointer_on_a_call_finds_its_definition() {
             app.shortcuts(ctx);
             app.chrome(ctx);
             app.search_panel(ctx);
-            app.build_panel(ctx);
+            app.workbench_panel(ctx);
             app.editor(ctx);
             app.quality_windows(ctx);
         });

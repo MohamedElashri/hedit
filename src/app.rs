@@ -121,6 +121,7 @@ mod view_commands;
 mod wait;
 mod workbench;
 mod workbench_navigation;
+mod workbench_panel;
 
 use commands::Command;
 use eframe::egui::{self, FontId, Key, Modifiers, RichText};
@@ -3753,7 +3754,7 @@ impl eframe::App for HeditApp {
         self.updates.poll();
         self.receive(ctx);
         self.poll_language_servers(ctx);
-        self.language_panels(ctx);
+        self.language_information(ctx);
         self.poll_incoming(ctx);
         self.activation.update(ctx);
         self.project.poll();
@@ -3831,8 +3832,7 @@ impl eframe::App for HeditApp {
         self.chrome(ctx);
         self.gpu(ctx);
         self.search_panel(ctx);
-        self.build_panel(ctx);
-        self.terminal_panel(ctx);
+        self.workbench_panel(ctx);
         self.editor(ctx);
         if !self.busy && !self.closing {
             self.command_palette(ctx);
@@ -3976,14 +3976,14 @@ mod tests {
                 || app.languages.problems
             {
                 app.poll_language_servers(ctx);
-                app.language_panels(ctx);
+                app.language_information(ctx);
             }
             app.shortcuts(ctx);
             app.chrome(ctx);
             app.gpu(ctx);
             app.search_panel(ctx);
             app.poll_build();
-            app.build_panel(ctx);
+            app.workbench_panel(ctx);
             app.editor(ctx);
             app.command_palette(ctx);
             app.preferences(ctx);
@@ -6081,7 +6081,7 @@ mod tests {
                             app.chrome(ctx);
                             app.gpu(ctx);
                             app.search_panel(ctx);
-                            app.build_panel(ctx);
+                            app.workbench_panel(ctx);
                             app.editor(ctx);
                             app.command_palette(ctx);
                             app.preferences(ctx);
