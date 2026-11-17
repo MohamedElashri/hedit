@@ -26,6 +26,7 @@ pub(super) fn remote_location(path: &std::path::Path) -> (PathBuf, Option<(u64, 
 type Work = Box<dyn FnOnce() -> Result<Action, String> + Send>;
 #[derive(Clone, PartialEq)]
 struct Origin {
+    group: u64,
     view: u64,
     revision: u64,
     anchor: usize,
@@ -36,6 +37,7 @@ impl Origin {
     fn capture(app: &HeditApp) -> Self {
         let b = app.active();
         Self {
+            group: app.panes.focused_id(),
             view: b.view.id,
             revision: b.page.info.revision,
             anchor: b.view.anchor,
@@ -53,6 +55,12 @@ pub(super) struct Request {
     pub preview: bool,
     cancel: Arc<AtomicBool>,
 }
+impl Request {
+    pub(super) fn group(&self) -> u64 {
+        self.origin.group
+    }
+}
+
 struct Task {
     request: Request,
     work: Work,
@@ -325,7 +333,7 @@ impl HeditApp {
             }
             self.changed();
             if focus {
-                self.source_control.open = false;
+                self.leave_review();
                 self.focus_editor = true;
                 self.finish_preview();
                 self.navigation_mark();
@@ -412,6 +420,25 @@ mod tests {
         assert_eq!(app.active().view.id, original);
         assert_eq!(app.active().page.text, "kept typing 🦀");
         assert!(app.workspace.open.iter().any(|b| b.view.id == id));
+    }
+    #[test]
+    fn changing_groups_with_identical_document_cursors_does_not_steal_focus() {
+        let (_dir, ctx, mut app) = app();
+        app.split(1);
+        let original = app.active().view.id;
+        let id = app.workspace.editor.id();
+        let (tx, rx) = mpsc::channel();
+        app.read_open(&ctx, "slow.txt".into(), move || {
+            rx.recv().unwrap();
+            Ok(added(id))
+        });
+        app.focus_group(1, false);
+        tx.send(()).unwrap();
+        finish_app_job(&mut app, &ctx);
+        assert_eq!(app.panes.focused, 1);
+        assert_eq!(app.active().view.id, original);
+        assert!(app.group_tab_ids(0).contains(&id));
+        assert!(!app.group_tab_ids(1).contains(&id));
     }
     #[test]
     fn a_read_finishing_in_the_same_frame_as_typing_cannot_redirect_the_keystroke() {

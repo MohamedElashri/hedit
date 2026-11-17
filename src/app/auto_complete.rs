@@ -17,6 +17,7 @@ pub(super) enum Choice {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Query {
+    group: u64,
     view: u64,
     revision: u64,
     pane: usize,
@@ -41,6 +42,7 @@ struct Source {
 type IndexKey = Vec<Source>;
 #[derive(Clone, Copy)]
 struct Scheduled {
+    group: u64,
     at: Instant,
     view: u64,
     pane: usize,
@@ -339,6 +341,7 @@ impl HeditApp {
         }
         let b = self.active();
         Some(Query {
+            group: self.panes.focused_id(),
             view: b.view.id,
             revision: b.page.info.revision,
             pane: if self.panes.mode == 0 {
@@ -577,7 +580,8 @@ impl HeditApp {
             } else {
                 self.panes.focused
             };
-            if due.view != b.view.id
+            if due.group != self.panes.focused_id()
+                || due.view != b.view.id
                 || due.pane != pane
                 || (due.revision == b.page.info.revision && due.head != b.view.head)
             {
@@ -622,6 +626,7 @@ impl HeditApp {
                     let delay = Duration::from_millis(self.settings.auto_complete_delay.into());
                     let b = self.active();
                     self.auto.due = Some(Scheduled {
+                        group: self.panes.focused_id(),
                         at: Instant::now() + delay,
                         view: b.view.id,
                         pane: if self.panes.mode == 0 {
@@ -848,6 +853,7 @@ mod redesign_tests {
         app.settings.font_size = 28.0;
         app.auto.popup = Some(Popup {
             query: Query {
+                group: app.panes.focused_id(),
                 view: app.active().view.id,
                 revision: app.active().page.info.revision,
                 pane: 0,

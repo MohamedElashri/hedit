@@ -269,6 +269,7 @@ impl Drop for Cache {
     }
 }
 struct Pending {
+    group: u64,
     key: Key,
     pane: usize,
     selection: (usize, usize),
@@ -279,6 +280,7 @@ struct Pending {
 #[derive(Default)]
 pub(super) struct LiveFind {
     pub origin: Option<(u64, usize)>,
+    pub origin_group: u64,
     caches: [Cache; panes::MAX_GROUPS],
     pending: Option<Pending>,
     status_key: Option<Key>,
@@ -393,6 +395,7 @@ impl HeditApp {
                 if !pending.typing
                     && pending.key == key
                     && pending.pane == pane
+                    && pending.group == self.panes.focused_id()
                     && pending.selection == selection
                 {
                     if pending.next.len() < 256 {
@@ -406,7 +409,9 @@ impl HeditApp {
         let origin = self
             .live_find
             .origin
-            .filter(|(id, _)| *id == b.view.id)
+            .filter(|(id, _)| {
+                *id == b.view.id && self.live_find.origin_group == self.panes.focused_id()
+            })
             .map_or(b.view.anchor.min(b.view.head), |(_, at)| at);
         let skip_zero = b.view.anchor == b.view.head
             && self
@@ -415,6 +420,7 @@ impl HeditApp {
                 .as_ref()
                 .is_some_and(|last| last.matches(b, &self.query, &self.quality.options));
         self.live_find.pending = Some(Pending {
+            group: self.panes.focused_id(),
             key,
             pane,
             selection,
@@ -433,8 +439,11 @@ impl HeditApp {
             return;
         }
         let b = self.active();
-        if self.live_find.origin.is_none_or(|(id, _)| id != b.view.id) {
+        if self.live_find.origin.is_none_or(|(id, _)| id != b.view.id)
+            || self.live_find.origin_group != self.panes.focused_id()
+        {
             self.live_find.origin = Some((b.view.id, b.view.anchor.min(b.view.head)));
+            self.live_find.origin_group = self.panes.focused_id();
         }
         self.schedule_find(true, false);
         self.poll_live_find(ctx);
@@ -500,6 +509,7 @@ impl HeditApp {
         let key = self.find_key();
         if self.live_find.pending.as_ref().is_some_and(|p| {
             p.key != key
+                || p.group != self.panes.focused_id()
                 || p.pane != self.panes.focused
                 || p.selection != (self.active().view.anchor, self.active().view.head)
                 || p.typing && !self.find_open

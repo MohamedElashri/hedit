@@ -1089,7 +1089,7 @@ impl HeditApp {
                     && self.active().view.markdown_view != hedit::session::MarkdownView::Source
             }
             Command::Close => {
-                self.source_control.open || self.workspace.can_close(self.workspace.active)
+                self.source_control.open || self.can_close_group_tab(self.workspace.active)
             }
             Command::NextOccurrence
             | Command::AllOccurrences
@@ -1110,7 +1110,7 @@ impl HeditApp {
             Command::NextTab
             | Command::PreviousTab
             | Command::RecentTab
-            | Command::RecentTabBack => self.workspace.open.len() > 1,
+            | Command::RecentTabBack => self.group_tab_count() > 1,
             Command::FocusPane | Command::MovePane => self.panes.mode != 0,
             Command::FocusGroup1 => true,
             Command::FocusGroup2 => self.panes.groups() > 1,
@@ -1311,13 +1311,25 @@ impl HeditApp {
         if self.source_control.open {
             if command == Command::Close {
                 self.source_control.review_tab = false;
-                self.source_control.open = false;
+                self.leave_review();
                 self.focus_editor = true;
                 return;
             }
             if !matches!(
                 command,
                 Command::SourceControl
+                    | Command::FocusGroup1
+                    | Command::FocusGroup2
+                    | Command::FocusGroup3
+                    | Command::FocusGroup4
+                    | Command::FocusPane
+                    | Command::SplitColumns
+                    | Command::SplitRows
+                    | Command::Columns3
+                    | Command::Columns4
+                    | Command::Rows3
+                    | Command::Grid
+                    | Command::SinglePane
                     | Command::BuildResults
                     | Command::LanguageProblems
                     | Command::Terminal
@@ -1347,7 +1359,7 @@ impl HeditApp {
                     | Command::Quit
                     | Command::Updates
             ) {
-                self.source_control.open = false;
+                self.leave_review();
                 self.focus_editor = true;
             }
         }
@@ -1467,15 +1479,15 @@ impl HeditApp {
             Command::PreviousTab => self.step_tab(false),
             Command::RecentTab => self.cycle_recent(false),
             Command::RecentTabBack => self.cycle_recent(true),
-            Command::Tab1 => self.select_tab(0),
-            Command::Tab2 => self.select_tab(1),
-            Command::Tab3 => self.select_tab(2),
-            Command::Tab4 => self.select_tab(3),
-            Command::Tab5 => self.select_tab(4),
-            Command::Tab6 => self.select_tab(5),
-            Command::Tab7 => self.select_tab(6),
-            Command::Tab8 => self.select_tab(7),
-            Command::Tab9 => self.select_tab(8),
+            Command::Tab1 => self.select_tab_position(0),
+            Command::Tab2 => self.select_tab_position(1),
+            Command::Tab3 => self.select_tab_position(2),
+            Command::Tab4 => self.select_tab_position(3),
+            Command::Tab5 => self.select_tab_position(4),
+            Command::Tab6 => self.select_tab_position(5),
+            Command::Tab7 => self.select_tab_position(6),
+            Command::Tab8 => self.select_tab_position(7),
+            Command::Tab9 => self.select_tab_position(8),
             Command::NextOccurrence => self.occurrence(false),
             Command::Build => self.build(ctx),
             Command::BuildWith => {
@@ -1758,6 +1770,7 @@ impl HeditApp {
                 // Typing in Find searches from here.
                 let b = self.active();
                 self.live_find.origin = Some((b.view.id, b.view.anchor.min(b.view.head)));
+                self.live_find.origin_group = self.panes.focused_id();
                 self.find_open = true;
                 self.find_focus = true;
                 // The palette asks for editor focus when it runs a command.

@@ -52,7 +52,7 @@ fn fixture() -> (tempfile::TempDir, egui::Context, HeditApp, Git) {
 #[test]
 fn sidebar_navigation_preserves_documents_and_review_is_an_explicit_reusable_tab() {
     let (_directory, ctx, mut app, _git) = fixture();
-    app.source_control.open = false;
+    app.leave_review();
     app.source_control.review_tab = false;
     app.workspace.open[0].page.text = "Keep this unsaved editor text".into();
     app.workspace.edit(0, "").unwrap();
@@ -547,7 +547,7 @@ fn diff_code_matches_editor_typography_syntax_and_selection_for_custom_themes() 
     let root = app.source_control.root.clone().unwrap();
     let source = "\tfn main(){\tlet n = 42;}\n";
     std::fs::write(root.join("main.rs"), source).unwrap();
-    app.source_control.open = false;
+    app.leave_review();
     app.open(&ctx, Some(root.join("main.rs")));
     finish_app_job(&mut app, &ctx);
     app.workspace.open[app.workspace.active].view.tab_size = Some(8);
@@ -579,7 +579,7 @@ fn diff_code_matches_editor_typography_syntax_and_selection_for_custom_themes() 
         for (size, padding) in [(14.0, 0.0), (24.0, 7.0)] {
             app.settings.font_size = size;
             app.settings.line_padding = padding;
-            app.source_control.open = false;
+            app.leave_review();
             let output = frame(&ctx, &mut app, vec![]);
             let editor = find(&output, &display);
             app.open_source_control(&ctx);
@@ -670,7 +670,7 @@ fn diff_font_changes_and_zoom_stay_in_sync_with_the_editor() {
     )
     .unwrap();
     std::fs::write(root.join("main.rs"), source).unwrap();
-    app.source_control.open = false;
+    app.leave_review();
     app.open(&ctx, Some(root.join("main.rs")));
     finish_app_job(&mut app, &ctx);
     app.open_source_control(&ctx);
@@ -745,7 +745,7 @@ fn diff_font_changes_and_zoom_stay_in_sync_with_the_editor() {
                     app.source_control.split_diff = split;
                     let output = frame(&ctx, &mut app, vec![]);
                     let diff = find(&output, source.trim_end());
-                    app.source_control.open = false;
+                    app.leave_review();
                     let output = frame(&ctx, &mut app, vec![]);
                     let editor = find(&output, source);
                     // Compare resolved glyph metrics, not just the requested size
@@ -2424,4 +2424,30 @@ fn activity_bar_switches_workspaces_without_losing_commit_drafts() {
     assert!(app.source_control.open);
     assert_eq!(app.active().view.id, id);
     assert_eq!(app.source_control.draft, "Keep my activity bar draft");
+}
+
+#[test]
+fn git_review_stays_in_its_group_while_another_group_edits_the_shared_document() {
+    let (_directory, ctx, mut app, _git) = fixture();
+    app.leave_review();
+    app.source_control.review_tab = false;
+    app.source_control.review_selected = false;
+    app.workspace.open[0].page.text = "Keep this shared draft".into();
+    app.workspace.edit(0, "").unwrap();
+    app.split(1);
+    click_label(&ctx, &mut app, "main.rs");
+    finish_git(&ctx, &mut app);
+    let out = frame(&ctx, &mut app, vec![]);
+    assert!(visible(&out, "Git review"));
+    assert!(visible(&out, "Keep this shared draft"));
+    app.focus_group(1, false);
+    assert!(!app.source_control.open && app.source_control.review_selected);
+    frame(&ctx, &mut app, vec![egui::Event::Text("prefix ".into())]);
+    assert!(app.active().page.text.contains("prefix "));
+    assert_eq!(app.workspace.open.len(), 1);
+    app.focus_group(0, false);
+    assert!(app.source_control.open);
+    app.execute(&ctx, Command::Close);
+    assert!(!app.source_control.review_tab);
+    assert!(app.active().page.text.contains("prefix "));
 }

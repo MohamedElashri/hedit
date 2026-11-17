@@ -40,6 +40,7 @@ mod goto_anything;
 mod goto_matches;
 #[cfg(test)]
 mod goto_tests;
+mod group_tabs;
 #[cfg(test)]
 mod interaction_tests;
 mod language_servers;
@@ -583,6 +584,7 @@ impl HeditApp {
         app.init_quality(storage);
         app.quality.config = config;
         app.apply_settings();
+        app.sync_groups();
         let warnings = app.apply_theme_settings(ctx);
         if !warnings.is_empty() {
             let banner = app.error.take().into_iter().chain(warnings);
@@ -1145,6 +1147,7 @@ impl HeditApp {
             if let Some(request) = &request {
                 self.quality.preview_request = request.preview
                     && !background
+                    && !matches!(&event,Ok(Action::Activate(id)|Action::Page(id,..)) if self.group_contains(request.group(),*id))
                     && matches!(
                         &event,
                         Ok(Action::Add(..)
@@ -1192,7 +1195,7 @@ impl HeditApp {
                         .iter()
                         .position(|b| b.page.info.id == id)
                     {
-                        self.source_control.open = false;
+                        self.leave_review();
                         self.workspace.active = index;
                         self.changed();
                         self.focus_editor = true;
@@ -1202,6 +1205,9 @@ impl HeditApp {
                 }
                 Ok(Action::ReopenRead(id, page, cursor)) => {
                     self.apply_reopen_read(ctx, id, page, cursor, !background);
+                    if self.active().view.id == id {
+                        self.attach_open_tab(request.as_ref().map(opening::Request::group), id);
+                    }
                 }
                 Ok(Action::Folder(listing)) => self.set_folder(listing),
                 Ok(Action::Folders(listings)) => {
@@ -1222,12 +1228,18 @@ impl HeditApp {
                     let result = self.workspace.add(*doc, page);
                     if result.is_ok() {
                         if !background {
-                            self.source_control.open = false;
+                            self.leave_review();
                         }
                         let buffer = &mut self.workspace.open[self.workspace.active];
                         buffer.view.anchor = cursor;
                         buffer.view.head = cursor;
                         buffer.reveal_cursor = cursor > 0;
+                    }
+                    if result.is_ok() {
+                        self.attach_open_tab(
+                            request.as_ref().map(opening::Request::group),
+                            self.active().view.id,
+                        );
                     }
                     self.report(result);
                     self.apply_format_preferences();
@@ -1278,7 +1290,7 @@ impl HeditApp {
                         .position(|b| b.page.info.id == id)
                     {
                         if !reloaded {
-                            self.source_control.open = false;
+                            self.leave_review();
                         }
                         self.workspace.active = index;
                         if !reloaded && selection.is_some() {
@@ -1994,8 +2006,10 @@ impl HeditApp {
     }
     fn editor(&mut self, ctx: &egui::Context) {
         self.apply_editor_style(ctx);
-        if self.source_control.open {
+        self.sync_review_group();
+        if self.source_control.open && self.panes.mode == 0 {
             self.source_control_editor(ctx);
+            self.finish_tab_drag(ctx);
             return;
         }
         self.markdown.retain_documents(ctx, &self.workspace.open);
@@ -2010,6 +2024,8 @@ impl HeditApp {
                 self.error_banner(ui, &theme);
                 self.pane_layout(ui);
             });
+        self.git_prompt(ctx);
+        self.finish_tab_drag(ctx);
     }
     /// One banner above all panes; Escape or its close button clears it.
     fn error_banner(&mut self, ui: &mut egui::Ui, theme: &Theme) {

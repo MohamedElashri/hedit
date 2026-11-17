@@ -25,6 +25,10 @@ impl HeditApp {
         if self.closing {
             return;
         }
+        let tabs = self.detach_shared_tabs(tabs);
+        if tabs.is_empty() {
+            return;
+        }
         self.cancel_opens();
         self.closing = true;
         self.close_flow = Some(CloseFlow { tabs: tabs.into() });
