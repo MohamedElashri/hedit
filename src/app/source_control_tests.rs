@@ -43,6 +43,7 @@ fn fixture() -> (tempfile::TempDir, egui::Context, HeditApp, Git) {
     let ctx = egui::Context::default();
     ctx.style_mut(|s| s.scroll_animation = egui::style::ScrollAnimation::none());
     let mut app = HeditApp::from_context(&ctx, None, workspace, errors, vec![]);
+    app.settings.show_activity_bar = false;
     app.open_source_control(&ctx);
     finish_git(&ctx, &mut app);
     (directory, ctx, app, git)

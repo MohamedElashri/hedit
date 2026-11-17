@@ -514,6 +514,20 @@ impl Theme {
     }
     /// Neutral control and menu hover surface, shared across the workbench.
     pub fn hover(&self) -> Rgb {
+        // Keep neutral hover surfaces visible on both the panel and editor.
+        // Custom themes retain their elevated role whenever it is readable.
+        for step in 0..=20 {
+            let t = step as f32 / 20.0;
+            let hover = Rgb(std::array::from_fn(|i| {
+                (self.elevated.0[i] as f32 * (1.0 - t) + self.text.0[i] as f32 * t).round() as u8
+            }));
+            if Self::contrast(hover, self.surface) >= 1.2
+                && Self::contrast(hover, self.panel) >= 1.2
+                && Self::contrast(self.text, hover) >= 3.0
+            {
+                return hover;
+            }
+        }
         self.elevated
     }
     /// A readable foreground for primary actions, including user-defined accents.
