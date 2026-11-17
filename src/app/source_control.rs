@@ -66,6 +66,8 @@ struct Reply {
 pub(super) struct SourceControl {
     pub open: bool,
     pub review_tab: bool,
+    pub review_selected: bool,
+    pub review_group: Option<u64>,
     pub reveal_review: bool,
     sidebar_visible: bool,
     sidebar_initialized: bool,
@@ -109,6 +111,8 @@ impl Default for SourceControl {
         Self {
             open: false,
             review_tab: false,
+            review_selected: false,
+            review_group: None,
             reveal_review: false,
             sidebar_visible: false,
             sidebar_initialized: false,
@@ -155,6 +159,8 @@ impl Drop for SourceControl {
 impl SourceControl {
     pub(super) fn show_review(&mut self) {
         self.open = true;
+        self.review_selected = true;
+        self.review_group = None;
         self.review_tab = true;
         self.reveal_review = true;
     }
@@ -188,7 +194,7 @@ impl SourceControl {
         eframe::set_value(storage, "git-tree-view", &self.tree_view);
     }
     pub(super) fn due(&self) -> Option<Duration> {
-        if (self.open || self.sidebar_visible)
+        if (self.open || self.review_selected || self.sidebar_visible)
             && !self.pending
             && self.root.is_some()
             && self.prompt.is_none()
@@ -1014,7 +1020,7 @@ impl HeditApp {
     fn git_open_file(&mut self, ctx: &egui::Context, path: &Path) {
         if let Some(root) = &self.source_control.root {
             let path = hedit::remote::join(root, path);
-            self.source_control.open = false;
+            self.leave_review();
             self.open(ctx, Some(path));
         }
     }
@@ -1237,157 +1243,154 @@ impl HeditApp {
         }
     }
     pub(super) fn source_control_editor(&mut self, ctx: &egui::Context) {
-        let theme = self.theme.clone();
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::new()
-                    .fill(theme.background.color())
+                    .fill(self.theme.background.color())
                     .inner_margin(14.0),
             )
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.heading(inspect::view_name(self.source_control.view));
-                    if let Some(activity) = self.source_control.ux.activity {
-                        ui.spinner();
-                        ui.label(RichText::new(activity).color(theme.muted.color()));
-                        if ui.small_button("Cancel").clicked() {
-                            self.source_control.cancel.store(true, Ordering::Relaxed);
+            .show(ctx, |ui| self.source_control_contents(ui));
+        self.git_prompt(ctx);
+    }
+    pub(super) fn source_control_contents(&mut self, ui: &mut egui::Ui) {
+        let ctx = &ui.ctx().clone();
+        let theme = self.theme.clone();
+        ui.horizontal(|ui| {
+            ui.heading(inspect::view_name(self.source_control.view));
+            if let Some(activity) = self.source_control.ux.activity {
+                ui.spinner();
+                ui.label(RichText::new(activity).color(theme.muted.color()));
+                if ui.small_button("Cancel").clicked() {
+                    self.source_control.cancel.store(true, Ordering::Relaxed);
+                }
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.toggle_value(&mut self.source_control.output_open, "Git output");
+            });
+        });
+        self.git_review_feedback(ui, ctx);
+        if let Some(error) = self.source_control.error.clone() {
+            egui::Frame::new()
+                .fill(theme.error.color().gamma_multiply(0.10))
+                .inner_margin(10.0)
+                .show(ui, |ui| {
+                    ui.horizontal_top(|ui| {
+                        ui.add(
+                            egui::Label::new(RichText::new(error).color(theme.error.color()))
+                                .wrap(),
+                        );
+                        if controls::close_button(ui, "Dismiss Git message").clicked() {
+                            self.source_control.error = None;
                         }
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.toggle_value(&mut self.source_control.output_open, "Git output");
                     });
                 });
-                self.git_review_feedback(ui, ctx);
-                if let Some(error) = self.source_control.error.clone() {
-                    egui::Frame::new()
-                        .fill(theme.error.color().gamma_multiply(0.10))
-                        .inner_margin(10.0)
-                        .show(ui, |ui| {
-                            ui.horizontal_top(|ui| {
-                                ui.add(
-                                    egui::Label::new(
-                                        RichText::new(error).color(theme.error.color()),
-                                    )
-                                    .wrap(),
-                                );
-                                if controls::close_button(ui, "Dismiss Git message").clicked() {
-                                    self.source_control.error = None;
-                                }
-                            });
-                        });
-                }
-                if self.source_control.output_open {
-                    egui::ScrollArea::vertical()
-                        .id_salt("git-output")
-                        .max_height(150.0)
-                        .stick_to_bottom(true)
-                        .show(ui, |ui| {
-                            for text in &self.source_control.output {
-                                ui.add(
-                                    egui::Label::new(RichText::new(text).monospace().size(11.0))
-                                        .wrap()
-                                        .selectable(true),
-                                );
-                                ui.separator();
-                            }
-                        });
-                }
-                ui.separator();
-                self.git_review_navigation(ui, ctx);
-                if self.source_control.view == View::History {
-                    if let Some(oid) = self.source_control.commit.clone() {
-                        ui.horizontal_wrapped(|ui| {
-                            ui.label(
-                                RichText::new(&oid[..8])
-                                    .monospace()
-                                    .size(11.0)
-                                    .color(theme.muted.color()),
-                            )
-                            .on_hover_text(&oid);
-                            if ui.small_button("Copy ID").clicked() {
-                                ui.ctx().copy_text(oid.clone());
-                            }
-                            ui.add_enabled_ui(!self.source_control.pending, |ui| {
-                                if ui.small_button("Cherry-pick…").clicked() {
-                                    self.git_confirm(
-                                        "Cherry-pick commit",
-                                        format!(
-                                            "Apply commit {} to the current branch?",
-                                            &oid[..8]
-                                        ),
-                                        Operation::CherryPick(oid.clone()),
-                                    );
-                                }
-                                if ui.small_button("Revert…").clicked() {
-                                    self.git_confirm(
-                                        "Revert commit",
-                                        format!("Create a new commit that reverses {}?", &oid[..8]),
-                                        Operation::Revert(oid.clone()),
-                                    );
-                                }
-                                ui.menu_button("More…", |ui| {
-                                    if ui.button("Branch here…").clicked() {
-                                        self.git_name_at(inspect::NamedAction::Branch(oid.clone()));
-                                        ui.close_menu();
-                                    }
-                                    if ui.button("Tag…").clicked() {
-                                        self.git_name_at(inspect::NamedAction::Tag(oid.clone()));
-                                        ui.close_menu();
-                                    }
-                                    if ui.button("Compare with HEAD").clicked() {
-                                        self.git_start_comparison(ctx, oid.clone(), "HEAD".into());
-                                        ui.close_menu();
-                                    }
-                                });
-                            });
-                        });
-                        egui::ScrollArea::vertical()
-                            .id_salt("git-commit-body")
-                            .max_height(100.0)
-                            .show(ui, |ui| {
-                                ui.add(
-                                    egui::Label::new(&self.source_control.body)
-                                        .wrap()
-                                        .selectable(true),
-                                );
-                            });
+        }
+        if self.source_control.output_open {
+            egui::ScrollArea::vertical()
+                .id_salt("git-output")
+                .max_height(150.0)
+                .stick_to_bottom(true)
+                .show(ui, |ui| {
+                    for text in &self.source_control.output {
+                        ui.add(
+                            egui::Label::new(RichText::new(text).monospace().size(11.0))
+                                .wrap()
+                                .selectable(true),
+                        );
                         ui.separator();
-                        if ui.available_width() >= 640.0 {
-                            egui::SidePanel::left("git-commit-files")
-                                .default_width(210.0)
-                                .min_width(140.0)
-                                .max_width(ui.available_width() * 0.4)
-                                .resizable(true)
-                                .show_inside(ui, |ui| {
-                                    self.git_commit_files(ui, ctx, &oid);
-                                });
-                        } else {
-                            egui::CollapsingHeader::new(format!(
-                                "Files · {}",
-                                self.source_control.files.len()
-                            ))
-                            .id_salt("git-compact-commit-files")
-                            .default_open(true)
-                            .show(ui, |ui| {
-                                egui::ScrollArea::vertical()
-                                    .id_salt("git-compact-file-scroll")
-                                    .max_height(140.0)
-                                    .show(ui, |ui| {
-                                        self.git_commit_files(ui, ctx, &oid);
-                                    });
-                            });
-                            ui.separator();
-                        }
                     }
-                }
-                if self.source_control.view == View::Blame {
-                    self.git_blame_canvas(ui, ctx);
+                });
+        }
+        ui.separator();
+        self.git_review_navigation(ui, ctx);
+        if self.source_control.view == View::History {
+            if let Some(oid) = self.source_control.commit.clone() {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(
+                        RichText::new(&oid[..8])
+                            .monospace()
+                            .size(11.0)
+                            .color(theme.muted.color()),
+                    )
+                    .on_hover_text(&oid);
+                    if ui.small_button("Copy ID").clicked() {
+                        ui.ctx().copy_text(oid.clone());
+                    }
+                    ui.add_enabled_ui(!self.source_control.pending, |ui| {
+                        if ui.small_button("Cherry-pick…").clicked() {
+                            self.git_confirm(
+                                "Cherry-pick commit",
+                                format!("Apply commit {} to the current branch?", &oid[..8]),
+                                Operation::CherryPick(oid.clone()),
+                            );
+                        }
+                        if ui.small_button("Revert…").clicked() {
+                            self.git_confirm(
+                                "Revert commit",
+                                format!("Create a new commit that reverses {}?", &oid[..8]),
+                                Operation::Revert(oid.clone()),
+                            );
+                        }
+                        ui.menu_button("More…", |ui| {
+                            if ui.button("Branch here…").clicked() {
+                                self.git_name_at(inspect::NamedAction::Branch(oid.clone()));
+                                ui.close_menu();
+                            }
+                            if ui.button("Tag…").clicked() {
+                                self.git_name_at(inspect::NamedAction::Tag(oid.clone()));
+                                ui.close_menu();
+                            }
+                            if ui.button("Compare with HEAD").clicked() {
+                                self.git_start_comparison(ctx, oid.clone(), "HEAD".into());
+                                ui.close_menu();
+                            }
+                        });
+                    });
+                });
+                egui::ScrollArea::vertical()
+                    .id_salt("git-commit-body")
+                    .max_height(100.0)
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::Label::new(&self.source_control.body)
+                                .wrap()
+                                .selectable(true),
+                        );
+                    });
+                ui.separator();
+                if ui.available_width() >= 640.0 {
+                    egui::SidePanel::left("git-commit-files")
+                        .default_width(210.0)
+                        .min_width(140.0)
+                        .max_width(ui.available_width() * 0.4)
+                        .resizable(true)
+                        .show_inside(ui, |ui| {
+                            self.git_commit_files(ui, ctx, &oid);
+                        });
                 } else {
-                    self.git_diff_canvas(ui, ctx);
+                    egui::CollapsingHeader::new(format!(
+                        "Files · {}",
+                        self.source_control.files.len()
+                    ))
+                    .id_salt("git-compact-commit-files")
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .id_salt("git-compact-file-scroll")
+                            .max_height(140.0)
+                            .show(ui, |ui| {
+                                self.git_commit_files(ui, ctx, &oid);
+                            });
+                    });
+                    ui.separator();
                 }
-            });
-        self.git_prompt(ctx);
+            }
+        }
+        if self.source_control.view == View::Blame {
+            self.git_blame_canvas(ui, ctx);
+        } else {
+            self.git_diff_canvas(ui, ctx);
+        }
     }
     fn git_commit_files(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, oid: &str) {
         self.git_tree_controls(ui);

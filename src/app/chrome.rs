@@ -35,6 +35,8 @@ fn menu_item(ui: &mut egui::Ui, app: &HeditApp, command: Command) -> bool {
 }
 impl HeditApp {
     pub(super) fn chrome(&mut self, ctx: &egui::Context) {
+        self.sync_groups();
+        self.sync_review_group();
         self.apply_workbench_style(ctx);
         let theme = self.theme.clone();
         let mut action = None;
@@ -254,7 +256,7 @@ impl HeditApp {
         self.tabs(ctx);
     }
     fn tabs(&mut self, ctx: &egui::Context) {
-        if !self.settings.show_tab_bar || self.distraction_free {
+        if !self.settings.show_tab_bar || self.distraction_free || self.panes.mode != 0 {
             return;
         }
         let theme = self.theme.clone();
@@ -521,11 +523,11 @@ impl HeditApp {
                                         review.scroll_to_me(Some(egui::Align::Max));
                                     }
                                     if review.clicked() {
-                                        self.source_control.open = true;
+                                        self.activate_review();
                                         self.focus_editor = false;
                                     }
                                     if controls::close_button(ui, "Close Git review").clicked() {
-                                        self.source_control.open = false;
+                                        self.leave_review();
                                         self.source_control.review_tab = false;
                                         self.focus_editor = true;
                                     }

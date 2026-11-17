@@ -46,13 +46,16 @@ impl HeditApp {
     /// Close every tab, or only those without unsaved changes. Pinned tabs
     /// stay; unsaved files and non-empty untitled tabs prompt before closing.
     pub(super) fn close_tabs(&mut self, unmodified: bool) {
+        self.sync_groups();
         let tabs = self
-            .workspace
-            .open
-            .iter()
+            .group_tab_ids(self.panes.focused)
+            .into_iter()
             .rev()
-            .filter(|b| !b.view.pinned && (!unmodified || !b.page.info.dirty))
-            .map(|b| b.view.id)
+            .filter(|id| {
+                self.workspace.open.iter().any(|b| {
+                    b.view.id == *id && !b.view.pinned && (!unmodified || !b.page.info.dirty)
+                })
+            })
             .collect();
         self.request_close(tabs);
     }

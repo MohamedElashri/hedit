@@ -741,3 +741,16 @@ are UTF-8 files under `buffers-*`, indexed by `session.json`. Recovery is not en
 | Terminal RTL reordered twice | Disable terminal bidirectional shaping |
 | SSH fails | Check pinned host key, unlocked agent, helper version, explicit port, and private durable state storage |
 | CUDA tool unavailable | Install the tool, check PATH, and read its output |
+
+### Tabs in editor groups
+
+Each editor group has its own tab strip. Opening a file adds it to the focused
+group; the same file can appear in several groups with independent cursor and
+scroll positions. Edits and undo belong to the shared document. Tab position,
+next/previous tab, Close others, Close to the right and Close all apply to the
+focused group. Drag a tab to another group’s strip or editor, or use Move file
+to other group. Closing a shared tab removes that view; the final dirty tab
+asks before discarding. Empty groups close automatically. Reducing the layout
+merges remaining tabs, and recovery retains their documents and view metadata.
+Git reviews use a reusable tab in one group while other groups remain editable.
+Paged files share the currently loaded page across their groups.

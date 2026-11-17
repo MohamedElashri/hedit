@@ -105,6 +105,7 @@ impl HeditApp {
             self.query = text;
             let b = self.active();
             self.live_find.origin = Some((b.view.id, b.view.anchor.max(b.view.head)));
+            self.live_find.origin_group = self.panes.focused_id();
         }
     }
     /// Ctrl+F3 / Ctrl+Shift+F3: select the word at the cursor, then each press

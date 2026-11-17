@@ -609,3 +609,21 @@ fn export_panel_previews() {
         scene.save(&output, "terminal");
     }
 }
+
+#[test]
+#[ignore = "exports group-local tabs to HEDIT_PREVIEW_DIR"]
+fn export_group_previews() {
+    let output =
+        PathBuf::from(std::env::var_os("HEDIT_PREVIEW_DIR").expect("set HEDIT_PREVIEW_DIR"));
+    std::fs::create_dir_all(&output).unwrap();
+    for light in [false, true] {
+        let mut scene = Scene::new(light);
+        scene.app.split(1);
+        scene.app.focus_group(1, false);
+        scene
+            .app
+            .open(&scene.ctx, Some(scene.root.join("src/report.rs")));
+        finish_app_job(&mut scene.app, &scene.ctx);
+        scene.save(&output, if light { "groups-light" } else { "groups-dark" });
+    }
+}

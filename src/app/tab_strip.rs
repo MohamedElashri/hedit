@@ -254,6 +254,9 @@ impl Cache {
     pub fn offset(&self, i: usize) -> f32 {
         self.offsets[i]
     }
+    pub fn entry_width(&self, i: usize) -> f32 {
+        self.offsets[i + 1] - self.offsets[i]
+    }
     pub fn width(&self) -> f32 {
         self.offsets.last().copied().unwrap_or(0.0)
     }

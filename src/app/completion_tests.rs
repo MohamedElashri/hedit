@@ -193,9 +193,13 @@ fn delayed_completion_is_cancelled_by_escape_tab_switch_and_cursor_movement() {
 }
 #[test]
 fn a_revision_or_pane_change_and_batched_text_cannot_accept_an_old_choice() {
-    for action in 0..3 {
+    for action in 0..4 {
         let (_dir, ctx, mut app) = app("al alpha alpine\n");
         app.set_selections(vec![hedit::advanced::Selection::caret(2)]);
+        if action == 3 {
+            app.split(1);
+            app.focus_group(1, false);
+        }
         app.open_completion(&ctx);
         if action == 0 {
             let old = app.active().page.text.clone();
@@ -206,6 +210,12 @@ fn a_revision_or_pane_change_and_batched_text_cannot_accept_an_old_choice() {
         } else if action == 1 {
             app.panes.mode = 1;
             app.panes.focused = 1;
+            app.commit_choice(0);
+            assert_eq!(app.active().page.text, "al alpha alpine\n");
+        } else if action == 3 {
+            app.split(0);
+            app.split(1);
+            app.focus_group(1, false);
             app.commit_choice(0);
             assert_eq!(app.active().page.text, "al alpha alpine\n");
         } else if action == 2 {

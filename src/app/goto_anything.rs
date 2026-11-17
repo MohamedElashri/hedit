@@ -81,6 +81,7 @@ pub(super) fn text_matches(text: &str, query: &str, limit: usize) -> Vec<(String
 
 /// Where the cursor was before previewing Go to Anything results.
 pub(super) struct Origin {
+    group: u64,
     id: u64,
     anchor: usize,
     head: usize,
@@ -128,6 +129,7 @@ impl HeditApp {
         if self.goto_origin.is_none() {
             let b = self.active();
             self.goto_origin = Some(Origin {
+                group: self.panes.focused_id(),
                 id: b.view.id,
                 anchor: b.view.anchor,
                 head: b.view.head,
@@ -145,6 +147,9 @@ impl HeditApp {
         let Some(origin) = self.goto_origin.take() else {
             return;
         };
+        if !self.group_contains(origin.group, origin.id) {
+            return;
+        }
         let Some(index) = self
             .workspace
             .open
@@ -154,6 +159,8 @@ impl HeditApp {
             return;
         };
         let b = &mut self.workspace.open[index];
+        let canonical = (origin.group != self.panes.focused_id())
+            .then(|| (panes::CursorView::get(b), b.restore_cursor, b.reveal_cursor));
         b.view.anchor = origin.anchor;
         b.view.head = origin.head;
         b.view.selections = origin.selections;
@@ -162,6 +169,13 @@ impl HeditApp {
         b.view.markdown_view = origin.markdown_view;
         b.restore_cursor = true;
         b.reveal_cursor = false;
+        self.save_view_in_group(origin.group, index);
+        if let Some((cursor, restore, reveal)) = canonical {
+            let b = &mut self.workspace.open[index];
+            cursor.put(b);
+            b.restore_cursor = restore;
+            b.reveal_cursor = reveal;
+        }
         self.changed();
     }
     /// Apply a Go to Anything target after choosing a file: jump in an open

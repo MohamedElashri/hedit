@@ -151,15 +151,18 @@ mod tests {
         app.settings.caret_blink = false;
         app.settings.auto_complete = false;
         app.settings.show_folders = false;
-        for _ in 0..5 {
-            frame(&ctx, &mut app, vec![]);
-        }
-        for _ in 0..30 {
-            let output = frame(&ctx, &mut app, vec![]);
-            assert!(
-                output.textures_delta.set.is_empty(),
-                "idle workbench uploaded textures again"
-            );
+        for mode in [0, 6] {
+            app.split(mode);
+            for _ in 0..5 {
+                frame(&ctx, &mut app, vec![]);
+            }
+            for _ in 0..30 {
+                let output = frame(&ctx, &mut app, vec![]);
+                assert!(
+                    output.textures_delta.set.is_empty(),
+                    "idle workbench uploaded textures again"
+                );
+            }
         }
         assert!(app.ui_font.loading.is_none());
     }

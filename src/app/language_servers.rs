@@ -25,7 +25,7 @@ struct Guard {
     view: u64,
     language: syntax::Language,
     formatting_options: (u8, bool),
-    pane: usize,
+    pane: u64,
     head: usize,
     revision: u64,
     anchor: usize,
@@ -569,7 +569,7 @@ impl HeditApp {
                         .path
                         .as_ref()
                         .is_none_or(|p| self.language_root(&PathBuf::from(p)) != guard.root)
-                    || self.panes.focused != guard.pane
+                    || self.panes.focused_id() != guard.pane
                     || self.closing
                     || self.busy
                 {
@@ -647,7 +647,7 @@ impl HeditApp {
                 b.view.tab_size.unwrap_or(4),
                 b.view.indent.as_deref() != Some("tabs"),
             ),
-            pane: self.panes.focused,
+            pane: self.panes.focused_id(),
             head: b.view.head,
             revision: b.page.info.revision,
             anchor: b.view.anchor,
@@ -1687,7 +1687,13 @@ mod tests {
     #[test]
     fn language_results_are_discarded_after_cursor_revision_or_pane_changes() {
         let (_dir, ctx, mut app) = app();
-        for change in 0..5 {
+        for change in 0..6 {
+            if change == 5 {
+                app.busy = false;
+                app.panes.focused = 0;
+                app.split(1);
+                app.focus_group(1, false);
+            }
             let b = app.active();
             let guard = Guard {
                 view: b.view.id,
@@ -1698,7 +1704,7 @@ mod tests {
                 ),
                 revision: b.page.info.revision,
                 head: b.view.head,
-                pane: app.panes.focused,
+                pane: app.panes.focused_id(),
                 anchor: b.view.anchor,
                 selections: b.view.selections.clone(),
                 root: app.language_root(&PathBuf::from(b.page.info.path.as_ref().unwrap())),
@@ -1713,7 +1719,12 @@ mod tests {
                 1 => app.workspace.open[app.workspace.active].page.info.revision += 1,
                 2 => app.panes.focused = 1,
                 3 => app.workspace.open[app.workspace.active].view.anchor = 1,
-                _ => app.busy = true,
+                4 => app.busy = true,
+                _ => {
+                    app.split(0);
+                    app.split(1);
+                    app.focus_group(1, false);
+                }
             }
             app.language_event(&ctx,Event::Response{ticket,result:Ok(Reply{path,revision,encoding:Encoding::Utf8,feature:Feature::Formatting,value:json!([{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":0}},"newText":"BAD"}])})});
             assert_eq!(app.active().page.text, "fo");

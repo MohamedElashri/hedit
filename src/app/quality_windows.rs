@@ -217,18 +217,24 @@ impl HeditApp {
         }
     }
     pub(super) fn close_tab_group(&mut self, right: bool) {
+        self.sync_groups();
         let current = self.active().view.id;
-        let active = self.workspace.active;
-        let tabs = self
-            .workspace
-            .open
-            .iter()
+        let ids = self.group_tab_ids(self.panes.focused);
+        let active = ids.iter().position(|id| *id == current).unwrap_or(0);
+        let tabs = ids
+            .into_iter()
             .enumerate()
             .rev()
-            .filter(|(index, b)| {
-                b.view.id != current && !b.view.pinned && (!right || *index > active)
+            .filter(|(position, id)| {
+                *id != current
+                    && (!right || *position > active)
+                    && self
+                        .workspace
+                        .open
+                        .iter()
+                        .any(|b| b.view.id == *id && !b.view.pinned)
             })
-            .map(|(_, b)| b.view.id)
+            .map(|(_, id)| id)
             .collect();
         self.request_close(tabs);
     }
@@ -238,6 +244,11 @@ impl HeditApp {
         }
         self.quality.preview_request = false;
         let current = self.active().view.id;
+        let owner = self
+            .quality
+            .preview_group
+            .take()
+            .unwrap_or(self.panes.focused_id());
         if let Some(previous) = self.quality.preview.take() {
             if previous != current {
                 if let Some(index) = self
@@ -246,13 +257,16 @@ impl HeditApp {
                     .iter()
                     .position(|b| b.view.id == previous && !b.page.info.dirty && !b.view.pinned)
                 {
-                    let result = self.workspace.close(index);
-                    self.report(result);
+                    if !self.detach_shared_preview(owner, previous) {
+                        let result = self.workspace.close(index);
+                        self.report(result);
+                    }
                 }
             }
         }
         if !self.active().view.pinned && !self.active().page.info.dirty {
             self.quality.preview = Some(current);
+            self.quality.preview_group = Some(self.panes.focused_id());
         }
     }
     pub(super) fn quality_windows(&mut self, ctx: &egui::Context) {

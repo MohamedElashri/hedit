@@ -348,3 +348,14 @@ and report completion. Only the selected tab performs layout. Output line ranges
 and formatted language diagnostics are cached until their source changes; rows
 are virtualized. Switching away clears terminal composition and shortcut prefixes
 without replacing the PTY or touching editor undo.
+
+### Group-local tabs
+
+`app/panes.rs` stores document IDs and per-tab cursor/revision snapshots for each
+stable group ID. `Workspace::open` remains the sole owner of document buffers;
+groups never clone text or undo journals. Shared-tab closure detaches a view,
+while the last reference uses the existing save/discard/recovery flow. Layout
+reduction merges unique references. Restored legacy layouts place existing tabs
+in the first group. Pending reads capture stable group identity as part of their
+focus guard, and background results attach without redirecting input. Tab strips
+reuse derived global title/location geometry and paint only visible tabs.

@@ -64,7 +64,8 @@ impl HeditApp {
         if index >= self.workspace.open.len() {
             return;
         }
-        self.source_control.open = false;
+        self.select_group_tab(index);
+        self.leave_review();
         if index == self.workspace.active {
             self.focus_editor = true;
             return;
@@ -79,6 +80,7 @@ impl HeditApp {
     /// the order stays put, so repeated presses walk further back; releasing
     /// Ctrl makes the chosen tab the most recent.
     pub(super) fn track_recent_tabs(&mut self, ctx: &egui::Context) {
+        self.sync_groups();
         let control =
             ctx.input(|i| i.modifiers.ctrl || (!cfg!(target_os = "macos") && i.modifiers.command));
         if self.tab_cycle.step.is_some() && !control {
@@ -107,7 +109,16 @@ impl HeditApp {
     }
     /// Ctrl+Tab: the next tab back in recently used order.
     pub(super) fn cycle_recent(&mut self, back: bool) {
-        let count = self.tab_cycle.recent.len();
+        self.sync_groups();
+        let local = self.group_tab_ids(self.panes.focused);
+        let recent: Vec<_> = self
+            .tab_cycle
+            .recent
+            .iter()
+            .copied()
+            .filter(|id| local.contains(id))
+            .collect();
+        let count = recent.len();
         if count < 2 {
             return;
         }
@@ -118,20 +129,31 @@ impl HeditApp {
             (step + 1) % count
         };
         self.tab_cycle.step = Some(step);
-        let id = self.tab_cycle.recent[step];
+        let id = recent[step];
         if let Some(index) = self.workspace.open.iter().position(|b| b.view.id == id) {
             self.select_tab(index);
         }
     }
     /// Ctrl+PageDown / Ctrl+PageUp: the next or previous tab in the tab strip.
     pub(super) fn step_tab(&mut self, forward: bool) {
-        let count = self.workspace.open.len();
-        let active = self.workspace.active;
-        self.select_tab(if forward {
-            (active + 1) % count
-        } else {
-            (active + count - 1) % count
-        });
+        self.sync_groups();
+        let ids = self.group_tab_ids(self.panes.focused);
+        if ids.is_empty() {
+            return;
+        }
+        let active = ids
+            .iter()
+            .position(|id| *id == self.active().view.id)
+            .unwrap_or(0);
+        self.select_tab_position((active + if forward { 1 } else { ids.len() - 1 }) % ids.len());
+    }
+    pub(super) fn select_tab_position(&mut self, position: usize) {
+        self.sync_groups();
+        if let Some(id) = self.group_tab_ids(self.panes.focused).get(position) {
+            if let Some(index) = self.workspace.open.iter().position(|b| b.view.id == *id) {
+                self.select_tab(index);
+            }
+        }
     }
     pub(super) fn tab_shortcuts(&mut self, ctx: &egui::Context) {
         // Control+Tab on every platform, as Cmd+Tab switches applications on macOS.
