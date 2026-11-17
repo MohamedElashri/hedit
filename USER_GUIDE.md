@@ -754,3 +754,14 @@ asks before discarding. Empty groups close automatically. Reducing the layout
 merges remaining tabs, and recovery retains their documents and view metadata.
 Git reviews use a reusable tab in one group while other groups remain editable.
 Paged files share the currently loaded page across their groups.
+
+### Breadcrumbs and Outline
+
+**View → Editor → Show breadcrumbs** displays the file location above each
+group. Click a segment to reveal it in an open folder’s Files tree; hover for
+the full path. SSH breadcrumbs include the host and relative file path.
+**Show Outline** opens a filterable list of functions and types for the active
+file. Click a symbol to navigate; Escape in its filter returns typing to the
+editor. Outline is off by default, scans only while visible, and shows up to
+500 symbols for files up to 2 MiB. Use Go to symbol for larger files. Both
+visibility preferences are also available in Settings → General.

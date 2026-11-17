@@ -19,6 +19,7 @@ mod counterpart_tests;
 #[cfg(test)]
 mod cursor_tests;
 mod definitions;
+mod document_navigation;
 mod edit_actions;
 #[cfg(test)]
 mod editing_tests;
@@ -321,6 +322,7 @@ pub struct HeditApp {
     ime_composing: bool,
     key_filter: String,
     panes: panes::Panes,
+    document_navigation: document_navigation::State,
     rectangle_start: Option<(usize, usize)>,
     extra_layouts: [editor_layout::LayoutCache; panes::MAX_GROUPS - 1],
     projections: [editor_layout::ProjectionCache; panes::MAX_GROUPS],
@@ -526,6 +528,7 @@ impl HeditApp {
             key_filter: String::new(),
             rectangle_start: None,
             panes,
+            document_navigation: Default::default(),
             extra_layouts: Default::default(),
             projections: Default::default(),
             distraction_free: false,

@@ -359,3 +359,12 @@ reduction merges unique references. Restored legacy layouts place existing tabs
 in the first group. Pending reads capture stable group identity as part of their
 focus guard, and background results attach without redirecting input. Tab strips
 reuse derived global title/location geometry and paint only visible tabs.
+
+### Document navigation
+
+`app/document_navigation.rs` derives breadcrumbs from paths without filesystem
+queries and retains at most four groups of metadata. The optional Outline reuses
+the revision/path-checked native symbol cache. It requests no work while hidden,
+skips paged and >2 MiB snapshots, uses a worker above 64 KiB and virtualizes up to
+500 result rows. It starts no language server. Outline filter focus follows the
+same Escape handoff as persistent Search.

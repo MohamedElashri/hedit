@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add file-location breadcrumbs for editor groups and an optional on-demand Outline, with bounded symbol lists and no scans while hidden.
+
 - Give editor groups independent tab strips, order and cursor state while sharing documents, undo and recovery; move tabs between groups and keep Git reviews in their group.
 
 - Show Git action confirmations from the persistent sidebar even when a document is active.

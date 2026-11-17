@@ -200,6 +200,9 @@ impl HeditApp {
         let Some(path) = self.active().page.info.path.clone() else {
             return;
         };
+        self.reveal_path_in_sidebar(path);
+    }
+    pub(super) fn reveal_path_in_sidebar(&mut self, path: String) {
         let file = std::path::Path::new(&path);
         let Some(root) = self
             .workspace
