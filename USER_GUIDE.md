@@ -867,3 +867,20 @@ VS Code preset move from the terminal to an editor group. Sidebar focus leaves
 the panel and active document intact. Focusing a terminal shows its existing
 session, or starts one when explicitly requested and enabled. A disabled terminal
 never starts when restoring the last panel; Problems is shown instead.
+
+### Notifications and progress
+
+Use Notifications in the status bar, View → Panel, or the command palette to
+review recent messages. Messages do not take keyboard focus. The window keeps
+up to 128 entries and 256 KiB of history, combines consecutive repeated messages,
+and shows unread counts. Dismiss individual entries or clear the history; this
+does not dismiss recovery errors or cancel running work. History lasts for the
+current window and is not written to disk.
+
+Failed saves provide Retry save when the original document is still open at the
+same path. Save As retries ask for a destination again. Build completions link to
+Output; language and Git failures link to their existing management/log views.
+Progress controls can cancel builds, folder searches and language-server work
+cooperatively. Cancelling server work clears stale diagnostics and stops owned
+servers; Refresh in Language servers resumes them. Generic file-writing jobs
+are not cancelled by notification controls.

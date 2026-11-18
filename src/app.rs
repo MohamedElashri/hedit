@@ -68,6 +68,7 @@ mod markup_selection;
 mod markup_selection_tests;
 mod minimap;
 mod native_perf;
+mod notifications;
 mod opening;
 #[cfg(test)]
 mod overlay_tests;
@@ -266,6 +267,7 @@ pub struct HeditApp {
     waits: Vec<wait::Wait>,
     build: build_panel::BuildState,
     panel_state: workbench_panel::State,
+    notifications: notifications::State,
     terminal: terminal_panel::TerminalState,
     /// The first key of a shortcut being recorded, and when it was pressed.
     capture_first: Option<(String, Instant)>,
@@ -495,6 +497,7 @@ impl HeditApp {
             waits: Vec::new(),
             build: Default::default(),
             panel_state: Default::default(),
+            notifications: Default::default(),
             terminal: Default::default(),
             capture_first: None,
             chord: None,
@@ -1001,10 +1004,20 @@ impl HeditApp {
         let Some(index) = self.workspace.open.iter().position(|b| b.view.id == id) else {
             return;
         };
+        let retry = notifications::Action::RetrySave {
+            view: id,
+            path: self.workspace.open[index].page.info.path.clone(),
+            save_as: target.is_some(),
+        };
         self.workspace.active = index;
         if !self.format_before_save_for(target.as_deref()) {
+            if let Some(error) = self.error.clone() {
+                self.notifications.seen_error_record(&error);
+                self.notify(notifications::Kind::Error, error, Some(retry));
+            }
             return;
         }
+        self.notifications.pending_save = Some(retry);
         let editor = Arc::clone(&self.workspace.editor);
         self.job(ctx, move || {
             let info = editor
@@ -1364,6 +1377,7 @@ impl HeditApp {
                     }
                 }
                 Ok(Action::SaveCancelled) => {
+                    self.notifications.pending_save = None;
                     // Cancel a pending tab closure, but let an app shutdown
                     // preserve the unsaved buffer through session recovery.
                     if self.close_flow.is_some() {
@@ -1389,6 +1403,12 @@ impl HeditApp {
                     self.changed();
                 }
                 Ok(Action::Saved(id, info)) => {
+                    self.notifications.pending_save = None;
+                    self.notify(
+                        notifications::Kind::Success,
+                        format!("Saved {}.", info.name),
+                        None,
+                    );
                     // Compare resolved paths: the config folder may be reached
                     // through a symlink, such as /var → /private/var on macOS.
                     let resolve = |p: PathBuf| std::fs::canonicalize(&p).unwrap_or(p);
@@ -1496,6 +1516,13 @@ impl HeditApp {
                     self.notice = error;
                 }
                 Err(error) => {
+                    let action = if !side {
+                        self.notifications.pending_save.take()
+                    } else {
+                        None
+                    };
+                    self.notifications.seen_error_record(&error);
+                    self.notify(notifications::Kind::Error, error.clone(), action);
                     if self.quality.incoming.is_some() {
                         self.quality.incoming_error = Some(error.clone());
                     }
@@ -3911,6 +3938,7 @@ impl eframe::App for HeditApp {
         self.record_copies(ctx);
         self.close_dialog(ctx);
         self.terminal_onboarding(ctx);
+        self.notification_center(ctx);
         let paths: Vec<_> = ctx.input(|i| {
             i.raw
                 .dropped_files
@@ -4058,6 +4086,7 @@ mod tests {
             app.quality_windows(ctx);
             app.record_copies(ctx);
             app.close_dialog(ctx);
+            app.notification_center(ctx);
         });
         assert!(!output.shapes.is_empty());
         output

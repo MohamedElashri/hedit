@@ -3,6 +3,7 @@ use super::*;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum Command {
+    Notifications,
     FocusExplorer,
     FocusEditor,
     FocusSearch,
@@ -267,6 +268,7 @@ impl Command {
         )
     }
     pub(super) const ALL: &'static [Self] = &[
+        Self::Notifications,
         Self::FocusExplorer,
         Self::FocusEditor,
         Self::FocusSearch,
@@ -582,6 +584,7 @@ impl Command {
             Self::FocusTerminal => "Focus terminal",
             Self::TogglePanel => "Toggle last used panel",
             Self::MaximizePanel => "Maximize or restore panel",
+            Self::Notifications => "Toggle notification history",
             Self::FocusExplorer => "Focus Explorer",
             Self::ExplorerNewFile => "Explorer: new file…",
             Self::ExplorerNewFolder => "Explorer: new folder…",
@@ -1410,6 +1413,7 @@ impl HeditApp {
             if !matches!(
                 command,
                 Command::SourceControl
+                    | Command::Notifications
                     | Command::FocusExplorer
                     | Command::FocusEditor
                     | Command::FocusSearch
@@ -1520,6 +1524,7 @@ impl HeditApp {
             Command::NavForward => self.navigate(ctx, true),
             Command::CompareDisk => self.compare_disk(ctx, false),
             Command::GitDiff => self.compare_disk(ctx, true),
+            Command::Notifications => self.toggle_notifications(),
             Command::FocusExplorer => self.focus_explorer(ctx),
             Command::FocusEditor => self.focus_editor_command(ctx),
             Command::FocusSearch => {

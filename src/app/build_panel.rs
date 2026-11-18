@@ -194,11 +194,21 @@ impl HeditApp {
             }
             self.build.output.push_str(&summary);
             let errors = self.build.locations.len();
+            let notification = summary.clone();
             self.build.status = match errors {
                 0 => summary,
                 1 => format!("{summary} · 1 location; F4 jumps to it"),
                 n => format!("{summary} · {n} locations; F4 jumps to the next"),
             };
+            self.notify(
+                match code {
+                    Some(0) => notifications::Kind::Success,
+                    Some(_) => notifications::Kind::Error,
+                    None => notifications::Kind::Info,
+                },
+                notification,
+                Some(notifications::Action::Output),
+            );
         }
     }
     /// Jump to the next (or previous) location in the build output.

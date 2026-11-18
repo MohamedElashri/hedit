@@ -189,6 +189,7 @@ impl Scene {
                 self.app.buffer_tools(ctx);
                 self.app.close_dialog(ctx);
                 self.app.language_information(ctx);
+                self.app.notification_center(ctx);
             },
         );
         for (id, delta) in &output.textures_delta.set {
@@ -765,5 +766,43 @@ fn export_refactor_previews() {
         );
         scene.settle();
         scene.save(&output, if light { "review-light" } else { "review-dark" });
+    }
+}
+
+#[test]
+#[ignore = "exports native notification history"]
+fn export_notification_previews() {
+    let output = PathBuf::from(std::env::var_os("HEDIT_PREVIEW_DIR").unwrap());
+    std::fs::create_dir_all(&output).unwrap();
+    for light in [false, true] {
+        let mut scene = Scene::new(light);
+        scene.settle();
+        let id = scene.app.active().view.id;
+        let path = scene.app.active().page.info.path.clone();
+        scene.app.notify(
+            notifications::Kind::Success,
+            "Build finished successfully in 1.3s.".into(),
+            Some(notifications::Action::Output),
+        );
+        scene.app.notify(
+            notifications::Kind::Error,
+            "Could not save main.rs: the file changed on disk. Your editor changes are preserved."
+                .into(),
+            Some(notifications::Action::RetrySave {
+                view: id,
+                path,
+                save_as: false,
+            }),
+        );
+        scene.app.toggle_notifications();
+        scene.settle();
+        scene.save(
+            &output,
+            if light {
+                "notifications-light"
+            } else {
+                "notifications-dark"
+            },
+        );
     }
 }

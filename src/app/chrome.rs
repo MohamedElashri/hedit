@@ -35,6 +35,7 @@ fn menu_item(ui: &mut egui::Ui, app: &HeditApp, command: Command) -> bool {
 }
 impl HeditApp {
     pub(super) fn chrome(&mut self, ctx: &egui::Context) {
+        self.observe_notifications();
         self.sync_groups();
         self.sync_review_group();
         self.apply_workbench_style(ctx);
@@ -655,6 +656,15 @@ impl HeditApp {
                                         .size((font - 1.0).max(10.0))
                                         .color(theme.accent.color()),
                                 );
+                            }
+                            if ui
+                                .small_button(format!(
+                                    "Notifications {}",
+                                    self.notifications.unread()
+                                ))
+                                .clicked()
+                            {
+                                self.toggle_notifications();
                             }
                             if self.busy {
                                 ui.spinner();
@@ -1352,6 +1362,7 @@ impl HeditApp {
             self,
             "Panel",
             &[
+                Command::Notifications,
                 Command::TogglePanel,
                 Command::MaximizePanel,
                 Command::FocusEditor,
