@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Unify build and language diagnostics with severity, source, text and current-file filters, grouping, counts and diagnostic navigation.
+
 - Add Explorer keyboard navigation, inline create/rename with preserved error drafts, active-file reveal, optional compact folders, and cached Git/diagnostic badges.
 
 - Refresh local workspace folders and filename indexes through bounded, debounced native filesystem watches; keep unsaved file conflicts intact and prevent background reloads from changing the selected document.

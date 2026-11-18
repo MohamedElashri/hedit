@@ -88,7 +88,6 @@ impl HeditApp {
                 match panel {
                     Panel::Output => self.build_contents(ui),
                     Panel::Problems => {
-                        self.build_problem_contents(ui);
                         self.problems_contents(ui);
                     }
                     Panel::Terminal => self.terminal_contents(ui),
@@ -107,55 +106,6 @@ impl HeditApp {
         }
         if !self.terminal.open {
             ctx.memory_mut(|m| m.surrender_focus(terminal_panel::input_id()));
-        }
-    }
-
-    fn build_problem_contents(&mut self, ui: &mut egui::Ui) {
-        if self.build.locations.is_empty() {
-            return;
-        }
-        let mut jump = None;
-        ui.strong(format!(
-            "Build · {} {}",
-            self.build.locations.len(),
-            if self.build.locations.len() == 1 {
-                "result"
-            } else {
-                "results"
-            }
-        ));
-        egui::ScrollArea::vertical()
-            .id_salt("build-problems")
-            .max_height((ui.available_height() * 0.45).max(30.0))
-            .show_rows(
-                ui,
-                ui.text_style_height(&egui::TextStyle::Body),
-                self.build.locations.len(),
-                |ui, range| {
-                    for index in range {
-                        let location = &self.build.locations[index];
-                        if ui
-                            .selectable_label(
-                                self.build.current == Some(index),
-                                format!(
-                                    "{}:{} · {}",
-                                    location.file.display(),
-                                    location.line,
-                                    location.message
-                                ),
-                            )
-                            .on_hover_text(location.file.display().to_string())
-                            .clicked()
-                        {
-                            jump = Some(index);
-                        }
-                    }
-                },
-            );
-        if let Some(index) = jump {
-            // Keep Problems selected when following a build diagnostic.
-            self.go_to_location(index);
-            self.set_panel(Panel::Problems);
         }
     }
 }

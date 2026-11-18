@@ -817,3 +817,17 @@ server. Git refresh follows filesystem and Git-metadata events, explicit refresh
 and refocusing; SSH Git badges require execution trust and refresh on focus or
 explicit refresh. Decoration budgets bound large repositories; hover Refresh
 folders for status. Unsaved editor text is independent of disk Git status.
+
+### Filtering Problems
+
+The Problems panel combines build results and language-server diagnostics in one
+list. Filter by message, filename or source, select a severity or source, and use
+Current file to follow the active editor. Group by file adds location headers.
+Counts show the filtered total and overall severity totals. Build messages with
+no explicit error or warning prefix appear as information.
+
+Next diagnostic and Previous diagnostic follow the current filters and wrap at
+the ends. The optional VS Code shortcut preset binds them to F8 and Shift+F8.
+These commands preserve the Problems panel and reject stale language positions.
+Explorer diagnostic badges include build results as well as language diagnostics.
+The combined catalogue is limited to 10,000 entries and 8 MiB.

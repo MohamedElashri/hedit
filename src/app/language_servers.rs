@@ -41,12 +41,8 @@ enum Intent {
     Sync,
     Feature(Guard),
 }
-struct ProblemRow {
-    path: PathBuf,
-    encoding: Encoding,
-    position: text::Position,
-    label: String,
-}
+mod problems;
+use problems::ProblemRow;
 
 struct Diagnostics {
     server: String,
@@ -66,7 +62,9 @@ pub(super) struct LanguageServers {
     observed: Option<(Vec<Snapshot>, Instant)>,
     diagnostics: BTreeMap<PathBuf, Vec<Diagnostics>>,
     pub(super) problems: bool,
-    problem_rows: Option<Vec<ProblemRow>>,
+    problem_rows: Option<Arc<Vec<ProblemRow>>>,
+    problem_build_key: (u64, usize),
+    problems_ui: problems::State,
     explorer_badges: Option<Arc<BTreeMap<PathBuf, (usize, u8)>>>,
     pub(super) info: Option<String>,
     filter: String,
@@ -1194,123 +1192,6 @@ impl HeditApp {
             if !open {
                 self.languages.info = None;
                 self.focus_editor = true;
-            }
-        }
-    }
-    pub(super) fn explorer_diagnostic_badges(&mut self) -> Arc<BTreeMap<PathBuf, (usize, u8)>> {
-        if self.languages.explorer_badges.is_none() {
-            let mut badges = BTreeMap::<PathBuf, (usize, u8)>::new();
-            for (path, sources) in &self.languages.diagnostics {
-                let mut count = 0usize;
-                let mut severity = 4u8;
-                for item in sources.iter().flat_map(|s| &s.items) {
-                    if !["start", "end"].iter().all(|position| {
-                        ["line", "character"].iter().all(|field| {
-                            item["range"][position][field]
-                                .as_u64()
-                                .is_some_and(|n| n <= u64::from(u32::MAX))
-                        })
-                    }) {
-                        continue;
-                    }
-                    count += 1;
-                    severity = severity.min(
-                        item["severity"]
-                            .as_u64()
-                            .filter(|n| (1..=4).contains(n))
-                            .unwrap_or(3) as u8,
-                    );
-                }
-                if count == 0 {
-                    continue;
-                }
-                for parent in path.ancestors().take(32) {
-                    let value = badges.entry(parent.to_owned()).or_insert((0, severity));
-                    value.0 = value.0.saturating_add(count);
-                    value.1 = value.1.min(severity);
-                }
-            }
-            self.languages.explorer_badges = Some(Arc::new(badges));
-        }
-        self.languages.explorer_badges.as_ref().unwrap().clone()
-    }
-    pub(super) fn problems_contents(&mut self, ui: &mut egui::Ui) {
-        if self.languages.problem_rows.is_none() {
-            let mut rows = Vec::new();
-            for (path, sources) in &self.languages.diagnostics {
-                for diagnostics in sources {
-                    for item in &diagnostics.items {
-                        let Ok(range) =
-                            serde_json::from_value::<text::Range>(item["range"].clone())
-                        else {
-                            continue;
-                        };
-                        let severity = match item["severity"].as_u64() {
-                            Some(1) => "Error",
-                            Some(2) => "Warning",
-                            _ => "Info",
-                        };
-                        rows.push(ProblemRow {
-                            path: path.clone(),
-                            encoding: diagnostics.encoding,
-                            position: range.start,
-                            label: format!(
-                                "{severity} · {} · {}:{} · {}",
-                                diagnostics.server,
-                                path.file_name().unwrap_or_default().to_string_lossy(),
-                                u64::from(range.start.line) + 1,
-                                item["message"]
-                                    .as_str()
-                                    .unwrap_or("")
-                                    .chars()
-                                    .take(500)
-                                    .collect::<String>()
-                            ),
-                        });
-                    }
-                }
-            }
-            self.languages.problem_rows = Some(rows);
-        }
-        let rows = self.languages.problem_rows.as_ref().unwrap();
-        let mut jump = None;
-        if rows.is_empty() {
-            ui.weak("No language-server diagnostics for open files.");
-        }
-        egui::ScrollArea::vertical()
-            .id_salt("language-problems")
-            .show_rows(
-                ui,
-                ui.text_style_height(&egui::TextStyle::Body),
-                rows.len(),
-                |ui, range| {
-                    for index in range {
-                        let row = &rows[index];
-                        if ui
-                            .selectable_label(false, &row.label)
-                            .on_hover_text(row.path.display().to_string())
-                            .clicked()
-                        {
-                            jump = Some((row.path.clone(), row.encoding, row.position));
-                        }
-                    }
-                },
-            );
-
-        if let Some((path, encoding, position)) = jump {
-            if let Some(index) = self.workspace.open.iter().position(|b| {
-                b.page
-                    .info
-                    .path
-                    .as_ref()
-                    .is_some_and(|p| Path::new(p) == path)
-            }) {
-                let text = &self.workspace.open[index].page.text;
-                if let Ok(byte) = encoding.byte(text, position) {
-                    let scalar = text[..byte].chars().count();
-                    self.select_tab(index);
-                    self.set_selections(vec![hedit::advanced::Selection::caret(scalar)]);
-                }
             }
         }
     }
