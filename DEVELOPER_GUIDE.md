@@ -452,3 +452,15 @@ panel releases shell input without destroying sessions. Only explicit workbench
 focus/toggle bindings cross the terminal input boundary; editor editing commands
 remain shell input. Focusing the already selected group still returns keyboard
 focus from the terminal.
+
+### Notification history
+
+`app/notifications.rs` stores at most 128 entries and 256 KiB per window, with
+message length caps and consecutive deduplication. Passive observation records
+errors/notices without reopening windows or requesting focus. Typed save retry
+actions retain the buffer ID, source path and Save As mode. Build completions
+and existing error sources link to their corresponding output views. Clearing
+history never clears recovery errors. Cancellation controls target only build,
+folder-search and language-worker cancellation tokens; they do not abort generic
+file-writing jobs. Language cancellation blocks automatic restart until Refresh
+and clears all diagnostics and result caches from the stopped worker.

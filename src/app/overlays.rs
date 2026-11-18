@@ -26,12 +26,13 @@ pub(super) enum Overlay {
     About,
     Updates,
     Preferences,
+    Notifications,
     LanguageInfo,
     Find,
     Build,
 }
 impl Overlay {
-    const ALL: [Self; 24] = [
+    const ALL: [Self; 25] = [
         Self::GitPrompt,
         Self::UserGuide,
         Self::Palette,
@@ -52,6 +53,7 @@ impl Overlay {
         Self::Settings,
         Self::About,
         Self::Updates,
+        Self::Notifications,
         Self::LanguageInfo,
         Self::Preferences,
         Self::Find,
@@ -95,6 +97,7 @@ impl HeditApp {
             Overlay::About => self.about_open,
             Overlay::Updates => self.updates.open,
             Overlay::Preferences => self.preferences_open,
+            Overlay::Notifications => self.notifications.open,
             Overlay::LanguageInfo => {
                 self.languages.info.is_some() || self.languages.refactor.visible()
             }
@@ -128,6 +131,7 @@ impl HeditApp {
             Overlay::Settings => self.quality.settings_open = false,
             Overlay::About => self.about_open = false,
             Overlay::Updates => self.updates.open = false,
+            Overlay::Notifications => self.notifications.open = false,
             Overlay::LanguageInfo => {
                 self.languages.info = None;
                 self.languages.refactor = Default::default();

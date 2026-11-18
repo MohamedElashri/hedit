@@ -197,6 +197,15 @@ impl LanguageServers {
         self.pending.insert(self.next, intent);
         Ok(())
     }
+    pub(super) fn notification_error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+    pub(super) fn notification_progress(&self) -> &str {
+        &self.progress
+    }
+    pub(super) fn notification_working(&self) -> bool {
+        !self.progress.is_empty() || self.managing()
+    }
     fn managing(&self) -> bool {
         self.pending.values().any(|i| {
             matches!(
@@ -892,9 +901,7 @@ impl HeditApp {
                 ui.spinner();
                 ui.label(&self.languages.progress);
                 if ui.small_button("Cancel").clicked() {
-                    self.languages.service = None;
-                    self.languages.pending.clear();
-                    self.languages.progress.clear();
+                    self.cancel_language_work();
                 }
             });
         }
@@ -1251,6 +1258,18 @@ impl HeditApp {
     pub(super) fn reset_language_completion(&mut self) {
         self.languages.last_completion = None;
     }
+    pub(super) fn cancel_language_work(&mut self) {
+        self.languages.service = None;
+        self.languages.pending.clear();
+        self.languages.progress.clear();
+        self.languages.snapshots.clear();
+        self.languages.statuses.clear();
+        self.languages.diagnostics.clear();
+        self.languages.problem_rows = None;
+        self.languages.explorer_badges = None;
+        self.languages.blocked = true;
+        self.languages.listed = false;
+    }
     pub(super) fn cancel_language_requests(&mut self) {
         self.languages
             .pending
@@ -1402,6 +1421,19 @@ mod tests {
             );
             thread::sleep(Duration::from_millis(5));
         }
+    }
+    #[test]
+    fn cancelling_server_work_clears_stale_diagnostics_and_stays_stopped_until_refresh() {
+        let (_dir, ctx, mut app) = app();
+        assert!(app.languages.service.is_some());
+        assert!(!app.languages.diagnostics.is_empty());
+        app.cancel_language_work();
+        app.poll_language_servers(&ctx);
+        assert!(app.languages.service.is_none());
+        assert!(app.languages.pending.is_empty());
+        assert!(app.languages.diagnostics.is_empty());
+        assert!(app.languages.blocked);
+        assert!(app.explorer_diagnostic_badges().is_empty());
     }
     #[test]
     fn language_formatting_uses_normal_undo_and_recovery() {

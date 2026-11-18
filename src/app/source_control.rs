@@ -105,6 +105,14 @@ pub(super) struct SourceControl {
     tx: Sender<Option<Reply>>,
     rx: Receiver<Option<Reply>>,
 }
+impl SourceControl {
+    pub(super) fn notification_error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+    pub(super) fn open_notification_output(&mut self) {
+        self.output_open = true;
+    }
+}
 impl Default for SourceControl {
     fn default() -> Self {
         let (tx, rx) = mpsc::channel();
