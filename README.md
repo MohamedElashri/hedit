@@ -70,6 +70,9 @@ printf 'keep this note\n' | hedit -
 
 ## Features
 
+Check the [release notes](CHANGELOG.md) for feature availability in stable downloads.
+Improvements awaiting a release can be tried by [building from source](DEVELOPER_GUIDE.md).
+
 - **Resume unfinished work.** Restore tabs, unsaved notes, and undo history;
   recover closed notes from Closed Files. Checkpoints run every few seconds,
   so save important work. [Recovery details](USER_GUIDE.md#recovery).
@@ -77,6 +80,10 @@ printf 'keep this note\n' | hedit -
   and run builds or shells with explicit execution trust. Remote document content
   stays out of Hedit's local recovery. SSH is experimental and requires a matching
   host helper. [Setup, privacy, and limits](USER_GUIDE.md#ssh-remote-workspaces).
+- **Arrange your workspace.** Keep independent editor groups beside persistent
+  Explorer, Search and Source Control sidebars. Use one resizable panel for
+  Problems, Output and Terminal, file breadcrumbs and an optional Outline.
+  [Layout controls](USER_GUIDE.md#views-and-layout).
 - **Keep code and technical notes together.** Stage Git changes by file, hunk, or
   line. Write Markdown beside a synchronized preview with local images, LaTeX
   equations, and Mermaid diagrams. [Git](USER_GUIDE.md#source-control) ·
@@ -93,7 +100,8 @@ Choose UI fonts and density independently of editor and terminal typography.
 Language servers can be installed, configured, restarted, and removed in
 **Settings → Language Servers**. Managed Rust, C/C++, Python, Lua and TOML servers
 and external-server presets provide completion, diagnostics, navigation, hover information, and
-formatting for local or trusted SSH workspaces.
+formatting for local or trusted SSH workspaces. Review symbol renames and quick
+fixes before applying undoable edits across files.
 [Setup and supported features](USER_GUIDE.md#language-servers). Terminal fonts and
 colors can optionally be customized separately from the app.
 
