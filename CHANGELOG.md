@@ -1,44 +1,30 @@
 # Changelog
 
-## Unreleased
+## [0.6.0] - 2026-11-18
 
-- Refresh Explorer Git badges for branch-reference changes and shared metadata in linked worktrees without requiring file edits or refocus.
+### Added
 
-- Allow reviewed language-server text edits in named buffers before their first save while retaining project-root and symlink guards.
-
-- Add bounded notification history with guarded save retries, output/log actions, progress and cooperative cancellation for builds, searches and language-server work.
-
-- Remember the last used panel, add maximize/restore and explicit editor, Explorer, Search and terminal focus controls.
-
+- Give editor groups independent tabs, ordering and cursor state while sharing documents, undo and recovery. Move tabs between groups and keep Git reviews in their group.
+- Keep Search and Source Control in persistent sidebars. Share a resizable bottom panel across Problems, Output and Terminal, remember its last view, and add maximize/restore and explicit focus controls.
+- Add Explorer keyboard navigation, inline create/rename, active-file reveal, optional compact folders, and cached Git and diagnostic badges.
+- Refresh local workspace folders and filename indexes through bounded, debounced native filesystem watches while preserving unsaved file conflicts and the selected document.
 - Add reviewed, version-checked language-server symbol rename and quick fixes with undoable cross-file text edits.
+- Combine build and language diagnostics in Problems, with severity, source, text and current-file filters, grouping, counts and navigation.
+- Add bounded notification history, guarded save retries, output/log actions, progress and cooperative cancellation for builds, searches and language-server work.
+- Add file-location breadcrumbs and an optional, bounded Outline that does no scanning while hidden.
+- Add an optional VS Code shortcut preset with personal-binding priority, shared command hints, conflict suppression and focus-aware chord routing.
 
-- Unify build and language diagnostics with severity, source, text and current-file filters, grouping, counts and diagnostic navigation.
+### Changed
 
-- Add Explorer keyboard navigation, inline create/rename with preserved error drafts, active-file reveal, optional compact folders, and cached Git/diagnostic badges.
+- Add independent workbench font, size and density controls, one embedded icon family, consistent toolbar actions, an optional activity bar, flatter tabs and restrained dark/light palettes. Preserve customized themes and editor, terminal and document typography.
+- Bring User and Project settings into one window with preserved drafts, responsive search, aligned rows, keyboard category navigation, an installed UI-font chooser and an on-demand formatting-source inspector. Protect project saves against concurrent disk or editor changes.
+- Update SVG rendering, file-encoding and workspace-ignore dependencies.
 
-- Refresh local workspace folders and filename indexes through bounded, debounced native filesystem watches; keep unsaved file conflicts intact and prevent background reloads from changing the selected document.
+### Fixed
 
-- Add an optional VS Code shortcut preset with personal-binding priority, shared command hints, conflict suppression and focus-aware chord routing; clarify group file-tab actions and panel labels.
-
-- Bring User and Project settings into one window with preserved drafts and an on-demand formatting-source inspector; protect project saves against concurrent disk or editor changes.
-
-- Add file-location breadcrumbs for editor groups and an optional on-demand Outline, with bounded symbol lists and no scans while hidden.
-
-- Give editor groups independent tab strips, order and cursor state while sharing documents, undo and recovery; move tabs between groups and keep Git reviews in their group.
-
-- Show Git action confirmations from the persistent sidebar even when a document is active.
-
-- Share one resizable bottom panel across Problems, Output and Terminal, preserving hidden builds, diagnostics and shell sessions.
-
-- Keep Search and Source Control in persistent sidebars beside the editor, with independent search inputs, reusable Git review tabs and cached result grouping.
-
-- Refine Settings with responsive search and category sizing, flat aligned rows, keyboard category navigation, and a searchable installed UI-font chooser.
-
-- Add an optional activity bar, flatter tabs, restrained dark and light workbench palettes, and responsive status and terminal headers. Preserve customized themes.
-
-- Use one embedded, font-independent icon family and consistent toolbar actions across file tabs, sidebars, trees and terminals, with readable primary actions and keyboard focus.
-
-- Add independent workbench font, size and density controls with shared tab, tree and button metrics, while preserving editor, terminal and document typography.
+- Show Git action confirmations from the persistent sidebar when a document is active.
+- Allow reviewed language-server text edits in named buffers before their first save while retaining project-root and symlink guards.
+- Refresh Explorer Git badges after branch-reference changes and shared metadata changes in linked worktrees without requiring file edits or refocus.
 
 ## [0.5.3] - 2026-11-17
 
