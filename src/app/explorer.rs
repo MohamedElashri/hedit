@@ -362,6 +362,7 @@ impl HeditApp {
             return false;
         }
         // Global shortcuts and explicitly configured bindings keep priority in coalesced input.
+        let personal_rename = self.personally_bound(Command::LanguageRename);
         let configured = self.configured_bindings();
         let claimed = ctx.input(|i| {
             i.events.iter().any(|event| {
@@ -377,14 +378,20 @@ impl HeditApp {
                 modifiers.command
                     || modifiers.ctrl
                     || modifiers.alt
-                    || configured.iter().filter(|b| !b.editor_only).any(|b| {
-                        chords::parse(&b.shortcut)
-                            .ok()
-                            .and_then(|k| k.first().copied())
-                            .is_some_and(|s| {
-                                s.logical_key == *key && modifiers.matches_exact(s.modifiers)
-                            })
-                    })
+                    || configured
+                        .iter()
+                        .filter(|b| {
+                            !b.editor_only
+                                && (b.command != Command::LanguageRename || personal_rename)
+                        })
+                        .any(|b| {
+                            chords::parse(&b.shortcut)
+                                .ok()
+                                .and_then(|k| k.first().copied())
+                                .is_some_and(|s| {
+                                    s.logical_key == *key && modifiers.matches_exact(s.modifiers)
+                                })
+                        })
             })
         });
         drop(configured);

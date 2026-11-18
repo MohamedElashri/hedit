@@ -42,6 +42,7 @@ enum Intent {
     Feature(Guard),
 }
 mod problems;
+pub(super) mod refactor;
 use problems::ProblemRow;
 
 struct Diagnostics {
@@ -65,6 +66,7 @@ pub(super) struct LanguageServers {
     problem_rows: Option<Arc<Vec<ProblemRow>>>,
     problem_build_key: (u64, usize),
     problems_ui: problems::State,
+    pub(super) refactor: refactor::State,
     explorer_badges: Option<Arc<BTreeMap<PathBuf, (usize, u8)>>>,
     pub(super) info: Option<String>,
     filter: String,
@@ -659,13 +661,25 @@ impl HeditApp {
             root: self.language_root(&path),
             feature,
         };
-        let operation = Operation::Request {
-            path,
-            revision: guard.revision,
-            scalar: guard.head,
-            feature,
-            tab_size: guard.formatting_options.0,
-            spaces: guard.formatting_options.1,
+        let operation = if feature == Feature::Rename {
+            let Some(name) = self.languages.refactor.name.take() else {
+                return false;
+            };
+            Operation::Rename {
+                path,
+                revision: guard.revision,
+                scalar: guard.head,
+                name,
+            }
+        } else {
+            Operation::Request {
+                path,
+                revision: guard.revision,
+                scalar: guard.head,
+                feature,
+                tab_size: guard.formatting_options.0,
+                spaces: guard.formatting_options.1,
+            }
         };
         self.languages
             .send(operation, Intent::Feature(guard))
@@ -717,6 +731,14 @@ impl HeditApp {
                     self.close_transient(ctx);
                     self.languages.info = Some(content.chars().take(32_768).collect());
                 }
+            }
+            Feature::Rename => {
+                let preview = serde_json::from_value(reply.value).map_err(|e| e.to_string())?;
+                self.review_refactor(ctx, "Rename symbol".into(), preview);
+            }
+            Feature::QuickFixes => {
+                let fixes = serde_json::from_value(reply.value).map_err(|e| e.to_string())?;
+                self.show_quick_fixes(ctx, fixes);
             }
             Feature::Formatting => {
                 let edits: Vec<TextEdit> = serde_json::from_value(if reply.value.is_null() {
@@ -1126,6 +1148,7 @@ impl HeditApp {
                 ui.horizontal_wrapped(|ui| {
                     ui.checkbox(&mut features.completion, "Completion"); ui.checkbox(&mut features.hover, "Hover");
                     ui.checkbox(&mut features.definition, "Definition"); ui.checkbox(&mut features.references, "References");
+                    ui.checkbox(&mut features.rename, "Rename"); ui.checkbox(&mut features.quick_fixes, "Quick fixes");
                     ui.checkbox(&mut features.formatting, "Formatting"); ui.checkbox(&mut features.diagnostics, "Diagnostics");
                 });
                 if editor.executable.trim().is_empty() { ui.checkbox(&mut editor.override_arguments, "Override default launch arguments"); }
@@ -1177,6 +1200,7 @@ impl HeditApp {
         }
     }
     pub(super) fn language_information(&mut self, ctx: &egui::Context) {
+        self.refactor_windows(ctx);
         if let Some(content) = &self.languages.info {
             let mut open = true;
             egui::Window::new("Language information")
@@ -1318,7 +1342,7 @@ impl HeditApp {
 mod tests {
     use super::super::tests::{finish_app_job, frame, frame_size};
     use super::*;
-    fn app() -> (tempfile::TempDir, egui::Context, HeditApp) {
+    pub(super) fn app() -> (tempfile::TempDir, egui::Context, HeditApp) {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
         let (workspace, _) = Workspace::restore(root.join("session")).unwrap();
@@ -1364,7 +1388,7 @@ mod tests {
         frame(&ctx, &mut app, vec![]);
         (dir, ctx, app)
     }
-    fn pump(ctx: &egui::Context, app: &mut HeditApp, done: impl Fn(&HeditApp) -> bool) {
+    pub(super) fn pump(ctx: &egui::Context, app: &mut HeditApp, done: impl Fn(&HeditApp) -> bool) {
         let start = Instant::now();
         loop {
             app.poll_language_servers(ctx);

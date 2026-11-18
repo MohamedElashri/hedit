@@ -95,7 +95,9 @@ impl HeditApp {
             Overlay::About => self.about_open,
             Overlay::Updates => self.updates.open,
             Overlay::Preferences => self.preferences_open,
-            Overlay::LanguageInfo => self.languages.info.is_some(),
+            Overlay::LanguageInfo => {
+                self.languages.info.is_some() || self.languages.refactor.visible()
+            }
             Overlay::Find => self.find_open,
             Overlay::Build => self.build.open || self.languages.problems,
         }
@@ -126,7 +128,10 @@ impl HeditApp {
             Overlay::Settings => self.quality.settings_open = false,
             Overlay::About => self.about_open = false,
             Overlay::Updates => self.updates.open = false,
-            Overlay::LanguageInfo => self.languages.info = None,
+            Overlay::LanguageInfo => {
+                self.languages.info = None;
+                self.languages.refactor = Default::default();
+            }
             Overlay::Preferences => {
                 self.preferences_open = false;
                 self.appearance.save_name = None;

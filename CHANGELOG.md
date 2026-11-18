@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add reviewed, version-checked language-server symbol rename and quick fixes with undoable cross-file text edits.
+
 - Unify build and language diagnostics with severity, source, text and current-file filters, grouping, counts and diagnostic navigation.
 
 - Add Explorer keyboard navigation, inline create/rename with preserved error drafts, active-file reveal, optional compact folders, and cached Git/diagnostic badges.

@@ -188,6 +188,7 @@ impl Scene {
                 self.app.preferences(ctx);
                 self.app.buffer_tools(ctx);
                 self.app.close_dialog(ctx);
+                self.app.language_information(ctx);
             },
         );
         for (id, delta) in &output.textures_delta.set {
@@ -735,5 +736,34 @@ fn export_explorer_previews() {
                 "conflict-dark"
             },
         );
+    }
+}
+
+#[test]
+#[ignore = "exports native refactor previews"]
+fn export_refactor_previews() {
+    use hedit::language_server::workspace_edit::{FileEdit, Preview};
+    let output = PathBuf::from(std::env::var_os("HEDIT_PREVIEW_DIR").unwrap());
+    std::fs::create_dir_all(&output).unwrap();
+    for light in [false, true] {
+        let mut scene = Scene::new(light);
+        scene.settle();
+        let path = PathBuf::from(scene.app.active().page.info.path.as_ref().unwrap());
+        let original = scene.app.active().page.text.clone();
+        let updated = original.replace("report", "summary");
+        scene.app.review_refactor(
+            &scene.ctx,
+            "Rename report to summary".into(),
+            Preview {
+                files: vec![FileEdit {
+                    path,
+                    original,
+                    updated,
+                    revision: Some(scene.app.active().page.info.revision),
+                }],
+            },
+        );
+        scene.settle();
+        scene.save(&output, if light { "review-light" } else { "review-dark" });
     }
 }

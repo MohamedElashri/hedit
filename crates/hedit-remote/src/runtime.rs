@@ -530,7 +530,8 @@ impl Runtime {
                             host::open_source(&files.root, &Files::relative(&document.path)?)?;
                         }
                     }
-                    hedit_core::language_server::Operation::Request { path, .. } => {
+                    hedit_core::language_server::Operation::Request { path, .. }
+                    | hedit_core::language_server::Operation::Rename { path, .. } => {
                         host::open_source(&files.root, &Files::relative(path)?)?;
                     }
                     _ => (),
@@ -1012,6 +1013,8 @@ mod tests {
                 ),
                 "{path}"
             );
+            let rename=Request::Language{session:journal.session().into(),epoch,ticket:2,operation:Operation::Rename{path:path.into(),revision:1,scalar:0,name:"renamed".into()}};
+            assert!(matches!(runtime.handle(&mut journal,1,&rename).unwrap(),Err(Error::Permission)),"rename {path}");
         }
         assert!(runtime.languages.is_empty());
     }

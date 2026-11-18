@@ -183,6 +183,8 @@ impl HeditApp {
                                 vec![
                                     Command::LanguageHover,
                                     Command::LanguageFormat,
+                                    Command::LanguageRename,
+                                    Command::LanguageQuickFix,
                                     Command::LanguageProblems,
                                     Command::NextProblem,
                                     Command::PreviousProblem,

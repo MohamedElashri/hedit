@@ -32,6 +32,8 @@ pub enum Feature {
     Definition,
     References,
     Formatting,
+    Rename,
+    QuickFixes,
 }
 impl Feature {
     fn method(self) -> &'static str {
@@ -41,6 +43,8 @@ impl Feature {
             Self::Definition => "textDocument/definition",
             Self::References => "textDocument/references",
             Self::Formatting => "textDocument/formatting",
+            Self::Rename => "textDocument/rename",
+            Self::QuickFixes => "textDocument/codeAction",
         }
     }
     fn capability(self) -> &'static str {
@@ -50,6 +54,8 @@ impl Feature {
             Self::Definition => "definitionProvider",
             Self::References => "referencesProvider",
             Self::Formatting => "documentFormattingProvider",
+            Self::Rename => "renameProvider",
+            Self::QuickFixes => "codeActionProvider",
         }
     }
 }
@@ -80,6 +86,12 @@ pub enum Operation {
         tab_size: u8,
         spaces: bool,
     },
+    Rename {
+        path: PathBuf,
+        revision: u64,
+        scalar: usize,
+        name: String,
+    },
     Restart {
         id: String,
     },
@@ -99,7 +111,7 @@ impl Operation {
                     d.root = map(&d.root)?;
                 }
             }
-            Self::Request { path, .. } => *path = map(path)?,
+            Self::Request { path, .. } | Self::Rename { path, .. } => *path = map(path)?,
             Self::Configure { registration, .. } => {
                 registration.workspaces = std::mem::take(&mut registration.workspaces)
                     .into_iter()
@@ -147,7 +159,14 @@ impl Operation {
             | Self::Remove { id }
             | Self::Stop { id }
             | Self::Restart { id } => Manager::validate_id(id)?,
-            Self::Request { path, scalar, .. } => {
+            Self::Rename { name, .. }
+                if name.trim().is_empty()
+                    || name.len() > 1024
+                    || name.chars().any(char::is_control) =>
+            {
+                return Err("Invalid symbol name.".into());
+            }
+            Self::Request { path, scalar, .. } | Self::Rename { path, scalar, .. } => {
                 if (!path.is_absolute() && !path.to_string_lossy().starts_with("hedit-ssh:"))
                     || *scalar > MAX_DOCUMENT
                 {
@@ -238,7 +257,10 @@ impl Service {
                 match rx.recv_timeout(Duration::from_millis(40)) {
                     Ok(envelope) => {
                         let ticket = envelope.ticket;
-                        let request = matches!(&envelope.operation, Operation::Request { .. });
+                        let request = matches!(
+                            &envelope.operation,
+                            Operation::Request { .. } | Operation::Rename { .. }
+                        );
                         let result = worker.run(envelope.operation, &stop, &emit);
                         let event = if request {
                             Event::Response {
@@ -346,11 +368,22 @@ impl Drop for Service {
         self.cancel();
     }
 }
+struct FeatureRequest {
+    path: PathBuf,
+    revision: u64,
+    scalar: usize,
+    feature: Feature,
+    tab_size: u8,
+    spaces: bool,
+    name: Option<String>,
+}
+
 struct Session {
     client: Client,
     features: manager::Features,
     priority: i16,
     documents: BTreeMap<PathBuf, Document>,
+    diagnostics: BTreeMap<PathBuf, (u64, Vec<Value>)>,
 }
 struct Worker {
     manager: Manager,
@@ -385,6 +418,86 @@ impl Worker {
         }
         self.failed.retain(|(server, _)| server != id);
     }
+    fn request(&mut self, request: FeatureRequest, cancel: &AtomicBool) -> Result<Value, String> {
+        let FeatureRequest {
+            path,
+            revision,
+            scalar,
+            feature,
+            tab_size,
+            spaces,
+            name,
+        } = request;
+        let selected = self
+            .sessions
+            .iter()
+            .filter(|(_, s)| {
+                s.documents.contains_key(&path)
+                    && s.features.enabled(feature)
+                    && s.client.supported(feature.capability())
+            })
+            .min_by(|(ka, a), (kb, b)| b.priority.cmp(&a.priority).then_with(|| ka.cmp(kb)))
+            .map(|(key, _)| key.clone());
+        let Some(session) = selected.and_then(|key| self.sessions.get_mut(&key)) else {
+            return Err("No running language server supports this action.".into());
+        };
+        let document = &session.documents[&path];
+        if document.revision != revision {
+            return Err("The document changed before the LSP request.".into());
+        }
+        let position = session.client.encoding.position(&document.text, scalar)?;
+        let mut params = json!({"textDocument":{"uri":text::uri(&path)?},"position":position});
+        if feature == Feature::References {
+            params["context"] = json!({"includeDeclaration":true});
+        }
+        if feature == Feature::Completion {
+            params["context"] = json!({"triggerKind":1});
+        }
+        if feature == Feature::Formatting {
+            params = json!({"textDocument":{"uri":text::uri(&path)?},"options":{"tabSize":tab_size.clamp(1,8),"insertSpaces":spaces}});
+        }
+        if feature == Feature::Rename {
+            params["newName"] = json!(name.ok_or("Missing symbol name.")?);
+        }
+        if feature == Feature::QuickFixes {
+            params = json!({"textDocument":{"uri":text::uri(&path)?},"range":{"start":position,"end":position},"context":{"diagnostics":session.diagnostics.get(&path).filter(|(r,_)|*r==revision).map(|(_,v)|v.iter().filter(|d|serde_json::from_value::<text::Range>(d["range"].clone()).is_ok_and(|r|(r.start.line,r.start.character)<=(position.line,position.character)&&(position.line,position.character)<=(r.end.line,r.end.character))).cloned().collect::<Vec<_>>()).unwrap_or_default(),"only":["quickfix"],"triggerKind":1}});
+        }
+        let root = document.root.clone();
+        let result =
+            session
+                .client
+                .request(feature.method(), params, cancel, Duration::from_secs(15));
+        let mut value = result?;
+        if matches!(feature, Feature::Definition | Feature::References) {
+            normalize_locations(&mut value, session.client.encoding, &session.documents)?;
+        }
+        if feature == Feature::Rename {
+            value = serde_json::to_value(super::workspace_edit::prepare(
+                value,
+                session.client.encoding,
+                &root,
+                &self.documents,
+            )?)
+            .map_err(super::error)?;
+        } else if feature == Feature::QuickFixes {
+            value = serde_json::to_value(super::workspace_edit::quick_fixes(
+                value,
+                session.client.encoding,
+                &root,
+                &self.documents,
+            )?)
+            .map_err(super::error)?;
+        }
+        serde_json::to_value(Reply {
+            path,
+            revision,
+            encoding: session.client.encoding,
+            feature,
+            value,
+        })
+        .map_err(super::error)
+    }
+
     fn run(
         &mut self,
         op: Operation,
@@ -463,55 +576,35 @@ impl Worker {
                 feature,
                 tab_size,
                 spaces,
-            } => {
-                let selected = self
-                    .sessions
-                    .iter()
-                    .filter(|(_, s)| {
-                        s.documents.contains_key(&path)
-                            && s.features.enabled(feature)
-                            && s.client.supported(feature.capability())
-                    })
-                    .min_by(|(ka, a), (kb, b)| b.priority.cmp(&a.priority).then_with(|| ka.cmp(kb)))
-                    .map(|(key, _)| key.clone());
-                let Some(session) = selected.and_then(|key| self.sessions.get_mut(&key)) else {
-                    return Err("No running language server supports this action.".into());
-                };
-                let document = &session.documents[&path];
-                if document.revision != revision {
-                    return Err("The document changed before the LSP request.".into());
-                }
-                let position = session.client.encoding.position(&document.text, scalar)?;
-                let mut params =
-                    json!({"textDocument":{"uri":text::uri(&path)?},"position":position});
-                if feature == Feature::References {
-                    params["context"] = json!({"includeDeclaration":true});
-                }
-                if feature == Feature::Completion {
-                    params["context"] = json!({"triggerKind":1});
-                }
-                if feature == Feature::Formatting {
-                    params = json!({"textDocument":{"uri":text::uri(&path)?},"options":{"tabSize":tab_size.clamp(1,8),"insertSpaces":spaces}});
-                }
-                let result = session.client.request(
-                    feature.method(),
-                    params,
-                    cancel,
-                    Duration::from_secs(15),
-                );
-                let mut value = result?;
-                if matches!(feature, Feature::Definition | Feature::References) {
-                    normalize_locations(&mut value, session.client.encoding, &session.documents)?;
-                }
-                serde_json::to_value(Reply {
+            } => self.request(
+                FeatureRequest {
                     path,
                     revision,
-                    encoding: session.client.encoding,
+                    scalar,
                     feature,
-                    value,
-                })
-                .map_err(super::error)
-            }
+                    tab_size,
+                    spaces,
+                    name: None,
+                },
+                cancel,
+            ),
+            Operation::Rename {
+                path,
+                revision,
+                scalar,
+                name,
+            } => self.request(
+                FeatureRequest {
+                    path,
+                    revision,
+                    scalar,
+                    feature: Feature::Rename,
+                    tab_size: 4,
+                    spaces: true,
+                    name: Some(name),
+                },
+                cancel,
+            ),
         }
     }
     fn sync(
@@ -633,6 +726,7 @@ impl Worker {
                                 features: registration.features.clone(),
                                 priority: registration.priority,
                                 documents: BTreeMap::new(),
+                                diagnostics: BTreeMap::new(),
                             },
                         );
                         emit(Self::status(&key, "Running", ""));
@@ -663,6 +757,12 @@ impl Worker {
                     items: vec![],
                 });
             });
+            session.diagnostics.retain(|path, (revision, _)| {
+                session
+                    .documents
+                    .get(path)
+                    .is_some_and(|d| d.revision == *revision)
+            });
             if let Err(e) = result {
                 self.sessions.remove(&key);
                 self.failed.insert(key.clone());
@@ -692,7 +792,7 @@ impl Worker {
                 continue;
             }
             while let Some(notification) = session.client.notifications.pop_front() {
-                if !session.features.diagnostics {
+                if !session.features.diagnostics && !session.features.quick_fixes {
                     continue;
                 }
                 let params = &notification["params"];
@@ -717,7 +817,7 @@ impl Worker {
                 {
                     continue;
                 }
-                let items = params["diagnostics"]
+                let items: Vec<Value> = params["diagnostics"]
                     .as_array()
                     .map(|v| {
                         v.iter()
@@ -727,14 +827,33 @@ impl Worker {
                             .collect()
                     })
                     .unwrap_or_default();
-                emit(Event::Diagnostics {
-                    server: key.0.clone(),
-                    root: key.1.clone(),
-                    path: document.path.clone(),
-                    revision: document.revision,
-                    encoding: session.client.encoding,
-                    items,
-                });
+                let mut budget = 128 * 1024usize;
+                let context = items
+                    .iter()
+                    .take(100)
+                    .take_while(|item| {
+                        let size = serde_json::to_vec(item).map_or(usize::MAX, |s| s.len());
+                        if size > budget {
+                            return false;
+                        }
+                        budget -= size;
+                        true
+                    })
+                    .cloned()
+                    .collect();
+                session
+                    .diagnostics
+                    .insert(document.path.clone(), (document.revision, context));
+                if session.features.diagnostics {
+                    emit(Event::Diagnostics {
+                        server: key.0.clone(),
+                        root: key.1.clone(),
+                        path: document.path.clone(),
+                        revision: document.revision,
+                        encoding: session.client.encoding,
+                        items,
+                    });
+                }
             }
         }
         for key in failed {

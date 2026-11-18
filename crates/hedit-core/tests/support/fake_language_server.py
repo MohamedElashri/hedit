@@ -63,7 +63,7 @@ while True:
             'positionEncoding': args.encoding,
             'textDocumentSync': {'openClose': True, 'change': 2, 'save': {'includeText': True}},
             'completionProvider': {}, 'hoverProvider': True, 'definitionProvider': not args.unsupported_definitions,
-            'referencesProvider': True, 'documentFormattingProvider': True,
+            'referencesProvider': True, 'documentFormattingProvider': True, 'renameProvider': True, 'codeActionProvider': True,
         }}})
     elif method in ('textDocument/didOpen', 'textDocument/didChange'):
         if args.crash_on_open:
@@ -99,6 +99,18 @@ while True:
     elif method == 'textDocument/formatting':
         pos = {'line': 0, 'character': 0}
         send({'id': request_id, 'result': [{'range': {'start': pos, 'end': pos}, 'newText': '// formatted\n'}]})
+    elif method == 'textDocument/rename':
+        pos = {'line': 0, 'character': 0}
+        send({'id': request_id, 'result': {'changes': {
+            params['textDocument']['uri']: [{'range': {'start': pos, 'end': dict(pos, character=2)}, 'newText': params['newName']}],
+            root + '/target.rs': [{'range': {'start': pos, 'end': pos}, 'newText': '// ' + params['newName'] + '\n'}],
+        }}})
+    elif method == 'textDocument/codeAction':
+        pos = {'line': 0, 'character': 0}
+        send({'id': request_id, 'result': [
+            {'title': 'Fix fixture', 'kind': 'quickfix', 'edit': {'changes': {params['textDocument']['uri']: [{'range': {'start': pos, 'end': pos}, 'newText': '// fixed\n'}]}}},
+            {'title': 'Server command', 'command': 'fixture.doNotRun'},
+        ]})
     elif method == 'test/hang':
         pass
     elif method == 'test/log-flood':

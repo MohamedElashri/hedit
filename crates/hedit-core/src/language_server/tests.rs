@@ -1158,7 +1158,7 @@ fn session_limit_prioritizes_servers_and_reconciles_new_priorities() {
         .iter()
         .any(|e| matches!(e, Event::Status(s) if s.id == "i" && s.state == "Stopped")));
     let mut b = manager.read("b").unwrap().unwrap();
-    b.features = serde_json::from_value(json!({"completion":false,"hover":false,"definition":false,"references":false,"formatting":false,"diagnostics":false})).unwrap();
+    b.features = serde_json::from_value(json!({"completion":false,"hover":false,"definition":false,"references":false,"formatting":false,"diagnostics":false,"rename":false,"quick_fixes":false})).unwrap();
     service
         .submit(
             3,

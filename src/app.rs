@@ -162,6 +162,7 @@ enum Action {
     Folders(Vec<hedit::folder::FolderListing>),
     Created(String, bool),
     ExplorerEntry(u64, Result<explorer::EntryOutcome, String>),
+    RefactorApplied(Box<language_servers::refactor::Applied>),
     Page(u64, Page, Option<(usize, usize)>),
     Reloaded(u64, Page, Option<(usize, usize)>),
     History(u64, Page, bool, Vec<hedit::advanced::Selection>),
@@ -1204,6 +1205,7 @@ impl HeditApp {
             };
             let reloaded = matches!(&event, Ok(Action::Reloaded(..)));
             match event {
+                Ok(Action::RefactorApplied(applied)) => self.finish_refactor(ctx, *applied),
                 Ok(Action::ExplorerEntry(token, outcome)) => {
                     self.finish_explorer_entry(ctx, token, outcome)
                 }

@@ -831,3 +831,24 @@ the ends. The optional VS Code shortcut preset binds them to F8 and Shift+F8.
 These commands preserve the Problems panel and reject stale language positions.
 Explorer diagnostic badges include build results as well as language diagnostics.
 The combined catalogue is limited to 10,000 entries and 8 MiB.
+
+### Rename Symbol and Quick Fixes
+
+Tools → Language server includes Rename symbol and Quick fixes. The optional
+VS Code shortcut preset uses F2 and Primary+Period. In Explorer, F2 still renames
+the selected file. Each server's Configure page can enable or disable these
+features independently.
+
+Rename requests a new name and opens a preview. Quick fixes lists available
+text edits; choose one to review it. Inspect each file's Before and After text,
+then choose Apply all text changes. The preview shows the first 500 characters
+of long lines. Changes stay unsaved, and each changed file has its own normal
+Undo history and session recovery. Opening a preview never changes file text.
+
+The editor rejects stale previews, stale versions, overlapping edits and paths
+outside the project root. File resource operations and server commands are
+unavailable. A batch supports up to 64 complete files, 2 MiB per file and 8 MiB of
+combined source and proposed text. Local batches preflight every source and
+commit no edits if preparation fails. SSH batches preflight every source too;
+if a later host edit fails, the editor reports the completed files and keeps
+their text and Undo history visible. Files are never saved automatically.

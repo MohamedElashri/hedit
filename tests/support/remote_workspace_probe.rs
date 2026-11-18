@@ -200,6 +200,27 @@ fn run() -> Result<(), String> {
             remote.path("target.rs")?.to_string_lossy().as_ref()
         );
         assert_eq!(reply.value[0]["heditColumn16"], 4);
+        service.submit(40,Operation::Rename{path:path.clone(),revision:1,scalar:2,name:"renamed".into()})?;
+        let renamed=collect(40)?.into_iter().find_map(|event|match event{Event::Response{result:Ok(reply),..}=>Some(reply),_=>None}).ok_or("No rename response.")?;
+        let preview:hedit::language_server::workspace_edit::Preview=serde_json::from_value(renamed.value).map_err(|e|e.to_string())?;
+        assert_eq!(preview.files.len(),2);
+        for(index,file)in preview.files.into_iter().enumerate(){
+            remote.relative(&file.path)?;
+            assert!(file.path.to_string_lossy().starts_with("hedit-ssh:"));
+            let mut edited=remote.open(70+index as u64,&file.path)?;
+            assert_eq!(edited.text(2*1024*1024)?,file.original);
+            let revision=edited.info().revision;
+            edited.replace(0,file.original.len() as u64,file.updated.clone(),revision)?;
+            assert_eq!(edited.text(2*1024*1024)?,file.updated);
+            let revision=edited.info().revision;
+            let undone=edited.history(false,0,revision)?;
+            assert_eq!(undone.text,file.original);
+        }
+        service.submit(41,Operation::Request{path:path.clone(),revision:1,scalar:2,feature:Feature::QuickFixes,tab_size:4,spaces:true})?;
+        let fixed=collect(41)?.into_iter().find_map(|event|match event{Event::Response{result:Ok(reply),..}=>Some(reply),_=>None}).ok_or("No quick-fix response.")?;
+        let fixes:Vec<hedit::language_server::workspace_edit::QuickFix>=serde_json::from_value(fixed.value).map_err(|e|e.to_string())?;
+        assert!(fixes[0].preview.as_ref().is_some_and(|p|p.files[0].path==path));
+        assert!(fixes[1].preview.is_none());
         let mut large = document;
         large.revision = 2;
         large.text = "x".repeat(100_000);
