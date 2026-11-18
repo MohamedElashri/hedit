@@ -24,6 +24,7 @@ pub(super) struct BuildState {
     parsed: usize,
     parsed_lines: usize,
     pub locations: Vec<Location>,
+    pub problems_revision: u64,
     pub current: Option<usize>,
     regex: String,
     dir: PathBuf,
@@ -51,6 +52,7 @@ impl BuildState {
             &self.dir,
             self.parsed_lines,
         ));
+        self.problems_revision = self.problems_revision.wrapping_add(1);
         self.parsed_lines += text.lines().count();
         self.parsed = end;
     }
@@ -123,6 +125,7 @@ impl HeditApp {
         match Running::start_with_variables(&system.shell_cmd, &dir, &variables, wake) {
             Ok(running) => {
                 self.build = BuildState {
+                    problems_revision: self.build.problems_revision.wrapping_add(1),
                     open: true,
                     running: Some(running),
                     name: system.name.clone(),

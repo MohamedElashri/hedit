@@ -184,6 +184,8 @@ impl HeditApp {
                                     Command::LanguageHover,
                                     Command::LanguageFormat,
                                     Command::LanguageProblems,
+                                    Command::NextProblem,
+                                    Command::PreviousProblem,
                                     Command::LanguageRestart,
                                 ],
                                 vec![Command::Checkpoint],
@@ -228,6 +230,17 @@ impl HeditApp {
                             {
                                 if index > 0 {
                                     ui.separator();
+                                }
+                                if group.contains(&Command::LanguageHover) {
+                                    ui.menu_button("Language server", |ui| {
+                                        for &command in group {
+                                            if menu_item(ui, self, command) {
+                                                action = Some(command);
+                                                ui.close_menu();
+                                            }
+                                        }
+                                    });
+                                    continue;
                                 }
                                 for &command in group {
                                     if menu_item(ui, self, command) {

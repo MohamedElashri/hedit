@@ -231,6 +231,8 @@ pub(super) enum Command {
     LanguageHover,
     LanguageFormat,
     LanguageProblems,
+    NextProblem,
+    PreviousProblem,
     LanguageRestart,
     Checkpoint,
     UserGuide,
@@ -483,6 +485,8 @@ impl Command {
         Self::LanguageHover,
         Self::LanguageFormat,
         Self::LanguageProblems,
+        Self::NextProblem,
+        Self::PreviousProblem,
         Self::LanguageRestart,
         Self::Checkpoint,
         Self::UserGuide,
@@ -758,6 +762,8 @@ impl Command {
             Self::LanguageHover => "Language server: show hover information",
             Self::LanguageFormat => "Language server: format document",
             Self::LanguageProblems => "Toggle Problems",
+            Self::NextProblem => "Next diagnostic",
+            Self::PreviousProblem => "Previous diagnostic",
             Self::LanguageRestart => "Language servers: restart",
             Self::Checkpoint => "Checkpoint now",
             Self::UserGuide => "User guide",
@@ -1975,6 +1981,8 @@ impl HeditApp {
                 }
             }
             Command::LanguageProblems => self.toggle_panel(workbench_panel::Panel::Problems),
+            Command::NextProblem => self.next_problem(true),
+            Command::PreviousProblem => self.next_problem(false),
             Command::LanguageRestart => self.restart_language_servers(),
             Command::Checkpoint => self.checkpoint(ctx),
             Command::UserGuide => {

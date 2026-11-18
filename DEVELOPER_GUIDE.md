@@ -417,3 +417,13 @@ the existing native watcher; their writes invalidate badges without discarding
 working-tree filename caches. Diagnostic counts reuse an invalidated immutable
 summary of current diagnostics, including source removal and malformed-range
 checks. Hidden Files views do not start decoration work.
+
+### Problems catalogue
+
+`app/language_servers/problems.rs` shares a bounded catalogue between Problems
+and Explorer. Language publications and build parse generations invalidate the
+catalogue. Filtered indices, source options and group rows are cached until the
+catalogue, filters or active-file scope change. Layout virtualizes that row map;
+it performs no server startup or filesystem reads. Navigation validates the
+original language revision and negotiated position encoding before selecting an
+editor location. Build locations retain their existing line/column open path.

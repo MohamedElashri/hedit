@@ -23,6 +23,8 @@ fn preset() -> &'static [Binding] {
             (Command::Build, "Primary+Shift+B"),
             (Command::Symbols, "Primary+Shift+O"),
             (Command::LanguageProblems, "Primary+Shift+M"),
+            (Command::NextProblem, "F8"),
+            (Command::PreviousProblem, "Shift+F8"),
             (
                 Command::BuildResults,
                 if cfg!(target_os = "linux") {
