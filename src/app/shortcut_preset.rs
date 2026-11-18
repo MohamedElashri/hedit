@@ -19,6 +19,7 @@ fn preset() -> &'static [Binding] {
     static BINDINGS: std::sync::LazyLock<Vec<Binding>> = std::sync::LazyLock::new(|| {
         [
             (Command::Sidebar, "Primary+B"),
+            (Command::FocusExplorer, "Primary+Shift+E"),
             (Command::Build, "Primary+Shift+B"),
             (Command::Symbols, "Primary+Shift+O"),
             (Command::LanguageProblems, "Primary+Shift+M"),

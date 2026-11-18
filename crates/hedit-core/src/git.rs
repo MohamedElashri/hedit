@@ -255,6 +255,20 @@ impl Git {
             .canonicalize()
             .map_err(|e| e.to_string())
     }
+    /// Read only working-tree status; no history, branches, remotes or diffs.
+    pub fn status_files(&self, root: &Path) -> Result<Vec<FileStatus>> {
+        if let Some(result) = self.remote::<Snapshot>(root, crate::backend::GitQuery::Snapshot(0)) {
+            return result.map(|snapshot| snapshot.files);
+        }
+        self.require_root(root)?;
+        let raw = self.checked(
+            root,
+            &args(&["status", "--porcelain=v2", "-z", "--untracked-files=all"]),
+            None,
+            false,
+        )?;
+        Ok(parse_status(&raw)?.files)
+    }
     pub fn snapshot(&self, root: &Path, limit: usize) -> Result<Snapshot> {
         if let Some(result) = self.remote(root, crate::backend::GitQuery::Snapshot(limit)) {
             return result;

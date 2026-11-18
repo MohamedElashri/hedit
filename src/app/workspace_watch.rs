@@ -16,10 +16,12 @@ struct Configuration {
     roots: Vec<String>,
     files: Vec<String>,
     excludes: Vec<String>,
+    metadata: Vec<String>,
 }
 impl Configuration {
     fn matches(&self, app: &HeditApp) -> bool {
-        self.excludes == app.settings.folder_exclude_patterns
+        self.metadata == app.explorer.badges.metadata
+            && self.excludes == app.settings.folder_exclude_patterns
             && self.roots.len() == app.workspace.folders.len()
             && self
                 .roots
@@ -47,10 +49,16 @@ impl Configuration {
                 .filter_map(|b| b.page.info.path.clone())
                 .collect(),
             excludes: app.settings.folder_exclude_patterns.clone(),
+            metadata: app.explorer.badges.metadata.clone(),
         }
     }
     fn normalized(mut self) -> Self {
-        for path in self.roots.iter_mut().chain(self.files.iter_mut()) {
+        for path in self
+            .roots
+            .iter_mut()
+            .chain(self.files.iter_mut())
+            .chain(self.metadata.iter_mut())
+        {
             let source = std::path::Path::new(path);
             let canonical = std::fs::canonicalize(source).ok().or_else(|| {
                 let parent = std::fs::canonicalize(source.parent()?).ok()?;
@@ -62,8 +70,18 @@ impl Configuration {
         }
         self
     }
+    fn namespace_relevant(&self, path: &std::path::Path) -> bool {
+        self.roots.iter().any(|root| {
+            path.starts_with(root)
+                && !self
+                    .metadata
+                    .iter()
+                    .any(|m| path.starts_with(m) && !std::path::Path::new(root).starts_with(m))
+        })
+    }
     fn relevant(&self, path: &std::path::Path) -> bool {
-        self.files.iter().any(|f| path == std::path::Path::new(f))
+        self.metadata.iter().any(|d| path.starts_with(d))
+            || self.files.iter().any(|f| path == std::path::Path::new(f))
             || self
                 .roots
                 .iter()
@@ -248,6 +266,9 @@ fn plan(configuration: &Configuration, current: impl Fn() -> bool) -> Plan {
             add(parent.to_owned(), &mut result);
         }
     }
+    for path in &configuration.metadata {
+        add(PathBuf::from(path), &mut result);
+    }
     let mut queue = VecDeque::new();
     let mut queued_bytes = 0;
     for root in &configuration.roots {
@@ -346,15 +367,33 @@ fn run(
                 {
                     return;
                 }
-                let structural = match event {
+                let (structural, catalogue) = match event {
                     Ok(event) if interesting(&event, &callback_configuration) => {
-                        topology(event.kind) || event.need_rescan()
+                        let needs_rescan = event.need_rescan();
+                        let namespace = event.paths.is_empty()
+                            || event
+                                .paths
+                                .iter()
+                                .any(|path| callback_configuration.namespace_relevant(path));
+                        let catalogue = needs_rescan || (topology(event.kind) && namespace);
+                        let structural = needs_rescan
+                            || (topology(event.kind)
+                                && (namespace
+                                    || event.paths.iter().any(|p| {
+                                        callback_configuration
+                                            .metadata
+                                            .iter()
+                                            .any(|m| p == std::path::Path::new(m))
+                                    })));
+                        (structural, catalogue)
                     }
                     Ok(_) => return,
-                    Err(_) => true,
+                    Err(_) => (true, true),
                 };
-                if structural {
+                if catalogue {
                     signal.catalogue.store(true, Ordering::Release);
+                }
+                if structural {
                     signal.topology.store(true, Ordering::Release);
                     let _ = sender.try_send(());
                 }
@@ -420,6 +459,7 @@ impl HeditApp {
             self.project.invalidate();
         }
         if changed || refocused {
+            self.explorer.badges.invalidate();
             self.poll_at = Instant::now() - Duration::from_secs(1);
         }
     }

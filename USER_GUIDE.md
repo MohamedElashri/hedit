@@ -793,3 +793,27 @@ file. Click a symbol to navigate; Escape in its filter returns typing to the
 editor. Outline is off by default, scans only while visible, and shows up to
 500 symbols for files up to 2 MiB. Use Go to symbol for larger files. Both
 visibility preferences are also available in Settings → General.
+
+### Explorer interaction
+
+**View → Side bar → Focus Explorer** gives the folder tree keyboard focus. The
+optional VS Code preset uses Ctrl+Shift+E (Cmd+Shift+E on macOS). Arrows expand,
+collapse and navigate; Home/End and Page Up/Down move the selection. Type a name
+to jump to a matching row, Enter opens it, F2 renames it inline, Delete opens the
+existing trash confirmation, and Escape returns to the editor. Tab leaves the
+roving tree selection. Personal global bindings retain priority.
+
+Right-click a folder for inline **New file…** or **New folder…**; rename is inline
+too. Enter or the action button submits the name, and Escape cancels before the
+operation starts. Invalid names and filesystem conflicts keep the draft available
+to correct. Renaming an open dirty file retargets it without saving its text.
+
+Settings → Folders & Search controls automatic active-file reveal, compact
+single-child folder chains, Git badges and diagnostic counts. Automatic reveal
+runs when Files is visible and leaves Search/Source Control inputs intact. In a
+compact chain, F2 renames the final segment. Badges are cached and computed in
+background/on-demand work; showing diagnostic badges never starts a language
+server. Git refresh follows filesystem and Git-metadata events, explicit refresh,
+and refocusing; SSH Git badges require execution trust and refresh on focus or
+explicit refresh. Decoration budgets bound large repositories; hover Refresh
+folders for status. Unsaved editor text is independent of disk Git status.

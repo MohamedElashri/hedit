@@ -304,6 +304,24 @@ fn terminal_hide_keeps_session_and_disabling_ends_it_without_editing_buffer() {
     );
     assert_eq!(app.settings.show_sidebar, sidebar);
     assert!(app.terminal.open);
+    // Explorer focus is a workbench action and preserves the live shell.
+    let _ = ctx.run(
+        egui::RawInput {
+            focused: true,
+            events: vec![key(Key::E, Modifiers::COMMAND | Modifiers::SHIFT)],
+            ..Default::default()
+        },
+        |ctx| {
+            ctx.memory_mut(|m| m.request_focus(terminal_panel::input_id()));
+            app.shortcuts(ctx);
+        },
+    );
+    assert_eq!(
+        ctx.memory(|m| m.focused()),
+        Some(egui::Id::new("explorer-tree"))
+    );
+    assert!(app.terminal.open);
+    assert_eq!(app.terminal.tabs[0].id, session_id);
     // A rebound toggle works while the shell has focus, including a chord.
     app.quality.config.keybindings = vec![quality::Binding {
         command: Command::Terminal,

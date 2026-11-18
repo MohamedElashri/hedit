@@ -378,6 +378,34 @@ fn catalog() -> &'static [Setting] {
         setting!(Folders, List, "folder_exclude_patterns", "Excluded folders", "Glob patterns hidden from the folder tree, file picker and project search. One per line.");
         setting!(
             Folders,
+            Bool,
+            "explorer_auto_reveal",
+            "Reveal the active file",
+            "Open its ancestors in Explorer when the active file changes."
+        );
+        setting!(
+            Folders,
+            Bool,
+            "explorer_compact_folders",
+            "Compact single-child folders",
+            "Combine folder chains without files or sibling folders."
+        );
+        setting!(
+            Folders,
+            Bool,
+            "explorer_git_badges",
+            "Show Git badges",
+            "Decorate Explorer entries with cached Git status while Files is visible."
+        );
+        setting!(
+            Folders,
+            Bool,
+            "explorer_diagnostic_badges",
+            "Show diagnostic badges",
+            "Show counts for current open-file diagnostics without starting language servers."
+        );
+        setting!(
+            Folders,
             List,
             "file_exclude_patterns",
             "Excluded files",

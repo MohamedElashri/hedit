@@ -25,6 +25,7 @@ mod edit_actions;
 mod editing_tests;
 mod editor_interaction;
 mod editor_layout;
+mod explorer;
 mod file_reference;
 #[cfg(test)]
 mod file_reference_tests;
@@ -160,6 +161,7 @@ enum Action {
     Folder(hedit::folder::FolderListing),
     Folders(Vec<hedit::folder::FolderListing>),
     Created(String, bool),
+    ExplorerEntry(u64, Result<explorer::EntryOutcome, String>),
     Page(u64, Page, Option<(usize, usize)>),
     Reloaded(u64, Page, Option<(usize, usize)>),
     History(u64, Page, bool, Vec<hedit::advanced::Selection>),
@@ -336,6 +338,7 @@ pub struct HeditApp {
     settings_scope: settings_scope::State,
     shortcut_preset: shortcut_preset::State,
     workspace_watch: workspace_watch::State,
+    explorer: explorer::State,
     goto_open: bool,
     goto_focus: bool,
     replace_open: bool,
@@ -544,6 +547,7 @@ impl HeditApp {
             settings_scope: settings_scope::State::default(),
             shortcut_preset: shortcut_preset::State::default(),
             workspace_watch: workspace_watch::State::default(),
+            explorer: explorer::State::default(),
             goto_open: false,
             goto_focus: false,
             replace_open: false,
@@ -1200,6 +1204,9 @@ impl HeditApp {
             };
             let reloaded = matches!(&event, Ok(Action::Reloaded(..)));
             match event {
+                Ok(Action::ExplorerEntry(token, outcome)) => {
+                    self.finish_explorer_entry(ctx, token, outcome)
+                }
                 Ok(Action::Quality(event)) => self.quality_event(ctx, *event),
                 Ok(Action::Activate(id)) => {
                     if let Some(index) = self
@@ -1636,7 +1643,10 @@ impl HeditApp {
     /// caret where composition began, so after the first letter it dropped
     /// them all; type such commits as plain text instead.
     fn plain_ime_commits(&mut self, ctx: &egui::Context) {
-        if self.source_control.open && !self.preferences_open {
+        if self.source_control.open
+            && !self.preferences_open
+            && !self.project.create.as_ref().is_some_and(|d| d.inline)
+        {
             return;
         }
         ctx.input_mut(|input| {
@@ -1684,8 +1694,11 @@ impl HeditApp {
             }
             return;
         }
-        self.play_step(ctx);
         self.plain_ime_commits(ctx);
+        if self.explorer_shortcuts(ctx) {
+            return;
+        }
+        self.play_step(ctx);
         self.record_input(ctx);
         if self.capture_binding(ctx) {
             return;

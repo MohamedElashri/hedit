@@ -215,6 +215,9 @@ impl HeditApp {
                                         selected: false,
                                         depth: row.depth,
                                         symlink: false,
+                                        badge: None,
+                                        badge_hint: None,
+                                        roving: false,
                                     },
                                 )
                             })

@@ -399,3 +399,21 @@ and rescans topology at most once a second. Data events increment an atomic
 counter instead of queueing paths. UI invalidation settles for 180 ms with a
 one-second maximum delay; a stopped or limited watcher retains explicit/focus
 refresh. File contents use the existing conflict/reload/save guards.
+
+### Explorer selection and decorations
+
+`explorer` owns the roving tree focus, bounded type-ahead and tokened inline
+entry drafts. Filesystem actions use existing folder helpers and checkpoint
+before rename, then apply the existing path-retargeting event. Failures keep the
+name/error in the inline field. Tree cache keys include compaction and draft
+locations; incomplete, symlink and branching listings never compact. Rendering
+registers only viewport rows; row selection does not clone document contents.
+
+Git decorations use a single cancellable background status query at a time and
+coalesce invalidations at a one-second minimum interval. Local status avoids
+history/branch/remotes queries; host queries reuse the bounded existing snapshot
+RPC. Root/file/path budgets bound the map. Known Git metadata directories join
+the existing native watcher; their writes invalidate badges without discarding
+working-tree filename caches. Diagnostic counts reuse an invalidated immutable
+summary of current diagnostics, including source removal and malformed-range
+checks. Hidden Files views do not start decoration work.

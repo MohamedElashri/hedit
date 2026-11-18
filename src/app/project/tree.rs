@@ -4,19 +4,32 @@ use super::*;
 const MAX_ROWS: usize = 50_000;
 const MAX_BYTES: usize = 8 * 1024 * 1024;
 #[derive(Clone)]
-pub(super) enum Kind {
+pub(in crate::app) enum Kind {
     Root,
-    Entry { directory: bool, symlink: bool },
-    Message { warning: bool },
+    Entry {
+        directory: bool,
+        symlink: bool,
+        origin: Option<String>,
+    },
+    Draft,
+    Message {
+        warning: bool,
+    },
 }
-pub(super) struct Node {
+pub(in crate::app) struct Node {
     pub name: String,
     pub path: String,
     pub depth: usize,
     pub expanded: bool,
     pub kind: Kind,
 }
-pub(super) struct Tree {
+#[derive(Clone, Copy, Default)]
+pub(in crate::app) struct Options<'a> {
+    pub compact: bool,
+    pub draft: Option<&'a str>,
+    pub rename: Option<&'a str>,
+}
+pub(in crate::app) struct Tree {
     pub rows: Vec<Node>,
     pub missing: Vec<String>,
     pub used: HashSet<String>,
@@ -26,10 +39,25 @@ pub(super) struct Tree {
     expanded: BTreeSet<String>,
     bytes: usize,
     limited: bool,
+    compact: bool,
+    draft: Option<String>,
+    rename: Option<String>,
 }
 impl Tree {
+    #[cfg(test)]
     pub fn current(&self, roots: &[FolderView], expanded: &BTreeSet<String>) -> bool {
-        self.expanded == *expanded
+        self.current_with(roots, expanded, Options::default())
+    }
+    pub fn current_with(
+        &self,
+        roots: &[FolderView],
+        expanded: &BTreeSet<String>,
+        options: Options<'_>,
+    ) -> bool {
+        self.compact == options.compact
+            && self.rename.as_deref() == options.rename
+            && self.draft.as_deref() == options.draft
+            && self.expanded == *expanded
             && self.roots.len() == roots.len()
             && self
                 .roots
@@ -37,12 +65,30 @@ impl Tree {
                 .zip(roots)
                 .all(|((path, collapsed), root)| *path == root.path && *collapsed == root.collapsed)
     }
+    #[cfg(test)]
     pub fn build(
         roots: &[FolderView],
         expanded: &BTreeSet<String>,
         listings: &HashMap<String, Arc<Result<FolderListing, String>>>,
         remote: Option<&hedit::remote::Connection>,
         cache_limited: bool,
+    ) -> Self {
+        Self::build_with(
+            roots,
+            expanded,
+            listings,
+            remote,
+            cache_limited,
+            Options::default(),
+        )
+    }
+    pub fn build_with(
+        roots: &[FolderView],
+        expanded: &BTreeSet<String>,
+        listings: &HashMap<String, Arc<Result<FolderListing, String>>>,
+        remote: Option<&hedit::remote::Connection>,
+        cache_limited: bool,
+        options: Options<'_>,
     ) -> Self {
         let mut tree = Self {
             rows: vec![],
@@ -57,6 +103,9 @@ impl Tree {
             expanded: expanded.clone(),
             bytes: 0,
             limited: false,
+            compact: options.compact,
+            draft: options.draft.map(str::to_owned),
+            rename: options.rename.map(str::to_owned),
         };
         for root in roots {
             tree.scopes
@@ -95,7 +144,13 @@ impl Tree {
         tree
     }
     fn push(&mut self, row: Node) -> bool {
-        let bytes = row.name.len() + row.path.len() + std::mem::size_of::<Node>();
+        let extra = match &row.kind {
+            Kind::Entry {
+                origin: Some(path), ..
+            } => path.len(),
+            _ => 0,
+        };
+        let bytes = row.name.len() + row.path.len() + std::mem::size_of::<Node>() + extra;
         if self.rows.len() >= MAX_ROWS || self.bytes + bytes > MAX_BYTES {
             self.limited = true;
             return false;
@@ -113,6 +168,45 @@ impl Tree {
             kind: Kind::Message { warning },
         });
     }
+    fn compact_entry(
+        &mut self,
+        entry: &folder::FolderEntry,
+        listings: &HashMap<String, Arc<Result<FolderListing, String>>>,
+    ) -> (String, String, bool) {
+        let mut name = entry.name.clone();
+        let mut path = entry.path.clone();
+        let mut expanded = entry.is_directory && self.expanded.contains(&path);
+        if !self.compact || !entry.is_directory || entry.is_symlink {
+            return (name, path, expanded);
+        }
+        for _ in 0..31 {
+            if self.draft.as_deref() == Some(&path) || self.rename.as_deref() == Some(&path) {
+                break;
+            }
+            self.used.insert(path.clone());
+            let Some(listing) = listings.get(&path) else {
+                if !self.cache_limited && !self.missing.contains(&path) {
+                    self.missing.push(path.clone());
+                }
+                break;
+            };
+            let Ok(listing) = listing.as_ref() else {
+                break;
+            };
+            if listing.truncated || listing.unsupported_names || listing.entries.len() != 1 {
+                break;
+            }
+            let child = &listing.entries[0];
+            if !child.is_directory || child.is_symlink {
+                break;
+            }
+            name.push_str(" / ");
+            name.push_str(&child.name);
+            path = child.path.clone();
+            expanded |= self.expanded.contains(&path);
+        }
+        (name, path, expanded)
+    }
     fn directory(
         &mut self,
         path: &str,
@@ -127,6 +221,15 @@ impl Tree {
             return;
         }
         self.used.insert(path.into());
+        if self.draft.as_deref() == Some(path) {
+            self.push(Node {
+                name: String::new(),
+                path: path.into(),
+                depth,
+                expanded: false,
+                kind: Kind::Draft,
+            });
+        }
         let Some(listing) = listings.get(path) else {
             if self.cache_limited {
                 self.message(
@@ -148,25 +251,27 @@ impl Tree {
                 return;
             }
         };
-        if listing.entries.is_empty() {
+        if listing.entries.is_empty() && self.draft.as_deref() != Some(path) {
             self.message(path, depth, "Empty folder", false);
         }
         for entry in &listing.entries {
-            let expanded = entry.is_directory && self.expanded.contains(&entry.path);
+            let (name, path, expanded) = self.compact_entry(entry, listings);
+            let origin = (path != entry.path).then(|| entry.path.clone());
             if !self.push(Node {
-                name: entry.name.clone(),
-                path: entry.path.clone(),
+                name,
+                path: path.clone(),
                 depth,
                 expanded,
                 kind: Kind::Entry {
                     directory: entry.is_directory,
                     symlink: entry.is_symlink,
+                    origin,
                 },
             }) {
                 break;
             }
             if expanded {
-                self.directory(&entry.path, depth + 1, listings);
+                self.directory(&path, depth + 1, listings);
             }
         }
         if listing.truncated {

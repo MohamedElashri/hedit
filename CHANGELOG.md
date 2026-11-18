@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add Explorer keyboard navigation, inline create/rename with preserved error drafts, active-file reveal, optional compact folders, and cached Git/diagnostic badges.
+
 - Refresh local workspace folders and filename indexes through bounded, debounced native filesystem watches; keep unsaved file conflicts intact and prevent background reloads from changing the selected document.
 
 - Add an optional VS Code shortcut preset with personal-binding priority, shared command hints, conflict suppression and focus-aware chord routing; clarify group file-tab actions and panel labels.

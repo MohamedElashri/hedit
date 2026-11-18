@@ -1324,7 +1324,11 @@ impl HeditApp {
             ui,
             self,
             "Side bar",
-            &[Command::Sidebar, Command::FolderSidebar],
+            &[
+                Command::FocusExplorer,
+                Command::Sidebar,
+                Command::FolderSidebar,
+            ],
             action,
         );
         command_group(

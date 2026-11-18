@@ -5,7 +5,7 @@ use hedit::{
 };
 use std::collections::{BTreeSet, HashMap, HashSet};
 mod names;
-mod tree;
+pub(super) mod tree;
 
 fn listing_bytes(listing: &Result<FolderListing, String>) -> usize {
     match listing {
@@ -31,10 +31,15 @@ struct ListingResult {
 }
 
 pub(super) struct CreateEntry {
-    parent: String,
-    directory: bool,
-    name: String,
-    focus: bool,
+    pub(super) parent: String,
+    pub(super) directory: bool,
+    pub(super) name: String,
+    pub(super) focus: bool,
+    pub(super) inline: bool,
+    pub(super) rename: Option<PathBuf>,
+    pub(super) error: Option<String>,
+    pub(super) pending: bool,
+    pub(super) token: u64,
 }
 
 /// Directory reads and bounded fuzzy scans never run on the paint thread.
@@ -43,7 +48,7 @@ pub(super) struct ProjectBrowser {
     listings: HashMap<String, std::sync::Arc<Result<FolderListing, String>>>,
     pending: HashSet<String>,
     active_listings: usize,
-    tree: Option<Arc<tree::Tree>>,
+    pub(super) tree: Option<Arc<tree::Tree>>,
     listing_limited: bool,
     pub expanded: BTreeSet<String>,
     /// A file row to scroll into view once it is drawn, until a deadline in
@@ -230,6 +235,7 @@ impl HeditApp {
         self.sync_folder_view();
     }
     pub(super) fn refresh_folder(&mut self) {
+        self.explorer.badges.invalidate();
         self.workspace_watch.retry();
         self.project.invalidate();
     }
@@ -266,12 +272,18 @@ impl HeditApp {
         }
         self.changed();
     }
+    #[cfg(test)]
     fn create_entry(&mut self, parent: String, directory: bool) {
         self.project.create = Some(CreateEntry {
             parent,
             directory,
             name: String::new(),
             focus: true,
+            inline: false,
+            rename: None,
+            error: None,
+            pending: false,
+            token: 0,
         });
     }
     pub(super) fn folder_tree(&mut self, ui: &mut egui::Ui) {
@@ -310,7 +322,10 @@ impl HeditApp {
                 self.open_folder(ui.ctx());
             }
             if hedit::icons::button(ui, hedit::icons::Icon::Refresh, "Refresh folders")
-                .on_hover_text(&self.workspace_watch.status)
+                .on_hover_text(format!(
+                    "{}\n{}",
+                    self.workspace_watch.status, self.explorer.badges.note
+                ))
                 .clicked()
             {
                 self.refresh_folder();
@@ -331,27 +346,90 @@ impl HeditApp {
         if !self.settings.show_folders {
             return;
         }
+        let tree_focus = ui.interact(
+            ui.available_rect_before_wrap(),
+            egui::Id::new("explorer-tree"),
+            egui::Sense::focusable_noninteractive(),
+        );
+        tree_focus.widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::WidgetType::Other,
+                true,
+                format!(
+                    "Explorer · {}",
+                    self.explorer.selected.as_deref().unwrap_or("files")
+                ),
+            )
+        });
+        let tree_has_focus = tree_focus.has_focus();
+        if tree_has_focus {
+            ui.memory_mut(|m| {
+                m.set_focus_lock_filter(
+                    egui::Id::new("explorer-tree"),
+                    egui::EventFilter {
+                        tab: false,
+                        horizontal_arrows: true,
+                        vertical_arrows: true,
+                        escape: true,
+                    },
+                )
+            });
+        }
         if self.workspace.folders.is_empty() {
             if ui.button("Open folder…").clicked() {
                 self.open_folder(ui.ctx());
             }
             return;
         }
+        self.prepare_explorer(ui.ctx());
         ui.add_space(6.0);
-        if self
-            .project
-            .tree
-            .as_ref()
-            .is_none_or(|tree| !tree.current(&self.workspace.folders, &self.project.expanded))
-        {
-            self.project.tree = Some(Arc::new(tree::Tree::build(
+        let options = tree::Options {
+            compact: self.settings.explorer_compact_folders,
+            draft: self
+                .project
+                .create
+                .as_ref()
+                .filter(|d| d.inline && d.rename.is_none())
+                .map(|d| d.parent.as_str()),
+            rename: self
+                .project
+                .create
+                .as_ref()
+                .filter(|d| d.inline)
+                .and_then(|d| d.rename.as_ref())
+                .and_then(|p| p.to_str()),
+        };
+        if self.project.tree.as_ref().is_none_or(|tree| {
+            !tree.current_with(&self.workspace.folders, &self.project.expanded, options)
+        }) {
+            self.project.tree = Some(Arc::new(tree::Tree::build_with(
                 &self.workspace.folders,
                 &self.project.expanded,
                 &self.project.listings,
                 self.workspace.remote.as_deref(),
                 self.project.listing_limited,
+                options,
             )));
             let tree = self.project.tree.as_ref().unwrap();
+            if let Some(selected) = self
+                .explorer
+                .selected
+                .as_ref()
+                .filter(|_| tree.missing.is_empty())
+                .filter(|path| {
+                    !tree.rows.iter().any(|n| {
+                        n.path == **path
+                            && !matches!(n.kind, tree::Kind::Message { .. } | tree::Kind::Draft)
+                    })
+                })
+            {
+                let replacement=tree.rows.iter().find(|n|matches!(&n.kind,tree::Kind::Entry {origin:Some(origin),..} if std::path::Path::new(selected).starts_with(origin) && std::path::Path::new(&n.path).starts_with(selected)))
+                    .or_else(||tree.rows.iter().filter(|n|!matches!(n.kind,tree::Kind::Message{..}|tree::Kind::Draft) && std::path::Path::new(selected).starts_with(&n.path)).max_by_key(|n|n.path.len()))
+                    .or_else(||tree.rows.first());
+                if let Some(node) = replacement {
+                    self.explorer.selected = Some(node.path.clone());
+                }
+            }
             let before = self.project.listings.len();
             self.project
                 .listings
@@ -377,6 +455,12 @@ impl HeditApp {
             .is_some_and(|(_, until)| Instant::now() > *until)
         {
             self.project.reveal = None;
+        }
+        if self.explorer.scroll {
+            if let Some(path) = self.explorer.selected.clone() {
+                self.project.reveal = Some((path, Instant::now() + Duration::from_secs(3)));
+            }
+            self.explorer.scroll = false;
         }
         let reveal = self.project.reveal.as_ref().and_then(|(path, _)| {
             tree.rows.iter().position(|row| {
@@ -410,9 +494,22 @@ impl HeditApp {
                     .on_hover_text(&node.name);
                     continue;
                 }
+                if matches!(node.kind, tree::Kind::Draft)
+                    || self.project.create.as_ref().is_some_and(|d| {
+                        d.inline
+                            && d.rename
+                                .as_ref()
+                                .is_some_and(|p| p == std::path::Path::new(&node.path))
+                    })
+                {
+                    self.explorer_entry_row(ui, node.depth);
+                    continue;
+                }
                 let root = matches!(node.kind, tree::Kind::Root);
                 let (directory, symlink) = match node.kind {
-                    tree::Kind::Entry { directory, symlink } => (directory, symlink),
+                    tree::Kind::Entry {
+                        directory, symlink, ..
+                    } => (directory, symlink),
                     _ => (true, false),
                 };
                 let scope = tree.scopes[tree
@@ -420,6 +517,37 @@ impl HeditApp {
                     .partition_point(|(start, _)| *start <= index)
                     .saturating_sub(1)]
                 .1;
+                let git = self
+                    .explorer
+                    .badges
+                    .files
+                    .get(std::path::Path::new(&node.path))
+                    .copied();
+                let diagnostic = self
+                    .explorer
+                    .badges
+                    .diagnostics
+                    .get(std::path::Path::new(&node.path))
+                    .copied();
+                let badge = match (git, diagnostic) {
+                    (Some(g), Some((n, _))) => format!("{g} · {n}"),
+                    (Some(g), None) => g.to_string(),
+                    (None, Some((n, _))) => n.to_string(),
+                    _ => String::new(),
+                };
+                let hint = match (git, diagnostic) {
+                    (Some(g), Some((n, _))) => format!("Git status: {g}; {n} diagnostics"),
+                    (Some(g), None) => format!("Git status: {g}"),
+                    (None, Some((n, _))) => format!("{n} diagnostics"),
+                    _ => String::new(),
+                };
+                let color = if diagnostic.is_some_and(|(_, s)| s == 1) || git == Some('!') {
+                    self.theme.error.color()
+                } else if diagnostic.is_some_and(|(_, s)| s == 2) || git == Some('M') {
+                    self.theme.warning.color()
+                } else {
+                    self.theme.accent.color()
+                };
                 let response = ui
                     .push_id(scope, |ui| {
                         tree_row::show(
@@ -430,33 +558,29 @@ impl HeditApp {
                                 path: &node.path,
                                 directory,
                                 expanded: node.expanded,
-                                selected: !directory
-                                    && self.active().page.info.path.as_deref() == Some(&node.path),
+                                selected: if tree_has_focus {
+                                    self.explorer.selected.as_deref() == Some(&node.path)
+                                } else {
+                                    !directory
+                                        && self.active().page.info.path.as_deref()
+                                            == Some(&node.path)
+                                },
                                 depth: node.depth,
                                 symlink,
+                                badge: (!badge.is_empty()).then_some((badge.as_str(), color)),
+                                badge_hint: (!hint.is_empty()).then_some(hint.as_str()),
+                                roving: true,
                             },
                         )
                     })
                     .inner;
                 if response.clicked() {
-                    if root {
-                        if let Some(folder) = self
-                            .workspace
-                            .folders
-                            .iter_mut()
-                            .find(|f| f.path == node.path)
-                        {
-                            folder.collapsed = !folder.collapsed;
-                        }
-                        self.project.tree = None;
-                        self.changed();
-                    } else if directory {
-                        if node.expanded {
-                            self.project.expanded.remove(&node.path);
-                        } else {
-                            self.project.expanded.insert(node.path.clone());
-                        }
-                        self.sync_folder_view();
+                    self.explorer.selected = Some(node.path.clone());
+                    ui.ctx()
+                        .memory_mut(|m| m.request_focus(egui::Id::new("explorer-tree")));
+                    self.focus_editor = false;
+                    if root || directory {
+                        self.toggle_explorer_node(node);
                     } else {
                         self.quality.preview_request = !response.double_clicked();
                         if response.double_clicked() {
@@ -473,11 +597,11 @@ impl HeditApp {
     fn folder_context_menu(&mut self, ui: &mut egui::Ui, path: &str, directory: bool) {
         if directory {
             if ui.button("New file…").clicked() {
-                self.create_entry(path.to_owned(), false);
+                self.start_explorer_entry(ui.ctx(), path.to_owned(), false, false);
                 ui.close_menu();
             }
             if ui.button("New folder…").clicked() {
-                self.create_entry(path.to_owned(), true);
+                self.start_explorer_entry(ui.ctx(), path.to_owned(), true, false);
                 ui.close_menu();
             }
         }
@@ -488,7 +612,11 @@ impl HeditApp {
             ("Move to trash…", quality::FileOperation::Trash),
         ] {
             if ui.button(label).clicked() {
-                self.begin_file_action(PathBuf::from(path), operation);
+                if operation == quality::FileOperation::Rename {
+                    self.start_explorer_entry(ui.ctx(), path.to_owned(), directory, true);
+                } else {
+                    self.begin_file_action(PathBuf::from(path), operation);
+                }
                 ui.close_menu();
             }
         }
@@ -540,6 +668,9 @@ impl HeditApp {
         let Some(create) = &mut self.project.create else {
             return;
         };
+        if create.inline {
+            return;
+        }
         let mut open = true;
         let mut choice = controls::Choice::None;
         egui::Window::new(if create.directory {
