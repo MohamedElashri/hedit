@@ -390,7 +390,7 @@ mod reference_watch_tests {
                 "--quiet",
                 "-b",
                 "linked-topic",
-                linked.to_str().unwrap(),
+                "../linked",
             ],
         );
         let reply = collect(&hedit::git::Git::default(), 1, vec![linked.clone()], true);
