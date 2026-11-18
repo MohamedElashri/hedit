@@ -694,3 +694,46 @@ fn export_shortcut_preset_previews() {
         );
     }
 }
+
+#[test]
+#[ignore = "exports Explorer interaction to HEDIT_PREVIEW_DIR"]
+fn export_explorer_previews() {
+    let output =
+        PathBuf::from(std::env::var_os("HEDIT_PREVIEW_DIR").expect("set HEDIT_PREVIEW_DIR"));
+    std::fs::create_dir_all(&output).unwrap();
+    for light in [false, true] {
+        let mut scene = Scene::new(light);
+        scene.app.settings.explorer_compact_folders = true;
+        scene.app.start_explorer_entry(
+            &scene.ctx,
+            scene
+                .root
+                .join("src/report.rs")
+                .to_string_lossy()
+                .into_owned(),
+            false,
+            true,
+        );
+        scene.app.project.create.as_mut().unwrap().name = "daily_report.rs".into();
+        scene.save(&output, if light { "rename-light" } else { "rename-dark" });
+        scene.app.project.create = None;
+        scene.app.project.tree = None;
+        scene.app.start_explorer_entry(
+            &scene.ctx,
+            scene.root.join("src").to_string_lossy().into_owned(),
+            false,
+            false,
+        );
+        scene.app.project.create.as_mut().unwrap().name = "report.rs".into();
+        scene.app.submit_explorer_entry(&scene.ctx);
+        scene.wait(|app| !app.busy);
+        scene.save(
+            &output,
+            if light {
+                "conflict-light"
+            } else {
+                "conflict-dark"
+            },
+        );
+    }
+}

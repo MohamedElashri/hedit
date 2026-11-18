@@ -9,6 +9,9 @@ pub(super) struct Row<'a> {
     pub selected: bool,
     pub depth: usize,
     pub symlink: bool,
+    pub badge: Option<(&'a str, egui::Color32)>,
+    pub badge_hint: Option<&'a str>,
+    pub roving: bool,
 }
 
 pub(super) fn show(ui: &mut egui::Ui, theme: &Theme, row: Row<'_>) -> egui::Response {
@@ -18,14 +21,21 @@ pub(super) fn show(ui: &mut egui::Ui, theme: &Theme, row: Row<'_>) -> egui::Resp
                 ui.available_width(),
                 hedit::ui_style::Metrics::for_ui(ui).row,
             ),
-            egui::Sense::click(),
+            if row.roving {
+                egui::Sense::click().difference(egui::Sense::focusable_noninteractive())
+            } else {
+                egui::Sense::click()
+            },
         );
         response.widget_info(|| {
             egui::WidgetInfo::selected(
                 egui::WidgetType::SelectableLabel,
                 ui.is_enabled(),
                 row.selected,
-                row.name,
+                row.badge_hint.map_or_else(
+                    || row.name.to_owned(),
+                    |hint| format!("{} · {hint}", row.name),
+                ),
             )
         });
         if ui.is_rect_visible(rect) {
@@ -76,10 +86,30 @@ pub(super) fn show(ui: &mut egui::Ui, theme: &Theme, row: Row<'_>) -> egui::Resp
             } else {
                 name.into_owned()
             };
+            let mut badge_width = 0.0;
+            if let Some((label, color)) = row.badge {
+                let badge = egui::WidgetText::from(RichText::new(label).color(color)).into_galley(
+                    ui,
+                    Some(egui::TextWrapMode::Truncate),
+                    50.0,
+                    egui::TextStyle::Small,
+                );
+                badge_width = badge.size().x + 8.0;
+                ui.painter()
+                    .with_clip_rect(rect.intersect(ui.clip_rect()))
+                    .galley(
+                        egui::pos2(
+                            rect.right() - badge.size().x - 4.0,
+                            cy - badge.size().y / 2.0,
+                        ),
+                        badge,
+                        color,
+                    );
+            }
             let galley = egui::WidgetText::from(name).into_galley(
                 ui,
                 Some(egui::TextWrapMode::Truncate),
-                (rect.right() - left - 38.0).max(0.0),
+                (rect.right() - left - 38.0 - badge_width).max(0.0),
                 egui::TextStyle::Button,
             );
             ui.painter()
@@ -90,7 +120,10 @@ pub(super) fn show(ui: &mut egui::Ui, theme: &Theme, row: Row<'_>) -> egui::Resp
                     theme.text.color(),
                 );
         }
-        response.on_hover_text(row.path)
+        response.on_hover_text(row.badge_hint.map_or_else(
+            || row.path.to_owned(),
+            |hint| format!("{}\n{hint}", row.path),
+        ))
     })
     .inner
 }

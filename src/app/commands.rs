@@ -3,6 +3,10 @@ use super::*;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum Command {
+    FocusExplorer,
+    ExplorerNewFile,
+    ExplorerNewFolder,
+    ExplorerRename,
     ConnectSsh,
     MarkdownSource,
     MarkdownSplit,
@@ -254,6 +258,10 @@ impl Command {
         )
     }
     pub(super) const ALL: &'static [Self] = &[
+        Self::FocusExplorer,
+        Self::ExplorerNewFile,
+        Self::ExplorerNewFolder,
+        Self::ExplorerRename,
         Self::Palette,
         Self::ConnectSsh,
         Self::MarkdownSource,
@@ -549,6 +557,10 @@ impl Command {
             Self::NavForward => "Navigate forward",
             Self::CompareDisk => "Compare with disk…",
             Self::GitDiff => "Compare file with Git HEAD…",
+            Self::FocusExplorer => "Focus Explorer",
+            Self::ExplorerNewFile => "Explorer: new file…",
+            Self::ExplorerNewFolder => "Explorer: new folder…",
+            Self::ExplorerRename => "Explorer: rename…",
             Self::SourceControl => "Source Control",
             Self::GitCommit => "Git: Commit staged changes",
             Self::GitNextFile => "Git: Next file",
@@ -1102,6 +1114,9 @@ impl HeditApp {
             return false;
         }
         match command {
+            Command::ExplorerNewFile | Command::ExplorerNewFolder | Command::ExplorerRename => {
+                !self.workspace.folders.is_empty()
+            }
             Command::GitCommit => {
                 self.source_control.open
                     && self.source_control.view == source_control::View::Changes
@@ -1364,6 +1379,7 @@ impl HeditApp {
             if !matches!(
                 command,
                 Command::SourceControl
+                    | Command::FocusExplorer
                     | Command::FocusGroup1
                     | Command::FocusGroup2
                     | Command::FocusGroup3
@@ -1468,6 +1484,10 @@ impl HeditApp {
             Command::NavForward => self.navigate(ctx, true),
             Command::CompareDisk => self.compare_disk(ctx, false),
             Command::GitDiff => self.compare_disk(ctx, true),
+            Command::FocusExplorer => self.focus_explorer(ctx),
+            Command::ExplorerNewFile | Command::ExplorerNewFolder | Command::ExplorerRename => {
+                self.explorer_command(ctx, command)
+            }
             Command::SourceControl => self.show_git_sidebar(ctx),
             Command::GitCommit => self.git_submit_commit(ctx),
             Command::GitNextFile => self.source_control.move_review(ctx, true),

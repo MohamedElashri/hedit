@@ -680,7 +680,8 @@ impl HeditApp {
                 !b.editor_only
                     && matches!(
                         b.command,
-                        Command::Terminal
+                        Command::FocusExplorer
+                            | Command::Terminal
                             | Command::NewTerminal
                             | Command::CloseTerminal
                             | Command::NextTerminal

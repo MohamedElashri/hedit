@@ -67,6 +67,7 @@ pub(super) struct LanguageServers {
     diagnostics: BTreeMap<PathBuf, Vec<Diagnostics>>,
     pub(super) problems: bool,
     problem_rows: Option<Vec<ProblemRow>>,
+    explorer_badges: Option<Arc<BTreeMap<PathBuf, (usize, u8)>>>,
     pub(super) info: Option<String>,
     filter: String,
     progress: String,
@@ -383,6 +384,7 @@ impl HeditApp {
                 self.languages.statuses.clear();
                 self.languages.diagnostics.clear();
                 self.languages.problem_rows = None;
+                self.languages.explorer_badges = None;
                 return;
             }
         }
@@ -414,6 +416,7 @@ impl HeditApp {
         });
         if changed {
             self.languages.problem_rows = None;
+            self.languages.explorer_badges = None;
         }
         let _ = self.sync_language_documents(false);
         if !self.languages.installed.is_empty()
@@ -433,6 +436,7 @@ impl HeditApp {
                 self.languages.statuses.clear();
                 self.languages.diagnostics.clear();
                 self.languages.problem_rows = None;
+                self.languages.explorer_badges = None;
             }
             Event::Progress { id, message } => self.languages.progress = format!("{id}: {message}"),
             Event::Status(status) => {
@@ -441,6 +445,7 @@ impl HeditApp {
                 }
                 if status.state != "Running" {
                     self.languages.problem_rows = None;
+                    self.languages.explorer_badges = None;
                     self.languages.diagnostics.retain(|_, sources| {
                         sources.retain(|d| d.server != status.id || d.root != status.root);
                         !sources.is_empty()
@@ -480,6 +485,7 @@ impl HeditApp {
                         && b.page.info.revision == revision
                 }) {
                     self.languages.problem_rows = None;
+                    self.languages.explorer_badges = None;
                     let sources = self.languages.diagnostics.entry(path).or_default();
                     sources.retain(|d| d.server != server || d.root != root);
                     if !items.is_empty() {
@@ -1190,6 +1196,43 @@ impl HeditApp {
                 self.focus_editor = true;
             }
         }
+    }
+    pub(super) fn explorer_diagnostic_badges(&mut self) -> Arc<BTreeMap<PathBuf, (usize, u8)>> {
+        if self.languages.explorer_badges.is_none() {
+            let mut badges = BTreeMap::<PathBuf, (usize, u8)>::new();
+            for (path, sources) in &self.languages.diagnostics {
+                let mut count = 0usize;
+                let mut severity = 4u8;
+                for item in sources.iter().flat_map(|s| &s.items) {
+                    if !["start", "end"].iter().all(|position| {
+                        ["line", "character"].iter().all(|field| {
+                            item["range"][position][field]
+                                .as_u64()
+                                .is_some_and(|n| n <= u64::from(u32::MAX))
+                        })
+                    }) {
+                        continue;
+                    }
+                    count += 1;
+                    severity = severity.min(
+                        item["severity"]
+                            .as_u64()
+                            .filter(|n| (1..=4).contains(n))
+                            .unwrap_or(3) as u8,
+                    );
+                }
+                if count == 0 {
+                    continue;
+                }
+                for parent in path.ancestors().take(32) {
+                    let value = badges.entry(parent.to_owned()).or_insert((0, severity));
+                    value.0 = value.0.saturating_add(count);
+                    value.1 = value.1.min(severity);
+                }
+            }
+            self.languages.explorer_badges = Some(Arc::new(badges));
+        }
+        self.languages.explorer_badges.as_ref().unwrap().clone()
     }
     pub(super) fn problems_contents(&mut self, ui: &mut egui::Ui) {
         if self.languages.problem_rows.is_none() {
@@ -2178,5 +2221,79 @@ mod preview_tests {
             )
             .unwrap();
         }
+    }
+}
+
+#[cfg(test)]
+mod explorer_badge_tests {
+    use super::*;
+    #[test]
+    fn diagnostic_badges_cache_counts_and_clear_stopped_sources_without_starting_servers() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        settings_store::TEST_CONFIG_DIR.with(|p| *p.borrow_mut() = Some(root.join("config")));
+        let path = root.join("main.rs");
+        std::fs::write(&path, "abc\n").unwrap();
+        let (workspace, _) = Workspace::restore(root.join("session")).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        app.choose_terminal(false);
+        let mut document =
+            hedit::document::Document::open(app.workspace.editor.id(), &path).unwrap();
+        let page = document.page(0).unwrap();
+        app.workspace.add(document, page).unwrap();
+        let revision = app.active().page.info.revision;
+        let diagnostic = |severity| json!({"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}},"severity":severity,"message":"fixture"});
+        for (server, items) in [
+            (
+                "first",
+                vec![
+                    diagnostic(1),
+                    json!({"range":{"start":{"line":-1,"character":0}},"severity":1}),
+                ],
+            ),
+            ("second", vec![diagnostic(2), diagnostic(3)]),
+        ] {
+            app.language_event(
+                &ctx,
+                Event::Diagnostics {
+                    server: server.into(),
+                    root: root.clone(),
+                    path: path.clone(),
+                    revision,
+                    encoding: Encoding::Utf8,
+                    items,
+                },
+            );
+        }
+        let first = app.explorer_diagnostic_badges();
+        assert_eq!(first[&path], (3, 1));
+        assert_eq!(first[&root], (3, 1));
+        assert!(Arc::ptr_eq(&first, &app.explorer_diagnostic_badges()));
+        assert!(app.languages.service.is_none());
+        app.language_event(
+            &ctx,
+            Event::Diagnostics {
+                server: "first".into(),
+                root: root.clone(),
+                path: path.clone(),
+                revision,
+                encoding: Encoding::Utf8,
+                items: vec![],
+            },
+        );
+        assert_eq!(app.explorer_diagnostic_badges()[&path], (2, 2));
+        app.language_event(
+            &ctx,
+            Event::Status(Status {
+                id: "second".into(),
+                root,
+                state: "Stopped".into(),
+                detail: String::new(),
+                logs: vec![],
+            }),
+        );
+        assert!(app.explorer_diagnostic_badges().is_empty());
+        assert!(app.languages.service.is_none());
     }
 }
