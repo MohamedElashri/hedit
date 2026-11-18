@@ -532,10 +532,11 @@ mod tests {
     #[test]
     fn plans_include_root_and_file_parents_and_do_not_follow_directory_symlinks() {
         let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().join("root");
+        let base = std::fs::canonicalize(dir.path()).unwrap();
+        let root = base.join("root");
         let child = root.join("child");
         std::fs::create_dir_all(&child).unwrap();
-        let external = dir.path().join("external");
+        let external = base.join("external");
         std::fs::create_dir(&external).unwrap();
         #[cfg(unix)]
         std::os::unix::fs::symlink(&external, root.join("linked")).unwrap();
@@ -545,7 +546,7 @@ mod tests {
             ..Default::default()
         };
         let result = plan(&configuration, || true);
-        assert!(result.directories.contains(dir.path()));
+        assert!(result.directories.contains(&base));
         assert!(result.directories.contains(&root));
         assert!(result.directories.contains(&child));
         assert!(result.directories.contains(&external));
