@@ -101,7 +101,14 @@ pub fn prepare(
             doc.text.clone()
         } else {
             let doc = crate::document::Document::open(0, &path)?;
-            if doc.info().path.as_ref().is_none_or(|path|!Path::new(path).starts_with(&root)){return Err("The edit source moved outside the project root.".into());}
+            if doc
+                .info()
+                .path
+                .as_ref()
+                .is_none_or(|path| !Path::new(path).starts_with(&root))
+            {
+                return Err("The edit source moved outside the project root.".into());
+            }
             doc.text(crate::document::SMALL_LIMIT)?
         };
         if original.len() > crate::document::SMALL_LIMIT as usize {
@@ -184,7 +191,7 @@ pub fn quick_fixes(
         result.push(QuickFix {
             title,
             preview,
-            reason:reason.map(|value|value.chars().take(1000).collect()),
+            reason: reason.map(|value| value.chars().take(1000).collect()),
         });
     }
     Ok(result)
