@@ -230,6 +230,7 @@ impl HeditApp {
         self.sync_folder_view();
     }
     pub(super) fn refresh_folder(&mut self) {
+        self.workspace_watch.retry();
         self.project.invalidate();
     }
     pub(super) fn close_folder(&mut self) {
@@ -308,7 +309,10 @@ impl HeditApp {
             {
                 self.open_folder(ui.ctx());
             }
-            if hedit::icons::button(ui, hedit::icons::Icon::Refresh, "Refresh folders").clicked() {
+            if hedit::icons::button(ui, hedit::icons::Icon::Refresh, "Refresh folders")
+                .on_hover_text(&self.workspace_watch.status)
+                .clicked()
+            {
                 self.refresh_folder();
             }
             if controls::close_button(
