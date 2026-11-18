@@ -27,6 +27,28 @@ pub struct QuickFix {
     pub reason: Option<String>,
 }
 pub const MAX_PREVIEW_BYTES: usize = 8 * 1024 * 1024;
+
+fn edit_path(uri: &str, documents: &[Document]) -> Result<PathBuf, String> {
+    let requested = text::path(uri)?;
+    match std::fs::canonicalize(&requested) {
+        Ok(path) => Ok(path),
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound
+                && documents
+                    .iter()
+                    .any(|document| text::same_path(&document.path, &requested))
+                && matches!(std::fs::symlink_metadata(&requested), Err(error) if error.kind() == std::io::ErrorKind::NotFound) =>
+        {
+            // A named buffer can have synchronized text before its first save.
+            // Resolve the existing parent so the normal root/alias checks still apply.
+            let parent =
+                std::fs::canonicalize(requested.parent().ok_or("Missing edit directory.")?)
+                    .map_err(super::error)?;
+            Ok(parent.join(requested.file_name().ok_or("Missing edit filename.")?))
+        }
+        Err(error) => Err(super::error(error)),
+    }
+}
 /// No resource operations, commands or writes occur while preparing a preview.
 pub fn prepare(
     value: Value,
@@ -44,7 +66,7 @@ pub fn prepare(
     let root = std::fs::canonicalize(root).map_err(super::error)?;
     let mut edits = BTreeMap::<PathBuf, (Option<u64>, Vec<TextEdit>)>::new();
     let mut add = |uri: &str, version: Option<u64>, items: Value| -> Result<(), String> {
-        let path = std::fs::canonicalize(text::path(uri)?).map_err(super::error)?;
+        let path = edit_path(uri, documents)?;
         if !path.starts_with(&root) {
             return Err("A language-server edit leaves the project root.".into());
         }
@@ -293,5 +315,84 @@ mod tests {
             &[doc]
         )
         .is_err());
+    }
+}
+
+#[cfg(test)]
+mod unsaved_file_tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn workspace_edits_support_named_files_before_their_first_save() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        let path = root.join("not-yet-saved.rs");
+        let mut editor_document = crate::document::Document::open_or_new(17, &path).unwrap();
+        editor_document
+            .replace(0, 0, "fo".into(), editor_document.info().revision)
+            .unwrap();
+        let source = Document {
+            path: path.clone(),
+            root: root.clone(),
+            language: "rust".into(),
+            revision: editor_document.info().revision,
+            text: "fo".into(),
+            dirty: true,
+        };
+        let edits = json!({"documentChanges":[{"textDocument":{"uri":text::uri(&path).unwrap(),"version":source.revision},"edits":[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":2}},"newText":"renamed"}]}]});
+        let preview = prepare(edits, Encoding::Utf16, &root, &[source]).unwrap();
+        assert_eq!(preview.files.len(), 1);
+        assert_eq!(preview.files[0].original, "fo");
+        assert_eq!(preview.files[0].updated, "renamed");
+        assert!(!path.exists(), "review must not save the new file");
+    }
+}
+#[cfg(test)]
+mod missing_file_boundary_tests {
+    use super::*;
+    use serde_json::json;
+    fn edit(path: &Path) -> Value {
+        json!({"changes":{text::uri(path).unwrap():[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":0}},"newText":"x"}]}})
+    }
+    #[test]
+    fn missing_files_require_an_open_snapshot_and_stay_inside_the_project() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        let missing = root.join("unopened.rs");
+        assert!(prepare(edit(&missing), Encoding::Utf8, &root, &[]).is_err());
+        assert!(!missing.exists());
+        let outside = tempfile::tempdir().unwrap();
+        let path = outside.path().canonicalize().unwrap().join("outside.rs");
+        let document = Document {
+            path: path.clone(),
+            root: root.clone(),
+            language: "rust".into(),
+            revision: 1,
+            text: String::new(),
+            dirty: true,
+        };
+        assert!(prepare(edit(&path), Encoding::Utf8, &root, &[document]).is_err());
+        assert!(!path.exists());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn an_open_snapshot_cannot_make_a_dangling_symlink_an_edit_target() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        let path = root.join("link.rs");
+        std::os::unix::fs::symlink(root.join("missing.rs"), &path).unwrap();
+        let document = Document {
+            path: path.clone(),
+            root: root.clone(),
+            language: "rust".into(),
+            revision: 1,
+            text: String::new(),
+            dirty: true,
+        };
+        assert!(prepare(edit(&path), Encoding::Utf8, &root, &[document]).is_err());
+        assert!(std::fs::symlink_metadata(path)
+            .unwrap()
+            .file_type()
+            .is_symlink());
     }
 }
