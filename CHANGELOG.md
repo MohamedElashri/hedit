@@ -22,6 +22,7 @@
 
 ### Fixed
 
+- Release SSH recovery and workspace locks when their journal closes, even while a child temporarily retains an inherited descriptor.
 - Show Git action confirmations from the persistent sidebar when a document is active.
 - Allow reviewed language-server text edits in named buffers before their first save while retaining project-root and symlink guards.
 - Refresh Explorer Git badges after branch-reference changes and shared metadata changes in linked worktrees without requiring file edits or refocus.

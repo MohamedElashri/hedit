@@ -186,15 +186,26 @@ impl Document {
     }
 }
 
+struct JournalLock(File);
+
+impl Drop for JournalLock {
+    fn drop(&mut self) {
+        // Closing alone retains flock while a concurrent fork holds a duplicate
+        // until exec. Release the owner's lock even while that descriptor lives.
+        let _ = self.0.unlock();
+    }
+}
+
 pub struct Journal {
+    // Close SQLite before releasing the writer fence below.
     db: Connection,
     source_cache: HashMap<u64, (host::Stamp, Vec<u8>)>,
     session: String,
-    _writer_lock: File,
+    _writer_lock: JournalLock,
     directory: File,
     root: Option<File>,
     root_path: Option<std::path::PathBuf>,
-    _workspace_lock: Option<File>,
+    _workspace_lock: Option<JournalLock>,
     state_path: std::path::PathBuf,
     documents: HashMap<u64, Document>,
 }
@@ -221,6 +232,7 @@ impl Journal {
         let directory = host::private_directory(state)?;
         let writer_lock = host::private_file(&directory, "writer.lock")?;
         writer_lock.try_lock().map_err(|_| Error::Busy)?;
+        let writer_lock = JournalLock(writer_lock);
         let db_file = host::private_file(&directory, "recovery.sqlite3")?;
         // Validate sidecars before SQLite can follow/open them.
         for name in [
@@ -756,7 +768,7 @@ impl Journal {
                 .map_err(storage)?;
         }
         if self._workspace_lock.is_none() {
-            self._workspace_lock = Some(host::workspace_lock(&root)?);
+            self._workspace_lock = Some(JournalLock(host::workspace_lock(&root)?));
         }
         self.root_path = Some(path);
         self.root = Some(root);
@@ -1157,6 +1169,56 @@ mod tests {
         let id = journal.open_document(b"file").unwrap().document;
         (temp, journal, id)
     }
+    fn reopen_with_inherited_descriptor(writer: bool) {
+        let (temp, journal, id) = setup();
+        let base = temp.path().canonicalize().unwrap();
+        let root = base.join("project");
+        // A concurrent fork can inherit this open file description until exec.
+        // Duplicating it reproduces that lifetime without a timing-dependent fork.
+        let inherited = if writer {
+            journal._writer_lock.0.try_clone().unwrap()
+        } else {
+            journal
+                ._workspace_lock
+                .as_ref()
+                .unwrap()
+                .0
+                .try_clone()
+                .unwrap()
+        };
+        assert!(matches!(
+            Journal::open(&base.join("state")),
+            Err(Error::Busy)
+        ));
+        drop(journal);
+        let mut next = Journal::open(&base.join("state"))
+            .expect("dropping the journal must release its writer lock");
+        next.workspace(root.as_os_str().as_bytes())
+            .expect("dropping the journal must release its workspace lock");
+        assert_eq!(next.read(id, 0).unwrap().1, "base");
+        drop(inherited);
+        // Closing the old descriptor must not release the new owner's locks.
+        assert!(matches!(
+            Journal::open(&base.join("state")),
+            Err(Error::Busy)
+        ));
+        let mut other = Journal::open(&base.join("other-state")).unwrap();
+        assert_eq!(
+            other.workspace(root.as_os_str().as_bytes()),
+            Err(Error::Busy)
+        );
+    }
+
+    #[test]
+    fn writer_lock_releases_while_an_inherited_descriptor_is_alive() {
+        reopen_with_inherited_descriptor(true);
+    }
+
+    #[test]
+    fn workspace_lock_releases_while_an_inherited_descriptor_is_alive() {
+        reopen_with_inherited_descriptor(false);
+    }
+
     fn edit() -> Action {
         Action::Edit {
             start: 0,
