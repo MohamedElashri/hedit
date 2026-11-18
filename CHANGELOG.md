@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Allow reviewed language-server text edits in named buffers before their first save while retaining project-root and symlink guards.
+
 - Add bounded notification history with guarded save retries, output/log actions, progress and cooperative cancellation for builds, searches and language-server work.
 
 - Remember the last used panel, add maximize/restore and explicit editor, Explorer, Search and terminal focus controls.

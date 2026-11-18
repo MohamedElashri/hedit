@@ -527,3 +527,40 @@ mod tests {
         assert!(app.notice.contains("fresh preview"));
     }
 }
+
+#[cfg(test)]
+mod unsaved_file_tests {
+    use super::super::tests::{app, pump};
+    use super::*;
+    use crate::app::tests::finish_app_job;
+    #[test]
+    fn quick_fix_review_applies_and_undoes_before_the_first_save() {
+        let (_directory, ctx, mut app) = app();
+        let path = PathBuf::from(app.active().page.info.path.as_ref().unwrap())
+            .with_file_name("unsaved.rs");
+        app.open(&ctx, Some(path.clone()));
+        finish_app_job(&mut app, &ctx);
+        app.batch(hedit::advanced::Batch {
+            text: "fo".into(),
+            selections: vec![hedit::advanced::Selection::caret(2)],
+        });
+        assert!(!path.exists());
+        assert!(app.request_language_feature(&ctx, Feature::QuickFixes));
+        pump(&ctx, &mut app, |a| a.languages.refactor.fixes.is_some());
+        let (_, fixes) = app.languages.refactor.fixes.take().unwrap();
+        let preview = fixes[0]
+            .preview
+            .clone()
+            .expect("unsaved text has a reviewable quick fix");
+        app.review_refactor(&ctx, fixes[0].title.clone(), preview);
+        let review = app.languages.refactor.review.take().unwrap();
+        app.apply_refactor(&ctx, review);
+        finish_app_job(&mut app, &ctx);
+        assert_eq!(app.active().page.text, "// fixed\nfo");
+        assert!(!path.exists());
+        app.history(&ctx, false);
+        finish_app_job(&mut app, &ctx);
+        assert_eq!(app.active().page.text, "fo");
+        assert!(!path.exists());
+    }
+}
