@@ -422,7 +422,7 @@ mod tests {
     use super::*;
     pub(super) fn fixture() -> (tempfile::TempDir, egui::Context, HeditApp, PathBuf) {
         let dir = tempfile::tempdir().unwrap();
-        let root=dir.path().canonicalize().unwrap();
+        let root = dir.path().canonicalize().unwrap();
         settings_store::TEST_CONFIG_DIR.with(|d| *d.borrow_mut() = Some(root.join("config")));
         let file = root.join("main.rs");
         std::fs::write(&file, "a😀b\nsecond\n").unwrap();
