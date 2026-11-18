@@ -53,7 +53,7 @@ percent-encoding = "2"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 latex-rust = "3.0.1"
 mermaid-rs-renderer = { version = "0.3.1", default-features = false }
-resvg = { version = "0.49", default-features = false, features = ["text", "system-fonts"] }
+resvg = { version = "0.50", default-features = false, features = ["text", "system-fonts"] }
 notify = "8.2.0"
 
 [target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
