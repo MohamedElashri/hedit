@@ -314,3 +314,17 @@ fn compact_folder_refresh_keeps_selection_and_an_inline_rename_target() {
         .any(|n| n.path == nested.to_string_lossy()));
     assert!(ctx.memory(|m| m.has_focus(egui::Id::new("explorer-entry-name"))));
 }
+#[test]
+fn vscode_f2_renames_files_when_explorer_has_focus() {
+    let (_dir, ctx, mut app, root) = fixture();
+    app.settings.keybinding_preset = hedit::settings::KeybindingPreset::Vscode;
+    app.focus_explorer(&ctx);
+    app.explorer.selected = Some(root.join("alpha.txt").to_string_lossy().into_owned());
+    paint(&ctx, &mut app, vec![key(Key::F2, Modifiers::NONE)]);
+    assert!(app
+        .project
+        .create
+        .as_ref()
+        .is_some_and(|d| d.rename.is_some()));
+    assert!(!app.languages.refactor.visible());
+}

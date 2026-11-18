@@ -230,6 +230,8 @@ pub(super) enum Command {
     LanguageServers,
     LanguageHover,
     LanguageFormat,
+    LanguageRename,
+    LanguageQuickFix,
     LanguageProblems,
     NextProblem,
     PreviousProblem,
@@ -484,6 +486,8 @@ impl Command {
         Self::LanguageServers,
         Self::LanguageHover,
         Self::LanguageFormat,
+        Self::LanguageRename,
+        Self::LanguageQuickFix,
         Self::LanguageProblems,
         Self::NextProblem,
         Self::PreviousProblem,
@@ -512,6 +516,8 @@ impl Command {
                 | Self::ToolSettings
                 | Self::LanguageServers
                 | Self::LanguageHover
+                | Self::LanguageRename
+                | Self::LanguageQuickFix
                 | Self::TerminalSettings
                 | Self::KeyBindings
                 | Self::ProjectSettings
@@ -761,6 +767,8 @@ impl Command {
             Self::LanguageServers => "Language servers: manage…",
             Self::LanguageHover => "Language server: show hover information",
             Self::LanguageFormat => "Language server: format document",
+            Self::LanguageRename => "Language server: rename symbol…",
+            Self::LanguageQuickFix => "Language server: quick fixes…",
             Self::LanguageProblems => "Toggle Problems",
             Self::NextProblem => "Next diagnostic",
             Self::PreviousProblem => "Previous diagnostic",
@@ -1972,6 +1980,13 @@ impl HeditApp {
             Command::LanguageHover => {
                 if !self.request_language_feature(ctx, hedit::language_server::Feature::Hover) {
                     self.notice = "Configure a language server for this file first.".into();
+                }
+            }
+            Command::LanguageRename => self.rename_symbol(ctx),
+            Command::LanguageQuickFix => {
+                if !self.request_language_feature(ctx, hedit::language_server::Feature::QuickFixes)
+                {
+                    self.notice = "No language server supports quick fixes for this file.".into();
                 }
             }
             Command::LanguageFormat => {

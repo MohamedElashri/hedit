@@ -1147,6 +1147,30 @@ impl Connection {
                             result: Ok(reply), ..
                         } => {
                             map(&mut reply.path)?;
+                            if reply.feature == hedit_core::language_server::Feature::Rename {
+                                let mut preview:hedit_core::language_server::workspace_edit::Preview=serde_json::from_value(reply.value.take()).map_err(|e|e.to_string())?;
+                                for file in &mut preview.files {
+                                    map(&mut file.path)?;
+                                }
+                                reply.value =
+                                    serde_json::to_value(preview).map_err(|e| e.to_string())?;
+                            } else if reply.feature
+                                == hedit_core::language_server::Feature::QuickFixes
+                            {
+                                let mut fixes: Vec<
+                                    hedit_core::language_server::workspace_edit::QuickFix,
+                                > = serde_json::from_value(reply.value.take())
+                                    .map_err(|e| e.to_string())?;
+                                for fix in &mut fixes {
+                                    if let Some(preview) = &mut fix.preview {
+                                        for file in &mut preview.files {
+                                            map(&mut file.path)?;
+                                        }
+                                    }
+                                }
+                                reply.value =
+                                    serde_json::to_value(fixes).map_err(|e| e.to_string())?;
+                            }
                             if matches!(
                                 reply.feature,
                                 hedit_core::language_server::Feature::Definition

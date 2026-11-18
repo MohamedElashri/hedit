@@ -427,3 +427,18 @@ catalogue, filters or active-file scope change. Layout virtualizes that row map;
 it performs no server startup or filesystem reads. Navigation validates the
 original language revision and negotiated position encoding before selecting an
 editor location. Build locations retain their existing line/column open path.
+
+### Reviewed language edits
+
+`language_server/workspace_edit.rs` prepares text-only workspace edits on the
+service worker. It resolves file identities inside the project root, validates
+versions, positions and budgets, and uses synchronized text for unsaved files.
+The SSH bridge maps prepared file paths through the existing workspace boundary.
+The client never executes code-action commands or accepts unsolicited applyEdit.
+
+`app/language_servers/refactor.rs` captures the originating editor group and
+revision for the review. Apply preflights all sources, edits document clones
+through normal Document history and then publishes buffers. Local preparation
+failure leaves all original documents unchanged. Remote edits use existing host
+journal transactions per file; completed edits remain visible if a later file
+fails. Recovery checkpoints surround application.

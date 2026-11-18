@@ -249,6 +249,8 @@ pub struct Features {
     pub definition: bool,
     pub references: bool,
     pub formatting: bool,
+    pub rename: bool,
+    pub quick_fixes: bool,
     pub diagnostics: bool,
 }
 impl Default for Features {
@@ -259,6 +261,8 @@ impl Default for Features {
             definition: true,
             references: true,
             formatting: true,
+            rename: true,
+            quick_fixes: true,
             diagnostics: true,
         }
     }
@@ -269,6 +273,8 @@ impl Features {
             || self.hover
             || self.definition
             || self.references
+            || self.rename
+            || self.quick_fixes
             || self.formatting
             || self.diagnostics
     }
@@ -279,6 +285,8 @@ impl Features {
             super::Feature::Definition => self.definition,
             super::Feature::References => self.references,
             super::Feature::Formatting => self.formatting,
+            super::Feature::Rename => self.rename,
+            super::Feature::QuickFixes => self.quick_fixes,
         }
     }
 }
