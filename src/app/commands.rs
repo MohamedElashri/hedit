@@ -4,6 +4,11 @@ use super::*;
 #[serde(rename_all = "snake_case")]
 pub(super) enum Command {
     FocusExplorer,
+    FocusEditor,
+    FocusSearch,
+    FocusTerminal,
+    TogglePanel,
+    MaximizePanel,
     ExplorerNewFile,
     ExplorerNewFolder,
     ExplorerRename,
@@ -263,6 +268,11 @@ impl Command {
     }
     pub(super) const ALL: &'static [Self] = &[
         Self::FocusExplorer,
+        Self::FocusEditor,
+        Self::FocusSearch,
+        Self::FocusTerminal,
+        Self::TogglePanel,
+        Self::MaximizePanel,
         Self::ExplorerNewFile,
         Self::ExplorerNewFolder,
         Self::ExplorerRename,
@@ -567,6 +577,11 @@ impl Command {
             Self::NavForward => "Navigate forward",
             Self::CompareDisk => "Compare with disk…",
             Self::GitDiff => "Compare file with Git HEAD…",
+            Self::FocusEditor => "Focus editor",
+            Self::FocusSearch => "Focus Search",
+            Self::FocusTerminal => "Focus terminal",
+            Self::TogglePanel => "Toggle last used panel",
+            Self::MaximizePanel => "Maximize or restore panel",
             Self::FocusExplorer => "Focus Explorer",
             Self::ExplorerNewFile => "Explorer: new file…",
             Self::ExplorerNewFolder => "Explorer: new folder…",
@@ -1184,7 +1199,9 @@ impl HeditApp {
             Command::FocusGroup3 => self.panes.groups() > 2,
             Command::FocusGroup4 => self.panes.groups() > 3,
             Command::CancelBuild => self.build.running(),
-            Command::Terminal => cfg!(feature = "terminal") && self.settings.terminal_enabled,
+            Command::Terminal | Command::FocusTerminal => {
+                cfg!(feature = "terminal") && self.settings.terminal_enabled
+            }
             Command::NewTerminal => cfg!(feature = "terminal") && self.settings.terminal_enabled,
             Command::CloseTerminal
             | Command::RestartTerminal
@@ -1394,6 +1411,11 @@ impl HeditApp {
                 command,
                 Command::SourceControl
                     | Command::FocusExplorer
+                    | Command::FocusEditor
+                    | Command::FocusSearch
+                    | Command::FocusTerminal
+                    | Command::TogglePanel
+                    | Command::MaximizePanel
                     | Command::FocusGroup1
                     | Command::FocusGroup2
                     | Command::FocusGroup3
@@ -1499,6 +1521,14 @@ impl HeditApp {
             Command::CompareDisk => self.compare_disk(ctx, false),
             Command::GitDiff => self.compare_disk(ctx, true),
             Command::FocusExplorer => self.focus_explorer(ctx),
+            Command::FocusEditor => self.focus_editor_command(ctx),
+            Command::FocusSearch => {
+                self.terminal.release_input();
+                self.show_search_sidebar();
+            }
+            Command::FocusTerminal => self.focus_terminal_command(ctx),
+            Command::TogglePanel => self.toggle_last_panel(ctx),
+            Command::MaximizePanel => self.maximize_panel(ctx),
             Command::ExplorerNewFile | Command::ExplorerNewFolder | Command::ExplorerRename => {
                 self.explorer_command(ctx, command)
             }

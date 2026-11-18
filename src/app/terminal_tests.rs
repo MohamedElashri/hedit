@@ -322,6 +322,24 @@ fn terminal_hide_keeps_session_and_disabling_ends_it_without_editing_buffer() {
     );
     assert!(app.terminal.open);
     assert_eq!(app.terminal.tabs[0].id, session_id);
+    let _ = ctx.run(
+        egui::RawInput {
+            focused: true,
+            events: vec![key(Key::Num1, Modifiers::COMMAND)],
+            ..Default::default()
+        },
+        |ctx| {
+            ctx.memory_mut(|m| m.request_focus(terminal_panel::input_id()));
+            app.shortcuts(ctx);
+        },
+    );
+    assert!(
+        app.focus_editor,
+        "Primary+1 focuses the already selected editor group from the terminal"
+    );
+    assert!(app.terminal.open);
+    app.execute(&ctx, Command::FocusTerminal);
+    assert!(!app.focus_editor);
     // A rebound toggle works while the shell has focus, including a chord.
     app.quality.config.keybindings = vec![quality::Binding {
         command: Command::Terminal,

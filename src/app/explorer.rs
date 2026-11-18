@@ -36,6 +36,7 @@ fn valid_name(name: &str) -> bool {
 }
 impl HeditApp {
     pub(super) fn focus_explorer(&mut self, ctx: &egui::Context) {
+        self.terminal.release_input();
         self.sidebar = workbench_navigation::Sidebar::Files;
         self.settings.show_sidebar = true;
         self.settings.show_folders = true;

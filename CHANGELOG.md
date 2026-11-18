@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Remember the last used panel, add maximize/restore and explicit editor, Explorer, Search and terminal focus controls.
+
 - Add reviewed, version-checked language-server symbol rename and quick fixes with undoable cross-file text edits.
 
 - Unify build and language diagnostics with severity, source, text and current-file filters, grouping, counts and diagnostic navigation.

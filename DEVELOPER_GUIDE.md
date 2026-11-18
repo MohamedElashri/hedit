@@ -442,3 +442,13 @@ through normal Document history and then publishes buffers. Local preparation
 failure leaves all original documents unchanged. Remote edits use existing host
 journal transactions per file; completed edits remain visible if a later file
 fails. Recovery checkpoints surround application.
+
+### Panel focus state
+
+`workbench_panel::State` records the last visible tab, maximize flag and normal
+height for the window. Maximize uses the available native panel region, and
+restore repairs the egui panel state before normal resizing resumes. Hiding a
+panel releases shell input without destroying sessions. Only explicit workbench
+focus/toggle bindings cross the terminal input boundary; editor editing commands
+remain shell input. Focusing the already selected group still returns keyboard
+focus from the terminal.
