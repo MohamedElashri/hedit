@@ -387,3 +387,15 @@ settings, chords and terminal routing share that result. Context routing still
 restricts shell and settings input; `editor_only` applies to chords as well as
 single keys. Keep local-only availability in `Command::requires_local` so menus
 and execution agree for SSH workspaces.
+
+### Native workspace watching
+
+`workspace_watch` owns one coalescing configuration mailbox and one worker. Native
+non-recursive watches are capped at 1,024 directories; breadth-first discovery
+also has time and path-memory limits and does not traverse symlinks. Root and
+open-file parents retain atomic-save and root-recreation events. The worker
+installs replacement watches before dropping the prior set, rejects old epochs
+and rescans topology at most once a second. Data events increment an atomic
+counter instead of queueing paths. UI invalidation settles for 180 ms with a
+one-second maximum delay; a stopped or limited watcher retains explicit/focus
+refresh. File contents use the existing conflict/reload/save guards.

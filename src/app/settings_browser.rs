@@ -50,6 +50,7 @@ fn catalog() -> &'static [Setting] {
                 });
             };
         }
+        setting!(General, Bool, "auto_refresh_workspace", "Automatically refresh workspace", "Use bounded native filesystem watches for local folders and open files. Refocusing also refreshes folders.");
         setting!(
             General,
             Bool,

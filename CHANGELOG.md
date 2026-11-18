@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Refresh local workspace folders and filename indexes through bounded, debounced native filesystem watches; keep unsaved file conflicts intact and prevent background reloads from changing the selected document.
+
 - Add an optional VS Code shortcut preset with personal-binding priority, shared command hints, conflict suppression and focus-aware chord routing; clarify group file-tab actions and panel labels.
 
 - Bring User and Project settings into one window with preserved drafts and an on-demand formatting-source inspector; protect project saves against concurrent disk or editor changes.

@@ -255,8 +255,14 @@ missing. **Esc** returns to one cursor after dismissing open panels/dialogs.
 | Bookmarks | **Ctrl+F2** toggles; **F2/Shift+F2** navigates; **Goto → Bookmarks…** lists; **Alt+F2** adds cursors; **Ctrl+Shift+F2** clears |
 
 Large find, file-picker, symbol, and text searches run in the background. New
-input takes priority over pending navigation. Filename indexes stay in memory;
-reopen the picker or refresh folders to pick up external changes. Notices report
+input takes priority over pending navigation. Filename indexes stay in memory. **Settings → General → Automatically refresh
+workspace** enables debounced native watching of local roots and open-file
+parents. Watches cover up to 1,024 directories, skip directory symlinks and
+excluded folders, and stop scanning after two seconds or the path-memory limit.
+Hover Refresh folders for coverage status. Refocusing or Refresh folders updates
+caches beyond watch coverage; SSH workspaces continue to use explicit refresh.
+Clean active files reload after external changes; unsaved text is kept with a
+conflict banner and the existing save guard. Notices report
 indexing progress, unreadable folders, and incomplete results.
 
 ## Writing code

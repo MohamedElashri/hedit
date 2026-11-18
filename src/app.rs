@@ -126,6 +126,7 @@ mod wait;
 mod workbench;
 mod workbench_navigation;
 mod workbench_panel;
+mod workspace_watch;
 
 use commands::Command;
 use eframe::egui::{self, FontId, Key, Modifiers, RichText};
@@ -334,6 +335,7 @@ pub struct HeditApp {
     settings_browser: settings_browser::State,
     settings_scope: settings_scope::State,
     shortcut_preset: shortcut_preset::State,
+    workspace_watch: workspace_watch::State,
     goto_open: bool,
     goto_focus: bool,
     replace_open: bool,
@@ -541,6 +543,7 @@ impl HeditApp {
             settings_browser: settings_browser::State::default(),
             settings_scope: settings_scope::State::default(),
             shortcut_preset: shortcut_preset::State::default(),
+            workspace_watch: workspace_watch::State::default(),
             goto_open: false,
             goto_focus: false,
             replace_open: false,
@@ -1122,7 +1125,8 @@ impl HeditApp {
             };
             let background = request
                 .as_ref()
-                .is_some_and(|request| !self.open_focus(request));
+                .is_some_and(|request| !self.open_focus(request))
+                || matches!(&event, Ok(Action::Reloaded(id, ..)) if *id != self.active().view.id);
             let keep_view = background.then(|| (self.active().view.id, self.focus_editor));
             if request.is_some() {
                 if self.closing {
@@ -1301,6 +1305,13 @@ impl HeditApp {
                         if !reloaded {
                             self.leave_review();
                         }
+                        let selection = if reloaded {
+                            let count = page.text.chars().count();
+                            let current = &self.workspace.open[index].view;
+                            Some((current.anchor.min(count), current.head.min(count)))
+                        } else {
+                            selection
+                        };
                         self.workspace.active = index;
                         if !reloaded && selection.is_some() {
                             self.reveal_markdown_source(ctx);
@@ -1310,9 +1321,11 @@ impl HeditApp {
                             buffer.cursor_undo.clear();
                             buffer.cursor_redo.clear();
                             buffer.pending_selection = None;
-                            buffer.changes.clear();
                         }
                         buffer.set_page(page);
+                        if reloaded {
+                            buffer.changes.clear();
+                        }
                         buffer.external = false;
                         if let Some((anchor, head)) = selection {
                             buffer.view.anchor = anchor;
@@ -1324,9 +1337,11 @@ impl HeditApp {
                             buffer.view.scroll_top = 0.0;
                         }
                         self.changed();
-                        // Stepping through matches keeps typing in the Find bar.
-                        self.focus_editor = !self.find_input_focused(ctx);
-                        self.navigation_mark();
+                        // Background reloads update their buffer without stealing the current group.
+                        if !background {
+                            self.focus_editor = !self.find_input_focused(ctx);
+                            self.navigation_mark();
+                        }
                     }
                 }
                 Ok(Action::SaveTo(id, path)) => {
@@ -3790,6 +3805,7 @@ impl eframe::App for HeditApp {
         self.language_information(ctx);
         self.poll_incoming(ctx);
         self.activation.update(ctx);
+        self.poll_workspace_watch(ctx);
         self.project.poll();
         self.poll_source_control(ctx);
         if self.quality.preview.is_some_and(|id| {
