@@ -852,3 +852,18 @@ combined source and proposed text. Local batches preflight every source and
 commit no edits if preparation fails. SSH batches preflight every source too;
 if a later host edit fails, the editor reports the completed files and keeps
 their text and Undo history visible. Files are never saved automatically.
+
+### Panel and focus controls
+
+View → Panel includes Toggle last used panel and Maximize or restore panel.
+Closing or toggling the panel preserves its selected tab, output and shell.
+Maximize expands the panel while remembering its normal height; Restore returns
+to that height. These layout choices are remembered for the current window.
+The VS Code shortcut preset uses Primary+J to toggle the panel.
+
+Focus editor, Focus Explorer, Focus Search and Focus terminal are available in
+the command palette and custom keybindings. Primary+1 through Primary+4 in the
+VS Code preset move from the terminal to an editor group. Sidebar focus leaves
+the panel and active document intact. Focusing a terminal shows its existing
+session, or starts one when explicitly requested and enabled. A disabled terminal
+never starts when restoring the last panel; Problems is shown instead.

@@ -20,6 +20,8 @@ fn preset() -> &'static [Binding] {
         [
             (Command::Sidebar, "Primary+B"),
             (Command::FocusExplorer, "Primary+Shift+E"),
+            (Command::FocusSearch, "Primary+Shift+F"),
+            (Command::TogglePanel, "Primary+J"),
             (Command::Build, "Primary+Shift+B"),
             (Command::Symbols, "Primary+Shift+O"),
             (Command::LanguageProblems, "Primary+Shift+M"),

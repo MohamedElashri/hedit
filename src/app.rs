@@ -265,6 +265,7 @@ pub struct HeditApp {
     /// `hedit -w` requests waiting for their files to close.
     waits: Vec<wait::Wait>,
     build: build_panel::BuildState,
+    panel_state: workbench_panel::State,
     terminal: terminal_panel::TerminalState,
     /// The first key of a shortcut being recorded, and when it was pressed.
     capture_first: Option<(String, Instant)>,
@@ -493,6 +494,7 @@ impl HeditApp {
             key_capture: None,
             waits: Vec::new(),
             build: Default::default(),
+            panel_state: Default::default(),
             terminal: Default::default(),
             capture_first: None,
             chord: None,

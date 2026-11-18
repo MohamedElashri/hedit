@@ -623,6 +623,10 @@ impl HeditApp {
     }
     pub(super) fn focus_group(&mut self, next: usize, carry: bool) {
         self.sync_groups();
+        if next < self.panes.groups() {
+            self.terminal.release_input();
+            self.focus_editor = true;
+        }
         if next >= self.panes.groups() || next == self.panes.focused {
             return;
         }

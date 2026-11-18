@@ -1341,8 +1341,24 @@ impl HeditApp {
             "Side bar",
             &[
                 Command::FocusExplorer,
+                Command::FocusSearch,
                 Command::Sidebar,
                 Command::FolderSidebar,
+            ],
+            action,
+        );
+        command_group(
+            ui,
+            self,
+            "Panel",
+            &[
+                Command::TogglePanel,
+                Command::MaximizePanel,
+                Command::FocusEditor,
+                Command::FocusTerminal,
+                Command::LanguageProblems,
+                Command::BuildResults,
+                Command::Terminal,
             ],
             action,
         );

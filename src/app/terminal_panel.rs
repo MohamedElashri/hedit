@@ -391,13 +391,7 @@ impl HeditApp {
         #[cfg(feature = "terminal")]
         {
             if self.terminal.open {
-                if let Some(tab) = self.terminal.tabs.get_mut(self.terminal.active) {
-                    tab.preedit.clear();
-                }
-                self.terminal.open = false;
-                self.terminal.dragged_tab = None;
-                self.terminal.binding_prefix = None;
-                self.focus_editor = true;
+                self.hide_panel();
                 ctx.memory_mut(|m| m.surrender_focus(input_id()));
                 return;
             }
@@ -681,6 +675,15 @@ impl HeditApp {
                     && matches!(
                         b.command,
                         Command::FocusExplorer
+                            | Command::FocusGroup1
+                            | Command::FocusGroup2
+                            | Command::FocusGroup3
+                            | Command::FocusGroup4
+                            | Command::FocusEditor
+                            | Command::FocusSearch
+                            | Command::FocusTerminal
+                            | Command::TogglePanel
+                            | Command::MaximizePanel
                             | Command::Terminal
                             | Command::NewTerminal
                             | Command::CloseTerminal
