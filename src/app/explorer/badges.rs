@@ -44,6 +44,65 @@ fn priority(status: char) -> u8 {
         _ => 1,
     }
 }
+fn git_metadata_path(root: &Path, value: &str) -> PathBuf {
+    let path = PathBuf::from(value.trim_end());
+    if path.is_absolute() {
+        path
+    } else {
+        root.join(path)
+    }
+}
+fn add_metadata_directory(reply: &mut Reply, path: &Path) {
+    match path
+        .canonicalize()
+        .ok()
+        .filter(|path| path.is_dir())
+        .and_then(|path| path.to_str().map(str::to_owned))
+    {
+        Some(path) => reply.metadata.push(path),
+        None => reply.limited = true,
+    }
+}
+fn metadata_directories(git: &hedit::git::Git, root: &Path, reply: &mut Reply) {
+    for args in [
+        ["rev-parse", "--absolute-git-dir"],
+        ["rev-parse", "--git-common-dir"],
+    ] {
+        if let Ok(value) = git.command(root, &args) {
+            let path = git_metadata_path(root, &value);
+            add_metadata_directory(reply, &path);
+            // Git's reftable backend keeps its tables below the metadata root.
+            let reftable = path.join("reftable");
+            if reftable.is_dir() {
+                add_metadata_directory(reply, &reftable);
+            }
+        } else {
+            reply.limited = true;
+        }
+    }
+    // Loose branch refs are below refs/heads, outside a non-recursive .git watch.
+    // --git-path also resolves shared refs correctly for linked worktrees.
+    if let Ok(reference) = git.command(root, &["symbolic-ref", "--quiet", "HEAD"]) {
+        if let Ok(value) = git.command(root, &["rev-parse", "--git-path", reference.trim_end()]) {
+            let path = git_metadata_path(root, &value);
+            if let Some(mut directory) = path.parent() {
+                // An unborn or newly selected nested branch may not have a ref yet.
+                for _ in 0..32 {
+                    if directory.is_dir() {
+                        add_metadata_directory(reply, directory);
+                        break;
+                    }
+                    let Some(parent) = directory.parent() else {
+                        break;
+                    };
+                    directory = parent;
+                }
+            }
+        } else {
+            reply.limited = true;
+        }
+    }
+}
 fn collect(git: &hedit::git::Git, generation: u64, roots: Vec<PathBuf>, local: bool) -> Reply {
     let mut reply = Reply {
         generation,
@@ -66,9 +125,7 @@ fn collect(git: &hedit::git::Git, generation: u64, roots: Vec<PathBuf>, local: b
             continue;
         }
         if local {
-            if let Ok(directory) = git.command(&root, &["rev-parse", "--absolute-git-dir"]) {
-                reply.metadata.push(directory.trim_end().to_owned());
-            }
+            metadata_directories(git, &root, &mut reply);
         }
         let Ok(files) = git.status_files(&root) else {
             continue;
@@ -165,7 +222,7 @@ impl HeditApp {
                         state.files = Arc::new(reply.files);
                         state.metadata = reply.metadata;
                         state.note = if reply.limited {
-                            "Git decorations reached their file/path budget. Source Control provides the full review."
+                            "Git decorations have limited metadata coverage or reached their file/path budget. Source Control provides the full review."
                                 .into()
                         } else {
                             String::new()
@@ -258,6 +315,154 @@ mod tests {
         assert_eq!(reply.files[&root.join("src/tracked.rs")], 'M');
         assert_eq!(reply.files[&root.join("src")], 'M');
         assert_eq!(reply.files[&root.join("new.rs")], '?');
-        assert_eq!(reply.metadata.len(), 1);
+        assert_eq!(reply.metadata.len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod reference_watch_tests {
+    use super::*;
+    fn git(root: &Path, args: &[&str]) -> String {
+        let result = std::process::Command::new("git")
+            .args([
+                "-c",
+                "user.name=Hedit test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .args(args)
+            .current_dir(root)
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{:?}: {}",
+            args,
+            String::from_utf8_lossy(&result.stderr)
+        );
+        String::from_utf8(result.stdout)
+            .unwrap()
+            .trim_end()
+            .to_owned()
+    }
+    fn repository() -> (tempfile::TempDir, PathBuf) {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap().join("repository");
+        std::fs::create_dir(&root).unwrap();
+        git(&root, &["init", "--quiet"]);
+        std::fs::write(root.join("tracked.txt"), "first\n").unwrap();
+        git(&root, &["add", "tracked.txt"]);
+        git(&root, &["commit", "--quiet", "-m", "first"]);
+        (directory, root)
+    }
+    fn ref_parent(root: &Path) -> PathBuf {
+        let name = git(root, &["symbolic-ref", "--quiet", "HEAD"]);
+        let path = PathBuf::from(git(root, &["rev-parse", "--git-path", &name]));
+        let path = if path.is_absolute() {
+            path
+        } else {
+            root.join(path)
+        };
+        path.parent().unwrap().canonicalize().unwrap()
+    }
+    #[test]
+    fn metadata_includes_the_current_branch_reference_directory() {
+        let (_directory, root) = repository();
+        let reply = collect(&hedit::git::Git::default(), 1, vec![root.clone()], true);
+        let parent = ref_parent(&root);
+        assert!(
+            reply.metadata.iter().any(|p| Path::new(p) == parent),
+            "branch reference directory is not watched: {:?}",
+            reply.metadata
+        );
+    }
+    #[test]
+    fn linked_worktrees_watch_shared_metadata_and_their_current_branch() {
+        let (directory, root) = repository();
+        let linked = directory.path().canonicalize().unwrap().join("linked");
+        git(
+            &root,
+            &[
+                "worktree",
+                "add",
+                "--quiet",
+                "-b",
+                "linked-topic",
+                "../linked",
+            ],
+        );
+        let reply = collect(&hedit::git::Git::default(), 1, vec![linked.clone()], true);
+        let common = root.join(".git").canonicalize().unwrap();
+        let parent = ref_parent(&linked);
+        assert!(
+            reply.metadata.iter().any(|p| Path::new(p) == common),
+            "shared Git directory is not watched: {:?}",
+            reply.metadata
+        );
+        assert!(reply.metadata.iter().any(|p| Path::new(p) == parent));
+    }
+    #[test]
+    fn native_ref_updates_refresh_badges_without_editing_files_or_refocusing() {
+        let (directory, root) = repository();
+        let first = git(&root, &["rev-parse", "HEAD"]);
+        std::fs::write(root.join("tracked.txt"), "second\n").unwrap();
+        git(&root, &["add", "tracked.txt"]);
+        git(&root, &["commit", "--quiet", "-m", "second"]);
+        settings_store::TEST_CONFIG_DIR
+            .with(|p| *p.borrow_mut() = Some(directory.path().join("config")));
+        let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        app.choose_terminal(false);
+        app.set_folder(hedit::folder::read_directory(root.clone()).unwrap());
+        let started = Instant::now();
+        let mut quiet = None;
+        loop {
+            app.poll_explorer_badges(&ctx);
+            app.poll_workspace_watch(&ctx);
+            app.project.poll();
+            let idle = app.workspace_watch.status.starts_with("Automatic refresh:")
+                && app.explorer.badges.rx.is_none()
+                && !app.explorer.badges.dirty;
+            if idle {
+                let since = quiet.get_or_insert_with(Instant::now);
+                if since.elapsed() > Duration::from_secs(2) {
+                    break;
+                }
+            } else {
+                quiet = None;
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(15),
+                "metadata watches did not settle: {}",
+                app.workspace_watch.status
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(!app
+            .explorer
+            .badges
+            .files
+            .contains_key(&root.join("tracked.txt")));
+        git(&root, &["update-ref", "HEAD", &first]);
+        let started = Instant::now();
+        loop {
+            app.poll_workspace_watch(&ctx);
+            app.poll_explorer_badges(&ctx);
+            if app.explorer.badges.files.get(&root.join("tracked.txt")) == Some(&'M') {
+                break;
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(10),
+                "branch ref changes did not refresh Explorer"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            std::fs::read_to_string(root.join("tracked.txt")).unwrap(),
+            "second\n"
+        );
     }
 }

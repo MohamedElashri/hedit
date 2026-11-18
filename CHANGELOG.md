@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Refresh Explorer Git badges for branch-reference changes and shared metadata in linked worktrees without requiring file edits or refocus.
+
 - Allow reviewed language-server text edits in named buffers before their first save while retaining project-root and symlink guards.
 
 - Add bounded notification history with guarded save retries, output/log actions, progress and cooperative cancellation for builds, searches and language-server work.
