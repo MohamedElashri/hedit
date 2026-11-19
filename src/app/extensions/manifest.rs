@@ -87,26 +87,35 @@ fn valid_id(id: &str) -> bool {
 }
 
 fn valid_body(body: &str) -> bool {
-    static FLAT_SNIPPET: OnceLock<Regex> = OnceLock::new();
-    if body.len() > MAX_BODY_BYTES
+    static TOKEN: OnceLock<Regex> = OnceLock::new();
+    if body.is_empty()
+        || body.len() > MAX_BODY_BYTES
         || body.bytes().filter(|byte| *byte == b'\n').count() >= MAX_BODY_LINES
     {
         return false;
     }
     // Flat numbered fields bound expansion and reuse the same editor snippet syntax.
-    FLAT_SNIPPET
-        .get_or_init(|| {
-            Regex::new(
-                r"(?x)\A(?:
-                  [^$\\]
-                | \\[\\$}]
-                | \$[0-9]+
-                | \$\{[0-9]+(?::[^$\\{}\r\n]*)?\}
-                )+\z",
-            )
-            .expect("valid extension snippet grammar")
-        })
-        .is_match(body)
+    let pattern = TOKEN.get_or_init(|| {
+        Regex::new(
+            r"(?x)
+              [^$\\]+
+            | \\[\\$}]
+            | \$(?P<bare>[0-9]+)
+            | \$\{(?P<braced>[0-9]+)(?::[^$\\{}\r\n]*)?\}",
+        )
+        .expect("valid extension snippet token pattern")
+    });
+    let mut end = 0;
+    for token in pattern.captures_iter(body) {
+        let span = token.get(0).unwrap();
+        let field = token.name("bare").or_else(|| token.name("braced"));
+        if span.start() != end || field.is_some_and(|field| field.as_str().parse::<u32>().is_err())
+        {
+            return false;
+        }
+        end = span.end();
+    }
+    end == body.len()
 }
 
 fn read_manifest(path: &Path) -> Result<Manifest, String> {
@@ -142,8 +151,14 @@ fn read_manifest(path: &Path) -> Result<Manifest, String> {
             return Err(format!("Command {} needs a title of 1–{MAX_TITLE_BYTES} bytes without surrounding whitespace or control characters.", command.id));
         }
         let Action::InsertSnippet { body } = &command.action;
+        if body.contains('\0') {
+            return Err(format!(
+                "Command {} has a snippet containing a NUL character.",
+                command.id
+            ));
+        }
         if !valid_body(body) {
-            return Err(format!("Command {} has an invalid snippet. Use 1–{MAX_BODY_BYTES} bytes, up to {MAX_BODY_LINES} lines, and flat numbered fields.", command.id));
+            return Err(format!("Command {} has an invalid snippet. Use 1–{MAX_BODY_BYTES} bytes, up to {MAX_BODY_LINES} lines, and flat fields numbered 0–{}.", command.id, u32::MAX));
         }
     }
     Ok(manifest)
@@ -299,6 +314,33 @@ mod tests {
             &"x".repeat(MAX_BODY_BYTES + 1),
             &"x\n".repeat(MAX_BODY_LINES),
         ] {
+            assert!(!valid_body(body), "{body:?}");
+        }
+    }
+
+    #[test]
+    fn extension_loader_rejects_nul_in_plain_text_and_field_defaults() {
+        let config = tempfile::tempdir().unwrap();
+        let directory = config.path().join("extensions");
+        fs::create_dir(&directory).unwrap();
+        for (id, body) in [("plain", "before\0after"), ("field", "${1:before\0after}")] {
+            fs::write(
+                directory.join(format!("{id}.json")),
+                manifest(id, vec![command("insert", body)]),
+            )
+            .unwrap();
+        }
+        let (commands, errors) = load(Some(config.path()));
+        assert!(commands.is_empty());
+        assert_eq!(errors.len(), 2);
+        assert!(errors.iter().all(|error| error.contains("NUL")));
+    }
+
+    #[test]
+    fn extension_template_rejects_overflowing_field_numbers() {
+        assert!(valid_body("$4294967295 ${4294967295:valid}"));
+        assert!(valid_body(r"\$4294967296"));
+        for body in ["$4294967296", "${4294967296}", "${4294967296:invalid}"] {
             assert!(!valid_body(body), "{body:?}");
         }
     }

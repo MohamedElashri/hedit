@@ -16,10 +16,10 @@ The [Markdown task example](../examples/extensions/markdown-task.json) is ready 
 | `commands[].action` | An object with `"kind": "insert_snippet"` and a `body` string. |
 
 IDs use up to 48 lowercase ASCII letters, digits, or hyphens and start with a
-letter. A body uses up to 2,048 UTF-8 bytes across 16 lines. Use flat numbered
-snippet fields such as `${1:default}` and `$2`, repeat a field number to mirror its
-value, and use `$0` for the final caret position. To insert a literal dollar sign,
-write `\\$` in the JSON string.
+letter. A body uses up to 2,048 UTF-8 bytes across 16 lines without NUL characters.
+Use flat snippet fields numbered 0 to 4,294,967,295, such as `${1:default}` and
+`$2`. Repeat a field number to mirror its value and use `$0` for the final caret
+position. To insert a literal dollar sign, write `\\$` in the JSON string.
 
 Commands are available with one caret or selection in the text editor. Snippets
 respect the document's indentation and line endings. One undo restores the
