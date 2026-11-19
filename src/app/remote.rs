@@ -1440,8 +1440,13 @@ mod tests {
             app.remote_controls(&ctx);
             let expected = if success { &resolved } else { &original };
             assert_eq!(
-                app.remote_ui.catalog.as_ref().unwrap().workspaces,
-                [expected.clone()]
+                app.remote_ui
+                    .catalog
+                    .as_ref()
+                    .unwrap()
+                    .workspaces
+                    .as_slice(),
+                std::slice::from_ref(expected)
             );
         }
     }
