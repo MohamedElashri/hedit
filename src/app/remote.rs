@@ -34,6 +34,7 @@ pub(super) struct RemoteUi {
     state: String,
     config: String,
     manual_helper: bool,
+    interactive_auth: bool,
     config_dialog: bool,
     takeover: bool,
     editing: Option<RemoteConfig>,
@@ -126,6 +127,7 @@ impl ConnectChoice<'_> {
                     },
                     root: String::new(),
                     managed: true,
+                    interactive_auth: false,
                     takeover: false,
                 }
             }
@@ -229,6 +231,7 @@ impl RemoteUi {
     fn edit(&mut self, config: Option<&RemoteConfig>, default_config: &str) {
         self.editing = config.cloned();
         self.manual_helper = config.is_some_and(|c| !c.managed);
+        self.interactive_auth = config.is_some_and(|c| c.interactive_auth);
         self.host = config.map(|c| c.target.host.clone()).unwrap_or_default();
         self.user = config
             .and_then(|c| c.target.user.clone())
@@ -279,6 +282,7 @@ impl RemoteUi {
             },
             root: self.root.trim().into(),
             managed: !self.manual_helper,
+            interactive_auth: self.interactive_auth,
             takeover: self.takeover,
         };
         let mut validate = Catalog::default();
@@ -604,13 +608,22 @@ impl HeditApp {
             if config.takeover {
                 command.arg("--ssh-takeover");
             }
+            if config.interactive_auth {
+                command.arg("--ssh-interactive");
+            }
             let child = command
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::piped())
                 .spawn()
                 .map_err(|e| e.to_string())?;
-            wait_for_window(child)
+            let timeout = Duration::from_secs(40)
+                + if config.interactive_auth {
+                    hedit::remote::askpass::AUTH_TIMEOUT
+                } else {
+                    Duration::ZERO
+                };
+            wait_for_window(child, timeout)
         });
     }
     pub(super) fn remote_explorer(&mut self, ui: &mut egui::Ui) {
@@ -1056,6 +1069,10 @@ impl HeditApp {
                             ui.label("Installed helper (absolute)");ui.text_edit_singleline(&mut self.remote_ui.helper);
                         } else {ui.label("The matching helper is installed automatically for your remote user.");}
                         ui.checkbox(&mut self.remote_ui.takeover, "Take over an existing writer (fences its edits)");
+                        ui.add_enabled(
+                            hedit::remote::askpass::SUPPORTED || self.remote_ui.interactive_auth,
+                            egui::Checkbox::new(&mut self.remote_ui.interactive_auth, "Allow interactive SSH authentication"),
+                        ).on_hover_text("Prompt locally for a password, passphrase, or verification code.");
                         ui.label("SSH keys remain managed by OpenSSH and your agent.");
                         ui.horizontal(|ui| {
                             let ready = self.remote_ui.pending.is_none() && self.remote_ui.saving.is_none() && self.remote_ui.connecting.is_none();
@@ -1336,14 +1353,14 @@ fn schedule_backpressure_repaint(ctx: &egui::Context, delay: Option<Duration>) {
     }
 }
 
-fn wait_for_window(mut child: std::process::Child) -> Result<(), String> {
+fn wait_for_window(mut child: std::process::Child, timeout: Duration) -> Result<(), String> {
     use std::io::Read;
     let start = Instant::now();
     let status = loop {
         if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
             break status;
         }
-        if start.elapsed() > Duration::from_secs(40) {
+        if start.elapsed() > timeout {
             let _ = child.kill();
             let _ = child.wait();
             return Err(
@@ -1914,6 +1931,7 @@ mod tests {
             },
             root: "/work/project".into(),
             managed: false,
+            interactive_auth: false,
             takeover: false,
         };
         app.remote_ui.edit(Some(&original), "");
@@ -2083,6 +2101,7 @@ mod tests {
             },
             root: fixture["root"].as_str().unwrap().into(),
             managed: false,
+            interactive_auth: false,
             takeover: false,
         };
         let directory = tempfile::tempdir().unwrap();

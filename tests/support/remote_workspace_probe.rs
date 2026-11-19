@@ -36,6 +36,7 @@ fn run() -> Result<(), String> {
         },
         root: args[3].clone(),
         managed: managed_timings,
+        interactive_auth: false,
         takeover: false,
     })?;
     let connected = started.elapsed();

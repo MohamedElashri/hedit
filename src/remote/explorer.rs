@@ -162,6 +162,7 @@ mod tests {
             },
             root: "/work/project".into(),
             managed: false,
+            interactive_auth: false,
             takeover: true,
         }
     }

@@ -59,6 +59,28 @@ fn arguments_override_unsafe_forwarding_and_connection_reuse() {
 }
 
 #[test]
+fn interactive_commands_keep_strict_ssh_policy() {
+    let target = target();
+    let command = target.command_with_auth(true).unwrap();
+    let args: Vec<_> = command.get_args().map(|s| s.to_str().unwrap()).collect();
+    assert!(!args.contains(&"BatchMode=yes"));
+    for option in [
+        "BatchMode=no",
+        "NumberOfPasswordPrompts=1",
+        "StrictHostKeyChecking=yes",
+        "ForwardAgent=no",
+        "ControlMaster=no",
+        "PermitLocalCommand=no",
+        "UpdateHostKeys=no",
+    ] {
+        assert!(
+            args.windows(2).any(|pair| pair == ["-o", option]),
+            "{option}"
+        );
+    }
+}
+
+#[test]
 fn trusted_install_paths_are_shell_quoted_and_invalid_ones_rejected() {
     let mut t = target();
     t.helper = "/opt/a ' quote/helper".into();
