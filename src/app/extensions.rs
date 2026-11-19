@@ -1,9 +1,12 @@
 //! Local extension manifests contribute commands to the Command Palette.
+mod catalog;
+mod manager;
 mod manifest;
 
 use super::{snippet_fields, HeditApp};
 use hedit::intelligence::Snippet;
 
+pub(super) use manager::Manager;
 pub(super) use manifest::{load, Contribution};
 
 const MAX_INDENT_BYTES: usize = 4096;

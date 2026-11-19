@@ -283,6 +283,7 @@ pub struct HeditApp {
     /// A list shown in the palette instead of files or commands.
     pick_list: Option<commands::PickList>,
     extensions: Vec<extensions::Contribution>,
+    extension_manager: extensions::Manager,
     /// Tab moves through the fields of the snippet inserted last.
     snippet: Option<snippet_fields::SnippetSession>,
     auto: auto_complete::AutoComplete,
@@ -511,6 +512,7 @@ impl HeditApp {
             paste_history: Vec::new(),
             pick_list: None,
             extensions,
+            extension_manager: extensions::Manager::default(),
             snippet: None,
             auto: Default::default(),
             languages: Default::default(),

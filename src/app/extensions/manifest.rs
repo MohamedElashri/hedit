@@ -9,9 +9,9 @@ use std::{
 };
 
 const API_VERSION: u32 = 1;
-const MAX_DIRECTORY_ENTRIES: usize = 256;
-const MAX_MANIFESTS: usize = 32;
-const MAX_MANIFEST_BYTES: u64 = 32 * 1024;
+pub(super) const MAX_DIRECTORY_ENTRIES: usize = 256;
+pub(super) const MAX_MANIFESTS: usize = 32;
+pub(super) const MAX_MANIFEST_BYTES: u64 = 32 * 1024;
 const MAX_COMMANDS: usize = 16;
 const MAX_ID_BYTES: usize = 48;
 const MAX_TITLE_BYTES: usize = 128;
@@ -31,10 +31,30 @@ struct Version {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Manifest {
+pub(super) struct Manifest {
     api_version: u32,
-    id: String,
+    pub(super) id: String,
     commands: Vec<Command>,
+}
+
+impl Manifest {
+    pub(super) fn command_labels(&self) -> Vec<(String, String)> {
+        self.commands
+            .iter()
+            .map(|command| (format!("{}.{}", self.id, command.id), command.title.clone()))
+            .collect()
+    }
+
+    pub(super) fn into_contributions(self) -> impl Iterator<Item = Contribution> {
+        self.commands.into_iter().map(move |command| {
+            let Action::InsertSnippet { body } = command.action;
+            Contribution {
+                id: format!("{}.{}", self.id, command.id),
+                title: command.title,
+                body,
+            }
+        })
+    }
 }
 
 #[derive(Deserialize)]
@@ -51,19 +71,21 @@ enum Action {
     InsertSnippet { body: String },
 }
 
-fn paths(directory: &Path) -> io::Result<Vec<PathBuf>> {
+pub(super) fn paths(directory: &Path) -> io::Result<(Vec<PathBuf>, usize)> {
     let entries = match fs::read_dir(directory) {
         Ok(entries) => entries,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok((Vec::new(), 0)),
         Err(error) => return Err(error),
     };
     let mut paths = Vec::new();
+    let mut count = 0;
     for (index, entry) in entries.enumerate() {
         if index == MAX_DIRECTORY_ENTRIES {
             return Err(io::Error::other(format!(
                 "The directory contains more than {MAX_DIRECTORY_ENTRIES} entries."
             )));
         }
+        count = index + 1;
         let entry = entry?;
         let path = entry.path();
         if path
@@ -75,10 +97,10 @@ fn paths(directory: &Path) -> io::Result<Vec<PathBuf>> {
         }
     }
     paths.sort_unstable();
-    Ok(paths)
+    Ok((paths, count))
 }
 
-fn valid_id(id: &str) -> bool {
+pub(super) fn valid_id(id: &str) -> bool {
     id.len() <= MAX_ID_BYTES
         && id.as_bytes().first().is_some_and(u8::is_ascii_lowercase)
         && id
@@ -118,16 +140,20 @@ fn valid_body(body: &str) -> bool {
     end == body.len()
 }
 
-fn read_manifest(path: &Path) -> Result<Manifest, String> {
+pub(super) fn read_manifest(path: &Path) -> Result<Manifest, String> {
     let text = projects::read_text(path, MAX_MANIFEST_BYTES)?;
-    let version: Version = serde_json::from_str(&text).map_err(|error| error.to_string())?;
+    parse_manifest(&text)
+}
+
+pub(super) fn parse_manifest(text: &str) -> Result<Manifest, String> {
+    let version: Version = serde_json::from_str(text).map_err(|error| error.to_string())?;
     if version.api_version != API_VERSION {
         return Err(format!(
             "API version {} is unsupported. This editor supports version {API_VERSION}.",
             version.api_version
         ));
     }
-    let manifest: Manifest = serde_json::from_str(&text).map_err(|error| error.to_string())?;
+    let manifest: Manifest = serde_json::from_str(text).map_err(|error| error.to_string())?;
     debug_assert_eq!(manifest.api_version, version.api_version);
     if !valid_id(&manifest.id) {
         return Err("Invalid extension ID. Use 1–48 lowercase letters, digits, or hyphens, starting with a letter.".into());
@@ -165,48 +191,8 @@ fn read_manifest(path: &Path) -> Result<Manifest, String> {
 }
 
 pub(in crate::app) fn load(config: Option<&Path>) -> (Vec<Contribution>, Vec<String>) {
-    let Some(directory) = config.map(|config| config.join("extensions")) else {
-        return (Vec::new(), Vec::new());
-    };
-    let paths = match paths(&directory) {
-        Ok(paths) => paths,
-        Err(error) => {
-            return (
-                Vec::new(),
-                vec![format!("Extensions in {}: {error}", directory.display())],
-            );
-        }
-    };
-    let mut errors = Vec::new();
-    if paths.len() > MAX_MANIFESTS {
-        errors.push(format!(
-            "Extensions in {}: only the first {MAX_MANIFESTS} manifests by filename were read.",
-            directory.display()
-        ));
-    }
-    let mut extension_ids = HashSet::new();
-    let mut contributions = Vec::new();
-    for path in paths.into_iter().take(MAX_MANIFESTS) {
-        match read_manifest(&path) {
-            Ok(manifest) if extension_ids.insert(manifest.id.clone()) => {
-                for command in manifest.commands {
-                    let Action::InsertSnippet { body } = command.action;
-                    contributions.push(Contribution {
-                        id: format!("{}.{}", manifest.id, command.id),
-                        title: command.title,
-                        body,
-                    });
-                }
-            }
-            Ok(manifest) => errors.push(format!(
-                "Extension {}: duplicate extension ID {:?}.",
-                path.display(),
-                manifest.id
-            )),
-            Err(error) => errors.push(format!("Extension {}: {error}", path.display())),
-        }
-    }
-    (contributions, errors)
+    let catalog = config.map(super::catalog::read).unwrap_or_default();
+    (catalog.contributions, catalog.view.startup_errors())
 }
 
 #[cfg(test)]

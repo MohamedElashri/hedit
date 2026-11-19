@@ -6,7 +6,7 @@ impl HeditApp {
         &mut self,
         ui: &mut egui::Ui,
         searching: bool,
-        counts: &[usize; 11],
+        counts: &[usize; PreferencesPage::ALL.len()],
         height: f32,
         width: f32,
     ) {
