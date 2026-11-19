@@ -323,6 +323,13 @@ impl FolderPicker {
     }
 }
 
+fn parent_path(relative: &[u8]) -> Option<&[u8]> {
+    (!relative.is_empty()).then(|| {
+        let end = relative.iter().rposition(|&byte| byte == b'/').unwrap_or(0);
+        &relative[..end]
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -392,7 +399,7 @@ mod tests {
         frame(&ctx, &mut picker, vec![key(Key::ArrowDown)]);
         assert!(matches!(
             frame(&ctx, &mut picker, vec![key(Key::Enter)]),
-            Some(Action::Navigate(path)) if path == PathBuf::from("hedit-ssh:test/project")
+            Some(Action::Navigate(path)) if path == std::path::Path::new("hedit-ssh:test/project")
         ));
         frame(&ctx, &mut picker, vec![key(Key::ArrowUp)]);
         assert!(picker.selected.is_none());
@@ -446,11 +453,4 @@ mod tests {
         assert_eq!(parent_path(b"project"), Some(b"".as_slice()));
         assert_eq!(parent_path(b""), None);
     }
-}
-
-fn parent_path(relative: &[u8]) -> Option<&[u8]> {
-    (!relative.is_empty()).then(|| {
-        let end = relative.iter().rposition(|&byte| byte == b'/').unwrap_or(0);
-        &relative[..end]
-    })
 }
