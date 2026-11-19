@@ -264,7 +264,7 @@ pub struct HeditApp {
     settings: hedit::settings::Settings,
     settings_files: settings_store::SettingsFiles,
     /// The command whose shortcut is being recorded on the Key Bindings page.
-    key_capture: Option<Command>,
+    key_capture: Option<quality::BindingCommand>,
     /// `hedit -w` requests waiting for their files to close.
     waits: Vec<wait::Wait>,
     build: build_panel::BuildState,

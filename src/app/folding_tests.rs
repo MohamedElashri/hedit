@@ -75,7 +75,7 @@ fn fold_level_chords_and_rebinding_work_and_paged_files_are_disabled() {
         );
     }
     app.quality.config.keybindings.push(quality::Binding {
-        command: Command::FoldLevel2,
+        command: Command::FoldLevel2.into(),
         shortcut: "Alt+F8".into(),
         editor_only: true,
     });
