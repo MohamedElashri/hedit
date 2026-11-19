@@ -40,7 +40,13 @@ impl HeditApp {
         let remote = self.workspace.remote.clone();
         let body = body.to_owned();
         self.job(ctx, move || {
-            let expansion = intelligence::expand_fields(&body.replace("\r\n", "\n"), "");
+            let expansion = intelligence::expand_fields_bounded(
+                &body.replace("\r\n", "\n"),
+                "",
+                None,
+                super::MAX_EXPANSION_BYTES,
+            )
+            .ok_or("The expanded extension file template is too large.")?;
             let mut doc = match remote {
                 Some(remote) => remote.scratch(id)?,
                 None => Document::empty(id),

@@ -38,8 +38,8 @@ Both actions use flat fields numbered 0 to 4,294,967,295, such as
 
 Snippet actions also support `${SELECTION}` and `${FILE_BASENAME}`. These
 expand literally. The basename removes the final extension from the file name
-and is empty in an untitled buffer. An expanded extension snippet can use up to
-128 KiB.
+and is empty in an untitled buffer. An expanded extension snippet or file
+template can use up to 128 KiB.
 
 ## Context and shortcuts
 
@@ -54,10 +54,10 @@ any number of characters and `?` for one character. `selection` accepts
   "id": "writing-tools",
   "commands": [
     {
-      "id": "wrap-link",
-      "title": "Wrap selection in a link",
+      "id": "bold-selection",
+      "title": "Make selection bold",
       "when": {"languages": ["markdown"], "filename": "*.md", "selection": true},
-      "action": {"kind": "insert_snippet", "body": "[${SELECTION}](${1:url})$0"}
+      "action": {"kind": "insert_snippet", "body": "**${SELECTION}**$0"}
     },
     {
       "id": "python-test",
@@ -69,7 +69,7 @@ any number of characters and `?` for one character. `selection` accepts
 ```
 
 Bind an extension command in the **Key Bindings** settings by its title or
-namespaced ID, for example `writing-tools.wrap-link`. The command must be
+namespaced ID, for example `writing-tools.bold-selection`. The command must be
 enabled and available in the current editor context when you press the shortcut.
 
 hedit reads up to 32 regular `.json` manifests of at most 32 KiB each in
