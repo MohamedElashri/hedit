@@ -5,9 +5,29 @@ use std::{
     io,
     path::{Path, PathBuf},
 };
-use tempfile::{NamedTempFile, TempDir, TempPath};
+use tempfile::{Builder, NamedTempFile, TempDir, TempPath};
 
 const CONFLICT: &str = "The destination changed while saving. Your edits are still available.";
+
+pub(super) fn staging_directory(parent: &Path) -> io::Result<TempDir> {
+    let mut builder = Builder::new();
+    builder.prefix(".hedit-save-");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let private = fs::Permissions::from_mode(0o700);
+        builder.permissions(private.clone());
+        let directory = builder.tempdir_in(parent)?;
+        // A default ACL or a restrictive umask can remove owner traversal
+        // during creation. Restore it before placing files in the directory.
+        if fs::metadata(directory.path())?.permissions().mode() & 0o700 != 0o700 {
+            fs::set_permissions(directory.path(), private)?;
+        }
+        Ok(directory)
+    }
+    #[cfg(not(unix))]
+    builder.tempdir_in(parent)
+}
 
 pub(super) fn replace(
     staged: NamedTempFile,

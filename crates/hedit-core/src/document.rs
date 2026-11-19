@@ -8,7 +8,7 @@ use std::{
     sync::Arc,
     time::SystemTime,
 };
-use tempfile::{Builder, NamedTempFile};
+use tempfile::NamedTempFile;
 
 mod save_permissions;
 mod save_target;
@@ -1789,7 +1789,7 @@ impl Document {
         let parent = target.parent().ok_or("Invalid save directory.")?;
         let staging = target_stamp
             .as_ref()
-            .map(|_| Builder::new().prefix(".hedit-save-").tempdir_in(parent))
+            .map(|_| save_target::staging_directory(parent))
             .transpose()
             .map_err(err)?;
         let mut temp = NamedTempFile::new_in(staging.as_ref().map_or(parent, |dir| dir.path()))
