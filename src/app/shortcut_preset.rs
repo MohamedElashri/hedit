@@ -1,7 +1,7 @@
 //! Resolve personal bindings, an optional preset, and Hedit defaults once per edit.
 use super::*;
 use hedit::settings::KeybindingPreset;
-use quality::Binding;
+use quality::{Binding, BindingCommand};
 use std::cell::{Ref, RefCell};
 use std::collections::HashMap;
 
@@ -12,6 +12,7 @@ struct Cache {
     ready: bool,
     preset: KeybindingPreset,
     personal: Vec<Binding>,
+    extensions: HashMap<String, bool>,
     configured: Vec<Binding>,
     commands: HashMap<Command, (String, bool)>,
 }
@@ -53,7 +54,7 @@ fn preset() -> &'static [Binding] {
         ]
         .into_iter()
         .map(|(command, shortcut)| Binding {
-            command,
+            command: command.into(),
             shortcut: shortcut.into(),
             editor_only: false,
         })
@@ -106,16 +107,28 @@ pub(super) fn bindings_collide(parsed: &[egui::KeyboardShortcut], text: &str) ->
     collides(parsed, &keys(text))
 }
 impl State {
-    fn resolve(&self, selected: KeybindingPreset, personal: &[Binding]) -> Ref<'_, Cache> {
+    fn resolve(
+        &self,
+        selected: KeybindingPreset,
+        personal: &[Binding],
+        extension_available: impl Fn(&str) -> bool,
+    ) -> Ref<'_, Cache> {
         let changed = {
             let cache = self.0.borrow();
-            !cache.ready || cache.preset != selected || cache.personal != personal
+            !cache.ready
+                || cache.preset != selected
+                || cache.personal != personal
+                || cache
+                    .extensions
+                    .iter()
+                    .any(|(id, active)| extension_available(id) != *active)
         };
         if changed {
             let mut cache = self.0.borrow_mut();
             cache.ready = true;
             cache.preset = selected;
             cache.personal = personal.to_vec();
+            cache.extensions.clear();
             cache.configured.clear();
             cache.commands.clear();
             let mut claimed: Vec<Vec<egui::KeyboardShortcut>> = vec![];
@@ -124,14 +137,25 @@ impl State {
                 selected == KeybindingPreset::Vscode
                     && !personal.iter().any(|p| p.command == binding.command)
             })) {
+                if let BindingCommand::Extension(id) = &binding.command {
+                    let available = *cache
+                        .extensions
+                        .entry(id.clone())
+                        .or_insert_with(|| extension_available(id));
+                    if !available {
+                        continue;
+                    }
+                }
                 let parsed = keys(&binding.shortcut);
                 let blocked = claimed.iter().any(|k| collides(k, &parsed));
-                let entry = cache
-                    .commands
-                    .entry(binding.command)
-                    .or_insert((String::new(), true));
-                if entry.0.is_empty() && !blocked {
-                    entry.0 = display(&binding.shortcut);
+                if let Some(command) = binding.command.builtin() {
+                    let entry = cache
+                        .commands
+                        .entry(command)
+                        .or_insert((String::new(), true));
+                    if entry.0.is_empty() && !blocked {
+                        entry.0 = display(&binding.shortcut);
+                    }
                 }
                 if !blocked && !parsed.is_empty() {
                     claimed.push(parsed);
@@ -155,32 +179,26 @@ impl State {
     }
 }
 impl HeditApp {
-    pub(super) fn configured_bindings(&self) -> Ref<'_, [Binding]> {
-        Ref::map(
-            self.shortcut_preset.resolve(
-                self.settings.keybinding_preset,
-                &self.quality.config.keybindings,
-            ),
-            |c| c.configured.as_slice(),
+    fn binding_cache(&self) -> Ref<'_, Cache> {
+        self.shortcut_preset.resolve(
+            self.settings.keybinding_preset,
+            &self.quality.config.keybindings,
+            |id| self.extension_available_by_id(id),
         )
     }
+
+    pub(super) fn configured_bindings(&self) -> Ref<'_, [Binding]> {
+        Ref::map(self.binding_cache(), |c| c.configured.as_slice())
+    }
     pub(super) fn shortcut_text(&self, command: Command) -> String {
-        self.shortcut_preset
-            .resolve(
-                self.settings.keybinding_preset,
-                &self.quality.config.keybindings,
-            )
+        self.binding_cache()
             .commands
             .get(&command)
             .map_or_else(String::new, |(label, _)| label.clone())
     }
     /// True when an explicit binding replaces this command or claims its default keys.
     pub(super) fn overridden(&self, command: Command) -> bool {
-        self.shortcut_preset
-            .resolve(
-                self.settings.keybinding_preset,
-                &self.quality.config.keybindings,
-            )
+        self.binding_cache()
             .commands
             .get(&command)
             .is_some_and(|(_, overridden)| *overridden)
@@ -191,6 +209,42 @@ impl HeditApp {
             .keybindings
             .iter()
             .any(|b| b.command == command)
+    }
+
+    pub(super) fn extension_shortcut_text(&self, id: &str) -> String {
+        self.configured_bindings()
+            .iter()
+            .find(|binding| matches!(&binding.command, BindingCommand::Extension(command) if command == id))
+            .map_or_else(String::new, |binding| display(&binding.shortcut))
+    }
+
+    pub(super) fn configured_shortcut_enabled(
+        &self,
+        binding: &Binding,
+        editor_focused: bool,
+    ) -> bool {
+        if binding.editor_only && !editor_focused {
+            return false;
+        }
+        match &binding.command {
+            BindingCommand::Builtin(command) => {
+                !self.preferences_open || Self::settings_key_command(*command)
+            }
+            BindingCommand::Extension(id) => {
+                editor_focused
+                    && !self.transient_overlay_open()
+                    && self.extension_available_by_id(id)
+            }
+        }
+    }
+
+    pub(super) fn execute_binding(&mut self, ctx: &egui::Context, binding: BindingCommand) {
+        match binding {
+            BindingCommand::Builtin(command) => self.execute(ctx, command),
+            BindingCommand::Extension(id) => {
+                self.run_extension_by_id(ctx, &id);
+            }
+        }
     }
 }
 
@@ -207,6 +261,129 @@ mod tests {
         app.choose_terminal(false);
         (dir, ctx, app)
     }
+
+    fn load_extension(dir: &std::path::Path, app: &mut HeditApp) {
+        let config = dir.join("config");
+        std::fs::create_dir_all(config.join("extensions")).unwrap();
+        std::fs::write(
+            config.join("extensions/samples.json"),
+            r#"{
+                "api_version": 1, "id": "samples",
+                "commands": [
+                    {"id":"first", "title":"Insert sample", "action":{"kind":"insert_snippet","body":"first$0"}},
+                    {"id":"second", "title":"Insert sample", "action":{"kind":"insert_snippet","body":"second$0"}}
+                ]
+            }"#,
+        ).unwrap();
+        let (commands, errors) = extensions::load(Some(&config));
+        assert!(errors.is_empty(), "{errors:?}");
+        app.extensions = commands;
+    }
+
+    #[test]
+    fn extension_bindings_keep_their_ids_and_release_keys_when_unavailable() {
+        let (dir, ctx, mut app) = fixture();
+        let saved = r#"[
+            {"command":"save","shortcut":"Primary+Alt+S","editor_only":false},
+            {"command":"samples.second","shortcut":"Primary+F","editor_only":true}
+        ]"#;
+        let bindings: Vec<Binding> = serde_json::from_str(saved).unwrap();
+        assert_eq!(
+            serde_json::to_value(&bindings).unwrap(),
+            serde_json::from_str::<serde_json::Value>(saved).unwrap(),
+        );
+        assert!(serde_json::from_str::<Binding>(r#"{"command":"saev","shortcut":"F8"}"#).is_err());
+        app.quality.config.keybindings = bindings.clone();
+        assert_eq!(app.shortcut_text(Command::Find), Command::Find.shortcut());
+
+        load_extension(dir.path(), &mut app);
+        app.focus_editor = true;
+        frame(&ctx, &mut app, vec![]);
+        assert!(app.shortcut_text(Command::Find).is_empty());
+        assert_eq!(
+            app.extension_shortcut_text("samples.second"),
+            display("Primary+F")
+        );
+        frame(&ctx, &mut app, vec![key(Key::F, Modifiers::COMMAND)]);
+        assert_eq!(app.active().page.text, "second");
+        assert!(!app.find_open);
+
+        let commands = std::mem::take(&mut app.extensions);
+        assert_eq!(app.shortcut_text(Command::Find), Command::Find.shortcut());
+        frame(&ctx, &mut app, vec![key(Key::F, Modifiers::COMMAND)]);
+        assert!(app.find_open);
+        assert_eq!(app.quality.config.keybindings, bindings);
+        app.find_open = false;
+        app.extensions = commands;
+        assert!(app.shortcut_text(Command::Find).is_empty());
+        settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
+    }
+
+    #[test]
+    fn extension_chords_use_the_existing_recorder_and_conflict_rules() {
+        let (dir, ctx, mut app) = fixture();
+        load_extension(dir.path(), &mut app);
+        let command = BindingCommand::Extension("samples.first".into());
+        app.set_binding(Command::Goto, Some("Alt+F7, F9".into()));
+        app.open_preferences(PreferencesPage::Keys);
+        app.key_capture = Some(command.clone());
+        frame(&ctx, &mut app, vec![key(Key::F7, Modifiers::ALT)]);
+        frame(&ctx, &mut app, vec![key(Key::F9, Modifiers::NONE)]);
+        assert!(app.key_capture.is_none());
+        assert!(app.shortcut_text(Command::Goto).is_empty());
+        assert!(app.notice.contains(Command::Goto.label()));
+        app.flush_settings();
+        let saved: Vec<Binding> =
+            hedit::projects::read_json(&dir.path().join("config/keybindings.json"), 1024 * 1024)
+                .unwrap();
+        assert!(saved
+            .iter()
+            .any(|binding| { binding.command == command && binding.shortcut == "Alt+F7, F9" }));
+
+        app.preferences_open = false;
+        app.focus_editor = true;
+        frame(
+            &ctx,
+            &mut app,
+            [Key::F7, Key::F9]
+                .into_iter()
+                .map(|key| egui::Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed: false,
+                    repeat: false,
+                    modifiers: Modifiers::NONE,
+                })
+                .collect(),
+        );
+        frame(&ctx, &mut app, vec![key(Key::F7, Modifiers::ALT)]);
+        assert_eq!(app.active().page.text, "");
+        assert!(app.chord.is_some());
+        frame(&ctx, &mut app, vec![key(Key::F9, Modifiers::NONE)]);
+        assert_eq!(app.active().page.text, "first");
+        app.set_binding(
+            BindingCommand::Extension("samples.second".into()),
+            Some("Space".into()),
+        );
+        frame(
+            &ctx,
+            &mut app,
+            vec![
+                key(Key::Space, Modifiers::NONE),
+                egui::Event::Text(" ".into()),
+            ],
+        );
+        assert_eq!(app.active().page.text, "firstsecond");
+        app.set_binding(Command::Goto, Some("Alt+F7, F9".into()));
+        assert!(app
+            .quality
+            .config
+            .keybindings
+            .iter()
+            .all(|binding| binding.command != command));
+        settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
+    }
+
     #[test]
     fn default_preset_preserves_hedit_and_switching_never_rewrites_personal_bindings() {
         let (_dir, _ctx, mut app) = fixture();
@@ -215,7 +392,7 @@ mod tests {
             assert_eq!(app.shortcut_text(command), command.shortcut());
         }
         let personal = vec![Binding {
-            command: Command::Goto,
+            command: Command::Goto.into(),
             shortcut: "F8".into(),
             editor_only: true,
         }];
@@ -247,12 +424,12 @@ mod tests {
         app.settings.keybinding_preset = KeybindingPreset::Vscode;
         app.quality.config.keybindings = vec![
             Binding {
-                command: Command::Build,
+                command: Command::Build.into(),
                 shortcut: "Primary+B".into(),
                 editor_only: false,
             },
             Binding {
-                command: Command::Save,
+                command: Command::Save.into(),
                 shortcut: "Primary+K".into(),
                 editor_only: false,
             },
@@ -299,7 +476,7 @@ mod tests {
     fn personal_editor_only_chords_do_not_run_in_settings_text_fields() {
         let (_dir, ctx, mut app) = fixture();
         app.quality.config.keybindings = vec![Binding {
-            command: Command::Close,
+            command: Command::Close.into(),
             shortcut: "Primary+K, Primary+W".into(),
             editor_only: true,
         }];
@@ -322,7 +499,7 @@ mod tests {
             assert_eq!(app.configured_bindings().as_ptr(), address);
         }
         app.quality.config.keybindings.push(Binding {
-            command: Command::Build,
+            command: Command::Build.into(),
             shortcut: "F8".into(),
             editor_only: false,
         });
@@ -339,7 +516,7 @@ mod tests {
         app.sync_project_settings_gui();
         assert!(!app.command_enabled(Command::SaveProject));
         app.quality.config.keybindings.push(Binding {
-            command: Command::Save,
+            command: Command::Save.into(),
             shortcut: "Primary+K, Primary+S".into(),
             editor_only: false,
         });
@@ -357,12 +534,12 @@ mod tests {
         let (_dir, _ctx, mut app) = fixture();
         app.quality.config.keybindings = vec![
             Binding {
-                command: Command::Build,
+                command: Command::Build.into(),
                 shortcut: "F8".into(),
                 editor_only: false,
             },
             Binding {
-                command: Command::Build,
+                command: Command::Build.into(),
                 shortcut: "F9".into(),
                 editor_only: false,
             },
@@ -394,12 +571,12 @@ mod tests {
         let (_dir, _ctx, mut app) = fixture();
         app.quality.config.keybindings = vec![
             Binding {
-                command: Command::Build,
+                command: Command::Build.into(),
                 shortcut: "F8".into(),
                 editor_only: false,
             },
             Binding {
-                command: Command::Build,
+                command: Command::Build.into(),
                 shortcut: "F9".into(),
                 editor_only: false,
             },

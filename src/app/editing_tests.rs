@@ -299,7 +299,7 @@ fn two_key_shortcuts_run_commands_and_can_be_recorded() {
     frame(&ctx, &mut app, vec![release]);
     // Recording: a second key soon after the first makes a chord.
     app.open_preferences(PreferencesPage::Keys);
-    app.key_capture = Some(Command::Goto);
+    app.key_capture = Some(Command::Goto.into());
     frame(&ctx, &mut app, ctrl(Key::K));
     frame(&ctx, &mut app, ctrl(Key::G));
     assert_eq!(app.key_capture, None);

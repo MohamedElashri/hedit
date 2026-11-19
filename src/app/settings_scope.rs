@@ -106,14 +106,18 @@ impl HeditApp {
             return;
         }
         let bindings = self.configured_bindings().to_vec();
-        for binding in bindings
-            .into_iter()
-            .filter(|b| !b.editor_only && Self::settings_key_command(b.command))
-        {
+        for binding in bindings {
+            let Some(command) = binding
+                .command
+                .builtin()
+                .filter(|&command| !binding.editor_only && Self::settings_key_command(command))
+            else {
+                continue;
+            };
             if let Ok(keys) = chords::parse(&binding.shortcut) {
                 if let [key] = keys.as_slice() {
                     if tab_switch::take_exact(ctx, key.modifiers, key.logical_key) {
-                        self.execute(ctx, binding.command);
+                        self.execute(ctx, command);
                         return;
                     }
                 }

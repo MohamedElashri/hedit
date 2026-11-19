@@ -1,11 +1,50 @@
 use super::*;
 use hedit::{intelligence, projects, search};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::path::{Path, PathBuf};
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(untagged)]
+pub(super) enum BindingCommand {
+    Builtin(Command),
+    Extension(#[serde(deserialize_with = "deserialize_extension_id")] String),
+}
+
+fn deserialize_extension_id<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<String, D::Error> {
+    let id = String::deserialize(deserializer)?;
+    if extensions::valid_command_id(&id) {
+        Ok(id)
+    } else {
+        Err(serde::de::Error::custom("Invalid extension command ID"))
+    }
+}
+
+impl From<Command> for BindingCommand {
+    fn from(command: Command) -> Self {
+        Self::Builtin(command)
+    }
+}
+
+impl BindingCommand {
+    pub(super) fn builtin(&self) -> Option<Command> {
+        match self {
+            Self::Builtin(command) => Some(*command),
+            Self::Extension(_) => None,
+        }
+    }
+}
+
+impl PartialEq<Command> for BindingCommand {
+    fn eq(&self, other: &Command) -> bool {
+        self.builtin() == Some(*other)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct Binding {
-    pub command: Command,
+    pub command: BindingCommand,
     pub shortcut: String,
     #[serde(default)]
     pub editor_only: bool,
