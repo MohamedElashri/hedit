@@ -133,11 +133,16 @@ mod tests {
         assert!(app.next_field(false));
         assert!(app.snippet.is_none());
         assert_eq!(app.active().view.head, 33);
+        if let Some(worker) = app.checkpoint_worker.take() {
+            worker.join().unwrap();
+        }
         app.workspace.checkpoint().unwrap();
+        let expected = app.active().page.text.clone();
+        drop(app);
 
         let (reopened, _) = hedit::workspace::Workspace::restore(directory.path().into()).unwrap();
         let active = &reopened.open[reopened.active];
-        assert_eq!(active.page.text, app.active().page.text);
+        assert_eq!(active.page.text, expected);
         assert_eq!(active.language_override(), Some(Language::Python));
         assert_eq!(active.view.head, 33);
     }
