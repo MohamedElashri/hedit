@@ -17,6 +17,11 @@
 
 - Report unreadable positions in malformed paged files without stalling the open worker.
 - Use atomic creation for new Save As destinations so another file created during the save stays intact and pending edits remain available for retry.
+- Preserve competing writes during existing-file saves and detect replacements with matching length and modification time. Validate UTF-8 before advancing a page past a partial character.
+- Read only regular, bounded files for Mini Diff comparisons against disk.
+- Prefer a typed SSH address over partial alias matches. Restore added folders and their expansion state with saved workspaces, replace edited connection profiles after successful setup, and let users retry after a background worker exits.
+- Keep SSH change checks on schedule under continuous activity, age only unacknowledged edits, and serialize execution-trust updates with reconnects. Stop pending-edit repaint timers while offline.
+- Reject NUL characters and overflowing snippet field numbers in extension manifests. Match exact command IDs before titles and preserve the final caret marker during expansion.
 
 ## [0.6.2] - 2026-11-19
 
