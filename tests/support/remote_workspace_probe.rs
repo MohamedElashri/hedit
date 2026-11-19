@@ -23,6 +23,8 @@ fn run() -> Result<(), String> {
     if ![5, 6].contains(&args.len()) {
         return Err("Expected SSH config, helper, state, root".into());
     }
+    let managed_timings = args.get(5).is_some_and(|mode| mode == "managed_timings");
+    let started = Instant::now();
     let remote = Connection::connect(Config {
         target: hedit_remote::client::SshTarget {
             host: "lab".into(),
@@ -33,9 +35,10 @@ fn run() -> Result<(), String> {
             state: args[2].clone(),
         },
         root: args[3].clone(),
-        managed: false,
+        managed: managed_timings,
         takeover: false,
     })?;
+    let connected = started.elapsed();
     let wakes = Arc::new(AtomicUsize::new(0));
     let counter = wakes.clone();
     remote.set_wake(Arc::new(move || {
@@ -46,6 +49,23 @@ fn run() -> Result<(), String> {
     assert!(doc.is_ephemeral());
     assert!(doc.info().name == "file");
     let original = doc.text(10 * 1024 * 1024)?;
+    if managed_timings {
+        let first_document = started.elapsed();
+        remote.disconnect()?;
+        assert!(!remote.status().0);
+        let reconnecting = Instant::now();
+        remote.reconnect()?;
+        assert!(remote.writable());
+        assert_eq!(remote.open(2, &path)?.text(10 * 1024 * 1024)?, original);
+        println!(
+            "Managed SSH ms: setup_and_connect={:.2} first_document={:.2} reconnect_and_open={:.2}",
+            connected.as_secs_f64() * 1000.0,
+            first_document.as_secs_f64() * 1000.0,
+            reconnecting.elapsed().as_secs_f64() * 1000.0,
+        );
+        remote.disconnect()?;
+        return Ok(());
+    }
     if args.get(5).is_some_and(|mode| mode == "language_servers") {
         use hedit::language_server::{
             manager::{Launch, Registration},
@@ -401,6 +421,7 @@ fn run() -> Result<(), String> {
         }
         assert_eq!(remote.status().2, 1);
         if automatic {
+            let disconnected = Instant::now();
             let deadline = Instant::now() + Duration::from_secs(30);
             while !remote.status().0 {
                 if Instant::now() > deadline {
@@ -409,6 +430,10 @@ fn run() -> Result<(), String> {
                 std::thread::sleep(Duration::from_millis(10));
             }
             assert!(!remote.status().1, "reconnect must reset execution trust");
+            println!(
+                "SSH ms from detected loss to automatic reconciliation: {:.2}",
+                disconnected.elapsed().as_secs_f64() * 1000.0,
+            );
         } else {
             remote.reconnect()?;
         }
