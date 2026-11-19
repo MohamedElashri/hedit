@@ -21,6 +21,8 @@ jobs:
       CARGO_INCREMENTAL: 0
       CARGO_PROFILE_DEV_DEBUG: 0
       CARGO_PROFILE_TEST_DEBUG: 0
+      # Leave CPU available for bounded asynchronous font/math rendering.
+      RUST_TEST_THREADS: 2
       # Ship the C runtime in the executable for portable installations.
       RUSTFLAGS: -C target-feature=+crt-static
     steps:
