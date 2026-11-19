@@ -53,7 +53,8 @@ def main():
             shutil.copy2(ROOT / filename, stage / filename)
         for directory in ['assets', 'themes', 'docs/images']:
             shutil.copytree(ROOT / directory, stage / directory)
-        for relative in ['vendor/egui_commonmark/PATCH.md', 'vendor/libghostty-vt-sys/PATCH.md']:
+        for relative in ['vendor/egui_commonmark/PATCH.md', 'vendor/libghostty-vt-sys/PATCH.md',
+                         'docs/extensions.md', 'examples/extensions/markdown-task.json']:
             (stage / relative).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / relative, stage / relative)
         shutil.copytree(ROOT / 'examples/cuda', stage / 'examples/cuda')

@@ -27,6 +27,7 @@ documents! {
     "assets/licenses/ghostty-MIT.txt",
     "assets/licenses/libghostty-rs-MIT.txt",
     "assets/licenses/Noto-Sans-Arabic-OFL.txt",
+    "docs/extensions.md", "examples/extensions/markdown-task.json",
 }
 
 struct Reader {
@@ -39,7 +40,12 @@ impl Reader {
         let text = if path.ends_with(".md") {
             source.into()
         } else {
-            format!("```text\n{source}\n```\n")
+            let language = if path.ends_with(".json") {
+                "json"
+            } else {
+                "text"
+            };
+            format!("```{language}\n{source}\n```\n")
         };
         let prepared = markdown::prepare(&text);
         let topics = prepared
