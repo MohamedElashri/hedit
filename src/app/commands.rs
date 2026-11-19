@@ -1750,7 +1750,7 @@ impl HeditApp {
                 }
                 self.report(r);
             }
-            Command::ConnectSsh => self.show_remote_explorer(ctx),
+            Command::ConnectSsh => self.show_ssh_picker(ctx),
             Command::Open => self.open(ctx, None),
             Command::NewWindow => {
                 let session = hedit::windows::new_session(self.workspace.store.directory());

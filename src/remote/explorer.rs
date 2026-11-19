@@ -35,7 +35,16 @@ impl Catalog {
         }
         Ok(value)
     }
-    pub fn remember(&mut self, mut config: Config) -> Result<(), String> {
+    pub fn remember(&mut self, config: Config) -> Result<(), String> {
+        self.remember_with_policy(config, false)
+    }
+
+    /// Connecting directly to an account's home can resolve to a saved root.
+    pub fn remember_host_home(&mut self, config: Config) -> Result<(), String> {
+        self.remember_with_policy(config, true)
+    }
+
+    fn remember_with_policy(&mut self, mut config: Config, keep_saved: bool) -> Result<(), String> {
         config.validate()?;
         config.takeover = false;
         let existing = self.workspaces.iter().position(|w| {
@@ -46,6 +55,13 @@ impl Catalog {
                 && (w.root == config.root || w.managed && config.managed && w.root.is_empty())
         });
         if let Some(index) = existing {
+            let saved = &self.workspaces[index];
+            if keep_saved
+                && (!saved.managed
+                    || !saved.target.state.is_empty() && saved.target.state != config.target.state)
+            {
+                return Ok(());
+            }
             self.workspaces.remove(index);
             self.workspaces.push(config);
         } else if self.workspaces.len() < 64 {
@@ -102,6 +118,28 @@ mod tests {
             takeover: true,
         }
     }
+
+    #[test]
+    fn host_home_preserves_a_saved_profile_for_that_root() {
+        let mut saved = config();
+        saved.root = "/home/editor".into();
+        saved.takeover = false;
+        let mut resolved = saved.clone();
+        resolved.managed = true;
+        resolved.target.helper = "/managed/helper".into();
+        resolved.target.state = "/default/state".into();
+
+        for managed in [false, true] {
+            saved.managed = managed;
+            let mut catalog = Catalog::default();
+            catalog.remember(saved.clone()).unwrap();
+            catalog.remember_host_home(resolved.clone()).unwrap();
+            assert_eq!(catalog.workspaces, [saved.clone()]);
+            catalog.remember(resolved.clone()).unwrap();
+            assert_eq!(catalog.workspaces, [resolved.clone()]);
+        }
+    }
+
     #[test]
     fn saved_workspaces_deduplicate_and_never_retain_takeover() {
         let dir = tempfile::tempdir().unwrap();

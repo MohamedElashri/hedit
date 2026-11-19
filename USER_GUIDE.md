@@ -150,11 +150,16 @@ builds, terminals, and recovery run on the host; the interface runs locally.
 
 ### Connect
 
-Click a host in **Remote Explorer** to connect. The first connection opens the
-remote account's home directory; saved workspaces reopen their saved folder.
-The sidebar discovers aliases from `~/.ssh/config`, the system config, and
-included files. User and port come from OpenSSH unless explicitly overridden.
-Wildcard and negated selectors do not appear as destinations.
+Choose **Connect via SSH…** from the Command Palette or **+ Connect…** in
+**Remote Explorer**. Type a hostname, SSH alias, `user@host`, or part of a saved
+workspace path. Use the arrow keys to select a result, **Enter** to connect, and
+**Escape** to dismiss the picker. A host opens the remote account's home
+directory. A saved workspace reopens its saved folder. You can also select either
+directly in Remote Explorer.
+
+hedit discovers aliases from `~/.ssh/config`, the system config, and included
+files. User and port come from OpenSSH unless explicitly overridden. Wildcard and
+negated selectors do not appear as destinations.
 
 hedit checks the host platform, installs the matching helper for the non-root SSH
 account, and opens a separate remote window. It uses a bundled helper when the
@@ -164,10 +169,10 @@ compiler, internet access, or elevated privileges. Later connections reuse the
 versioned user-local installation. Setup progress and cancellation appear in the
 sidebar. Automatic setup refuses root accounts and unsafe directory permissions.
 
-Right-click a host for **Connection settings…** or **SSH configuration…**. Connection
-settings let you select a workspace and override user, port, trusted config, or
-private recovery directory. Existing recovery paths are retained when enabling
-automatic helper management.
+Open **Connection settings…** from the picker or a host's context menu to choose
+a workspace and override the user, port, trusted config, or private recovery
+directory. Existing recovery paths are retained when enabling automatic helper
+management. The host context menu also has **SSH configuration…**.
 For an existing custom installation, enable **Use a manually installed helper**
 and supply absolute helper and private recovery paths. Saved workspaces also
 have right-click actions to edit or remove them. Filter by host or workspace path.
