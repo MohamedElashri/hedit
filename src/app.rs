@@ -789,17 +789,11 @@ impl HeditApp {
                 let label = view.name.clone();
                 self.read_open(ctx, label, move || {
                     let mut doc = editor.get(id)?.lock().map_err(|e| e.to_string())?.clone();
-                    let offset = if let Some((line, column)) = location {
-                        doc.location_offset(line, column)?.saturating_sub(4096)
+                    let (page, cursor) = if let Some((line, column)) = location {
+                        let (page, cursor) = opening::page_at_location(&mut doc, line, column)?;
+                        (page, Some(cursor))
                     } else {
-                        start
-                    };
-                    let page = doc.page(offset)?;
-                    let cursor = if let Some((line, column)) = location {
-                        let at = doc.location_offset(line, column)?;
-                        Some(page.text[..(at - page.start) as usize].chars().count())
-                    } else {
-                        None
+                        (doc.page(start)?, None)
                     };
                     Ok(Action::ReopenRead(id, page, cursor))
                 });
@@ -814,9 +808,7 @@ impl HeditApp {
             self.read_open(ctx, label, move || {
                 let mut doc = remote.open(editor.id(), &path)?;
                 let (line, column) = location.unwrap_or((1, 1));
-                let offset = doc.location_offset(line, column)?;
-                let page = doc.page(offset.saturating_sub(4096))?;
-                let cursor = page.text[..(offset - page.start) as usize].chars().count();
+                let (page, cursor) = opening::page_at_location(&mut doc, line, column)?;
                 Ok(Action::Add(Box::new(doc), page, cursor))
             });
             return;
@@ -883,28 +875,17 @@ impl HeditApp {
                 }
                 let shared = editor.get(*id)?;
                 let mut doc = shared.lock().map_err(|e| e.to_string())?.clone();
-                let offset = doc.location_offset(line, col)?;
-                let page = doc.page(offset.saturating_sub(4096))?;
-                let cursor = page.text
-                    [..(offset - page.start).min(page.text.len() as u64) as usize]
-                    .chars()
-                    .count();
+                let (page, cursor) = opening::page_at_location(&mut doc, line, col)?;
                 return Ok(Action::Page(*id, page, Some((cursor, cursor))));
             }
             if let Some((_, id, start)) = closed_paths.iter().find(|(p, _, _)| p == &canonical) {
                 let shared = editor.get(*id)?;
                 let mut doc = shared.lock().map_err(|e| e.to_string())?.clone();
-                let offset = if plain_path {
-                    *start
+                let (page, cursor) = if plain_path {
+                    (doc.page(*start)?, None)
                 } else {
-                    doc.location_offset(line, col)?.saturating_sub(4096)
-                };
-                let page = doc.page(offset)?;
-                let cursor = if plain_path {
-                    None
-                } else {
-                    let offset = doc.location_offset(line, col)?;
-                    Some(page.text[..(offset - page.start) as usize].chars().count())
+                    let (page, cursor) = opening::page_at_location(&mut doc, line, col)?;
+                    (page, Some(cursor))
                 };
                 return Ok(Action::ReopenRead(*id, page, cursor));
             }
@@ -913,9 +894,7 @@ impl HeditApp {
             } else {
                 Document::open(editor.id(), &path)?
             };
-            let offset = doc.location_offset(line, col)?;
-            let page = doc.page(offset.saturating_sub(4096))?;
-            let cursor = page.text[..(offset - page.start) as usize].chars().count();
+            let (page, cursor) = opening::page_at_location(&mut doc, line, col)?;
             Ok(Action::Add(Box::new(doc), page, cursor))
         };
         self.read_open(ctx, label, move || {
@@ -1094,8 +1073,7 @@ impl HeditApp {
                 start = scan.scanned_through;
             };
             let page = doc.page(found.saturating_sub(4096))?;
-            let local = (found - page.start) as usize;
-            let cursor = page.text[..local].chars().count();
+            let cursor = opening::page_cursor(&page, found)?;
             Ok(Action::Page(
                 id,
                 page,
@@ -1123,9 +1101,7 @@ impl HeditApp {
         self.job(ctx, move || {
             let shared = editor.get(id)?;
             let mut doc = shared.lock().map_err(|e| e.to_string())?;
-            let offset = doc.location_offset(line, column)?;
-            let page = doc.page(offset.saturating_sub(4096))?;
-            let cursor = page.text[..(offset - page.start) as usize].chars().count();
+            let (page, cursor) = opening::page_at_location(&mut doc, line, column)?;
             Ok(Action::Page(id, page, Some((cursor, cursor))))
         });
     }

@@ -702,12 +702,8 @@ impl HeditApp {
                     "The match extends beyond the editable page; narrow the pattern.".into(),
                 );
             }
-            let a = page.text[..selected.start - page.start as usize]
-                .chars()
-                .count();
-            let z = page.text[..selected.end - page.start as usize]
-                .chars()
-                .count();
+            let a = opening::page_cursor(&page, selected.start as u64)?;
+            let z = opening::page_cursor(&page, selected.end as u64)?;
             Ok(Action::Quality(Box::new(Event::Found(
                 id, page, a, z, count, query, options,
             ))))

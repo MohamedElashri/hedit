@@ -4,6 +4,28 @@ use super::*;
 use std::collections::HashMap;
 const WORKERS: usize = 2;
 const LIMIT: usize = 16;
+
+/// Convert a document byte offset only when it is present in this UTF-8 page.
+pub(super) fn page_cursor(page: &Page, offset: u64) -> Result<usize, String> {
+    offset
+        .checked_sub(page.start)
+        .and_then(|offset| usize::try_from(offset).ok())
+        .and_then(|offset| page.text.get(..offset))
+        .map(|prefix| prefix.chars().count())
+        .ok_or_else(|| "The requested position is outside the readable text on this page.".into())
+}
+
+pub(super) fn page_at_location(
+    document: &mut Document,
+    line: u64,
+    column: u64,
+) -> Result<(Page, usize), String> {
+    let offset = document.location_offset(line, column)?;
+    let page = document.page(offset.saturating_sub(4096))?;
+    let cursor = page_cursor(&page, offset)?;
+    Ok((page, cursor))
+}
+
 /// Navigation adds literal suffixes to an encoded remote URI. Colons in host
 /// filenames are percent-encoded, so parsing never consults the local filesystem.
 pub(super) fn remote_location(path: &std::path::Path) -> (PathBuf, Option<(u64, u64)>) {
