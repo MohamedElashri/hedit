@@ -83,7 +83,6 @@ pub(super) struct Quality {
     pub git_at: Option<Instant>,
     pub git_cache: std::collections::BTreeMap<u64, String>,
     pub git_pending: bool,
-    /// The buffer and revision the current markers were computed for.
     /// The view, revision, saved state, and comparison the markers are for.
     pub git_key: Option<(u64, u64, bool, String)>,
     /// The text each view's change markers compare against.
@@ -155,8 +154,8 @@ pub(super) enum FileOperation {
     Trash,
 }
 pub(super) enum Event {
-    /// Change markers: view, revision, diff, and the text compared against.
-    GitMarkers(u64, u64, String, Option<String>),
+    /// Change markers: view, revision, mode, diff, and the text compared against.
+    GitMarkers(u64, u64, String, String, Option<String>),
     Found(u64, Page, usize, usize, usize, String, search::Options),
     Results(search::Results),
     Applied(Vec<(u64, Page)>, usize, Vec<String>, Vec<search::Restore>),
@@ -217,13 +216,14 @@ impl HeditApp {
                     }
                 }
             }
-            Event::GitMarkers(id, revision, diff, base) => {
+            Event::GitMarkers(id, revision, mode, diff, base) => {
                 self.quality.git_pending = false;
-                if self
-                    .workspace
-                    .open
-                    .iter()
-                    .any(|b| b.view.id == id && b.page.info.revision == revision)
+                if mode == self.settings.mini_diff
+                    && self
+                        .workspace
+                        .open
+                        .iter()
+                        .any(|b| b.view.id == id && b.page.info.revision == revision)
                 {
                     self.quality
                         .git_lines
@@ -314,7 +314,7 @@ impl HeditApp {
                 self.quality.diff_target = Some((id, revision, disk));
                 self.quality.diff_open = true;
                 self.quality.git_diff = git;
-                if git {
+                if git && self.settings.mini_diff != "off" {
                     self.quality
                         .git_lines
                         .insert(id, intelligence::changed_lines(&self.quality.diff));
@@ -1551,39 +1551,46 @@ impl HeditApp {
 }
 
 impl HeditApp {
-    /// Whether git markers are out of date: the text changed, the window came
-    /// back into focus (a commit may have happened), or they are 30 s old.
-    pub(super) fn git_stale(&self, ctx: &egui::Context) -> bool {
-        let b = self.active();
-        b.page.info.path.is_some()
-            && !b.page.info.paged
-            && (self.quality.git_key.as_ref()
-                != Some(&(
-                    b.view.id,
-                    b.page.info.revision,
-                    b.page.info.dirty,
-                    self.settings.mini_diff.clone(),
-                ))
-                || refocused(ctx)
-                || self
-                    .quality
-                    .git_at
-                    .is_none_or(|t| t.elapsed() >= Duration::from_secs(30)))
-    }
-    pub(super) fn poll_git(&mut self, ctx: &egui::Context) {
-        if self.workspace.remote.is_some() {
-            return;
-        }
-        if self.quality.git_pending
+    /// Share eligibility and timing between the worker and the frame scheduler.
+    pub(super) fn git_refresh_delay(&self, ctx: &egui::Context) -> Option<Duration> {
+        if self.workspace.remote.is_some()
+            || self.settings.mini_diff == "off"
+            || self.quality.git_pending
             || self.busy
             || self.closing
-            || !self.git_stale(ctx)
-            || (!refocused(ctx)
-                && self
-                    .quality
-                    .git_at
-                    .is_some_and(|t| t.elapsed() < Duration::from_secs(2)))
         {
+            return None;
+        }
+        let b = self.active();
+        if b.page.info.path.is_none() || b.page.info.paged {
+            return None;
+        }
+        if refocused(ctx) {
+            return Some(Duration::ZERO);
+        }
+        let same = self.quality.git_key.as_ref().is_some_and(|key| {
+            key.0 == b.view.id
+                && key.1 == b.page.info.revision
+                && key.2 == b.page.info.dirty
+                && key.3 == self.settings.mini_diff
+        });
+        let interval = Duration::from_secs(if same { 30 } else { 2 });
+        Some(
+            self.quality
+                .git_at
+                .map_or(Duration::ZERO, |at| interval.saturating_sub(at.elapsed())),
+        )
+    }
+    pub(super) fn poll_git(&mut self, ctx: &egui::Context) {
+        if self.settings.mini_diff == "off" {
+            self.quality.git_key = None;
+            self.quality.git_at = None;
+            self.quality.git_lines.clear();
+            self.quality.git_cache.clear();
+            self.quality.git_base.clear();
+            return;
+        }
+        if self.git_refresh_delay(ctx) != Some(Duration::ZERO) {
             return;
         }
         let b = self.active();
@@ -1615,7 +1622,6 @@ impl HeditApp {
                     .map(|(text, _)| text)
             };
             let base = match mode.as_str() {
-                "off" => None,
                 "saved" => saved(),
                 _ => intelligence::git_base(path).ok().or_else(saved),
             };
@@ -1633,7 +1639,7 @@ impl HeditApp {
                 .map(|base| hedit::search::diff(base, &text, path))
                 .unwrap_or_default();
             let _ = tx.send(Ok(Action::Quality(Box::new(Event::GitMarkers(
-                id, revision, diff, base,
+                id, revision, mode, diff, base,
             )))));
             ctx.request_repaint();
         });
