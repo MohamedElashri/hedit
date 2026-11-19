@@ -137,6 +137,7 @@ pub(super) enum Command {
     IndentGuides,
     Minimap,
     New,
+    NewFileFromTemplate,
     NewWindow,
     Open,
     OpenFolder,
@@ -403,6 +404,7 @@ impl Command {
         Self::IndentGuides,
         Self::Minimap,
         Self::New,
+        Self::NewFileFromTemplate,
         Self::NewWindow,
         Self::Open,
         Self::OpenFolder,
@@ -688,6 +690,7 @@ impl Command {
             Self::IndentGuides => "Show indentation guides",
             Self::Minimap => "Show minimap",
             Self::New => "New file",
+            Self::NewFileFromTemplate => "New File from Template…",
             Self::NewWindow => "New window",
             Self::Open => "Open file…",
             Self::OpenFolder => "Open folder…",
@@ -1092,6 +1095,8 @@ pub(super) enum Pick {
     Font(String),
     /// A saved macro, by name.
     Macro(String),
+    /// An extension command's stable ID.
+    Extension(String),
     Location(definitions::Location),
 }
 
@@ -1753,6 +1758,7 @@ impl HeditApp {
                 }
                 self.report(r);
             }
+            Command::NewFileFromTemplate => self.choose_extension_template(ctx),
             Command::ConnectSsh => self.show_ssh_picker(ctx),
             Command::SshOutput => self.show_ssh_output(),
             Command::Open => self.open(ctx, None),
@@ -2368,6 +2374,9 @@ impl HeditApp {
                         .find(|m| m.name == name)
                         .map(|m| m.steps.clone());
                     self.play_macro(steps.unwrap_or_default());
+                }
+                Item::Pick(Pick::Extension(id)) => {
+                    self.run_extension_by_id(ctx, &id);
                 }
                 Item::Pick(Pick::Location(location)) => self.open_location(ctx, location),
                 Item::Syntax(language) => self.set_syntax(Some(language)),

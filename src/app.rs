@@ -158,6 +158,7 @@ use std::{
 enum Action {
     Quality(Box<quality::Event>),
     Add(Box<Document>, Page, usize),
+    AddTemplate(Box<Document>, Page, extensions::Template),
     Activate(u64),
     ReopenRead(u64, Page, Option<usize>),
     Folder(hedit::folder::FolderListing),
@@ -641,6 +642,36 @@ impl HeditApp {
         } else {
             self.changed();
             self.focus_editor = true;
+        }
+    }
+    fn finish_opened_document(
+        &mut self,
+        doc: Document,
+        page: Page,
+        cursor: usize,
+        group: Option<u64>,
+        background: bool,
+        template: Option<extensions::Template>,
+    ) {
+        let result = self.workspace.add(doc, page);
+        if result.is_ok() {
+            if !background {
+                self.leave_review();
+            }
+            let buffer = &mut self.workspace.open[self.workspace.active];
+            buffer.view.anchor = cursor;
+            buffer.view.head = cursor;
+            buffer.reveal_cursor = cursor > 0;
+            self.attach_open_tab(group, self.active().view.id);
+            if let Some(template) = template {
+                self.fill_extension_template(template);
+            }
+        }
+        self.report(result);
+        self.apply_format_preferences();
+        if !background {
+            self.finish_preview();
+            self.navigation_mark();
         }
     }
     fn active(&self) -> &Buffer {
@@ -1175,6 +1206,7 @@ impl HeditApp {
             let opened = matches!(
                 &event,
                 Ok(Action::Add(..)
+                    | Action::AddTemplate(..)
                     | Action::Activate(..)
                     | Action::ReopenRead(..)
                     | Action::Page(..))
@@ -1245,28 +1277,17 @@ impl HeditApp {
                     }
                 }
                 Ok(Action::Add(doc, page, cursor)) => {
-                    let result = self.workspace.add(*doc, page);
-                    if result.is_ok() {
-                        if !background {
-                            self.leave_review();
-                        }
-                        let buffer = &mut self.workspace.open[self.workspace.active];
-                        buffer.view.anchor = cursor;
-                        buffer.view.head = cursor;
-                        buffer.reveal_cursor = cursor > 0;
-                    }
-                    if result.is_ok() {
-                        self.attach_open_tab(
-                            request.as_ref().map(opening::Request::group),
-                            self.active().view.id,
-                        );
-                    }
-                    self.report(result);
-                    self.apply_format_preferences();
-                    if !background {
-                        self.finish_preview();
-                        self.navigation_mark();
-                    }
+                    self.finish_opened_document(
+                        *doc,
+                        page,
+                        cursor,
+                        request.as_ref().map(opening::Request::group),
+                        background,
+                        None,
+                    );
+                }
+                Ok(Action::AddTemplate(doc, page, template)) => {
+                    self.finish_opened_document(*doc, page, 0, None, false, Some(template));
                 }
                 Ok(Action::History(id, page, redo, current)) => {
                     if let Some(index) = self

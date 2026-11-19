@@ -2,6 +2,7 @@
 mod catalog;
 mod manager;
 mod manifest;
+mod templates;
 
 use super::{snippet_fields, HeditApp};
 use eframe::egui;
@@ -11,6 +12,7 @@ use std::path::Path;
 pub(super) use manager::Manager;
 use manifest::ExtensionAction;
 pub(super) use manifest::{load, Contribution};
+pub(super) use templates::Template;
 
 const MAX_INDENT_BYTES: usize = 4096;
 const MAX_EXPANSION_BYTES: usize = 128 * 1024;
