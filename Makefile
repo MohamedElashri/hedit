@@ -79,8 +79,9 @@ test-renderer: ## Test the patched native text renderer and widget library
 test-remote: ## Test the SSH workspace helper and recovery engine
 	$(CARGO) test --locked -p hedit-remote
 
+# Keep the bundled test helper within the managed bootstrap's 64 MiB upload limit.
 test-remote-live: ## Test real loopback SSH and deterministic process crashes (requires sshd)
-	$(CARGO) build --locked -p hedit-remote
+	$(CARGO) rustc --locked -p hedit-remote --bin hedit-remote -- -Cstrip=debuginfo
 	$(CARGO) build --locked --example remote_workspace_probe
 	$(CARGO) test --locked --bin hedit --no-run --message-format=json > target/remote-editor-tests.jsonl
 	$(CARGO) build --locked -p hedit-remote --features test-faults --target-dir target/remote-fault-tests
