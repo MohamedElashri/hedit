@@ -197,10 +197,14 @@ occupied port or a host that refuses forwarding is reported during connection.
 Both options are saved with the workspace and are available on the command
 line as `--ssh-use-config-jump` and `--ssh-forward-config-ports`.
 
-Host keys must already be verified with OpenSSH. Authentication uses keys or an
-existing agent; passwords and interactive MFA remain unsupported. Unlock the
-agent before connecting. Saved metadata contains host names and paths, without
-keys, passwords, or document content. Corrupt metadata is reported and preserved.
+Verify the host key with OpenSSH before connecting. Keys or an existing SSH
+agent are the default. On Linux and macOS, enable **Allow interactive SSH
+authentication** in **Connection settings…** for hosts that prompt for a
+password, key passphrase, or keyboard-interactive verification code. Setup and
+remote tools may prompt when they open separate SSH connections. Use **Reconnect**
+to authenticate again after a disconnect. Scheduled retries use key or agent
+authentication. Saved metadata contains host names, paths, and connection
+preferences. Credentials and document content stay out of that metadata.
 
 The command line uses the same automatic setup:
 
@@ -210,7 +214,7 @@ hedit --ssh devbox --ssh-root /home/me/project src/main.rs
 ```
 
 Advanced flags: `--ssh-user USER`, `--ssh-port PORT`,
-`--ssh-config /absolute/config`, and `--ssh-takeover`. `--ssh-state` can retain an existing private recovery directory while managing
+`--ssh-config /absolute/config`, `--ssh-interactive`, and `--ssh-takeover`. `--ssh-state` can retain an existing private recovery directory while managing
 the helper automatically. Supplying `--ssh-helper` also requires `--ssh-state` and
 `--ssh-root` and selects a manually managed helper. Takeover fences the previous writer and does not merge edits.
 

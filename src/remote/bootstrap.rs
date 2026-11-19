@@ -134,11 +134,7 @@ pub fn prepare(
         absolute(&config.target.state)?;
     }
     progress("Connecting to SSH host…");
-    let (status, output) = run(
-        config.target.command_for_detailed(PROBE, false)?,
-        None,
-        cancel,
-    )?;
+    let (status, output) = run(config.setup_command(PROBE)?, None, cancel)?;
     if !status.success() {
         return Err(output);
     }
@@ -176,11 +172,7 @@ exec {helper} setup --workspace {workspace} --state {state}
         state = quote(&config.target.state),
         setup_version = SETUP_VERSION,
     );
-    let (status, output) = run(
-        config.target.command_for_detailed(&cached, false)?,
-        None,
-        cancel,
-    )?;
+    let (status, output) = run(config.setup_command(&cached)?, None, cancel)?;
     if status.success() {
         return account.resolve(config, &output);
     }
@@ -238,11 +230,7 @@ test "$("$stage/hedit-remote" --version)" = {expected}
     if size == 0 || size > 64 * 1024 * 1024 {
         return Err("Invalid SSH helper size.".into());
     }
-    let (status, output) = run(
-        config.target.command_for_detailed(&command, false)?,
-        Some(input),
-        cancel,
-    )?;
+    let (status, output) = run(config.setup_command(&command)?, Some(input), cancel)?;
     if !status.success() {
         return Err(format!(
             "Could not install the SSH helper for this user. {output}"
@@ -313,13 +301,14 @@ fn run(
         .stdin(input.map(Stdio::from).unwrap_or_else(Stdio::null))
         .stdout(output.try_clone().map_err(|e| e.to_string())?)
         .stderr(stderr.try_clone().map_err(|e| e.to_string())?);
+    let timeout = super::askpass::setup_timeout(&command);
     let mut child = command.spawn().map_err(|e| e.to_string())?;
     let started = Instant::now();
     loop {
         let cancelled = cancel.load(Ordering::Relaxed);
         let oversized = output.metadata().map_err(|e| e.to_string())?.len() > LIMIT
             || stderr.metadata().map_err(|e| e.to_string())?.len() > LIMIT;
-        if cancelled || oversized || started.elapsed() > Duration::from_secs(60) {
+        if cancelled || oversized || started.elapsed() > timeout {
             let _ = child.kill();
             let _ = child.wait();
             return Err(if cancelled {
@@ -392,6 +381,7 @@ mod tests {
             },
             root: String::new(),
             managed: true,
+            interactive_auth: false,
             takeover: false,
         };
         let key = Sha256::digest(b"/home/me")

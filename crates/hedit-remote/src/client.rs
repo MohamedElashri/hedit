@@ -37,6 +37,8 @@ pub struct SetupInfo {
     pub state: String,
 }
 pub const SETUP_VERSION: u32 = 1;
+pub const AUTH_TIMEOUT: Duration = Duration::from_secs(120);
+const RPC_TIMEOUT: Duration = Duration::from_secs(15);
 
 fn quote(s: &str) -> Result<String> {
     if s.contains(['\0', '\n', '\r']) || !s.starts_with('/') {
@@ -55,7 +57,11 @@ impl SshTarget {
     }
 
     pub fn command(&self) -> Result<Command> {
-        self.command_for(&self.bridge_command()?)
+        self.command_with_auth(false)
+    }
+
+    pub fn command_with_auth(&self, interactive: bool) -> Result<Command> {
+        self.command_for_with_auth(&self.bridge_command()?, interactive)
     }
 
     fn bridge_command(&self) -> Result<String> {
@@ -72,6 +78,8 @@ impl SshTarget {
         self.command_for_with_auth(remote_command, false)
     }
 
+    /// Allow keyboard-interactive SSH only when the caller supplies a local
+    /// askpass program. The remaining transport policy is identical.
     pub fn command_for_with_auth(
         &self,
         remote_command: &str,
@@ -151,14 +159,14 @@ impl SshTarget {
         command.current_dir("/");
         #[cfg(windows)]
         command.current_dir(std::env::temp_dir());
-        command.args([
-            "-o",
-            if interactive {
-                "BatchMode=no"
-            } else {
-                "BatchMode=yes"
-            },
-        ]);
+        command.arg("-o").arg(if interactive {
+            "BatchMode=no"
+        } else {
+            "BatchMode=yes"
+        });
+        if interactive {
+            command.arg("-o").arg("NumberOfPasswordPrompts=1");
+        }
         for option in [
             "StrictHostKeyChecking=yes",
             "ForwardAgent=no",
@@ -261,7 +269,12 @@ impl Client {
         target.destination(&mut command);
         command.arg(bridge);
         configure(&mut command)?;
-        let (mut client, session) = Self::spawn_with_session(command)?;
+        let timeout = if interactive {
+            AUTH_TIMEOUT
+        } else {
+            RPC_TIMEOUT
+        };
+        let (mut client, session) = Self::spawn_with_session(command, timeout)?;
         if let Some(forwards) = &mut forwards {
             forwards.activate(&target.host)?;
         }
@@ -269,11 +282,18 @@ impl Client {
         Ok((client, session))
     }
 
-    fn spawn_with_session(command: Command) -> std::result::Result<(Self, String), String> {
+    /// Connect an already configured SSH process. Only authentication and
+    /// Hello use the supplied deadline.
+    pub fn spawn_with_session(
+        command: Command,
+        authentication_timeout: Duration,
+    ) -> std::result::Result<(Self, String), String> {
         let mut client = Self::spawn_transport(command).map_err(|e| e.to_string())?;
+        client.deadline = authentication_timeout;
         let session = client
             .handshake()
             .map_err(|e| format!("{e}: {}", client.diagnostics().trim()))?;
+        client.deadline = RPC_TIMEOUT;
         Ok((client, session))
     }
     pub fn spawn(command: Command) -> Result<Self> {
@@ -348,7 +368,7 @@ impl Client {
             tx: Some(tx),
             worker: Some(worker),
             next: 0,
-            deadline: Duration::from_secs(15),
+            deadline: RPC_TIMEOUT,
             failed: false,
             diagnostics,
         })
@@ -555,13 +575,15 @@ time.sleep(10)
 
     #[test]
     fn validated_handshake_returns_the_session_without_a_second_hello() {
-        let (mut client, session) = Client::spawn_with_session(fake_command("hello_once")).unwrap();
+        let (mut client, session) =
+            Client::spawn_with_session(fake_command("hello_once"), AUTH_TIMEOUT).unwrap();
         assert_eq!(session, "a".repeat(64));
+        assert_eq!(client.deadline, RPC_TIMEOUT);
         assert!(matches!(
             client.call(Request::Ping {}),
             Ok(Response::Pong {})
         ));
-        assert!(Client::spawn_with_session(fake_command("wrong_frame")).is_err());
+        assert!(Client::spawn_with_session(fake_command("wrong_frame"), RPC_TIMEOUT).is_err());
     }
 
     #[test]

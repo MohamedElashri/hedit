@@ -39,6 +39,7 @@ impl Options {
         let mut config = None;
         let mut port = 0;
         let mut routing = hedit_remote::client::Routing::default();
+        let mut interactive_auth = false;
         let mut takeover = false;
         while let Some(arg) = args.next() {
             if literal {
@@ -134,6 +135,7 @@ impl Options {
                         return Err("Invalid SSH port".into());
                     }
                 }
+                Some("--ssh-interactive") => interactive_auth = true,
                 Some("--ssh-takeover") => takeover = true,
                 Some("--ssh-use-config-jump") => routing.jump = true,
                 Some("--ssh-forward-config-ports") => routing.forwards = true,
@@ -174,6 +176,7 @@ impl Options {
                 },
                 root: root.unwrap_or_default(),
                 managed,
+                interactive_auth,
                 takeover,
             });
             if options.stdin || options.wait {
@@ -186,6 +189,7 @@ impl Options {
             || config.is_some()
             || port != 0
             || !routing.is_default()
+            || interactive_auth
             || takeover
         {
             return Err("SSH options require --ssh HOST.".into());
@@ -273,6 +277,25 @@ mod language_server_tests {
         assert_eq!(parse(&explicit).unwrap().remote.unwrap().target.port, 2222);
         *explicit.last_mut().unwrap() = "0";
         assert!(parse(&explicit).is_err());
+    }
+
+    #[test]
+    fn ssh_interactive_authentication_is_opt_in() {
+        assert!(
+            !parse(&["--ssh", "dev"])
+                .unwrap()
+                .remote
+                .unwrap()
+                .interactive_auth
+        );
+        assert!(
+            parse(&["--ssh", "dev", "--ssh-interactive"])
+                .unwrap()
+                .remote
+                .unwrap()
+                .interactive_auth
+        );
+        assert!(parse(&["--ssh-interactive"]).is_err());
     }
 
     #[test]

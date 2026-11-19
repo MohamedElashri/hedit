@@ -499,6 +499,7 @@ fn export_readme_ssh_screenshot() {
         },
         root: fixture["root"].as_str().unwrap().into(),
         managed: false,
+        interactive_auth: false,
         takeover: false,
     };
     write_project(std::path::Path::new(&config.root));

@@ -10,6 +10,7 @@ use hedit_remote::{
     protocol::{Action, DocumentInfo, Request, Response},
 };
 use serde_json::Value;
+pub mod askpass;
 pub mod bootstrap;
 pub mod explorer;
 use std::{
@@ -45,6 +46,9 @@ pub struct Config {
     /// Resolve account paths and install the matching user-local helper.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub managed: bool,
+    /// Let OpenSSH request credentials using a local masked prompt.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub interactive_auth: bool,
     #[serde(skip)]
     pub takeover: bool,
 }
@@ -66,6 +70,18 @@ impl Config {
             }
         }
         Ok(())
+    }
+
+    /// Configure an application-owned SSH command for this connection profile.
+    /// The caller is responsible for quoting arguments in the remote command.
+    pub fn setup_command(&self, remote_command: &str) -> Result<std::process::Command, String> {
+        let mut command = self
+            .target
+            .command_for_detailed(remote_command, self.interactive_auth)?;
+        if self.interactive_auth {
+            askpass::configure(&mut command, &self.target.host)?;
+        }
+        Ok(command)
     }
 }
 struct State {
@@ -192,8 +208,15 @@ fn rpc(client: &mut Client, request: Request) -> Result<Response, String> {
 fn establish(
     config: &Config,
     expected: Option<&str>,
+    interactive: bool,
 ) -> Result<(Client, String, u64, String), String> {
-    let (mut client, session) = Client::connect_with_session(&config.target).map_err(|e| {
+    let connection = Client::connect_with_session_using(&config.target, interactive, |command| {
+        if interactive {
+            askpass::configure(command, &config.target.host)?;
+        }
+        Ok(())
+    });
+    let (mut client, session) = connection.map_err(|e| {
         format!("Cannot connect securely: {e}. Check the pinned host key, SSH key, and installed helper.")
     })?;
     if expected.is_some_and(|s| s != session) {
@@ -281,6 +304,7 @@ fn reconnect(
     config: &Config,
     client: &mut Client,
     shared: &Mutex<State>,
+    interactive: bool,
 ) -> Result<Response, String> {
     let expected = {
         let mut state = shared.lock().unwrap();
@@ -292,7 +316,7 @@ fn reconnect(
     notify(shared);
     client.disconnect();
     let result: Result<Response, String> = (|| {
-        let (new, _, epoch, token) = establish(config, Some(&expected))?;
+        let (new, _, epoch, token) = establish(config, Some(&expected), interactive)?;
         *client = new;
         {
             let mut state = shared.lock().unwrap();
@@ -376,7 +400,8 @@ impl Connection {
         } else {
             config
         };
-        let (mut client, session, epoch, token) = establish(&config, None)?;
+        let (mut client, session, epoch, token) =
+            establish(&config, None, config.interactive_auth)?;
         let state = Arc::new(Mutex::new(State {
             epoch,
             token,
@@ -413,7 +438,7 @@ impl Connection {
                     }
                 };
                 if retry {
-                    let _ = reconnect(&settings, &mut client, &shared);
+                    let _ = reconnect(&settings, &mut client, &shared, false);
                     next_change = Instant::now() + CHANGE_POLL_INTERVAL;
                     continue;
                 }
@@ -503,7 +528,8 @@ impl Connection {
                     }
                     Work::Reconnect(reply) => {
                         shared.lock().unwrap().retry = Retry::default();
-                        let result = reconnect(&settings, &mut client, &shared);
+                        let result =
+                            reconnect(&settings, &mut client, &shared, settings.interactive_auth);
                         next_change = Instant::now() + CHANGE_POLL_INTERVAL;
                         let _ = reply.send(result);
                     }
@@ -632,7 +658,13 @@ impl Connection {
         self.tx
             .try_send(Work::Reconnect(tx))
             .map_err(|_| "Remote request queue is full.")?;
-        rx.recv_timeout(Duration::from_secs(60))
+        let timeout = Duration::from_secs(60)
+            + if self.config.interactive_auth {
+                askpass::AUTH_TIMEOUT
+            } else {
+                Duration::ZERO
+            };
+        rx.recv_timeout(timeout)
             .map_err(|_| "Reconnect timed out.")??;
         Ok(())
     }
@@ -710,7 +742,17 @@ impl Connection {
             let s = self.state.lock().unwrap();
             (s.session.clone(), s.epoch, s.token.clone())
         };
-        let mut client = Client::connect(&self.config.target).map_err(|e| e.to_string())?;
+        let mut client = if self.config.interactive_auth {
+            let mut command = self
+                .config
+                .target
+                .command_with_auth(true)
+                .map_err(|error| error.to_string())?;
+            askpass::configure(&mut command, &self.config.target.host)?;
+            Client::spawn_with_session(command, askpass::AUTH_TIMEOUT)?.0
+        } else {
+            Client::connect(&self.config.target).map_err(|error| error.to_string())?
+        };
         rpc(
             &mut client,
             Request::Bind {
@@ -1615,6 +1657,7 @@ pub(crate) mod tests {
                 },
                 root: "/srv/work".into(),
                 managed: false,
+                interactive_auth: false,
                 takeover: false,
             },
             prefix: "hedit-ssh://test/".into(),
