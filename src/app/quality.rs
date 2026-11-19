@@ -1618,7 +1618,13 @@ impl HeditApp {
             // "auto" compares with Git's HEAD, or the saved file outside Git.
             // The saved file in the encoding the editor reads it with.
             let saved = || {
-                let bytes = std::fs::read(path).ok()?;
+                // Mini Diff only runs for a non-paged view. Allow its full
+                // disk representation, including twice the UTF-8 length for
+                // ASCII stored as UTF-16 and a byte order mark.
+                let file = hedit_core::file_io::open_regular(path).ok()?;
+                let bytes =
+                    hedit_core::file_io::read_bounded(file, 2 * hedit::document::SMALL_LIMIT + 3)
+                        .ok()?;
                 hedit::text_encoding::decode(&bytes, &encoding)
                     .or_else(|_| {
                         hedit::text_encoding::decode(&bytes, hedit::text_encoding::detect(&bytes))
