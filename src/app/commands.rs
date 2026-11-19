@@ -14,6 +14,7 @@ pub(super) enum Command {
     ExplorerNewFolder,
     ExplorerRename,
     ConnectSsh,
+    SshOutput,
     MarkdownSource,
     MarkdownSplit,
     MarkdownPreview,
@@ -280,6 +281,7 @@ impl Command {
         Self::ExplorerRename,
         Self::Palette,
         Self::ConnectSsh,
+        Self::SshOutput,
         Self::MarkdownSource,
         Self::MarkdownSplit,
         Self::MarkdownPreview,
@@ -553,6 +555,7 @@ impl Command {
     pub(super) fn label(self) -> &'static str {
         match self {
             Self::ConnectSsh => "Connect via SSH…",
+            Self::SshOutput => "Show SSH Output",
             Self::MarkdownSource => "Markdown: show source",
             Self::MarkdownSplit => "Markdown: split source and preview",
             Self::MarkdownPreview => "Markdown: render preview",
@@ -1432,6 +1435,7 @@ impl HeditApp {
                     | Command::Grid
                     | Command::SinglePane
                     | Command::BuildResults
+                    | Command::SshOutput
                     | Command::LanguageProblems
                     | Command::Terminal
                     | Command::NewTerminal
@@ -1750,6 +1754,7 @@ impl HeditApp {
                 self.report(r);
             }
             Command::ConnectSsh => self.show_ssh_picker(ctx),
+            Command::SshOutput => self.show_ssh_output(),
             Command::Open => self.open(ctx, None),
             Command::NewWindow => {
                 let session = hedit::windows::new_session(self.workspace.store.directory());

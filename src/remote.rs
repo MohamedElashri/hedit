@@ -11,7 +11,9 @@ use hedit_remote::{
 };
 use serde_json::Value;
 pub mod bootstrap;
+pub mod diagnostics;
 pub mod explorer;
+use diagnostics::{Event as Diagnostic, Failure as DiagnosticFailure};
 use std::{
     collections::{HashMap, VecDeque},
     path::{Path, PathBuf},
@@ -79,6 +81,7 @@ struct State {
     reconnecting: bool,
     retry: Retry,
     error: Option<String>,
+    diagnostics: diagnostics::Log,
     pending: VecDeque<PendingEdit>,
     pending_bytes: usize,
     infos: HashMap<String, DocumentInfo>,
@@ -93,6 +96,20 @@ struct PendingEdit {
     queued_at: Instant,
 }
 impl State {
+    fn record_connection_loss(&mut self, error: Option<String>) {
+        if self.connected {
+            self.diagnostics.record(Diagnostic::TransportLost(
+                error
+                    .as_deref()
+                    .map(DiagnosticFailure::classify)
+                    .unwrap_or(DiagnosticFailure::Unknown),
+            ));
+        }
+        self.connected = false;
+        self.trusted = false;
+        self.error = error;
+    }
+
     fn oldest_edit_deadline(&self) -> Option<Instant> {
         self.pending
             .front()
@@ -283,12 +300,15 @@ fn reconnect(
     config: &Config,
     client: &mut Client,
     shared: &Mutex<State>,
+    automatic: bool,
 ) -> Result<Response, String> {
     let expected = {
         let mut state = shared.lock().unwrap();
         state.connected = false;
         state.reconnecting = true;
         state.trusted = false;
+        let attempt = automatic.then_some(state.retry.attempts);
+        state.diagnostics.record(Diagnostic::Reconnecting(attempt));
         state.session.clone()
     };
     notify(shared);
@@ -312,9 +332,15 @@ fn reconnect(
                 state.connected = true;
                 state.error = None;
                 state.retry = Retry::default();
+                state.diagnostics.record(Diagnostic::Reconnected);
             }
             Err(error) => {
                 state.error = Some(error.clone());
+                state
+                    .diagnostics
+                    .record(Diagnostic::ReconnectFailed(DiagnosticFailure::classify(
+                        error,
+                    )));
                 // Session mismatch, fencing and reconciliation conflicts need a
                 // human decision; only an unusable transport permits retries.
                 if !client.is_failed() || error.contains("recovery session changed") {
@@ -356,13 +382,11 @@ fn poll_changes(client: &mut Client, shared: &Mutex<State>, cursor: &mut usize) 
         other => {
             let mut state = shared.lock().unwrap();
             changed_state = true;
-            state.connected = false;
-            state.trusted = false;
-            state.error = Some(
+            state.record_connection_loss(Some(
                 other
                     .err()
                     .unwrap_or_else(|| "Invalid host change response.".into()),
-            );
+            ));
         }
     }
     if changed_state {
@@ -378,6 +402,8 @@ impl Connection {
             config
         };
         let (mut client, session, epoch, token) = establish(&config, None)?;
+        let mut diagnostics = diagnostics::Log::default();
+        diagnostics.record(Diagnostic::Connected);
         let state = Arc::new(Mutex::new(State {
             epoch,
             token,
@@ -386,6 +412,7 @@ impl Connection {
             reconnecting: false,
             retry: Retry::default(),
             error: None,
+            diagnostics,
             pending: VecDeque::new(),
             pending_bytes: 0,
             infos: HashMap::new(),
@@ -413,7 +440,7 @@ impl Connection {
                     }
                 };
                 if retry {
-                    let _ = reconnect(&settings, &mut client, &shared);
+                    let _ = reconnect(&settings, &mut client, &shared, true);
                     next_change = Instant::now() + CHANGE_POLL_INTERVAL;
                     continue;
                 }
@@ -445,10 +472,10 @@ impl Connection {
                             };
                             let result = rpc(&mut client, request);
                             if client.is_failed() {
-                                let mut state = shared.lock().unwrap();
-                                state.connected = false;
-                                state.trusted = false;
-                                state.error = result.as_ref().err().cloned();
+                                shared
+                                    .lock()
+                                    .unwrap()
+                                    .record_connection_loss(result.as_ref().err().cloned());
                             } else if let (Some(allow), Ok(Response::Pong {})) = (trust, &result) {
                                 // Publish trust on the serialized transport worker
                                 // before the caller can observe the acknowledgement.
@@ -477,13 +504,11 @@ impl Connection {
                         match result {
                             Ok(info) => s.acknowledge_edit(&path, info),
                             other => {
-                                s.connected = false;
-                                s.trusted = false;
-                                s.error = Some(
+                                s.record_connection_loss(Some(
                                     other
                                         .err()
                                         .unwrap_or_else(|| "Invalid durability receipt.".into()),
-                                );
+                                ));
                             }
                         }
                     }
@@ -499,11 +524,12 @@ impl Connection {
                         state.retry.enabled = false;
                         state.retry.next = None;
                         state.error = Some("Disconnected. Pending edits remain in this window; reconnect to resume.".into());
+                        state.diagnostics.record(Diagnostic::Disconnected);
                         let _ = reply.send(Ok(Response::Pong {}));
                     }
                     Work::Reconnect(reply) => {
                         shared.lock().unwrap().retry = Retry::default();
-                        let result = reconnect(&settings, &mut client, &shared);
+                        let result = reconnect(&settings, &mut client, &shared, false);
                         next_change = Instant::now() + CHANGE_POLL_INTERVAL;
                         let _ = reply.send(result);
                     }
@@ -694,6 +720,9 @@ impl Connection {
                 })
             },
         )
+    }
+    pub fn take_diagnostics(&self) -> Vec<Diagnostic> {
+        self.state.lock().unwrap().diagnostics.drain()
     }
     fn service(&self) -> Result<Client, String> {
         self.flush()?;
@@ -1617,6 +1646,7 @@ pub(crate) mod tests {
                 reconnecting: false,
                 retry: Retry::default(),
                 error: None,
+                diagnostics: diagnostics::Log::default(),
                 pending: VecDeque::new(),
                 pending_bytes: 0,
                 infos: HashMap::new(),
@@ -1626,6 +1656,25 @@ pub(crate) mod tests {
             })),
         }
     }
+    #[test]
+    fn transport_diagnostics_report_only_one_loss_per_connection() {
+        let connection = disconnected();
+        {
+            let mut state = connection.state.lock().unwrap();
+            state.connected = true;
+            state.trusted = true;
+            state.record_connection_loss(Some("private.example: Connection reset".into()));
+            state.record_connection_loss(Some("private.example: failure".into()));
+            assert!(!state.connected);
+            assert!(!state.trusted);
+        }
+        assert_eq!(
+            connection.take_diagnostics(),
+            [Diagnostic::TransportLost(DiagnosticFailure::Network)]
+        );
+        assert!(connection.take_diagnostics().is_empty());
+    }
+
     #[test]
     fn a_read_rejects_a_moved_document_even_when_its_revision_did_not_change() {
         let mut remote = disconnected();
