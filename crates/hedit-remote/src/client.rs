@@ -390,6 +390,7 @@ impl Client {
         self.failed = true;
         let _ = self.child.kill();
         let _ = self.child.wait();
+        self.forwards.take();
     }
     pub fn is_failed(&self) -> bool {
         self.failed

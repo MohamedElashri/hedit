@@ -122,7 +122,7 @@ impl Failure {
     pub fn advice(self) -> &'static str {
         match self {
             Self::HostKey => "Verify the host key in OpenSSH, then retry.",
-            Self::Authentication => "Check the SSH user and agent, or enable interactive SSH authentication for this profile.",
+            Self::Authentication => "Check the SSH user and load your key into the SSH agent, or enable interactive SSH authentication for this profile.",
             Self::Connect => "Check the SSH configuration, pinned host key, SSH agent, and installed helper.",
             Self::Settings => "Review the SSH configuration and connection settings, then retry.",
             Self::Network => "Check the host address, SSH port, and network connection, then retry.",

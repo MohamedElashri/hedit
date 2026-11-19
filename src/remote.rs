@@ -376,6 +376,9 @@ fn reconnect(
             }
         }
     }
+    if result.is_err() {
+        client.disconnect();
+    }
     notify(shared);
     result
 }
