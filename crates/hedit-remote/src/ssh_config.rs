@@ -11,10 +11,28 @@ pub struct Hosts {
     pub aliases: Vec<String>,
     pub warnings: Vec<String>,
 }
+
+/// Observe a config entry or the children of an Include glob directory.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum WatchScope {
+    Entry,
+    Children,
+}
+
 /// Read a selected config, or the normal user and system configurations.
 pub fn discover(config: Option<&Path>, home: &Path) -> Hosts {
+    discover_with(config, home, |_, _| {})
+}
+
+/// Observe paths before they are read, including absent files and empty globs.
+pub fn discover_with(
+    config: Option<&Path>,
+    home: &Path,
+    observe: impl FnMut(&Path, WatchScope),
+) -> Hosts {
     let mut scan = Scan {
         home,
+        observe,
         files: 0,
         bytes: 0,
         seen: BTreeSet::new(),
@@ -37,15 +55,16 @@ pub fn discover(config: Option<&Path>, home: &Path) -> Hosts {
         warnings: scan.warnings,
     }
 }
-struct Scan<'a> {
+struct Scan<'a, F> {
     home: &'a Path,
+    observe: F,
     files: usize,
     bytes: usize,
     seen: BTreeSet<PathBuf>,
     aliases: BTreeSet<String>,
     warnings: Vec<String>,
 }
-impl Scan<'_> {
+impl<F: FnMut(&Path, WatchScope)> Scan<'_, F> {
     fn file(&mut self, path: &Path, depth: usize, optional: bool) {
         if self.files >= 128 || depth > 8 || self.bytes >= 1024 * 1024 {
             if self.warnings.is_empty() {
@@ -54,8 +73,14 @@ impl Scan<'_> {
             }
             return;
         }
+        (self.observe)(path, WatchScope::Entry);
         let path = match std::fs::canonicalize(path) {
-            Ok(path) => path,
+            Ok(canonical) => {
+                if canonical != path {
+                    (self.observe)(&canonical, WatchScope::Entry);
+                }
+                canonical
+            }
             Err(e) if optional && e.kind() == std::io::ErrorKind::NotFound => return,
             Err(e) => {
                 self.warnings.push(format!("{}: {e}", path.display()));
@@ -113,7 +138,7 @@ impl Scan<'_> {
                             self.home.join(".ssh").join(p)
                         }
                     };
-                    for included in expand(&expanded) {
+                    for included in expand(&expanded, &mut self.observe) {
                         self.file(&included, depth + 1, true);
                     }
                 }
@@ -121,7 +146,7 @@ impl Scan<'_> {
         }
     }
 }
-fn valid_alias(alias: &str) -> bool {
+pub fn valid_alias(alias: &str) -> bool {
     !alias.is_empty()
         && !alias.starts_with('-')
         && alias.len() <= 253
@@ -172,7 +197,7 @@ fn tokens(line: &str) -> Vec<String> {
     }
     result
 }
-fn expand(pattern: &Path) -> Vec<PathBuf> {
+fn expand(pattern: &Path, observe: &mut impl FnMut(&Path, WatchScope)) -> Vec<PathBuf> {
     let mut paths = vec![PathBuf::new()];
     for component in pattern.components() {
         if let Component::Normal(name) = component {
@@ -202,7 +227,10 @@ fn expand(pattern: &Path) -> Vec<PathBuf> {
                 };
                 paths = paths
                     .iter()
-                    .flat_map(|p| std::fs::read_dir(p).into_iter().flatten().take(4096))
+                    .flat_map(|p| {
+                        observe(p, WatchScope::Children);
+                        std::fs::read_dir(p).into_iter().flatten().take(4096)
+                    })
                     .filter_map(Result::ok)
                     .filter(|e| regex.is_match(&e.file_name().to_string_lossy()))
                     .take(128)
@@ -253,5 +281,21 @@ mod tests {
         assert!(!discover(Some(&config), dir.path()).warnings.is_empty());
         std::fs::write(&config, "x".repeat(1024 * 1024 + 1)).unwrap();
         assert!(!discover(Some(&config), dir.path()).warnings.is_empty());
+    }
+
+    #[test]
+    fn discovery_observes_empty_globs_and_missing_explicit_includes() {
+        let directory = tempfile::tempdir().unwrap();
+        let ssh = directory.path().join(".ssh");
+        let config = directory.path().join("config");
+        std::fs::write(&config, "Include config.d/*.conf missing.conf\nHost test\n").unwrap();
+        let mut observed = BTreeSet::new();
+        let hosts = discover_with(Some(&config), directory.path(), |path, scope| {
+            observed.insert((path.to_owned(), scope));
+        });
+        assert_eq!(hosts.aliases, ["test"]);
+        assert!(observed.contains(&(config, WatchScope::Entry)));
+        assert!(observed.contains(&(ssh.join("config.d"), WatchScope::Children)));
+        assert!(observed.contains(&(ssh.join("missing.conf"), WatchScope::Entry)));
     }
 }

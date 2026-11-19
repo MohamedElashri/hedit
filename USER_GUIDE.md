@@ -161,6 +161,14 @@ hedit discovers aliases from `~/.ssh/config`, the system config, and included
 files. User and port come from OpenSSH unless explicitly overridden. Wildcard and
 negated selectors do not appear as destinations.
 
+Choose **Import SSH hosts…** in Remote Explorer to select which aliases appear
+in the sidebar. **Import selected** saves that list across restarts. **Sync all
+hosts** also shows aliases added to SSH config later and is the default. Changes
+to SSH config and included files update the list automatically. A selected
+alias disappears when removed from SSH config and returns if you add it back.
+Connections use the current OpenSSH settings for the alias. The connection
+picker can still find any discovered alias.
+
 hedit checks the host platform, installs the matching helper for the non-root SSH
 account, and opens a separate remote window. It uses a bundled helper when the
 platform matches, or downloads the exact editor version and verifies its SHA-256

@@ -2,19 +2,29 @@
 use super::*;
 use hedit::remote::{explorer::Catalog, Config as RemoteConfig};
 use hedit_remote::{client::SshTarget, ssh_config};
+use std::sync::atomic::{AtomicBool, Ordering};
 mod folder_picker;
+mod host_import;
+mod host_watch;
 use folder_picker::FolderPicker;
+use host_import::ImportHosts;
+use host_watch::HostWatch;
+
 #[derive(Default)]
 pub(super) struct RemoteUi {
     dialog: bool,
     connect_picker: Option<ConnectPicker>,
     folder_picker: Option<FolderPicker>,
+    import_hosts: Option<ImportHosts>,
     selected_config: String,
     load_started: bool,
     query: String,
     catalog: Option<Catalog>,
     hosts: ssh_config::Hosts,
-    loading: Option<mpsc::Receiver<Result<(Catalog, ssh_config::Hosts), String>>>,
+    loading: Option<mpsc::Receiver<Result<DiscoveredHosts, String>>>,
+    _host_watch: Option<HostWatch>,
+    host_changes: Arc<AtomicBool>,
+    refresh_hosts_at: Option<Instant>,
     saving: Option<mpsc::Receiver<Result<Catalog, String>>>,
     host: String,
     user: String,
@@ -33,6 +43,21 @@ pub(super) struct RemoteUi {
     connecting: Option<Connecting>,
     connection_status: String,
 }
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CatalogLoad {
+    Read,
+    ApplyConfig,
+    SyncHosts,
+}
+
+struct DiscoveredHosts {
+    catalog: Catalog,
+    hosts: ssh_config::Hosts,
+    watch: Option<HostWatch>,
+    mode: CatalogLoad,
+}
+
 struct Connecting {
     events: mpsc::Receiver<ConnectEvent>,
     cancel: Arc<std::sync::atomic::AtomicBool>,
@@ -120,6 +145,7 @@ impl RemoteUi {
             || self.picker.is_some()
             || self.connect_picker.is_some()
             || self.folder_picker.is_some()
+            || self.import_hosts.is_some()
     }
 
     pub(super) fn close_overlay(&mut self) {
@@ -127,6 +153,7 @@ impl RemoteUi {
         self.picker = None;
         self.connect_picker = None;
         self.folder_picker = None;
+        self.import_hosts = None;
     }
 
     fn ready(&self) -> bool {
@@ -418,11 +445,11 @@ impl HeditApp {
     }
     pub(super) fn ensure_remote_catalog(&mut self, ctx: &egui::Context) {
         if self.remote_ui.catalog.is_none() && !self.remote_ui.load_started {
-            self.load_remote_catalog(ctx, false);
+            self.load_remote_catalog(ctx, CatalogLoad::Read);
         }
     }
-    fn load_remote_catalog(&mut self, ctx: &egui::Context, refresh: bool) {
-        if self.remote_ui.loading.is_some() || self.remote_ui.saving.is_some() {
+    fn load_remote_catalog(&mut self, ctx: &egui::Context, mode: CatalogLoad) {
+        if !self.remote_ui.ready() {
             return;
         }
         self.remote_ui.load_started = true;
@@ -432,29 +459,72 @@ impl HeditApp {
             .as_ref()
             .map(|p| p.join("ssh-workspaces.json"));
         let selected = self.remote_ui.selected_config.trim().to_owned();
-        if !selected.is_empty() && !std::path::Path::new(&selected).is_absolute() {
+        if mode == CatalogLoad::ApplyConfig
+            && !selected.is_empty()
+            && !std::path::Path::new(&selected).is_absolute()
+        {
             self.error = Some("Use an absolute local SSH config path.".into());
             return;
         }
+        let previous = self.remote_ui.catalog.clone().unwrap_or_default();
+        let host_changes = self.remote_ui.host_changes.clone();
+        let repaint = ctx.clone();
         self.remote_ui.loading = Some(remote_worker(ctx, move || {
-            let mut catalog = path
-                .as_deref()
-                .map(Catalog::load)
-                .transpose()?
-                .unwrap_or_default();
-            if refresh {
+            let mut catalog = if mode == CatalogLoad::SyncHosts {
+                previous
+            } else if let Some(path) = &path {
+                Catalog::load(path)?
+            } else {
+                previous
+            };
+            if mode == CatalogLoad::ApplyConfig {
                 let original = catalog.clone();
                 catalog.config = (!selected.is_empty()).then(|| selected.into());
-                if let Some(path) = &path {
-                    catalog.save(path, &original)?;
+                if catalog != original {
+                    if let Some(path) = &path {
+                        catalog.save(path, &original)?;
+                    }
                 }
             }
             let home = directories::BaseDirs::new()
                 .map(|d| d.home_dir().to_owned())
                 .ok_or("Cannot find your home directory.")?;
-            let hosts = ssh_config::discover(catalog.config.as_deref(), &home);
-            Ok((catalog, hosts))
+            let mut watch = HostWatch::new(repaint, host_changes);
+            let mut hosts =
+                ssh_config::discover_with(catalog.config.as_deref(), &home, |path, scope| {
+                    if let Some(watch) = &mut watch {
+                        watch.observe(path, scope);
+                    }
+                });
+            if watch.as_ref().is_none_or(HostWatch::incomplete) {
+                hosts.warnings.push(
+                    "Automatic SSH updates could not watch every config path. Use Refresh to check for changes."
+                        .into(),
+                );
+            }
+            Ok(DiscoveredHosts {
+                catalog,
+                hosts,
+                watch,
+                mode,
+            })
         }));
+    }
+
+    fn sync_remote_hosts(&mut self, ctx: &egui::Context, now: Instant) {
+        if self.remote_ui.host_changes.swap(false, Ordering::AcqRel) {
+            self.remote_ui
+                .refresh_hosts_at
+                .get_or_insert(now + Duration::from_millis(150));
+        }
+        if let Some(at) = self.remote_ui.refresh_hosts_at {
+            if now < at {
+                ctx.request_repaint_after(at - now);
+            } else if self.remote_ui.ready() {
+                self.remote_ui.refresh_hosts_at = None;
+                self.load_remote_catalog(ctx, CatalogLoad::SyncHosts);
+            }
+        }
     }
     fn save_remote_catalog(&mut self, ctx: &egui::Context, catalog: Catalog) {
         if self.remote_ui.saving.is_some() {
@@ -550,18 +620,21 @@ impl HeditApp {
     }
     fn remote_explorer_contents(&mut self, ui: &mut egui::Ui) {
         ui.add_space(8.0);
+        let ready = self.remote_ui.ready();
         let header = ui.strong("SSH REMOTES");
         header.context_menu(|ui| {
             if ui.button("SSH configuration…").clicked() {
                 self.remote_ui.config_dialog = true;
                 ui.close_menu();
             }
-            if ui.button("Refresh hosts").clicked() {
-                self.load_remote_catalog(ui.ctx(), true);
+            if ui
+                .add_enabled(ready, egui::Button::new("Refresh hosts"))
+                .clicked()
+            {
+                self.load_remote_catalog(ui.ctx(), CatalogLoad::Read);
                 ui.close_menu();
             }
         });
-        let ready = self.remote_ui.ready();
         ui.horizontal(|ui| {
             if ui
                 .add_enabled(
@@ -576,9 +649,26 @@ impl HeditApp {
                 .add_enabled(ready, egui::Button::new("Refresh"))
                 .clicked()
             {
-                self.load_remote_catalog(ui.ctx(), true);
+                self.load_remote_catalog(ui.ctx(), CatalogLoad::Read);
             }
         });
+        if ui
+            .add_enabled(
+                ready && self.remote_ui.catalog.is_some(),
+                egui::Button::new("Import SSH hosts…"),
+            )
+            .clicked()
+        {
+            self.close_transient(ui.ctx());
+            if let Some(catalog) = &self.remote_ui.catalog {
+                self.remote_ui.import_hosts = Some(ImportHosts::new(
+                    &catalog.imports,
+                    &self.remote_ui.hosts.aliases,
+                ));
+            }
+            self.focus_editor = false;
+            ui.ctx().request_repaint();
+        }
         ui.weak("Click a host to connect · Right-click for options");
         if self.remote_ui.loading.is_some() {
             ui.spinner();
@@ -597,7 +687,7 @@ impl HeditApp {
             }
         }
         if self.remote_ui.saving.is_some() {
-            ui.label("Saving workspace…");
+            ui.label("Saving SSH settings…");
         }
         if let Some(remote) = self.workspace.remote.clone() {
             ui.separator();
@@ -705,7 +795,17 @@ impl HeditApp {
             }
         }
         let ssh_config = self.remote_ui.ssh_config();
+        let mut has_imports = false;
         for host in &self.remote_ui.hosts.aliases {
+            if self
+                .remote_ui
+                .catalog
+                .as_ref()
+                .is_some_and(|catalog| !catalog.imports.includes(host))
+            {
+                continue;
+            }
+            has_imports = true;
             if !host.to_lowercase().contains(&query) {
                 continue;
             }
@@ -738,6 +838,8 @@ impl HeditApp {
         }
         if self.remote_ui.hosts.aliases.is_empty() && self.remote_ui.loading.is_none() {
             ui.label("No SSH aliases found. Add a Host entry to your SSH config or connect to a hostname.");
+        } else if !has_imports && self.remote_ui.loading.is_none() {
+            ui.label("No imported SSH hosts.");
         }
         if let Some(config) = edit {
             self.remote_ui.edit(Some(&config), "");
@@ -822,6 +924,7 @@ impl HeditApp {
             let mut open = true;
             let mut refresh = false;
             let mut edit = false;
+            let ready = self.remote_ui.ready();
             egui::Window::new("SSH configuration")
                 .open(&mut open)
                 .collapsible(false)
@@ -830,12 +933,14 @@ impl HeditApp {
                     ui.text_edit_singleline(&mut self.remote_ui.selected_config);
                     ui.horizontal(|ui| {
                         edit = ui.button("Open SSH config…").clicked();
-                        refresh = ui.button("Refresh hosts").clicked();
+                        refresh = ui
+                            .add_enabled(ready, egui::Button::new("Refresh hosts"))
+                            .clicked();
                     });
                 });
             self.remote_ui.config_dialog = open;
             if refresh {
-                self.load_remote_catalog(ctx, true);
+                self.load_remote_catalog(ctx, CatalogLoad::ApplyConfig);
             }
             if edit {
                 let path = if self.remote_ui.selected_config.trim().is_empty() {
@@ -866,14 +971,22 @@ impl HeditApp {
             remote_worker_result(&mut self.remote_ui.loading, "SSH configuration load")
         {
             match result {
-                Ok((catalog, hosts)) => {
-                    self.remote_ui.selected_config = catalog
-                        .config
-                        .as_ref()
-                        .map(|p| p.to_string_lossy().into_owned())
-                        .unwrap_or_default();
+                Ok(DiscoveredHosts {
+                    catalog,
+                    hosts,
+                    watch,
+                    mode,
+                }) => {
+                    if mode != CatalogLoad::SyncHosts {
+                        self.remote_ui.selected_config = catalog
+                            .config
+                            .as_ref()
+                            .map(|p| p.to_string_lossy().into_owned())
+                            .unwrap_or_default();
+                    }
                     self.remote_ui.catalog = Some(catalog);
                     self.remote_ui.hosts = hosts;
+                    self.remote_ui._host_watch = watch;
                 }
                 Err(error) => self.error = Some(error),
             }
@@ -883,6 +996,27 @@ impl HeditApp {
             match result {
                 Ok(catalog) => self.remote_ui.catalog = Some(catalog),
                 Err(error) => self.error = Some(error),
+            }
+        }
+        self.sync_remote_hosts(ctx, Instant::now());
+        if let Some(mut import) = self.remote_ui.import_hosts.take() {
+            let (cancel, imports) =
+                import.show(ctx, &self.remote_ui.hosts.aliases, self.remote_ui.ready());
+            if let Some(imports) = imports {
+                if let Some(mut catalog) = self.remote_ui.catalog.clone() {
+                    match catalog.set_imports(imports) {
+                        Ok(()) if Some(&catalog) != self.remote_ui.catalog.as_ref() => {
+                            self.save_remote_catalog(ctx, catalog);
+                        }
+                        Ok(()) => {}
+                        Err(error) => {
+                            self.error = Some(error);
+                            self.remote_ui.import_hosts = Some(import);
+                        }
+                    }
+                }
+            } else if !cancel {
+                self.remote_ui.import_hosts = Some(import);
             }
         }
         let remote = self.workspace.remote.clone();
@@ -1537,6 +1671,152 @@ mod tests {
             .iter()
             .any(|s| text_rect(&s.shape, "cluster  →").is_some()));
     }
+
+    #[test]
+    fn remote_explorer_can_import_selected_hosts_or_sync_all() {
+        use crate::app::tests::text_rect;
+        let (_dir, ctx, mut app) = app();
+        let size = egui::vec2(880.0, 650.0);
+        app.show_remote_explorer(&ctx);
+        let click = |app: &mut HeditApp, label: &str| {
+            frame(&ctx, app, size, vec![]);
+            let output = frame(&ctx, app, size, vec![]);
+            let position = output
+                .shapes
+                .iter()
+                .find_map(|shape| text_rect(&shape.shape, label))
+                .unwrap_or_else(|| panic!("missing control {label}"))
+                .center();
+            for pressed in [true, false] {
+                frame(
+                    &ctx,
+                    app,
+                    size,
+                    vec![
+                        egui::Event::PointerMoved(position),
+                        egui::Event::PointerButton {
+                            pos: position,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: Modifiers::NONE,
+                        },
+                    ],
+                );
+            }
+        };
+        click(&mut app, "Import SSH hosts…");
+        click(&mut app, "Clear selection");
+        click(&mut app, "devbox");
+        click(&mut app, "Import selected");
+        let imports = &app.remote_ui.catalog.as_ref().unwrap().imports;
+        assert!(imports.includes("devbox"));
+        assert!(!imports.includes("cluster"));
+        let output = frame(&ctx, &mut app, size, vec![]);
+        assert!(output
+            .shapes
+            .iter()
+            .any(|shape| text_rect(&shape.shape, "devbox  →").is_some()));
+        assert!(!output
+            .shapes
+            .iter()
+            .any(|shape| text_rect(&shape.shape, "cluster  →").is_some()));
+        assert!(!app.remote_ui.connect_choices("cluster").is_empty());
+
+        click(&mut app, "Import SSH hosts…");
+        click(&mut app, "Sync all hosts");
+        assert!(app
+            .remote_ui
+            .catalog
+            .as_ref()
+            .unwrap()
+            .imports
+            .includes("future"));
+    }
+
+    #[test]
+    fn ssh_imports_follow_config_replacements_and_new_include_files() {
+        use hedit::remote::explorer::HostImports;
+        use std::io::Write;
+
+        let (dir, ctx, mut app) = app();
+        let config = dir.path().join("ssh-config");
+        let includes = dir.path().join("included");
+        let pattern = includes.join("*.conf").to_string_lossy().replace('\\', "/");
+        let configured = |hosts: &str| format!("Include \"{pattern}\"\n{hosts}");
+        std::fs::write(&config, configured("Host devbox\n  User first\n")).unwrap();
+        app.remote_ui.selected_config = config.to_string_lossy().into_owned();
+        app.load_remote_catalog(&ctx, CatalogLoad::ApplyConfig);
+        let wait = |app: &mut HeditApp, aliases: &[&str]| {
+            let start = Instant::now();
+            loop {
+                app.remote_controls(&ctx);
+                if app.remote_ui.loading.is_none() && app.remote_ui.hosts.aliases == aliases {
+                    break;
+                }
+                assert!(
+                    start.elapsed() < Duration::from_secs(15),
+                    "expected {aliases:?}, found {:?}: {:?}",
+                    app.remote_ui.hosts.aliases,
+                    app.error,
+                );
+                thread::sleep(Duration::from_millis(10));
+            }
+        };
+        wait(&mut app, &["devbox"]);
+        app.remote_ui
+            .catalog
+            .as_mut()
+            .unwrap()
+            .set_imports(HostImports::Selected(["devbox".into()].into()))
+            .unwrap();
+
+        app.remote_ui.selected_config = "unapplied config path".into();
+        let mut replacement = tempfile::NamedTempFile::new_in(dir.path()).unwrap();
+        replacement
+            .write_all(configured("Host renamed\n  User second\n").as_bytes())
+            .unwrap();
+        replacement.persist(&config).unwrap();
+        wait(&mut app, &["renamed"]);
+        let imports = &app.remote_ui.catalog.as_ref().unwrap().imports;
+        assert!(!imports.includes("renamed"));
+        assert_eq!(app.remote_ui.selected_config, "unapplied config path");
+
+        std::fs::create_dir(&includes).unwrap();
+        let restored = includes.join("devbox.conf");
+        std::fs::write(&restored, "Host DevBox\n  User current\n  Port 2222\n").unwrap();
+        wait(&mut app, &["DevBox", "renamed"]);
+        assert!(app
+            .remote_ui
+            .catalog
+            .as_ref()
+            .unwrap()
+            .imports
+            .includes("DevBox"));
+        let target = ConnectChoice::Host("DevBox")
+            .config(app.remote_ui.ssh_config())
+            .target;
+        assert_eq!(target.config.as_ref(), Some(&config));
+        assert_eq!(target.user, None);
+        assert_eq!(target.port, 0);
+
+        app.remote_ui
+            .catalog
+            .as_mut()
+            .unwrap()
+            .set_imports(HostImports::All)
+            .unwrap();
+        std::fs::remove_file(restored).unwrap();
+        std::fs::write(includes.join("new.conf"), "Host new-alias\n").unwrap();
+        wait(&mut app, &["new-alias", "renamed"]);
+        assert!(app
+            .remote_ui
+            .catalog
+            .as_ref()
+            .unwrap()
+            .imports
+            .includes("new-alias"));
+    }
+
     #[test]
     fn activity_bar_switches_between_remote_and_files_without_changing_documents() {
         use hedit::icons::Icon;

@@ -1,12 +1,52 @@
 //! Local connection metadata only. No document content or authentication secrets.
 use super::Config;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+
+#[derive(Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HostImports {
+    #[default]
+    All,
+    Selected(BTreeSet<String>),
+}
+
+impl HostImports {
+    pub fn includes(&self, alias: &str) -> bool {
+        match self {
+            Self::All => true,
+            Self::Selected(aliases) => {
+                if alias.bytes().any(|byte| byte.is_ascii_uppercase()) {
+                    aliases.contains(&alias.to_ascii_lowercase())
+                } else {
+                    aliases.contains(alias)
+                }
+            }
+        }
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if let Self::Selected(aliases) = self {
+            if aliases.len() > 512 {
+                return Err("Remote Explorer supports at most 512 selected SSH aliases.".into());
+            }
+            if aliases.iter().any(|alias| {
+                !hedit_remote::ssh_config::valid_alias(alias)
+                    || alias.bytes().any(|byte| byte.is_ascii_uppercase())
+            }) {
+                return Err("Remote Explorer contains an invalid selected SSH alias.".into());
+            }
+        }
+        Ok(())
+    }
+}
 
 #[derive(Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Catalog {
     pub config: Option<PathBuf>,
     pub workspaces: Vec<Config>,
+    pub imports: HostImports,
 }
 impl Catalog {
     pub fn load(path: &Path) -> Result<Self, String> {
@@ -26,6 +66,7 @@ impl Catalog {
         for workspace in &value.workspaces {
             workspace.validate()?;
         }
+        value.imports.validate()?;
         if value
             .config
             .as_ref()
@@ -34,6 +75,11 @@ impl Catalog {
             return Err("Use an absolute SSH config path.".into());
         }
         Ok(value)
+    }
+    pub fn set_imports(&mut self, imports: HostImports) -> Result<(), String> {
+        imports.validate()?;
+        self.imports = imports;
+        Ok(())
     }
     pub fn remember(&mut self, config: Config) -> Result<(), String> {
         self.remember_with_policy(config, false)
@@ -72,6 +118,7 @@ impl Catalog {
         Ok(())
     }
     pub fn save(&self, path: &Path, expected: &Self) -> Result<(), String> {
+        self.imports.validate()?;
         if serde_json::to_vec_pretty(self)
             .map_err(|e| e.to_string())?
             .len()
@@ -158,6 +205,34 @@ mod tests {
         assert!(!loaded.workspaces[0].takeover);
         let bytes = std::fs::read_to_string(&path).unwrap();
         assert!(!bytes.contains("takeover"));
+    }
+
+    #[test]
+    fn legacy_catalog_shows_all_hosts_and_selected_imports_persist() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("ssh-workspaces.json");
+        std::fs::write(&path, r#"{"workspaces":[]}"#).unwrap();
+        let legacy = Catalog::load(&path).unwrap();
+        assert!(legacy.imports.includes("new-host"));
+
+        let mut catalog = legacy.clone();
+        catalog.remember(config()).unwrap();
+        catalog
+            .set_imports(HostImports::Selected(["devbox".into()].into()))
+            .unwrap();
+        catalog.save(&path, &legacy).unwrap();
+        let mut loaded = Catalog::load(&path).unwrap();
+        assert!(loaded.imports.includes("DevBox"));
+        assert!(!loaded.imports.includes("new-host"));
+        assert_eq!(loaded.workspaces, catalog.workspaces);
+
+        assert!(loaded
+            .set_imports(HostImports::Selected(["wild*".into()].into()))
+            .is_err());
+        assert!(loaded == catalog);
+        loaded.set_imports(HostImports::All).unwrap();
+        loaded.save(&path, &catalog).unwrap();
+        assert!(Catalog::load(&path).unwrap().imports.includes("new-host"));
     }
     #[test]
     fn a_stale_window_cannot_overwrite_another_windows_saved_workspaces() {
