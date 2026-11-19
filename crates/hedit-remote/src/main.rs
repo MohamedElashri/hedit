@@ -8,6 +8,34 @@ use std::{
 };
 
 fn main() {
+    #[cfg(unix)]
+    if std::env::args().nth(1).as_deref() == Some("setup") {
+        let args: Vec<_> = std::env::args().skip(2).collect();
+        let result = (|| {
+            let mut workspace = "";
+            let mut state = "";
+            let (fields, remainder) = args.as_chunks::<2>();
+            for pair in fields {
+                match pair[0].as_str() {
+                    "--workspace" => workspace = &pair[1],
+                    "--state" => state = &pair[1],
+                    _ => return Err("Unknown SSH setup option.".to_owned()),
+                }
+            }
+            if !remainder.is_empty() {
+                return Err("SSH setup options need a path value.".into());
+            }
+            hedit_remote::install::setup(workspace, state)
+        })();
+        match result {
+            Ok(info) => println!("{}", serde_json::to_string(&info).unwrap()),
+            Err(error) => {
+                eprintln!("hedit-remote: {error}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     if let Err(error) = run() {
         eprintln!("hedit-remote: {error}");
         std::process::exit(1);
@@ -19,6 +47,14 @@ fn run() -> Result<(), Error> {
     let Some(mode) = args.next() else {
         return Err(Error::Protocol);
     };
+    if mode == "--version" {
+        println!("hedit-remote {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    if mode == "--setup-version" {
+        println!("{}", hedit_remote::client::SETUP_VERSION);
+        return Ok(());
+    }
     if mode == "--help" {
         println!("hedit SSH workspace helper\n\
             worker --state ABSOLUTE_PRIVATE_DIRECTORY [--idle-seconds N]\n\
@@ -26,11 +62,12 @@ fn run() -> Result<(), Error> {
             connect --host HOST --helper ABSOLUTE_REMOTE_EXECUTABLE --state ABSOLUTE_REMOTE_DIRECTORY\n\
             [--port N] [--user USER] [--ssh-config ABSOLUTE_LOCAL_CONFIG]\n\
             connect accepts one bounded JSON Request per line and prints its Result.\n\
-            The editor uses this helper for host-only recovery, files, search, Git, builds, and terminal streams. Install it explicitly on the host.");
+            setup [--workspace ABSOLUTE_DIRECTORY] [--state ABSOLUTE_PRIVATE_DIRECTORY]\n\
+            The editor installs matching helpers automatically for the remote user.");
         return Ok(());
     }
     let (mut state, mut host, mut helper, mut user, mut config) = (None, None, None, None, None);
-    let (mut port, mut idle) = (22, 300_u64);
+    let (mut port, mut idle) = (0, 300_u64);
     while let Some(key) = args.next() {
         let value = args.next().ok_or(Error::Protocol)?;
         match key.as_str() {

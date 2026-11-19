@@ -127,6 +127,41 @@ impl Default for Client {
     }
 }
 impl Client {
+    pub(crate) fn download_helper(
+        &self,
+        version: &str,
+        name: &str,
+        destination: &Path,
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> Result<(), String> {
+        Version::parse(version).map_err(error)?;
+        let allowed = [
+            format!("hedit-remote-{version}-linux-x86_64"),
+            format!("hedit-remote-{version}-linux-aarch64"),
+            format!("hedit-remote-{version}-macos-universal"),
+        ];
+        if !allowed.iter().any(|n| n == name) {
+            return Err("Invalid SSH helper asset name.".into());
+        }
+        let output = File::create(destination).map_err(error)?;
+        let checksum = tempfile::tempfile().map_err(error)?;
+        let url = format!("{RELEASES_URL}/download/v{version}/{name}");
+        run_tool_cancellable(
+            &mut self.curl(&url, 64 * 1024 * 1024),
+            &output,
+            64 * 1024 * 1024,
+            Duration::from_secs(300),
+            Some(cancel),
+        )?;
+        run_tool_cancellable(
+            &mut self.curl(&format!("{url}.sha256"), CHECKSUM_LIMIT),
+            &checksum,
+            CHECKSUM_LIMIT,
+            Duration::from_secs(60),
+            Some(cancel),
+        )?;
+        verify_checksum(destination, &read_text(&checksum, CHECKSUM_LIMIT)?, name)
+    }
     fn curl(&self, url: &str, limit: u64) -> Command {
         let mut command = Command::new(&self.curl);
         command
@@ -256,6 +291,18 @@ fn run_tool(
     limit: u64,
     timeout: Duration,
 ) -> Result<(), String> {
+    run_tool_cancellable(command, output, limit, timeout, None)
+}
+fn run_tool_cancellable(
+    command: &mut Command,
+    output: &File,
+    limit: u64,
+    timeout: Duration,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+) -> Result<(), String> {
+    if cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed)) {
+        return Err("SSH connection cancelled.".into());
+    }
     let stderr = tempfile::tempfile().map_err(error)?;
     command
         .stdin(Stdio::null())
@@ -278,12 +325,15 @@ fn run_tool(
     };
     let started = Instant::now();
     loop {
+        let cancelled = cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed));
         let oversized = output.metadata().map_err(error)?.len() > limit
             || stderr.metadata().map_err(error)?.len() > 64 * 1024;
-        if oversized || started.elapsed() >= timeout {
+        if cancelled || oversized || started.elapsed() >= timeout {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(if oversized {
+            return Err(if cancelled {
+                "SSH connection cancelled."
+            } else if oversized {
                 "Tool output exceeded its size limit."
             } else {
                 "Update tool timed out."

@@ -33,6 +33,7 @@ fn run() -> Result<(), String> {
             state: args[2].clone(),
         },
         root: args[3].clone(),
+        managed: false,
         takeover: false,
     })?;
     let wakes = Arc::new(AtomicUsize::new(0));

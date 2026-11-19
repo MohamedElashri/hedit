@@ -55,6 +55,7 @@ jobs:
         with:
           toolchain: 1.99.1
           components: rustfmt, clippy
+          targets: ${{ matrix.arch }}-unknown-linux-musl
       - name: Format, documentation, policy, and script checks
         run: make static
       - uses: Swatinem/rust-cache@v2.9.3
@@ -67,16 +68,29 @@ jobs:
       - name: Install Linux packaging tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y rpm dpkg-dev desktop-file-utils cpio file xvfb xauth xdotool libxkbcommon-x11-0 libxcursor1 libxi6 libxrandr2 libwayland-client0 libwayland-cursor0 libwayland-egl1 libegl1 libgl1
+          sudo apt-get install -y musl-tools rpm dpkg-dev desktop-file-utils cpio file xvfb xauth xdotool libxkbcommon-x11-0 libxcursor1 libxi6 libxrandr2 libwayland-client0 libwayland-cursor0 libwayland-egl1 libegl1 libgl1
           python3 scripts/setup-appimage.py
+      - name: Build portable SSH helper
+        run: |
+          export CC_${{ matrix.arch }}_unknown_linux_musl=musl-gcc
+          cargo build --release --locked -p hedit-remote --target ${{ matrix.arch }}-unknown-linux-musl
+          cargo test --release --locked -p hedit-remote --target ${{ matrix.arch }}-unknown-linux-musl
+          helper=target/${{ matrix.arch }}-unknown-linux-musl/release/hedit-remote
+          file "$helper"
+          if readelf -l "$helper" | grep -q INTERP; then
+            echo 'The SSH helper must not require a system dynamic linker.' >&2
+            exit 1
+          fi
       - name: Package and verify every Linux format
-        run: make linux-packages smoke smoke-linux-packages
+        run: make linux-packages smoke smoke-linux-packages REMOTE_HELPER=target/${{ matrix.arch }}-unknown-linux-musl/release/hedit-remote
       - name: Verify AppImage detached windows without FUSE
         run: xvfb-run -a python3 scripts/test-appimage.py dist/hedit-*-linux-${{ matrix.arch }}.AppImage
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: hedit-linux-${{ matrix.arch }}
-          path: dist/hedit-*-linux-${{ matrix.arch }}.*
+          path: |
+            dist/hedit-*-linux-${{ matrix.arch }}.*
+            dist/hedit-remote-*-linux-${{ matrix.arch }}*
           if-no-files-found: error
 
   macos:
@@ -122,10 +136,10 @@ jobs:
               echo 'This release is already published. Use a new version tag for changes.' >&2
               exit 1
             fi
-            gh release upload "$RELEASE_TAG" dist/*.tar.gz dist/*.deb dist/*.rpm dist/*.AppImage dist/*.zip dist/*.sha256 --clobber
+            gh release upload "$RELEASE_TAG" dist/* --clobber
             gh release edit "$RELEASE_TAG" --notes-file release-notes.md --title "hedit $RELEASE_TAG"
           else
-            gh release create "$RELEASE_TAG" dist/*.tar.gz dist/*.deb dist/*.rpm dist/*.AppImage dist/*.zip dist/*.sha256 \
+            gh release create "$RELEASE_TAG" dist/* \
               --verify-tag --draft --notes-file release-notes.md --title "hedit $RELEASE_TAG"
           fi
           if [[ "$RELEASE_TAG" == *-* ]]; then

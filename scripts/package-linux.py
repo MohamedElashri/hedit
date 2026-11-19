@@ -16,21 +16,28 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=ROOT / 'target/release/hedit')
+    parser.add_argument('--helper', type=Path, default=ROOT / 'target/release/hedit-remote')
     parser.add_argument('--out-dir', type=Path, default=ROOT / 'dist')
     parser.add_argument('--formats', nargs='+', choices=['tar.gz', 'deb', 'rpm', 'appimage'], default=['tar.gz'])
     parser.add_argument('--appimage-tools', type=Path, default=ROOT / 'target/appimage-tools')
     args = parser.parse_args()
     args.binary = args.binary.resolve()
+    args.helper = args.helper.resolve()
     args.out_dir = args.out_dir.resolve()
     if platform.system() != 'Linux':
         parser.error('Linux packages must be built on Linux.')
     if not args.binary.is_file() or not os.access(args.binary, os.X_OK):
         parser.error('Build the executable first with cargo build --release --locked.')
+    if not args.helper.is_file() or not os.access(args.helper, os.X_OK):
+        parser.error('Build the matching helper with cargo build --release --locked --workspace.')
     machine = platform.machine()
     arch = {'x86_64': 'x86_64', 'amd64': 'x86_64', 'aarch64': 'aarch64', 'arm64': 'aarch64'}.get(machine)
     if not arch:
         parser.error(f'Unsupported package architecture: {machine}')
     version = tomllib.loads((ROOT / 'Cargo.toml').read_text())['package']['version']
+    reported = subprocess.check_output([str(args.helper), '--version'], text=True).strip()
+    if reported != f'hedit-remote {version}':
+        parser.error('The helper version must match the editor version.')
     name = f'hedit-{version}-linux-{arch}'
     args.out_dir.mkdir(parents=True, exist_ok=True)
     archive = args.out_dir / f'{name}.tar.gz'
@@ -38,6 +45,10 @@ def main():
         stage = Path(work) / name
         stage.mkdir()
         shutil.copy2(args.binary, stage / 'hedit')
+        shutil.copy2(args.helper, stage / 'hedit-remote')
+        standalone = stage / f'hedit-remote-{version}-linux-{arch}'
+        shutil.copy2(args.helper, standalone)
+        publish(standalone, args.out_dir / standalone.name)
         for filename in ['README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md', 'CHANGELOG.md', 'LICENSE']:
             shutil.copy2(ROOT / filename, stage / filename)
         for directory in ['assets', 'themes', 'docs/images']:
@@ -84,7 +95,7 @@ def deb(stage, root, version, arch, out):
     (stage / 'debian').mkdir()
     (stage / 'debian/control').write_text('Source: hedit\n\nPackage: hedit\nArchitecture: any\nDescription: Native text editor\n')
     dependencies = subprocess.check_output(
-        ['dpkg-shlibdeps', '--ignore-missing-info', '-O', '-e' + str(root / 'usr/bin/hedit')],
+        ['dpkg-shlibdeps', '--ignore-missing-info', '-O', '-e' + str(root / 'usr/bin/hedit'), '-e' + str(root / 'usr/bin/hedit-remote')],
         cwd=stage, text=True).strip().removeprefix('shlibs:Depends=')
     display = 'libx11-6, libxcursor1, libxi6, libxrandr2, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libegl1, libgl1'
     (control / 'control').write_text(f"""Package: hedit
@@ -134,6 +145,7 @@ mkdir -p %{{buildroot}}
 cp -a "{root}/usr" %{{buildroot}}/
 %files
 /usr/bin/hedit
+/usr/bin/hedit-remote
 /usr/share/applications/hedit.desktop
 /usr/share/icons/hicolor/scalable/apps/hedit.svg
 /usr/share/hedit

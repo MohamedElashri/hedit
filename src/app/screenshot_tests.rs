@@ -497,6 +497,7 @@ fn export_readme_ssh_screenshot() {
             state: fixture["state"].as_str().unwrap().into(),
         },
         root: fixture["root"].as_str().unwrap().into(),
+        managed: false,
         takeover: false,
     };
     write_project(std::path::Path::new(&config.root));

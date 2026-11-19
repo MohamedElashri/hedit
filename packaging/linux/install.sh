@@ -8,6 +8,7 @@ case "$install_prefix" in
     *) printf '%s\n' 'Use an absolute install prefix, for example /home/you/.local.' >&2; exit 2 ;;
 esac
 install -Dm755 "$package_dir/hedit" "$install_prefix/bin/hedit"
+install -Dm755 "$package_dir/hedit-remote" "$install_prefix/bin/hedit-remote"
 install -Dm644 "$package_dir/assets/hedit.svg" "$install_prefix/share/icons/hicolor/scalable/apps/hedit.svg"
 install -Dm644 "$package_dir/hedit.desktop" "$install_prefix/share/applications/hedit.desktop"
 install -d "$install_prefix/share/hedit/themes" "$install_prefix/share/doc/hedit"

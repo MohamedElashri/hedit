@@ -86,6 +86,9 @@ fn socket_metadata(path: &Path) -> Result<()> {
 pub fn run(state: &Path, idle: Duration) -> Result<()> {
     let mut journal = Journal::open(state)?;
     let directory = host::private_directory(state)?;
+    // This is a dedicated helper process, before any threads are started.
+    // Relative socket names avoid sun_path limits for deep user-home paths.
+    rustix::process::fchdir(&directory).map_err(|_| Error::Permission)?;
     let mut pid = host::private_file(&directory, "worker.pid")?;
     pid.set_len(0).map_err(|_| Error::Storage)?;
     writeln!(pid, "{}", std::process::id()).map_err(|_| Error::Storage)?;
@@ -97,7 +100,7 @@ pub fn run(state: &Path, idle: Duration) -> Result<()> {
         }
         fs::remove_file(&socket).map_err(|_| Error::Permission)?;
     }
-    let listener = UnixListener::bind(&socket).map_err(|_| Error::Unavailable)?;
+    let listener = UnixListener::bind("session.sock").map_err(|_| Error::Unavailable)?;
     fs::set_permissions(&socket, fs::Permissions::from_mode(0o600))
         .map_err(|_| Error::Permission)?;
     let (tx, rx) = mpsc::sync_channel(32);
@@ -270,13 +273,15 @@ fn authorize(owner: Option<(u64, u64)>, connection: u64, epoch: u64) -> Result<(
 fn connect(state: &Path) -> Result<UnixStream> {
     let socket = state.join("session.sock");
     socket_metadata(&socket)?;
-    let stream = UnixStream::connect(socket).map_err(|_| Error::Unavailable)?;
+    let stream = UnixStream::connect("session.sock").map_err(|_| Error::Unavailable)?;
     host::verify_peer(&stream)?;
     Ok(stream)
 }
 
 pub fn bridge(state: &Path) -> Result<()> {
     let dir = host::private_directory(state)?;
+    // The bridge is also its own process; change cwd before its copy thread.
+    rustix::process::fchdir(&dir).map_err(|_| Error::Permission)?;
     let mut stream = match connect(state) {
         Ok(stream) => stream,
         Err(Error::Permission) => return Err(Error::Permission),

@@ -4,6 +4,7 @@ CARGO ?= cargo
 PYTHON ?= python3
 ACTIONLINT ?= actionlint
 PREFIX ?= $(HOME)/.local
+REMOTE_HELPER ?= target/release/hedit-remote
 export RELEASE_TAG
 
 .PHONY: help dev build run fmt fmt-check policy docs scripts-check static clippy lint test test-renderer test-macos test-remote test-remote-live check ci smoke package install release-check workflow-lint linux-packages smoke-linux-packages macos clean
@@ -16,10 +17,10 @@ help: ## Show available commands and configuration
 	@printf '\nBefore committing: make ci\n'
 
 dev: ## Build a debug executable
-	$(CARGO) build --locked
+	$(CARGO) build --locked --workspace
 
 build: ## Build the optimized release executable
-	$(CARGO) build --release --locked
+	$(CARGO) build --release --locked --workspace
 
 run: ## Launch a development session; pass arguments with ARGS='...'
 	$(CARGO) run --locked -- $(ARGS)
@@ -90,19 +91,20 @@ check: lint test ## Run static checks and tests without a release build
 ci: check package smoke ## Run the same full validation as GitHub CI; use before committing
 
 package: build ## Create the Linux release archive and SHA-256 file in dist/
-	$(PYTHON) scripts/package-linux.py
+	$(PYTHON) scripts/package-linux.py --helper "$(REMOTE_HELPER)"
 
 smoke: build ## Verify package extraction, installation, checksums, and the executable
-	$(PYTHON) scripts/smoke-package.py
+	$(PYTHON) scripts/smoke-package.py --helper "$(REMOTE_HELPER)"
 
 linux-packages: build ## Build Linux tarball, DEB, RPM, and AppImage (requires packaging tools)
-	$(PYTHON) scripts/package-linux.py --formats tar.gz deb rpm appimage
+	$(PYTHON) scripts/package-linux.py --helper "$(REMOTE_HELPER)" --formats tar.gz deb rpm appimage
 
 smoke-linux-packages: ## Verify Linux formats and distro installation (requires Docker)
-	$(PYTHON) scripts/smoke-linux-packages.py --containers
+	$(PYTHON) scripts/smoke-linux-packages.py --helper "$(REMOTE_HELPER)" --containers
 
 install: build ## Install under PREFIX; supports a DESTDIR staging directory
 	install -Dm755 target/release/hedit "$(DESTDIR)$(PREFIX)/bin/hedit"
+	install -Dm755 target/release/hedit-remote "$(DESTDIR)$(PREFIX)/bin/hedit-remote"
 	install -Dm644 assets/hedit.svg "$(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/hedit.svg"
 	install -Dm644 packaging/linux/hedit.desktop "$(DESTDIR)$(PREFIX)/share/applications/hedit.desktop"
 	install -d "$(DESTDIR)$(PREFIX)/share/hedit/themes"
@@ -122,6 +124,6 @@ clean: ## Remove Cargo build artifacts; keep installed files and session data
 	$(CARGO) clean
 
 macos: ## Build and package one universal macOS app (requires macOS and Xcode)
-	MACOSX_DEPLOYMENT_TARGET=11.0 $(CARGO) build --release --locked --target aarch64-apple-darwin
-	MACOSX_DEPLOYMENT_TARGET=11.0 $(CARGO) build --release --locked --target x86_64-apple-darwin
+	MACOSX_DEPLOYMENT_TARGET=11.0 $(CARGO) build --release --locked --workspace --target aarch64-apple-darwin
+	MACOSX_DEPLOYMENT_TARGET=11.0 $(CARGO) build --release --locked --workspace --target x86_64-apple-darwin
 	$(PYTHON) scripts/package-macos.py

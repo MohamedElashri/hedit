@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Connect to SSH-config hosts with one sidebar click; move connection settings and configuration controls into right-click menus.
+- Automatically install and reuse a matching, versioned helper under the non-root SSH account, with private recovery storage, verified downloads, atomic installation, progress, and cancellation.
+- Bundle native SSH helpers and publish standalone Linux and macOS helpers for cross-platform connections.
+
 ## [0.6.1] - 2026-11-19
 
 - Add a sidebar Remote Explorer with SSH-config host discovery, included files, filtering, and saved workspace management.

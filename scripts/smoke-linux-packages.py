@@ -20,10 +20,12 @@ def run(*args, **kwargs):
     return subprocess.run(args, check=True, **kwargs)
 
 
-def payload(root):
+def payload(root, helper):
     prefix = root / 'usr'
     assert os.access(prefix / 'bin/hedit', os.X_OK)
     assert (prefix / 'bin/hedit').read_bytes() == (ROOT / 'target/release/hedit').read_bytes()
+    assert (prefix / 'bin/hedit-remote').read_bytes() == helper.read_bytes()
+    assert subprocess.check_output([str(prefix / 'bin/hedit-remote'), '--version'], text=True).strip() == f'hedit-remote {VERSION}'
     assert (prefix / 'share/hedit/package-managed').is_file()
     for relative in ['README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md', 'CHANGELOG.md', 'LICENSE'] + [p.relative_to(ROOT).as_posix() for p in (ROOT / 'docs/images').iterdir() if p.is_file()]:
         assert (prefix / 'share/doc/hedit' / relative).read_bytes() == (ROOT / relative).read_bytes(), relative
@@ -36,6 +38,7 @@ def payload(root):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--dist-dir', type=Path, default=ROOT / 'dist')
+    parser.add_argument('--helper', type=Path, default=ROOT / 'target/release/hedit-remote')
     parser.add_argument('--containers', action='store_true', help='Also test Ubuntu and Fedora using Docker')
     args = parser.parse_args()
     packages = {kind: args.dist_dir.resolve() / f'hedit-{VERSION}-linux-{ARCH}.{kind}' for kind in ['deb', 'rpm', 'AppImage']}
@@ -50,7 +53,7 @@ def main():
         assert f'Version: {VERSION.replace("-", "~", 1)}' in info
         assert f'Architecture: {dict(x86_64="amd64", aarch64="arm64")[ARCH]}' in info
         assert 'libc6 (' in info and 'libxkbcommon0' in info and 'openssh-client' in info
-        payload(deb)
+        payload(deb, args.helper)
         rpm = work / 'rpm'; rpm.mkdir()
         with tempfile.TemporaryFile() as archive:
             run('rpm2cpio', str(packages['rpm']), stdout=archive)
@@ -60,11 +63,11 @@ def main():
         assert info == f'hedit {VERSION.split("-")[0]} {ARCH}', info
         requires = subprocess.check_output(['rpm', '-qp', '--requires', str(packages['rpm'])], text=True)
         assert 'libc.so.6(GLIBC_' in requires and 'libxkbcommon.so.0()(64bit)' in requires
-        payload(rpm)
+        payload(rpm, args.helper)
         image = work / 'image with spaces'; image.mkdir()
         run(str(packages['AppImage']), '--appimage-extract', cwd=image, stdout=subprocess.DEVNULL)
         appdir = image / 'squashfs-root'
-        payload(appdir)
+        payload(appdir, args.helper)
         assert (appdir / 'usr/share/doc/hedit/bundled-libraries').is_dir()
         assert list((appdir / 'usr/lib').glob('libxkbcommon*'))
         env = dict(os.environ, APPIMAGE_EXTRACT_AND_RUN='1')

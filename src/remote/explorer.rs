@@ -43,10 +43,11 @@ impl Catalog {
                 && w.target.config == config.target.config
                 && w.target.user == config.target.user
                 && w.target.port == config.target.port
-                && w.root == config.root
+                && (w.root == config.root || w.managed && config.managed && w.root.is_empty())
         });
         if let Some(index) = existing {
-            self.workspaces[index] = config;
+            self.workspaces.remove(index);
+            self.workspaces.push(config);
         } else if self.workspaces.len() < 64 {
             self.workspaces.push(config);
         } else {
@@ -97,6 +98,7 @@ mod tests {
                 state: "/private/state".into(),
             },
             root: "/work/project".into(),
+            managed: false,
             takeover: true,
         }
     }
@@ -147,5 +149,26 @@ mod tests {
         let mut invalid = config();
         invalid.root = "relative".into();
         assert!(Catalog::default().remember(invalid).is_err());
+    }
+    #[test]
+    fn managed_profiles_resolve_defaults_without_duplicating_saved_workspaces() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ssh-workspaces.json");
+        let mut automatic = config();
+        automatic.managed = true;
+        automatic.root.clear();
+        automatic.target.helper.clear();
+        automatic.target.state.clear();
+        let mut catalog = Catalog::default();
+        catalog.remember(automatic.clone()).unwrap();
+        catalog.save(&path, &Catalog::default()).unwrap();
+        let loaded = Catalog::load(&path).unwrap();
+        assert!(loaded.workspaces[0].managed);
+        automatic.root = "/home/me".into();
+        automatic.target.helper = "/home/me/.local/helper".into();
+        automatic.target.state = "/home/me/.local/state".into();
+        catalog.remember(automatic).unwrap();
+        assert_eq!(catalog.workspaces.len(), 1);
+        assert_eq!(catalog.workspaces[0].root, "/home/me");
     }
 }

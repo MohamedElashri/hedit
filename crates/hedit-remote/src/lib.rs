@@ -7,6 +7,8 @@ pub mod files;
 #[cfg(unix)]
 pub mod host;
 #[cfg(unix)]
+pub mod install;
+#[cfg(unix)]
 pub mod journal;
 pub mod protocol;
 #[cfg(unix)]

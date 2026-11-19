@@ -409,7 +409,7 @@ fn production_macos_package_is_accepted_by_updater() {
     .unwrap();
     run(Command::new("/usr/bin/clang")
         .args(["-arch", "arm64", "-arch", "x86_64"])
-        .arg(source)
+        .arg(&source)
         .arg("-o")
         .arg(&binary));
     let arm = work.path().join("arm64");
@@ -420,12 +420,33 @@ fn production_macos_package_is_accepted_by_updater() {
             .args(["-thin", arch, "-output"])
             .arg(target));
     }
+    fs::write(
+        &source,
+        format!(
+            "#include <stdio.h>\nint main(void) {{ puts(\"hedit-remote {}\"); return 0; }}\n",
+            env!("CARGO_PKG_VERSION")
+        ),
+    )
+    .unwrap();
+    let helper_arm = work.path().join("helper-arm64");
+    let helper_intel = work.path().join("helper-intel");
+    for (arch, target) in [("arm64", &helper_arm), ("x86_64", &helper_intel)] {
+        run(Command::new("/usr/bin/clang")
+            .args(["-arch", arch])
+            .arg(&source)
+            .arg("-o")
+            .arg(target));
+    }
     run(Command::new("python3")
         .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/package-macos.py"))
         .arg("--arm64")
         .arg(arm)
         .arg("--intel")
         .arg(intel)
+        .arg("--helper-arm64")
+        .arg(helper_arm)
+        .arg("--helper-intel")
+        .arg(helper_intel)
         .arg("--out-dir")
         .arg(work.path()));
     let name = format!("hedit-{}-macos-universal.zip", env!("CARGO_PKG_VERSION"));

@@ -159,6 +159,7 @@ impl Installation {
                     "share/applications/hedit.desktop".into(),
                 ),
                 (docs, "share/doc/hedit".into()),
+                (package.join("hedit-remote"), "bin/hedit-remote".into()),
                 (package.join("hedit"), "bin/hedit".into()),
             ],
             Kind::Portable => [
@@ -171,6 +172,7 @@ impl Installation {
                 "LICENSE",
                 "install.sh",
                 "hedit.desktop",
+                "hedit-remote",
                 "hedit",
             ]
             .into_iter()

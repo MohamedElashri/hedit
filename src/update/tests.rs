@@ -64,6 +64,10 @@ impl Fixture {
             &package.join("hedit"),
             &format!("#!/bin/sh\nprintf 'hedit {VERSION}\\n'\n"),
         );
+        executable(
+            &package.join("hedit-remote"),
+            &format!("#!/bin/sh\nprintf 'hedit-remote {VERSION}\\n'\n"),
+        );
         let archive = directory.path().join(format!(
             "{}.tar.gz",
             package.file_name().unwrap().to_string_lossy()
@@ -247,7 +251,7 @@ fn install_failure_rolls_back_files_and_directories() {
     let installation = fixture.installation();
     let error = installation
         .replace_with_hook(&fixture.package, |index| {
-            if index == 4 {
+            if index == 5 {
                 Err("injected I/O failure".into())
             } else {
                 Ok(())
@@ -443,10 +447,20 @@ fn production_packager_output_is_accepted_by_updater() {
             env!("CARGO_PKG_VERSION")
         ),
     );
+    let helper = work.path().join("fixture-helper");
+    executable(
+        &helper,
+        &format!(
+            "#!/bin/sh\nprintf 'hedit-remote {}\\n'\n",
+            env!("CARGO_PKG_VERSION")
+        ),
+    );
     let status = Command::new("python3")
         .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/package-linux.py"))
         .arg("--binary")
         .arg(&binary)
+        .arg("--helper")
+        .arg(&helper)
         .arg("--out-dir")
         .arg(work.path())
         .status()
@@ -497,7 +511,7 @@ fn external_binary_replacement_during_staging_is_not_overwritten() {
     let installation = fixture.installation();
     let error = installation
         .replace_with_hook(&fixture.package, |index| {
-            if index == 4 {
+            if index == 5 {
                 fs::write(fixture.root.join("bin/hedit"), "external replacement").unwrap();
             }
             Ok(())
@@ -512,4 +526,38 @@ fn external_binary_replacement_during_staging_is_not_overwritten() {
         fs::read_to_string(fixture.root.join("share/applications/hedit.desktop")).unwrap(),
         "old desktop"
     );
+}
+
+#[test]
+fn helper_downloads_require_the_exact_release_name_and_verified_bytes() {
+    let fixture = Fixture::new();
+    let name = format!("hedit-remote-{VERSION}-linux-x86_64");
+    let source = fixture._directory.path().join(&name);
+    fs::write(&source, b"verified helper").unwrap();
+    let digest = Sha256::digest(b"verified helper")
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    fs::write(
+        source.with_file_name(format!("{name}.sha256")),
+        format!("{digest}  {name}\n"),
+    )
+    .unwrap();
+    let destination = fixture._directory.path().join("downloaded-helper");
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    fixture
+        .client
+        .download_helper(VERSION, &name, &destination, &cancel)
+        .unwrap();
+    assert_eq!(fs::read(&destination).unwrap(), b"verified helper");
+    fs::write(&source, b"tampered helper").unwrap();
+    assert!(fixture
+        .client
+        .download_helper(VERSION, &name, &destination, &cancel)
+        .unwrap_err()
+        .contains("Checksum mismatch"));
+    assert!(fixture
+        .client
+        .download_helper(VERSION, "../../unexpected", &destination, &cancel)
+        .is_err());
 }

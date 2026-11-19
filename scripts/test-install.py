@@ -85,6 +85,7 @@ class ReleaseInstaller(unittest.TestCase):
             binary = stage / 'hedit'
             binary.write_text('#!/bin/sh\nprintf "hedit 0.1.2\\n"\n')
             binary.chmod(0o755)
+            shutil.copy2(binary, stage / "hedit-remote")
             shutil.copy2(ROOT / 'packaging/linux/install.sh', stage / 'install.sh')
             shutil.copy2(ROOT / 'packaging/linux/hedit.desktop', stage / 'hedit.desktop')
             for filename in ['README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md', 'CHANGELOG.md', 'LICENSE']:

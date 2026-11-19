@@ -38,12 +38,18 @@ def icon_png(path, size=1024):
                      chunk(b'IDAT', zlib.compress(rows)) + chunk(b'IEND', b''))
 
 
-def package(arm64, intel, output, identity='-'):
+def package(arm64, intel, output, identity='-', helper_arm64=None, helper_intel=None):
     if sys.platform != 'darwin':
         raise ValueError('Universal macOS packages must be assembled on macOS with Xcode tools.')
     for binary, architecture in [(arm64, 'arm64'), (intel, 'x86_64')]:
         if not binary.is_file():
             raise ValueError(f'Build the {architecture} executable first: {binary}')
+        subprocess.run(['lipo', str(binary), '-verify_arch', architecture], check=True)
+    helper_arm64 = helper_arm64 or arm64.with_name('hedit-remote')
+    helper_intel = helper_intel or intel.with_name('hedit-remote')
+    for binary, architecture in [(helper_arm64, 'arm64'), (helper_intel, 'x86_64')]:
+        if not binary.is_file():
+            raise ValueError(f'Build the {architecture} helper with cargo build --release --locked --workspace: {binary}')
         subprocess.run(['lipo', str(binary), '-verify_arch', architecture], check=True)
     version = tomllib.loads((ROOT / 'Cargo.toml').read_text())['package']['version']
     output.mkdir(parents=True, exist_ok=True)
@@ -58,6 +64,11 @@ def package(arm64, intel, output, identity='-'):
         resources.mkdir()
         subprocess.run(['lipo', '-create', str(arm64), str(intel), '-output', str(executable)], check=True)
         executable.chmod(0o755)
+        helper = contents / 'MacOS/hedit-remote'
+        subprocess.run(['lipo', '-create', str(helper_arm64), str(helper_intel), '-output', str(helper)], check=True)
+        helper.chmod(0o755)
+        for architecture in ['arm64', 'x86_64']:
+            subprocess.run(['lipo', str(helper), '-verify_arch', architecture], check=True)
         for architecture in ['arm64', 'x86_64']:
             subprocess.run(['lipo', str(executable), '-verify_arch', architecture], check=True)
         with (contents / 'Info.plist').open('wb') as stream:
@@ -92,14 +103,23 @@ def package(arm64, intel, output, identity='-'):
         signing = ['codesign', '--force', '--sign', identity]
         if identity != '-':
             signing += ['--options', 'runtime', '--timestamp']
+        subprocess.run([*signing, str(helper)], check=True)
         subprocess.run([*signing, str(app)], check=True)
         subprocess.run(['codesign', '--verify', '--deep', '--strict', str(app)], check=True)
         reported = subprocess.run([str(executable), '--version'], check=True, capture_output=True, text=True)
         if reported.stdout.strip() != f'hedit {version}':
             raise ValueError('The bundled executable version does not match Cargo.toml.')
+        reported_helper = subprocess.run([str(helper), '--version'], check=True, capture_output=True, text=True)
+        if reported_helper.stdout.strip() != f'hedit-remote {version}':
+            raise ValueError('The bundled helper version does not match Cargo.toml.')
         archive = stage / name
         subprocess.run(['ditto', '-c', '-k', '--sequesterRsrc', '--keepParent', str(app), str(archive)], check=True)
         archive.replace(output / name)
+        remote_name = f'hedit-remote-{version}-macos-universal'
+        remote = stage / remote_name
+        shutil.copy2(helper, remote)
+        remote.replace(output / remote_name)
+        (output / (remote_name + '.sha256')).write_text(f'{hashlib.sha256((output / remote_name).read_bytes()).hexdigest()}  {remote_name}\n')
     archive = output / name
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
     archive.with_name(name + '.sha256').write_text(f'{digest}  {name}\n')
@@ -112,11 +132,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--arm64', type=Path, default=ROOT / 'target/aarch64-apple-darwin/release/hedit')
     parser.add_argument('--intel', type=Path, default=ROOT / 'target/x86_64-apple-darwin/release/hedit')
+    parser.add_argument('--helper-arm64', type=Path)
+    parser.add_argument('--helper-intel', type=Path)
     parser.add_argument('--out-dir', type=Path, default=ROOT / 'dist')
     parser.add_argument('--identity', default='-', help='Developer ID identity, or - for an ad-hoc development signature')
     args = parser.parse_args()
     try:
-        package(args.arm64.resolve(), args.intel.resolve(), args.out_dir.resolve(), args.identity)
+        package(args.arm64.resolve(), args.intel.resolve(), args.out_dir.resolve(), args.identity, args.helper_arm64, args.helper_intel)
     except (ValueError, subprocess.CalledProcessError) as error:
         parser.exit(1, f'{error}\n')
 

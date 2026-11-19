@@ -42,8 +42,8 @@ jobs:
         run: make test-macos
       - name: Build architecture slices and assemble universal app
         run: |
-          cargo build --release --locked --target aarch64-apple-darwin
-          cargo build --release --locked --target x86_64-apple-darwin
+          cargo build --release --locked --workspace --target aarch64-apple-darwin
+          cargo build --release --locked --workspace --target x86_64-apple-darwin
           python3 scripts/package-macos.py
       - name: Verify the distributed app
         shell: bash
@@ -57,11 +57,18 @@ jobs:
           expected=$(python3 -c 'import tomllib; print("hedit " + tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
           test "$("$binary" --version)" = "$expected"
           "$binary" --help
+          helper="$work/hedit.app/Contents/MacOS/hedit-remote"
+          lipo "$helper" -verify_arch arm64
+          lipo "$helper" -verify_arch x86_64
+          helper_expected=$(python3 -c 'import tomllib; print("hedit-remote " + tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
+          test "$("$helper" --version)" = "$helper_expected"
           if arch -x86_64 /usr/bin/true 2>/dev/null; then
             test "$(arch -x86_64 "$binary" --version)" = "$expected"
           fi
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: hedit-macos-universal
-          path: dist/hedit-*-macos-universal.zip*
+          path: |
+            dist/hedit-*-macos-universal.zip*
+            dist/hedit-remote-*-macos-universal*
           if-no-files-found: error
