@@ -1,4 +1,4 @@
-use hedit::projects;
+use hedit::{projects, syntax::Language};
 use regex::Regex;
 use serde::Deserialize;
 use std::{
@@ -17,11 +17,98 @@ const MAX_ID_BYTES: usize = 48;
 const MAX_TITLE_BYTES: usize = 128;
 const MAX_BODY_BYTES: usize = 2048;
 const MAX_BODY_LINES: usize = 16;
+const MAX_LANGUAGES: usize = 16;
+const MAX_FILENAME_PATTERN_BYTES: usize = 128;
 
+#[derive(Clone)]
 pub(in crate::app) struct Contribution {
     pub id: String,
     pub title: String,
-    pub body: String,
+    pub action: ExtensionAction,
+    pub when: Context,
+}
+
+#[derive(Clone, Default, Deserialize)]
+#[serde(try_from = "ContextDefinition")]
+pub(in crate::app) struct Context {
+    languages: Vec<Language>,
+    filename: Option<Regex>,
+    selection: Option<bool>,
+}
+
+impl Context {
+    pub(super) fn matches(
+        &self,
+        language: Language,
+        filename: Option<&str>,
+        selection: bool,
+    ) -> bool {
+        (self.languages.is_empty() || self.languages.contains(&language))
+            && self
+                .filename
+                .as_ref()
+                .is_none_or(|pattern| filename.is_some_and(|name| pattern.is_match(name)))
+            && self.selection.is_none_or(|required| required == selection)
+    }
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct ContextDefinition {
+    languages: Vec<String>,
+    filename: Option<String>,
+    selection: Option<bool>,
+}
+
+impl TryFrom<ContextDefinition> for Context {
+    type Error = String;
+
+    fn try_from(definition: ContextDefinition) -> Result<Self, Self::Error> {
+        if definition.languages.len() > MAX_LANGUAGES {
+            return Err(format!(
+                "Use at most {MAX_LANGUAGES} languages in an extension context."
+            ));
+        }
+        let languages = definition
+            .languages
+            .iter()
+            .map(|id| {
+                Language::from_id(id).ok_or_else(|| format!("Unknown editor language ID {id:?}."))
+            })
+            .collect::<Result<_, _>>()?;
+        let filename = definition
+            .filename
+            .as_deref()
+            .map(filename_pattern)
+            .transpose()?;
+        Ok(Self {
+            languages,
+            filename,
+            selection: definition.selection,
+        })
+    }
+}
+
+fn filename_pattern(pattern: &str) -> Result<Regex, String> {
+    if pattern.is_empty()
+        || pattern.len() > MAX_FILENAME_PATTERN_BYTES
+        || pattern.contains(['/', '\\'])
+        || pattern.chars().any(char::is_control)
+    {
+        return Err(format!(
+            "Use a filename pattern of 1–{MAX_FILENAME_PATTERN_BYTES} bytes without directory separators or control characters."
+        ));
+    }
+    let mut regex = String::from(r"(?s)\A");
+    for ch in pattern.chars() {
+        match ch {
+            '*' => regex.push_str(".*"),
+            '?' => regex.push('.'),
+            _ => regex.push_str(&regex::escape(&ch.to_string())),
+        }
+    }
+    regex.push_str(r"\z");
+    Regex::new(&regex).map_err(|error| error.to_string())
 }
 
 #[derive(Deserialize)]
@@ -42,13 +129,34 @@ struct Manifest {
 struct Command {
     id: String,
     title: String,
-    action: Action,
+    action: ExtensionAction,
+    #[serde(default)]
+    when: Context,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-enum Action {
-    InsertSnippet { body: String },
+pub(in crate::app) enum ExtensionAction {
+    InsertSnippet {
+        body: String,
+    },
+    NewFile {
+        body: String,
+        #[serde(default, deserialize_with = "template_language")]
+        language: Option<Language>,
+    },
+}
+
+fn template_language<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Language>, D::Error> {
+    Option::<String>::deserialize(deserializer)?
+        .map(|id| {
+            Language::from_id(&id).ok_or_else(|| {
+                serde::de::Error::custom(format!("Unknown editor language ID {id:?}."))
+            })
+        })
+        .transpose()
 }
 
 fn paths(directory: &Path) -> io::Result<Vec<PathBuf>> {
@@ -78,7 +186,7 @@ fn paths(directory: &Path) -> io::Result<Vec<PathBuf>> {
     Ok(paths)
 }
 
-fn valid_id(id: &str) -> bool {
+pub(super) fn valid_id(id: &str) -> bool {
     id.len() <= MAX_ID_BYTES
         && id.as_bytes().first().is_some_and(u8::is_ascii_lowercase)
         && id
@@ -86,7 +194,7 @@ fn valid_id(id: &str) -> bool {
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
 }
 
-fn valid_body(body: &str) -> bool {
+fn valid_body(body: &str, variables: bool) -> bool {
     static TOKEN: OnceLock<Regex> = OnceLock::new();
     if body.is_empty()
         || body.len() > MAX_BODY_BYTES
@@ -101,7 +209,8 @@ fn valid_body(body: &str) -> bool {
               [^$\\]+
             | \\[\\$}]
             | \$(?P<bare>[0-9]+)
-            | \$\{(?P<braced>[0-9]+)(?::[^$\\{}\r\n]*)?\}",
+            | \$\{(?P<braced>[0-9]+)(?::[^$\\{}\r\n]*)?\}
+            | \$\{(?P<variable>SELECTION|FILE_BASENAME)\}",
         )
         .expect("valid extension snippet token pattern")
     });
@@ -109,7 +218,9 @@ fn valid_body(body: &str) -> bool {
     for token in pattern.captures_iter(body) {
         let span = token.get(0).unwrap();
         let field = token.name("bare").or_else(|| token.name("braced"));
-        if span.start() != end || field.is_some_and(|field| field.as_str().parse::<u32>().is_err())
+        if span.start() != end
+            || field.is_some_and(|field| field.as_str().parse::<u32>().is_err())
+            || (!variables && token.name("variable").is_some())
         {
             return false;
         }
@@ -150,14 +261,17 @@ fn read_manifest(path: &Path) -> Result<Manifest, String> {
         {
             return Err(format!("Command {} needs a title of 1–{MAX_TITLE_BYTES} bytes without surrounding whitespace or control characters.", command.id));
         }
-        let Action::InsertSnippet { body } = &command.action;
+        let (body, variables) = match &command.action {
+            ExtensionAction::InsertSnippet { body } => (body, true),
+            ExtensionAction::NewFile { body, .. } => (body, false),
+        };
         if body.contains('\0') {
             return Err(format!(
                 "Command {} has a snippet containing a NUL character.",
                 command.id
             ));
         }
-        if !valid_body(body) {
+        if !valid_body(body, variables) {
             return Err(format!("Command {} has an invalid snippet. Use 1–{MAX_BODY_BYTES} bytes, up to {MAX_BODY_LINES} lines, and flat fields numbered 0–{}.", command.id, u32::MAX));
         }
     }
@@ -190,11 +304,11 @@ pub(in crate::app) fn load(config: Option<&Path>) -> (Vec<Contribution>, Vec<Str
         match read_manifest(&path) {
             Ok(manifest) if extension_ids.insert(manifest.id.clone()) => {
                 for command in manifest.commands {
-                    let Action::InsertSnippet { body } = command.action;
                     contributions.push(Contribution {
                         id: format!("{}.{}", manifest.id, command.id),
                         title: command.title,
-                        body,
+                        action: command.action,
+                        when: command.when,
                     });
                 }
             }
@@ -261,7 +375,8 @@ mod tests {
         let (contributions, errors) = load(Some(config.path()));
         assert_eq!(contributions.len(), 1);
         assert_eq!(contributions[0].id, "notes.insert");
-        assert_eq!(contributions[0].body, "Το ${1:café}$0");
+        assert!(matches!(&contributions[0].action,
+            ExtensionAction::InsertSnippet { body } if body == "Το ${1:café}$0"));
         assert_eq!(errors.len(), 6, "{errors:?}");
         for (error, expected) in errors.iter().zip([
             "duplicate extension ID",
@@ -303,8 +418,10 @@ mod tests {
 
     #[test]
     fn extension_template_allows_flat_fields_and_bounds_expansion() {
-        assert!(valid_body(r"\$ ${1:café} $1 ${2} $0 \\ \}"));
-        assert!(valid_body("one\r\ntwo"));
+        assert!(valid_body(r"\$ ${1:café} $1 ${2} $0 \\ \}", false));
+        assert!(valid_body("one\r\ntwo", false));
+        assert!(valid_body("${SELECTION} ${FILE_BASENAME}$0", true));
+        assert!(!valid_body("${FILE_BASENAME}", false));
         for body in [
             "",
             "${SELECTION}",
@@ -314,7 +431,7 @@ mod tests {
             &"x".repeat(MAX_BODY_BYTES + 1),
             &"x\n".repeat(MAX_BODY_LINES),
         ] {
-            assert!(!valid_body(body), "{body:?}");
+            assert!(!valid_body(body, false), "{body:?}");
         }
     }
 
@@ -338,10 +455,31 @@ mod tests {
 
     #[test]
     fn extension_template_rejects_overflowing_field_numbers() {
-        assert!(valid_body("$4294967295 ${4294967295:valid}"));
-        assert!(valid_body(r"\$4294967296"));
+        assert!(valid_body("$4294967295 ${4294967295:valid}", false));
+        assert!(valid_body(r"\$4294967296", false));
         for body in ["$4294967296", "${4294967296}", "${4294967296:invalid}"] {
-            assert!(!valid_body(body), "{body:?}");
+            assert!(!valid_body(body, false), "{body:?}");
+        }
+    }
+
+    #[test]
+    fn context_selectors_match_language_filename_and_selection_together() {
+        let context: Context = serde_json::from_value(json!({
+            "languages": ["markdown"], "filename": "note-?.md", "selection": true
+        }))
+        .unwrap();
+        assert!(context.matches(Language::Markdown, Some("note-λ.md"), true));
+        assert!(!context.matches(Language::Python, Some("note-λ.md"), true));
+        assert!(!context.matches(Language::Markdown, Some("note-long.md"), true));
+        assert!(!context.matches(Language::Markdown, Some("note-λ.md"), false));
+        assert!(!context.matches(Language::Markdown, None, true));
+        for invalid in [
+            json!({"languages": ["unknown"]}),
+            json!({"filename": "folder/*.md"}),
+            json!({"selection": "required"}),
+            json!({"script": "anything"}),
+        ] {
+            assert!(serde_json::from_value::<Context>(invalid).is_err());
         }
     }
 }

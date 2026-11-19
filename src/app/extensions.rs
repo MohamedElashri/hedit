@@ -2,35 +2,93 @@
 mod manifest;
 
 use super::{snippet_fields, HeditApp};
-use hedit::intelligence::Snippet;
+use eframe::egui;
+use hedit::intelligence;
+use std::path::Path;
 
+use manifest::ExtensionAction;
 pub(super) use manifest::{load, Contribution};
 
 const MAX_INDENT_BYTES: usize = 4096;
+const MAX_EXPANSION_BYTES: usize = 128 * 1024;
+
+pub(super) fn valid_command_id(id: &str) -> bool {
+    id.split_once('.').is_some_and(|(extension, command)| {
+        manifest::valid_id(extension) && manifest::valid_id(command)
+    })
+}
 
 impl HeditApp {
-    pub(super) fn extension_commands(&self) -> &[Contribution] {
-        if self.extensions.is_empty()
-            || self.busy
-            || self.closing
-            || self.preferences_open
-            || self.source_control.open
-            || self.markdown_preview_only()
-            || self.active().follow
-            || self.active().page.info.paged
-            || !self.active().view.selections.is_empty()
-        {
-            &[]
-        } else {
-            &self.extensions
-        }
+    pub(super) fn extension_commands(&self) -> impl Iterator<Item = &Contribution> {
+        let editor = self.active();
+        let info = &editor.page.info;
+        let language = editor.language();
+        let filename = info.path.as_ref().map(|_| info.name.as_str());
+        let selection = editor.view.anchor != editor.view.head
+            || editor
+                .view
+                .selections
+                .iter()
+                .any(|selection| selection.anchor != selection.head);
+        let available = !self.extensions.is_empty()
+            && !self.busy
+            && !self.closing
+            && !self.preferences_open
+            && !self.source_control.open
+            && self
+                .workspace
+                .remote
+                .as_ref()
+                .is_none_or(|remote| remote.writable());
+        let editable = available
+            && !self.markdown_preview_only()
+            && !editor.follow
+            && !info.paged
+            && editor.view.selections.is_empty();
+        self.extensions.iter().filter(move |command| {
+            let enabled = match command.action {
+                ExtensionAction::InsertSnippet { .. } => editable,
+                ExtensionAction::NewFile { .. } => available,
+            };
+            enabled && command.when.matches(language, filename, selection)
+        })
     }
 
-    pub(super) fn run_extension(&mut self, index: usize) {
-        let Some(command) = self.extension_commands().get(index) else {
-            return;
+    pub(super) fn extension_available_by_id(&self, id: &str) -> bool {
+        self.extension_by_id(id).is_some()
+    }
+
+    fn extension_by_id(&self, id: &str) -> Option<&Contribution> {
+        valid_command_id(id)
+            .then(|| self.extension_commands().find(|command| command.id == id))
+            .flatten()
+    }
+
+    pub(super) fn extension_file_templates(&self) -> Vec<(String, String)> {
+        self.extension_commands()
+            .filter(|command| matches!(command.action, ExtensionAction::NewFile { .. }))
+            .map(|command| (command.title.clone(), command.id.clone()))
+            .collect()
+    }
+
+    pub(super) fn run_extension_by_id(&mut self, ctx: &egui::Context, id: &str) -> bool {
+        let Some(action) = self
+            .extension_by_id(id)
+            .map(|command| command.action.clone())
+        else {
+            return false;
         };
-        if command.body.contains('\n') {
+        match action {
+            ExtensionAction::InsertSnippet { body } => self.run_extension_snippet(&body),
+            ExtensionAction::NewFile { body, language } => {
+                self.run_extension_template(ctx, &body, language)
+            }
+        }
+        true
+    }
+
+    fn run_extension_snippet(&mut self, body: &str) {
+        if body.contains('\n') {
             let buffer = self.active();
             let text = &buffer.page.text;
             let start =
@@ -46,15 +104,22 @@ impl HeditApp {
                 return;
             }
         }
-        self.insert_snippet(
-            Snippet {
-                trigger: String::new(),
-                description: command.title.clone(),
-                body: command.body.clone(),
-                language: None,
-            },
-            0,
-        );
+        let info = &self.active().page.info;
+        let basename = info
+            .path
+            .as_ref()
+            .and_then(|_| Path::new(&info.name).file_stem())
+            .and_then(|stem| stem.to_str())
+            .unwrap_or_default()
+            .to_owned();
+        self.insert_snippet_with(body, 0, |body, selection| {
+            intelligence::expand_fields_bounded(
+                body,
+                selection,
+                Some(&basename),
+                MAX_EXPANSION_BYTES,
+            )
+        });
     }
 }
 
@@ -128,12 +193,18 @@ mod tests {
             Contribution {
                 id: "first.insert".into(),
                 title: "second.insert".into(),
-                body: "wrong command".into(),
+                action: ExtensionAction::InsertSnippet {
+                    body: "wrong command".into(),
+                },
+                when: Default::default(),
             },
             Contribution {
                 id: "second.insert".into(),
                 title: "Insert note".into(),
-                body: "correct command".into(),
+                action: ExtensionAction::InsertSnippet {
+                    body: "correct command".into(),
+                },
+                when: Default::default(),
             },
         ];
         select_palette_command(&ctx, &mut app, "second.insert");
@@ -151,9 +222,9 @@ mod tests {
              "action":{"kind":"insert_snippet","body":"${1:α}$0${1:β}"}}]}"#,
         )
         .unwrap();
-        let (_session, _ctx, mut app) = app_with("", Some(config.path()));
+        let (_session, ctx, mut app) = app_with("", Some(config.path()));
         assert!(app.error.is_none(), "{:?}", app.error);
-        app.run_extension(0);
+        assert!(app.run_extension_by_id(&ctx, "test.insert"));
         assert_eq!(app.active().page.text, "αα");
         assert!(app.next_field(false));
         assert_eq!(app.selections(), [Selection::caret(1)]);
@@ -161,25 +232,66 @@ mod tests {
 
     #[test]
     fn extension_commands_only_edit_an_editable_single_selection() {
-        let (_session, _ctx, mut app) = app_with("left right", None);
+        let (_session, ctx, mut app) = app_with("left right", None);
         app.extensions.push(Contribution {
             id: "test.insert".into(),
             title: "Insert text".into(),
-            body: "text".into(),
+            action: ExtensionAction::InsertSnippet {
+                body: "text".into(),
+            },
+            when: Default::default(),
         });
-        assert_eq!(app.extension_commands().len(), 1);
+        assert_eq!(app.extension_commands().count(), 1);
         let index = app.workspace.active;
         app.workspace.open[index].follow = true;
-        assert!(app.extension_commands().is_empty());
-        app.run_extension(0);
+        assert!(app.extension_commands().next().is_none());
+        assert!(!app.run_extension_by_id(&ctx, "test.insert"));
         app.workspace.open[index].follow = false;
         app.workspace.open[index].page.info.paged = true;
-        assert!(app.extension_commands().is_empty());
-        app.run_extension(0);
+        assert!(app.extension_commands().next().is_none());
+        assert!(!app.run_extension_by_id(&ctx, "test.insert"));
         app.workspace.open[index].page.info.paged = false;
         app.set_selections(vec![Selection::caret(0), Selection::caret(5)]);
-        assert!(app.extension_commands().is_empty());
-        app.run_extension(0);
+        assert!(app.extension_commands().next().is_none());
+        assert!(!app.run_extension_by_id(&ctx, "test.insert"));
         assert_eq!(app.active().page.text, "left right");
+    }
+
+    #[test]
+    fn extension_context_and_literal_variables_are_applied_at_invocation() {
+        let configuration = tempfile::tempdir().unwrap();
+        let manifests = configuration.path().join("extensions");
+        std::fs::create_dir(&manifests).unwrap();
+        std::fs::write(
+            manifests.join("links.json"),
+            r#"{"api_version":1,"id":"links","commands":[{
+                "id":"wrap","title":"Wrap selection",
+                "when":{"languages":["markdown"],"filename":"note-*.md","selection":true},
+                "action":{"kind":"insert_snippet","body":"[${SELECTION}](${1:url}) ${FILE_BASENAME}$0"}
+            },{
+                "id":"other","title":"links.wrap","action":{"kind":"insert_snippet","body":"wrong"}
+            }]}"#,
+        ).unwrap();
+        let (session, ctx, mut app) = app_with("", Some(configuration.path()));
+        let filename = session.path().join("note-λ.md");
+        let source = "$1 } café";
+        std::fs::write(&filename, source).unwrap();
+        app.open(&ctx, Some(filename));
+        finish_app_job(&mut app, &ctx);
+        assert_eq!(app.active().page.text, source);
+        assert!(!app.extension_available_by_id("links.wrap"));
+        select_palette_command(&ctx, &mut app, "links.wrap");
+        assert_eq!(app.active().page.text, source);
+        app.set_selections(vec![Selection {
+            anchor: 0,
+            head: source.chars().count(),
+        }]);
+        assert!(app.extension_available_by_id("links.wrap"));
+        assert!(app.run_extension_by_id(&ctx, "links.wrap"));
+        assert_eq!(app.active().page.text, "[$1 } café](url) note-λ");
+        assert!(app.snippet.is_some());
+        app.execute(&ctx, Command::Undo);
+        finish_app_job(&mut app, &ctx);
+        assert_eq!(app.active().page.text, source);
     }
 }

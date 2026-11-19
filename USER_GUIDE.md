@@ -663,13 +663,21 @@ such as `{"python": {"tab_size": 4}}`, and custom `build_systems`.
 
 ### Extensions
 
-Extensions can add snippet commands to the Command Palette. To try the
-experimental extension API, copy [markdown-task.json](examples/extensions/markdown-task.json)
-into `extensions/` inside your configuration folder. In the bundled guide, use
-**Copy code** and save the contents as `markdown-task.json` in that folder.
-Restart hedit, open the Command Palette, and choose **Insert Markdown task** in
-a writable editor with one caret or selection. Type over the prompt and press
-**Tab** to finish the snippet. Remove the file and restart to uninstall it.
+Extensions add snippet commands and file templates. To try one, open
+**Settings → Extensions → Import manifest…** and choose
+[markdown-task.json](examples/extensions/markdown-task.json). Review its
+commands before installing. In a writable editor with one caret or selection,
+run **Insert Markdown task** from the Command Palette and use **Tab** to move
+through the snippet fields.
+
+Use **Settings → Extensions** to enable or disable an extension or reload
+manifests after editing them. The page shows validation errors next to the
+affected files. A disabled extension keeps its personal shortcuts. Bind an
+extension command by its title or namespaced ID in **Key Bindings**.
+
+Some extension commands only appear for a matching language, filename, or
+selection. **New File from Template…** lists available templates and creates
+an unsaved document with the template's syntax and tab stops.
 
 The [extension manifest reference](docs/extensions.md) describes the fields and limits.
 

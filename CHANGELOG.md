@@ -11,6 +11,9 @@
 - Reopen recent workspaces by SSH host or preview a remote folder before opening it. SSH Output records connection stages and offers diagnostic and recovery actions.
 - Enable masked interactive SSH authentication per connection profile on Linux and macOS.
 - Install experimental local extensions from versioned JSON manifests. Extensions can add snippet commands to the Command Palette. See the [Extensions guide](USER_GUIDE.md#extensions).
+- Import, enable, disable, and reload extensions in Settings. Review commands before installing and see per-file validation errors.
+- Assign extension commands personal shortcuts and scope their availability by editor language, filename, or selection.
+- Insert literal selection and file-name variables in extension snippets. Open extension templates as unsaved files with syntax and tab stops.
 
 ### Changed
 

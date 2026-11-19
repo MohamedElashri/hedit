@@ -2070,7 +2070,7 @@ impl HeditApp {
             Buffer(usize),
             File(String),
             Command(Command),
-            Extension(usize),
+            Extension(String),
             Syntax(syntax::Language),
             /// Remember a build system (or "automatic") and build with it.
             BuildWith(String),
@@ -2152,6 +2152,10 @@ impl HeditApp {
                         scored.push((found, (label.clone(), detail.clone(), Item::Pick(pick.clone()))));
                     }
                 }
+            } else if let Some(command) = self.extensions.iter().find(|c| commands && c.id == filter) {
+                if self.extension_available_by_id(&command.id) {
+                    scored.push((i64::MAX, (command.title.clone(), command.id.clone(), Item::Extension(command.id.clone()))));
+                }
             } else if commands {
                 for &command in Command::ALL {
                     if let Some(found) = score(command.label()).filter(|_| command != Command::Palette && self.command_enabled(command)) {
@@ -2161,14 +2165,10 @@ impl HeditApp {
                         ));
                     }
                 }
-                for (index, command) in self.extension_commands().iter().enumerate() {
-                    let found = if command.id == filter {
-                        Some(i64::MAX)
-                    } else {
-                        score(&command.title).or_else(|| score(&command.id).map(|score| score - 50))
-                    };
+                for command in self.extension_commands() {
+                    let found = score(&command.title).or_else(|| score(&command.id).map(|score| score - 50));
                     if let Some(found) = found {
-                        scored.push((found, (command.title.clone(), command.id.clone(), Item::Extension(index))));
+                        scored.push((found, (command.title.clone(), command.id.clone(), Item::Extension(command.id.clone()))));
                     }
                 }
                 // Build with a chosen system, remembered for Ctrl+B.
@@ -2345,7 +2345,9 @@ impl HeditApp {
                 }
                 Item::File(path) => self.open(ctx, Some(path.into())),
                 Item::Command(command) => self.execute(ctx, command),
-                Item::Extension(index) => self.run_extension(index),
+                Item::Extension(id) => {
+                    self.run_extension_by_id(ctx, &id);
+                }
                 Item::Pick(Pick::Paste(text)) => self.paste_entry(ctx, text),
                 Item::Pick(Pick::File(path)) => self.open(ctx, Some(path)),
                 Item::Pick(Pick::ExistingFile(path)) => self.open_existing(ctx, path),

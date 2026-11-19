@@ -162,16 +162,29 @@ pub struct Expansion {
 /// mirrors the first one's text), `$0`, and `${SELECTION}`. `\$`, `\}`, and
 /// `\\` are literal, as is a `$` that starts none of these.
 pub fn expand_fields(body: &str, selection: &str) -> Expansion {
+    expand_fields_bounded(body, selection, None, usize::MAX).expect("unbounded snippet expansion")
+}
+
+/// Expand fields and literal variables with an output byte limit. Providing a
+/// filename enables `${FILE_BASENAME}`; user snippets keep their original syntax.
+pub fn expand_fields_bounded(
+    body: &str,
+    selection: &str,
+    filename: Option<&str>,
+    max_bytes: usize,
+) -> Option<Expansion> {
     let chars: Vec<char> = body.chars().collect();
     let mut first = FieldParser {
         chars: &chars,
         selection,
+        filename,
+        max_bytes,
         defaults: Default::default(),
         text: String::new(),
         count: 0,
         fields: Default::default(),
     };
-    first.parse(&mut 0, false);
+    first.parse(&mut 0, false)?;
     // A bare `$1` before `${1:text}` still shows `text`.
     let mut parser = FieldParser {
         defaults: first.defaults,
@@ -180,7 +193,7 @@ pub fn expand_fields(body: &str, selection: &str) -> Expansion {
         fields: Default::default(),
         ..first
     };
-    parser.parse(&mut 0, false);
+    parser.parse(&mut 0, false)?;
     let FieldParser {
         text,
         count,
@@ -194,12 +207,14 @@ pub fn expand_fields(body: &str, selection: &str) -> Expansion {
     let last = by_number.remove(&0).unwrap_or_else(|| vec![(count, count)]);
     let mut fields: Vec<_> = by_number.into_values().collect();
     fields.push(last);
-    Expansion { text, fields }
+    Some(Expansion { text, fields })
 }
 
 struct FieldParser<'a> {
     chars: &'a [char],
     selection: &'a str,
+    filename: Option<&'a str>,
+    max_bytes: usize,
     defaults: std::collections::HashMap<u32, String>,
     text: String,
     /// Characters in `text`.
@@ -208,9 +223,13 @@ struct FieldParser<'a> {
 }
 
 impl FieldParser<'_> {
-    fn push(&mut self, text: &str) {
+    fn push(&mut self, text: &str) -> Option<()> {
+        if text.len() > self.max_bytes.saturating_sub(self.text.len()) {
+            return None;
+        }
         self.text.push_str(text);
         self.count += text.chars().count();
+        Some(())
     }
     fn number(&self, at: &mut usize) -> Option<u32> {
         let digits = self.chars[*at..]
@@ -229,36 +248,45 @@ impl FieldParser<'_> {
         self.fields.push((number, (start, self.count)));
     }
     /// Parse until the end, or until an unescaped `}` when `nested`.
-    fn parse(&mut self, at: &mut usize, nested: bool) {
+    fn parse(&mut self, at: &mut usize, nested: bool) -> Option<()> {
         let chars = self.chars;
         while *at < chars.len() {
             let c = chars[*at];
             match c {
                 '\\' if matches!(chars.get(*at + 1), Some('$' | '}' | '\\')) => {
-                    self.push(&chars[*at + 1].to_string());
+                    self.push(&chars[*at + 1].to_string())?;
                     *at += 2;
                 }
                 '}' if nested => {
                     *at += 1;
-                    return;
+                    return Some(());
                 }
                 '$' => {
                     let mut next = *at + 1;
                     if let Some(number) = self.number(&mut next) {
                         let start = self.count;
                         if let Some(default) = self.defaults.get(&number).cloned() {
-                            self.push(&default);
+                            self.push(&default)?;
                         }
                         self.field(number, start);
                         *at = next;
                         continue;
                     }
                     if chars.get(next) == Some(&'{') {
-                        let rest: String = chars[next..].iter().take(12).collect();
+                        let rest: String =
+                            chars[next..].iter().take("{FILE_BASENAME}".len()).collect();
                         if rest.starts_with("{SELECTION}") {
                             let selection = self.selection;
-                            self.push(selection);
+                            self.push(selection)?;
                             *at = next + "{SELECTION}".len();
+                            continue;
+                        }
+                        if let Some(filename) = self
+                            .filename
+                            .filter(|_| rest.starts_with("{FILE_BASENAME}"))
+                        {
+                            self.push(filename)?;
+                            *at = next + "{FILE_BASENAME}".len();
                             continue;
                         }
                         let mut inner = next + 1;
@@ -267,7 +295,7 @@ impl FieldParser<'_> {
                                 Some('}') => {
                                     let start = self.count;
                                     if let Some(default) = self.defaults.get(&number).cloned() {
-                                        self.push(&default);
+                                        self.push(&default)?;
                                     }
                                     self.field(number, start);
                                     *at = inner + 1;
@@ -278,7 +306,7 @@ impl FieldParser<'_> {
                                     let byte = self.text.len();
                                     let previous_fields = self.fields.len();
                                     *at = inner + 1;
-                                    self.parse(at, true);
+                                    self.parse(at, true)?;
                                     let default = self.text[byte..].to_owned();
                                     // A number used again mirrors its first text.
                                     let first =
@@ -287,7 +315,7 @@ impl FieldParser<'_> {
                                         self.text.truncate(byte);
                                         self.count = start;
                                         self.fields.truncate(previous_fields);
-                                        self.push(&first);
+                                        self.push(&first)?;
                                     }
                                     self.field(number, start);
                                     continue;
@@ -296,16 +324,20 @@ impl FieldParser<'_> {
                             }
                         }
                     }
-                    self.push("$");
+                    self.push("$")?;
                     *at += 1;
                 }
                 c => {
+                    if c.len_utf8() > self.max_bytes.saturating_sub(self.text.len()) {
+                        return None;
+                    }
                     self.text.push(c);
                     self.count += 1;
                     *at += 1;
                 }
             }
         }
+        Some(())
     }
 }
 pub fn default_snippets() -> Vec<Snippet> {
