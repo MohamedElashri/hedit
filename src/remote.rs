@@ -1412,7 +1412,7 @@ impl Connection {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     #[test]
     fn reconnect_replays_in_order_and_retains_the_unacknowledged_tail() {
@@ -1538,7 +1538,7 @@ mod tests {
         state.pending.clear();
         assert!(!queued_edit_pending(&state, &request));
     }
-    fn disconnected() -> Connection {
+    pub(crate) fn disconnected() -> Connection {
         let (tx, _) = mpsc::sync_channel(1);
         Connection {
             config: Config {
