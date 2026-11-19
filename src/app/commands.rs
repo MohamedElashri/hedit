@@ -2066,6 +2066,7 @@ impl HeditApp {
             Buffer(usize),
             File(String),
             Command(Command),
+            Extension(usize),
             Syntax(syntax::Language),
             /// Remember a build system (or "automatic") and build with it.
             BuildWith(String),
@@ -2154,6 +2155,11 @@ impl HeditApp {
                             found,
                             (command.label().to_owned(), self.shortcut_text(command), Item::Command(command)),
                         ));
+                    }
+                }
+                for (index, command) in self.extension_commands().iter().enumerate() {
+                    if let Some(found) = score(&command.title).or_else(|| score(&command.id).map(|score| score - 50)) {
+                        scored.push((found, (command.title.clone(), command.id.clone(), Item::Extension(index))));
                     }
                 }
                 // Build with a chosen system, remembered for Ctrl+B.
@@ -2330,6 +2336,7 @@ impl HeditApp {
                 }
                 Item::File(path) => self.open(ctx, Some(path.into())),
                 Item::Command(command) => self.execute(ctx, command),
+                Item::Extension(index) => self.run_extension(index),
                 Item::Pick(Pick::Paste(text)) => self.paste_entry(ctx, text),
                 Item::Pick(Pick::File(path)) => self.open(ctx, Some(path)),
                 Item::Pick(Pick::ExistingFile(path)) => self.open_existing(ctx, path),

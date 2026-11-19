@@ -26,6 +26,7 @@ mod editing_tests;
 mod editor_interaction;
 mod editor_layout;
 mod explorer;
+mod extensions;
 mod file_reference;
 #[cfg(test)]
 mod file_reference_tests;
@@ -281,6 +282,7 @@ pub struct HeditApp {
     paste_history: Vec<String>,
     /// A list shown in the palette instead of files or commands.
     pick_list: Option<commands::PickList>,
+    extensions: Vec<extensions::Contribution>,
     /// Tab moves through the fields of the snippet inserted last.
     snippet: Option<snippet_fields::SnippetSession>,
     auto: auto_complete::AutoComplete,
@@ -444,6 +446,8 @@ impl HeditApp {
         let (mut settings, config, settings_files, setting_errors) =
             settings_store::load(storage, workspace.store.directory());
         errors.extend(setting_errors);
+        let (extensions, extension_errors) = extensions::load(settings_files.dir.as_deref());
+        errors.extend(extension_errors);
         // The session remembers whether this workspace's folders were shown.
         if let Some(folder) = workspace.folders.first() {
             settings.show_folders = folder.visible;
@@ -506,6 +510,7 @@ impl HeditApp {
             tab_strip: Default::default(),
             paste_history: Vec::new(),
             pick_list: None,
+            extensions,
             snippet: None,
             auto: Default::default(),
             languages: Default::default(),
