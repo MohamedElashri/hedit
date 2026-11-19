@@ -1,6 +1,26 @@
 use hedit::document::Document;
 use std::{fs, path::Path, process::Command};
 
+#[cfg(unix)]
+#[test]
+fn save_as_does_not_replace_an_occupied_new_destination() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("destination.txt");
+    let missing = directory.path().join("missing.txt");
+    std::os::unix::fs::symlink(&missing, &path).unwrap();
+    let mut document = Document::empty(1);
+    document.replace(0, 0, "unsaved text".into(), 0).unwrap();
+
+    assert!(document.save(Some(path.clone())).is_err());
+    assert_eq!(fs::read_link(&path).unwrap(), missing);
+    assert!(document.info().dirty);
+    assert_eq!(document.text(1024).unwrap(), "unsaved text");
+    assert!(!missing.exists());
+
+    document.save(Some(missing.clone())).unwrap();
+    assert_eq!(fs::read_to_string(missing).unwrap(), "unsaved text");
+}
+
 fn save_edit(path: &Path) {
     let mut document = Document::open(1, path).unwrap();
     document

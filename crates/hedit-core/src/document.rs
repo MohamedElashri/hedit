@@ -1771,10 +1771,15 @@ impl Document {
         if now != target_stamp {
             return Err("The destination changed while saving. Your edits are still available; retry or choose another path.".into());
         }
-        // A named new buffer must not overwrite a file created after it opened,
-        // including between the final destination check and the actual write.
-        let file = if self.path.as_ref() == Some(&target) && self.stamp.is_none() {
-            temp.persist_noclobber(&target).map_err(err)?
+        // A destination checked as absent must still be absent at publication.
+        let file = if target_stamp.is_none() {
+            temp.persist_noclobber(&target).map_err(|failure| {
+                if failure.error.kind() == io::ErrorKind::AlreadyExists {
+                    "A file now exists at the destination. Your edits are still available; choose another path.".into()
+                } else {
+                    err(failure)
+                }
+            })?
         } else {
             // persist uses an atomic replacement on the same filesystem.
             temp.persist(&target).map_err(err)?

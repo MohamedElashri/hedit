@@ -101,6 +101,36 @@ fn goto_in_a_paged_file_honors_the_requested_column() {
 }
 
 #[test]
+fn opening_a_malformed_paged_file_finishes_without_a_worker_panic() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("partial.txt");
+    let mut bytes = vec![b'x'; hedit::document::SMALL_LIMIT as usize + 1];
+    bytes[0] = 0x80;
+    std::fs::write(&path, bytes).unwrap();
+    let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    app.open(&ctx, Some(path));
+    let started = Instant::now();
+    while app.opens.pending() {
+        assert!(started.elapsed() < Duration::from_secs(5));
+        app.receive(&ctx);
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(app
+        .error
+        .take()
+        .is_some_and(|error| error.contains("outside the readable text")));
+    app.transient_error = None;
+
+    let valid = directory.path().join("next.txt");
+    std::fs::write(&valid, "next file").unwrap();
+    app.open(&ctx, Some(valid));
+    finish_app_job(&mut app, &ctx);
+    assert_eq!(app.active().page.text, "next file");
+}
+
+#[test]
 fn symbols_lines_and_text_are_previewed_then_chosen_or_cancelled() {
     let directory = tempfile::tempdir().unwrap();
     let (mut workspace, _) = Workspace::restore(directory.path().into()).unwrap();
