@@ -6,6 +6,7 @@
 
 - Open a keyboard-first SSH connection picker from the Command Palette. Connect by alias or hostname, or reopen a specific saved workspace with its recovery settings. Setup errors identify the failed phase and suggest what to check.
 - Browse folders by keyboard within the connected SSH workspace. Add a folder to Files while keeping the active connection and recovery root.
+- Import selected SSH aliases into Remote Explorer or sync all hosts. The sidebar follows changes to SSH config and included files.
 - Install experimental local extensions from versioned JSON manifests. Extensions can add snippet commands to the Command Palette. See the [Extensions guide](USER_GUIDE.md#extensions).
 
 ### Changed
