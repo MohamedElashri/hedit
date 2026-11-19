@@ -9,6 +9,7 @@ pub(super) enum Sidebar {
     Files,
     Search,
     SourceControl,
+    Remote,
 }
 
 impl HeditApp {
@@ -92,6 +93,16 @@ impl HeditApp {
                         .clicked()
                     {
                         action = Some(Action::Command(Command::FindFiles));
+                    }
+                    if icons::navigation(
+                        ui,
+                        Icon::Remote,
+                        "Remote Explorer",
+                        self.sidebar == Sidebar::Remote && self.settings.show_sidebar,
+                    )
+                    .clicked()
+                    {
+                        action = Some(Action::Command(Command::ConnectSsh));
                     }
                 });
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {

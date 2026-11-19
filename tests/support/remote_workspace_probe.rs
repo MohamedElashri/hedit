@@ -382,7 +382,14 @@ fn run() -> Result<(), String> {
         println!("LAST_TAB_REFUSAL_OK");
         return Ok(());
     }
-    if args.get(5).is_some_and(|mode| mode == "recover_pending") {
+    if args
+        .get(5)
+        .is_some_and(|mode| mode == "recover_pending" || mode == "recover_pending_auto")
+    {
+        let automatic = args[5] == "recover_pending_auto";
+        if automatic {
+            remote.trust(true)?;
+        }
         doc.replace(0, 0, "PENDING_ONCE".into(), doc.info().revision)?;
         let deadline = Instant::now() + Duration::from_secs(20);
         while remote.status().0 {
@@ -392,7 +399,18 @@ fn run() -> Result<(), String> {
             std::thread::sleep(Duration::from_millis(10));
         }
         assert_eq!(remote.status().2, 1);
-        remote.reconnect()?;
+        if automatic {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            while !remote.status().0 {
+                if Instant::now() > deadline {
+                    return Err(format!("Automatic reconnect failed: {}", remote.status().3));
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert!(!remote.status().1, "reconnect must reset execution trust");
+        } else {
+            remote.reconnect()?;
+        }
         remote.flush()?;
         let recovered = remote.open(2, &path)?.text(10 * 1024 * 1024)?;
         assert_eq!(recovered, format!("PENDING_ONCE{original}"));

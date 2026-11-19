@@ -127,13 +127,22 @@ a native window. Remote documents are memory-backed/ephemeral; local recovery
 rejects them and launch metadata excludes content/tool output. Recovery, undo,
 and workspace metadata belong to the host.
 
+Remote Explorer discovers concrete aliases with a bounded read-only parser in
+`crates/hedit-remote/src/ssh_config.rs`; OpenSSH resolves the selected alias at
+connection time. A zero internal port means inherit config; an explicit CLI port
+must be nonzero. Local `ssh-workspaces.json` holds connection metadata only.
+
 Keep pinned host keys, direct connections, explicit execution trust, and
 reconnect trust reset. No forwarding, multiplexed connection reuse, credentials,
 or workspace-provided SSH configuration. Validate paths with descriptor-relative,
 no-symlink operations; remote identities never grant local filesystem access.
 
 Writer epochs fence old clients; receipts bind session, sequence, and revision.
-Replay deduplicates committed edits. Preserve pending edits across disconnects;
+Replay deduplicates committed edits. Transport failures get at most five retries
+with exponential delays; explicit disconnect cancels retries. Replayed edits must
+be skipped when their original queued work is consumed. Validate durability
+receipts before removing pending edits. Reconnect never repeats takeover.
+Preserve pending edits across disconnects;
 fail closed on conflicts/quotas. Never blindly retry uncertain saves/mutations.
 UI metadata checkpoints must not wait on a document mutex held by an SSH job.
 

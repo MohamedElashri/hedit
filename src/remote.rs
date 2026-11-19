@@ -10,6 +10,7 @@ use hedit_remote::{
     protocol::{Action, DocumentInfo, Request, Response},
 };
 use serde_json::Value;
+pub mod explorer;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -30,18 +31,33 @@ enum Work {
     Edit(Request, String),
     Barrier(Vec<(u64, u64)>, mpsc::SyncSender<Result<(), String>>),
     Reconnect(Reply),
+    Disconnect(Reply),
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Config {
     pub target: SshTarget,
     pub root: String,
+    #[serde(skip)]
     pub takeover: bool,
+}
+impl Config {
+    pub fn validate(&self) -> Result<(), String> {
+        self.target
+            .command()
+            .map_err(|e| format!("Invalid SSH settings: {e}"))?;
+        if !self.root.starts_with('/') || self.root.contains(['\0', '\r', '\n']) {
+            return Err("Use an absolute SSH workspace path.".into());
+        }
+        Ok(())
+    }
 }
 struct State {
     epoch: u64,
     token: String,
     session: String,
     connected: bool,
+    reconnecting: bool,
+    retry: Retry,
     error: Option<String>,
     pending: Vec<(Request, String)>,
     pending_bytes: usize,
@@ -73,6 +89,37 @@ fn edit_identity(request: &Request) -> Option<(u64, u64)> {
         _ => None,
     }
 }
+fn durable_info(request: &Request, response: Response) -> Result<DocumentInfo, String> {
+    let Request::Apply {
+        document,
+        sequence,
+        base_revision,
+        ..
+    } = request
+    else {
+        return Err("Invalid edit request.".into());
+    };
+    match response {
+        Response::Durable {
+            info,
+            sequence: acknowledged,
+        } if info.document == *document
+            && acknowledged == *sequence
+            && base_revision.checked_add(1) == Some(info.revision) =>
+        {
+            Ok(info)
+        }
+        _ => Err("Invalid durability receipt. Pending edits remain in memory.".into()),
+    }
+}
+fn queued_edit_pending(state: &State, request: &Request) -> bool {
+    edit_identity(request).is_some_and(|id| {
+        state
+            .pending
+            .iter()
+            .any(|(pending, _)| edit_identity(pending) == Some(id))
+    })
+}
 fn barrier_result(state: &State, through: &[(u64, u64)]) -> Result<(), String> {
     if state.connected
         && !state
@@ -89,15 +136,18 @@ fn barrier_result(state: &State, through: &[(u64, u64)]) -> Result<(), String> {
     }
 }
 fn rpc(client: &mut Client, request: Request) -> Result<Response, String> {
-    client
-        .call(request)
-        .map_err(|e| format!("SSH workspace: {e}. Remote recovery remains on the host."))
+    client.call(request).map_err(|e| {
+        format!(
+            "SSH workspace: {e}. {} Remote recovery remains on the host.",
+            client.diagnostics().trim()
+        )
+    })
 }
 fn establish(
     config: &Config,
     expected: Option<&str>,
 ) -> Result<(Client, String, u64, String), String> {
-    let mut client=Client::connect(&config.target).map_err(|e|format!("Cannot connect securely: {e}. Check the pinned host key, SSH key, and installed helper."))?;
+    let mut client=Client::connect_detailed(&config.target).map_err(|e|format!("Cannot connect securely: {e}. Check the pinned host key, SSH key, and installed helper."))?;
     let Response::Hello { session, .. } = rpc(&mut client, Request::Hello {})? else {
         return Err("Invalid helper handshake.".into());
     };
@@ -113,7 +163,7 @@ fn establish(
     let start = Instant::now();
     let owner = loop {
         match client.call(Request::Acquire {
-            takeover: config.takeover,
+            takeover: config.takeover && expected.is_none(),
         }) {
             Ok(value) => break value,
             Err(hedit_remote::protocol::Error::Busy)
@@ -129,17 +179,122 @@ fn establish(
     };
     Ok((client, session, epoch, token))
 }
+/// Only transport failures are retried. Mutations are never blindly reissued.
+struct Retry {
+    enabled: bool,
+    attempts: u8,
+    next: Option<Instant>,
+}
+impl Default for Retry {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            attempts: 0,
+            next: None,
+        }
+    }
+}
+impl Retry {
+    fn schedule(&mut self) {
+        if self.enabled && self.attempts < 5 && self.next.is_none() {
+            self.next = Some(Instant::now() + Duration::from_secs(1 << self.attempts));
+        }
+    }
+    fn due(&mut self) -> bool {
+        if self.next.is_some_and(|next| Instant::now() >= next) {
+            self.next = None;
+            self.attempts += 1;
+            true
+        } else {
+            false
+        }
+    }
+}
+fn replay_pending(
+    shared: &Mutex<State>,
+    epoch: u64,
+    mut send: impl FnMut(Request) -> Result<Response, String>,
+) -> Result<(), String> {
+    let pending = shared.lock().unwrap().pending.clone();
+    for (mut request, path) in pending {
+        if let Request::Apply { epoch: e, .. } = &mut request {
+            *e = epoch;
+        }
+        let response = send(request.clone())?;
+        let info = durable_info(&request, response)?;
+        let mut state = shared.lock().unwrap();
+        state.pending.remove(0);
+        state.pending_bytes = state.pending.iter().map(|(r, _)| edit_cost(r)).sum();
+        if state.pending.is_empty() {
+            state.oldest = None;
+        }
+        if let Some(current) = state.infos.get_mut(&path) {
+            if info.revision >= current.revision {
+                *current = info;
+            }
+        }
+    }
+    Ok(())
+}
+fn reconnect(
+    config: &Config,
+    client: &mut Client,
+    shared: &Mutex<State>,
+) -> Result<Response, String> {
+    let expected = {
+        let mut state = shared.lock().unwrap();
+        state.connected = false;
+        state.reconnecting = true;
+        state.trusted = false;
+        state.session.clone()
+    };
+    notify(shared);
+    client.disconnect();
+    let result: Result<Response, String> = (|| {
+        let (new, _, epoch, token) = establish(config, Some(&expected))?;
+        *client = new;
+        {
+            let mut state = shared.lock().unwrap();
+            state.epoch = epoch;
+            state.token = token;
+        }
+        replay_pending(shared, epoch, |request| rpc(client, request))?;
+        Ok(Response::Pong {})
+    })();
+    {
+        let mut state = shared.lock().unwrap();
+        state.reconnecting = false;
+        match &result {
+            Ok(_) => {
+                state.connected = true;
+                state.error = None;
+                state.retry = Retry::default();
+            }
+            Err(error) => {
+                state.error = Some(error.clone());
+                // Session mismatch, fencing and reconciliation conflicts need a
+                // human decision; only an unusable transport permits retries.
+                if !client.is_failed() || error.contains("recovery session changed") {
+                    state.retry.enabled = false;
+                    state.retry.next = None;
+                }
+            }
+        }
+    }
+    notify(shared);
+    result
+}
 impl Connection {
     pub fn connect(config: Config) -> Result<Arc<Self>, String> {
-        if !config.root.starts_with('/') || config.root.contains('\0') {
-            return Err("Use an absolute SSH workspace path.".into());
-        }
+        config.validate()?;
         let (mut client, session, epoch, token) = establish(&config, None)?;
         let state = Arc::new(Mutex::new(State {
             epoch,
             token,
             session: session.clone(),
             connected: true,
+            reconnecting: false,
+            retry: Retry::default(),
             error: None,
             pending: vec![],
             pending_bytes: 0,
@@ -155,6 +310,18 @@ impl Connection {
         std::thread::spawn(move || {
             let mut change_cursor = 0usize;
             loop {
+                let retry = {
+                    let mut state = shared.lock().unwrap();
+                    if !state.connected && !state.reconnecting && client.is_failed() {
+                        state.retry.schedule();
+                        state.retry.due()
+                    } else {
+                        false
+                    }
+                };
+                if retry {
+                    let _ = reconnect(&settings, &mut client, &shared);
+                }
                 let work = match rx.recv_timeout(Duration::from_millis(750)) {
                     Ok(w) => w,
                     Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -219,16 +386,27 @@ impl Connection {
                                 .into(),
                         )
                         };
+                        if client.is_failed() {
+                            let mut state = shared.lock().unwrap();
+                            state.connected = false;
+                            state.trusted = false;
+                            state.error = result.as_ref().err().cloned();
+                        }
                         let _ = reply.send(result);
                     }
                     Work::Edit(request, path) => {
-                        if !shared.lock().unwrap().connected {
-                            continue;
+                        {
+                            let state = shared.lock().unwrap();
+                            // Reconnect may already have replayed this queued edit.
+                            if !state.connected || !queued_edit_pending(&state, &request) {
+                                continue;
+                            }
                         }
-                        let result = rpc(&mut client, request);
+                        let result = rpc(&mut client, request.clone())
+                            .and_then(|response| durable_info(&request, response));
                         let mut s = shared.lock().unwrap();
                         match result {
-                            Ok(Response::Durable { info, .. }) => {
+                            Ok(info) => {
                                 if !s.pending.is_empty() {
                                     s.pending.remove(0);
                                 }
@@ -257,47 +435,19 @@ impl Connection {
                         let result = barrier_result(&shared.lock().unwrap(), &through);
                         let _ = reply.send(result);
                     }
-                    Work::Reconnect(reply) => {
-                        let expected = shared.lock().unwrap().session.clone();
+                    Work::Disconnect(reply) => {
                         client.disconnect();
-                        let result: Result<Response, String> = (|| {
-                            let (new, _, epoch, token) = establish(&settings, Some(&expected))?;
-                            client = new;
-                            {
-                                let mut s = shared.lock().unwrap();
-                                s.epoch = epoch;
-                                s.token = token;
-                                s.trusted = false;
-                            }
-                            let pending = shared.lock().unwrap().pending.clone();
-                            for (mut request, path) in pending {
-                                if let Request::Apply { epoch: e, .. } = &mut request {
-                                    *e = epoch;
-                                }
-                                let Response::Durable { info, .. } = rpc(&mut client, request)?
-                                else {
-                                    return Err("Cannot reconcile pending edits.".into());
-                                };
-                                let mut s = shared.lock().unwrap();
-                                s.pending.remove(0);
-                                if let Some(current) = s.infos.get_mut(&path) {
-                                    if info.revision >= current.revision {
-                                        *current = info;
-                                    }
-                                }
-                            }
-                            let mut s = shared.lock().unwrap();
-                            s.connected = true;
-                            s.error = None;
-                            s.pending_bytes = 0;
-                            s.oldest = None;
-                            Ok(Response::Pong {})
-                        })();
-                        if let Err(e) = &result {
-                            let mut s = shared.lock().unwrap();
-                            s.connected = false;
-                            s.error = Some(e.clone());
-                        }
+                        let mut state = shared.lock().unwrap();
+                        state.connected = false;
+                        state.trusted = false;
+                        state.retry.enabled = false;
+                        state.retry.next = None;
+                        state.error = Some("Disconnected. Pending edits remain in this window; reconnect to resume.".into());
+                        let _ = reply.send(Ok(Response::Pong {}));
+                    }
+                    Work::Reconnect(reply) => {
+                        shared.lock().unwrap().retry = Retry::default();
+                        let result = reconnect(&settings, &mut client, &shared);
                         let _ = reply.send(result);
                     }
                 }
@@ -410,6 +560,16 @@ impl Connection {
         rx.recv_timeout(Duration::from_secs(30))
             .map_err(|_| "Host durability confirmation timed out.")?
     }
+    /// Stop the transport without discarding documents or pending receipts.
+    pub fn disconnect(&self) -> Result<(), String> {
+        let (tx, rx) = mpsc::sync_channel(1);
+        self.tx
+            .try_send(Work::Disconnect(tx))
+            .map_err(|_| "Remote request queue is full.")?;
+        rx.recv_timeout(Duration::from_secs(30))
+            .map_err(|_| "Disconnect timed out.")??;
+        Ok(())
+    }
     pub fn reconnect(&self) -> Result<(), String> {
         let (tx, rx) = mpsc::sync_channel(1);
         self.tx
@@ -442,13 +602,28 @@ impl Connection {
             s.connected,
             s.trusted,
             s.pending.len(),
-            s.error.clone().unwrap_or_else(|| {
-                if s.pending.is_empty() {
-                    "Durable on SSH host".into()
-                } else {
-                    "Waiting for host durability".into()
-                }
-            }),
+            if s.reconnecting {
+                "Reconnecting to SSH host; reconciling pending edits…".into()
+            } else if !s.connected && s.retry.next.is_some() {
+                format!(
+                    "Connection lost. Reconnecting (attempt {} of 5). {}",
+                    s.retry.attempts + 1,
+                    s.error.as_deref().unwrap_or("")
+                )
+            } else if !s.connected && s.retry.attempts >= 5 {
+                format!(
+                    "Automatic reconnect stopped after five attempts. Reconnect to retry. {}",
+                    s.error.as_deref().unwrap_or("")
+                )
+            } else {
+                s.error.clone().unwrap_or_else(|| {
+                    if s.pending.is_empty() {
+                        "Durable on SSH host".into()
+                    } else {
+                        "Waiting for host durability".into()
+                    }
+                })
+            },
         )
     }
     fn service(&self) -> Result<Client, String> {
@@ -1218,6 +1393,130 @@ impl Connection {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reconnect_replays_in_order_and_retains_the_unacknowledged_tail() {
+        let remote = disconnected();
+        let request = |sequence| Request::Apply {
+            session: "test".into(),
+            epoch: 1,
+            document: 4,
+            sequence,
+            base_revision: sequence - 1,
+            action: Action::Undo {},
+        };
+        {
+            let mut state = remote.state.lock().unwrap();
+            state.pending = vec![(request(1), "file".into()), (request(2), "file".into())];
+            state.pending_bytes = state.pending.iter().map(|(r, _)| edit_cost(r)).sum();
+            state.oldest = Some(Instant::now());
+        }
+        let mut received = vec![];
+        let result = replay_pending(&remote.state, 7, |request| {
+            let Request::Apply {
+                epoch, sequence, ..
+            } = request
+            else {
+                panic!()
+            };
+            assert_eq!(epoch, 7);
+            received.push(sequence);
+            if sequence == 2 {
+                return Err("transport lost".into());
+            }
+            Ok(Response::Durable {
+                sequence,
+                info: DocumentInfo {
+                    document: 4,
+                    revision: 1,
+                    bytes: 0,
+                    path: b"file".to_vec(),
+                    saved_revision: 0,
+                    encoding: "UTF-8".into(),
+                    bom: false,
+                    dirty: true,
+                },
+            })
+        });
+        assert!(result.is_err());
+        assert_eq!(received, [1, 2]);
+        let state = remote.state.lock().unwrap();
+        assert_eq!(state.pending.len(), 1);
+        assert_eq!(edit_identity(&state.pending[0].0), Some((4, 2)));
+        assert_eq!(state.pending_bytes, edit_cost(&state.pending[0].0));
+        assert!(state.oldest.is_some());
+    }
+    #[test]
+    fn receipt_for_another_sequence_cannot_discard_a_pending_edit() {
+        let remote = disconnected();
+        remote.state.lock().unwrap().pending.push((
+            Request::Apply {
+                session: "test".into(),
+                epoch: 1,
+                document: 4,
+                sequence: 1,
+                base_revision: 0,
+                action: Action::Undo {},
+            },
+            "file".into(),
+        ));
+        let result = replay_pending(&remote.state, 2, |_| {
+            Ok(Response::Durable {
+                sequence: 2,
+                info: DocumentInfo {
+                    document: 4,
+                    revision: 1,
+                    bytes: 0,
+                    path: b"file".to_vec(),
+                    saved_revision: 0,
+                    encoding: "UTF-8".into(),
+                    bom: false,
+                    dirty: true,
+                },
+            })
+        });
+        assert!(result.is_err());
+        assert_eq!(remote.state.lock().unwrap().pending.len(), 1);
+    }
+    #[test]
+    fn automatic_retries_are_bounded_and_intentional_disconnect_stops_them() {
+        let mut retry = Retry::default();
+        for attempt in 0..5 {
+            retry.schedule();
+            let delay = retry
+                .next
+                .unwrap()
+                .saturating_duration_since(Instant::now());
+            assert!(delay <= Duration::from_secs(1 << attempt));
+            assert!(!retry.due());
+            retry.next = Some(Instant::now());
+            assert!(retry.due());
+        }
+        retry.schedule();
+        assert!(retry.next.is_none());
+        let mut stopped = Retry {
+            enabled: false,
+            ..Retry::default()
+        };
+        stopped.schedule();
+        assert!(stopped.next.is_none());
+    }
+    #[test]
+    fn edits_already_replayed_during_reconnect_are_not_sent_from_the_queue_again() {
+        let remote = disconnected();
+        let request = Request::Apply {
+            session: "test".into(),
+            epoch: 1,
+            document: 4,
+            sequence: 2,
+            base_revision: 1,
+            action: Action::Undo {},
+        };
+        let mut state = remote.state.lock().unwrap();
+        state.pending.push((request.clone(), "file".into()));
+        assert!(queued_edit_pending(&state, &request));
+        state.pending.clear();
+        assert!(!queued_edit_pending(&state, &request));
+    }
     fn disconnected() -> Connection {
         let (tx, _) = mpsc::sync_channel(1);
         Connection {
@@ -1240,6 +1539,8 @@ mod tests {
                 token: String::new(),
                 session: String::new(),
                 connected: false,
+                reconnecting: false,
+                retry: Retry::default(),
                 error: None,
                 pending: vec![],
                 pending_bytes: 0,

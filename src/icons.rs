@@ -20,7 +20,7 @@ icons! {
     More=>"ellipsis", Refresh=>"refresh", Folder=>"folder", FolderOpen=>"folder-opened",
     File=>"file", Split=>"split-horizontal", Sidebar=>"layout-sidebar-left",
     SidebarOff=>"layout-sidebar-left-off", Check=>"check", Warning=>"warning",
-    Error=>"error", Debug=>"debug",
+    Error=>"error", Debug=>"debug", Remote=>"remote",
 }
 
 #[derive(Clone, Default)]

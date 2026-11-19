@@ -161,7 +161,22 @@ install -m 700 target/release/hedit-remote "$HOME/.local/bin/hedit-remote"
 Verify the host key with OpenSSH first. Unknown/changed keys are refused.
 Authentication uses keys or an existing agent; passwords and interactive MFA are
 unsupported. Unlock the agent and approve its prompt within the 15-second startup
-budget. Choose **File → Connect via SSH…** or use:
+budget. Open **Remote Explorer** in the sidebar (also available through
+**File → Connect via SSH…**). It lists concrete `Host` aliases from your
+`~/.ssh/config`, the system SSH config, and included files. Discovery reads files
+without executing `Match exec`; OpenSSH resolves connection options when you
+connect. Wildcard and negated host selectors do not appear as destinations.
+
+Select an alias or **+ Connect…**, enter the absolute workspace, helper and private
+state paths, then choose **Open remote window** or **Save workspace**. Saved
+workspaces reopen with one click; right-click to edit or remove them. Filter the
+list by host or workspace path. **Open SSH config…** opens the local config for
+adding or editing hosts; choose **Refresh** afterwards. To use another trusted
+config, enter its absolute path and Refresh. The selection and workspace settings
+are kept in `ssh-workspaces.json` beside your local editor settings, without keys,
+passwords, or document content. A corrupt metadata file is reported and preserved.
+
+You can also connect from the command line:
 
 ```sh
 hedit --ssh devbox \
@@ -173,12 +188,15 @@ hedit --ssh devbox \
 
 Paths must be absolute; use a separate private state directory per workspace.
 Optional flags: `--ssh-user USER`, `--ssh-port PORT`, `--ssh-config /absolute/config`,
-`--ssh-takeover`. Set non-default ports explicitly, including for SSH aliases.
+`--ssh-takeover`. User and port inherit your SSH configuration unless explicitly
+overridden. Leave these fields blank in the connection dialog to inherit them.
 The configuration must be a trusted local file: includes and `Match exec` can
 execute code. Takeover fences the previous writer and does not merge edits.
 
-The **SSH · host** menu offers reconnect, remote paths, new files, and trust
-controls. Paths stay inside the workspace; new files start as recoverable host
+The **SSH · host** menu and Remote Explorer show connection status, pending edits,
+reconnect, disconnect and execution trust. The menu also offers remote paths and
+new files. Disconnect retains the window's documents and pending edits and stops
+automatic retries; Reconnect resumes the same host recovery session. Paths stay inside the workspace; new files start as recoverable host
 scratchpads and Save As refuses existing targets. Keep at least one remote tab
 open. **Trust for Git, builds and terminal…** permits host scripts, hooks and shells
 to execute as the SSH account. Reconnect clears trust; revoking it stops tracked
@@ -193,7 +211,11 @@ exports are outside this application guarantee. Trust the host with recovery dat
 
 **Durable on SSH host** means accepted edits committed to the host journal;
 **Save** separately writes the source file. Disconnects preserve pending edits in
-memory and pause editing until reconnect reconciles receipts. A client crash can
+memory and pause editing until reconnect reconciles receipts. Transport failures
+trigger up to five automatic reconnect attempts with increasing delays. Retries
+stop on recovery-session changes or reconciliation conflicts; they never take over
+another writer or repeat uncertain saves. After retries stop, use **Reconnect** to
+try again. Reconnect always clears execution trust. A client crash can
 lose edits without a durable receipt; there is no local recovery fallback.
 Outside changes, stale writers, lag, quota, or storage errors pause edits rather
 than discarding recovery. Failed saves retain editor text; use Save As if needed.

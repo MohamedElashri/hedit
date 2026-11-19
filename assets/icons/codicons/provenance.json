@@ -112,6 +112,11 @@
       "name": "debug",
       "upstream_sha256": "230cc1a3b2511b52f9a18bc6e3ab755dff888533445fd665107f053169114202",
       "embedded_sha256": "e00d534e5be1ee178ad7bead3ae153d0b3e2173b68f128f0286463a91cfcf5aa"
+    },
+    {
+      "name": "remote",
+      "upstream_sha256": "9fa604c436a1e46c0d0b3edec49d6d3dc3e2c08b541dbd92c2c93c4de3e220de",
+      "embedded_sha256": "2dfaa3473ecd379d6533a5dca3ea0e0a6c79138878adc18a89024261ec222c15"
     }
   ]
 }
