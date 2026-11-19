@@ -71,6 +71,9 @@ impl Failure {
             "invalid ssh settings",
             "could not open user configuration file",
             "bad port",
+            "cannot resolve the selected ssh config",
+            "use proxyjump",
+            "unsupported ssh jump destination",
         ]) {
             Self::Settings
         } else if has(&["timed out", "timeout"]) {
@@ -79,6 +82,8 @@ impl Failure {
             "stdio forwarding failed",
             "administratively prohibited",
             "channel_connect_stdio_fwd",
+            "cannot forward configured localhost ports",
+            "use tcp localforward rules",
         ]) {
             Self::Forwarding
         } else if has(&[
@@ -117,11 +122,11 @@ impl Failure {
     pub fn advice(self) -> &'static str {
         match self {
             Self::HostKey => "Verify the host key in OpenSSH, then retry.",
-            Self::Authentication => "Check the SSH user and load your key into the SSH agent, then retry.",
+            Self::Authentication => "Check the SSH user and agent, or enable interactive SSH authentication for this profile.",
             Self::Connect => "Check the SSH configuration, pinned host key, SSH agent, and installed helper.",
             Self::Settings => "Review the SSH configuration and connection settings, then retry.",
             Self::Network => "Check the host address, SSH port, and network connection, then retry.",
-            Self::Forwarding => "Check that the SSH host or jump host permits the requested forwarding.",
+            Self::Forwarding => "Check that the local port is free and the SSH host or jump host permits forwarding.",
             Self::Timeout => "The operation timed out. Check that the host and SSH port are reachable, then retry.",
             Self::RecoverySession => "The host recovery session changed. Reconnect to the original recovery directory to resume pending edits.",
             Self::Writer => "Close the other writer or review the workspace takeover settings.",

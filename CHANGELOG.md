@@ -8,6 +8,8 @@
 - Browse folders by keyboard within the connected SSH workspace. Add a folder to Files while keeping the active connection and recovery root.
 - Import selected SSH aliases into Remote Explorer or sync all hosts. The sidebar follows changes to SSH config and included files.
 - Opt into verified SSH config jump hosts and session-scoped localhost port forwarding on Linux and macOS clients.
+- Reopen recent workspaces by SSH host or preview a remote folder before opening it. SSH Output records connection stages and offers diagnostic and recovery actions.
+- Enable masked interactive SSH authentication per connection profile on Linux and macOS.
 - Install experimental local extensions from versioned JSON manifests. Extensions can add snippet commands to the Command Palette. See the [Extensions guide](USER_GUIDE.md#extensions).
 
 ### Changed
