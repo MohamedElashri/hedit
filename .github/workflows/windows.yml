@@ -14,7 +14,9 @@ permissions:
 jobs:
   windows:
     name: Windows x86-64
-    runs-on: windows-2025
+    # Zig 0.15.2 cannot compile against the VS 2026 STL on windows-2025.
+    # Keep the supported VS 2022 toolchain until the pinned Zig is upgraded.
+    runs-on: windows-2022
     timeout-minutes: 40
     env:
       CARGO_TERM_COLOR: always
