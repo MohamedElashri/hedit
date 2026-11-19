@@ -881,8 +881,9 @@ mod tests {
     }
     #[test]
     fn ssh_form_inherits_config_and_escape_closes_it() {
-        let (_dir, ctx, mut app) = app();
-        app.remote_ui.edit(None, "/trusted/config");
+        let (dir, ctx, mut app) = app();
+        let ssh_config = dir.path().join("config");
+        app.remote_ui.edit(None, &ssh_config.to_string_lossy());
         app.remote_ui.host = "devbox".into();
         app.remote_ui.root = "/project".into();
         app.remote_ui.helper = "/opt/hedit-remote".into();
@@ -890,10 +891,7 @@ mod tests {
         let config = app.remote_ui.connection_config().unwrap();
         assert_eq!(config.target.port, 0);
         assert!(config.target.user.is_none());
-        assert_eq!(
-            config.target.config.unwrap(),
-            PathBuf::from("/trusted/config")
-        );
+        assert_eq!(config.target.config.unwrap(), ssh_config);
         frame(&ctx, &mut app, egui::vec2(720.0, 480.0), vec![]);
         frame(
             &ctx,
