@@ -120,7 +120,7 @@ fn opening_a_malformed_paged_file_finishes_without_a_worker_panic() {
     assert!(app
         .error
         .take()
-        .is_some_and(|error| error.contains("outside the readable text")));
+        .is_some_and(|error| error.contains("not valid UTF-8")));
     app.transient_error = None;
 
     let valid = directory.path().join("next.txt");
