@@ -595,6 +595,25 @@ class LiveTests(unittest.TestCase):
         self.assertEqual(self.root.joinpath("file").read_text(), "PENDING_ONCEbase")
         print(f"\n{stdout.decode().splitlines()[0]}", flush=True)
 
+    def test_editor_detects_external_changes_during_continuous_work(self):
+        source = self.root / "file"
+        source.write_text("base")
+        probe = ROOT / "target/debug/examples/remote_workspace_probe"
+        process = subprocess.Popen(
+            [str(probe), str(LAB.client_config), str(ARGS.binary), str(self.state),
+             str(self.root), str(LAB.port), "continuous_work"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        self.clients.append(process)
+        self.assertTrue(select.select([process.stdout], [], [], 10)[0], "probe readiness timed out")
+        self.assertEqual(process.stdout.readline(), b"CHANGE_POLL_READY\n")
+        source.write_text("changed externally")
+        process.stdin.write(b"x")
+        process.stdin.flush()
+        stdout, stderr = process.communicate(timeout=15)
+        self.assertEqual(process.returncode, 0, stderr.decode())
+        self.assertIn(b"CHANGE_POLL_OK", stdout)
+
     def test_editor_flush_frontier_allows_later_edits_behind_a_delayed_read(self):
         worker, _ = self.worker()
         self.root.joinpath("file").write_text("base")

@@ -747,15 +747,13 @@ impl HeditApp {
                 }
             }
         }
-        if self
-            .workspace
-            .remote
-            .as_ref()
-            .is_some_and(|r| r.status().2 > 0)
-        {
-            // Keep the backpressure deadline visible even if a receipt stalls.
-            ctx.request_repaint_after(Duration::from_millis(100));
-        }
+        schedule_backpressure_repaint(
+            ctx,
+            self.workspace
+                .remote
+                .as_deref()
+                .and_then(hedit::remote::Connection::backpressure_repaint_after),
+        );
     }
     /// Host identity and execution permissions remain visible in the menu bar,
     /// including distraction-free mode and when the status bar is hidden.
@@ -880,6 +878,12 @@ impl HeditApp {
             let _ = tx.send(job());
             ctx.request_repaint();
         });
+    }
+}
+
+fn schedule_backpressure_repaint(ctx: &egui::Context, delay: Option<Duration>) {
+    if let Some(delay) = delay {
+        ctx.request_repaint_after(delay);
     }
 }
 
@@ -1213,6 +1217,28 @@ mod tests {
                     .unwrap();
             }
         }
+    }
+
+    #[test]
+    fn ssh_receipt_ui_schedules_a_deadline_but_no_offline_poll() {
+        let ctx = egui::Context::default();
+        let frame = |delay| {
+            ctx.run(
+                egui::RawInput {
+                    predicted_dt: 0.0,
+                    ..Default::default()
+                },
+                |ctx| schedule_backpressure_repaint(ctx, delay),
+            )
+            .viewport_output[&egui::ViewportId::ROOT]
+                .repaint_delay
+        };
+        for _ in 0..2 {
+            frame(None);
+        }
+        let deadline = Duration::from_millis(1250);
+        assert_eq!(frame(Some(deadline)), deadline);
+        assert_eq!(frame(None), Duration::MAX);
     }
 
     #[test]
