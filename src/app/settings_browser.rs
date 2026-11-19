@@ -499,6 +499,13 @@ fn catalog() -> &'static [Setting] {
             "Snippets",
             "Edit reusable text snippets and tab stops."
         );
+        setting!(
+            Extensions,
+            Group(&["extensions"]),
+            "extensions",
+            "Extensions",
+            "Import local plugin manifests, preview their commands, and enable, disable, or reload extensions."
+        );
         setting!(Tools, Text, "cuda_gdb_path", "CUDA-GDB executable", "Set the debugger executable or absolute path. Stop running tool sessions before changing it.");
         setting!(
             Editor,
@@ -583,10 +590,10 @@ impl HeditApp {
         }
         self.settings_browser.snapshot.as_ref().unwrap().1.clone()
     }
-    pub(super) fn settings_category_counts(&mut self) -> [usize; 11] {
+    pub(super) fn settings_category_counts(&mut self) -> [usize; PreferencesPage::ALL.len()] {
         let current = self.settings_document();
         let defaults = defaults();
-        let mut counts = [0; 11];
+        let mut counts = [0; PreferencesPage::ALL.len()];
         for setting in catalog().iter().filter(|s| {
             matches(s, &self.settings_browser.query)
                 && (!self.settings_browser.modified || self.setting_modified(s, &current, defaults))

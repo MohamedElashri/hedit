@@ -1,4 +1,6 @@
 //! Local extension manifests contribute commands to the Command Palette.
+mod catalog;
+mod manager;
 mod manifest;
 
 use super::{snippet_fields, HeditApp};
@@ -6,6 +8,7 @@ use eframe::egui;
 use hedit::intelligence;
 use std::path::Path;
 
+pub(super) use manager::Manager;
 use manifest::ExtensionAction;
 pub(super) use manifest::{load, Contribution};
 
