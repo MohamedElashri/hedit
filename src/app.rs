@@ -1631,11 +1631,7 @@ impl HeditApp {
                 .then(|| due(self.poll_at, Duration::from_secs(1))),
             self.settings_due(),
             self.wait_due(),
-            (!self.quality.git_pending && self.git_stale(ctx)).then(|| {
-                self.quality
-                    .git_at
-                    .map_or(Duration::ZERO, |at| due(at, Duration::from_secs(2)))
-            }),
+            self.git_refresh_delay(ctx),
         ]
         .into_iter()
         .flatten()
@@ -2282,11 +2278,8 @@ impl HeditApp {
         buffer.view.folds.retain(|f| {
             f.end <= count && !(f.start < buffer.view.head && buffer.view.head < f.end)
         });
-        let projection = self.projections[pane_id].get(
-            &buffer.page.text,
-            buffer.view.tab_size.unwrap_or(4),
-            &buffer.view.folds,
-        );
+        let projection = self.projections[pane_id]
+            .projection(buffer.view.tab_size.unwrap_or(4), &buffer.view.folds);
         let mut display = projection.text.clone();
         let original_selection = hedit::advanced::Selection {
             anchor: buffer.view.anchor,
