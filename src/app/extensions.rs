@@ -287,6 +287,7 @@ mod tests {
         assert!(!app.extension_available_by_id("links.wrap"));
         select_palette_command(&ctx, &mut app, "links.wrap");
         assert_eq!(app.active().page.text, source);
+        app.close_transient(&ctx);
         app.set_selections(vec![Selection {
             anchor: 0,
             head: source.chars().count(),
@@ -298,5 +299,41 @@ mod tests {
         app.execute(&ctx, Command::Undo);
         finish_app_job(&mut app, &ctx);
         assert_eq!(app.active().page.text, source);
+    }
+
+    #[test]
+    fn file_template_picker_runs_an_installed_manifest_action() {
+        let config = tempfile::tempdir().unwrap();
+        let manifests = config.path().join("extensions");
+        std::fs::create_dir(&manifests).unwrap();
+        std::fs::write(
+            manifests.join("tests.json"),
+            r#"{"api_version":1,"id":"test-tools","commands":[{
+                "id":"python-test","title":"Python test",
+                "action":{"kind":"new_file","language":"python","body":"def test_${1:sample}():\n    pass\n$0"}
+            }]}"#,
+        )
+        .unwrap();
+        let (_session, ctx, mut app) = app_with("original", Some(config.path()));
+        let previous = app.active().view.id;
+        app.execute(&ctx, Command::NewFileFromTemplate);
+        frame(&ctx, &mut app, Vec::new());
+        frame(
+            &ctx,
+            &mut app,
+            vec![egui::Event::Text("Python test".into())],
+        );
+        frame(
+            &ctx,
+            &mut app,
+            vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+        );
+        finish_app_job(&mut app, &ctx);
+        assert_ne!(app.active().view.id, previous);
+        assert_eq!(app.workspace.open[0].page.text, "original");
+        assert_eq!(app.active().language(), hedit::syntax::Language::Python);
+        assert!(app.active().page.info.path.is_none());
+        assert_eq!(app.active().page.text, "def test_sample():\n    pass\n");
+        assert!(app.snippet.is_some());
     }
 }

@@ -2149,6 +2149,14 @@ impl HeditApp {
             let mut items = Vec::new();
             // Letters in order, best matches first; equal scores keep their order.
             let score = |text: &str| hedit::folder::fuzzy_match(text, &filter).map(|(s, _)| s);
+            let extension_detail = |id: &str| {
+                let shortcut = self.extension_shortcut_text(id);
+                if shortcut.is_empty() {
+                    id.to_owned()
+                } else {
+                    format!("{id} · {shortcut}")
+                }
+            };
             let mut scored: Vec<(i64, (String, String, Item))> = vec![];
             if let Some(list) = &self.pick_list {
                 for (label, detail, pick) in &list.items {
@@ -2160,7 +2168,7 @@ impl HeditApp {
                 }
             } else if let Some(command) = self.extensions.iter().find(|c| commands && c.id == filter) {
                 if self.extension_available_by_id(&command.id) {
-                    scored.push((i64::MAX, (command.title.clone(), command.id.clone(), Item::Extension(command.id.clone()))));
+                    scored.push((i64::MAX, (command.title.clone(), extension_detail(&command.id), Item::Extension(command.id.clone()))));
                 }
             } else if commands {
                 for &command in Command::ALL {
@@ -2174,7 +2182,7 @@ impl HeditApp {
                 for command in self.extension_commands() {
                     let found = score(&command.title).or_else(|| score(&command.id).map(|score| score - 50));
                     if let Some(found) = found {
-                        scored.push((found, (command.title.clone(), command.id.clone(), Item::Extension(command.id.clone()))));
+                        scored.push((found, (command.title.clone(), extension_detail(&command.id), Item::Extension(command.id.clone()))));
                     }
                 }
                 // Build with a chosen system, remembered for Ctrl+B.
