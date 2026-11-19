@@ -2,10 +2,13 @@
 use super::*;
 use hedit::remote::{explorer::Catalog, Config as RemoteConfig};
 use hedit_remote::{client::SshTarget, ssh_config};
+mod folder_picker;
+use folder_picker::FolderPicker;
 #[derive(Default)]
 pub(super) struct RemoteUi {
     dialog: bool,
     connect_picker: Option<ConnectPicker>,
+    folder_picker: Option<FolderPicker>,
     selected_config: String,
     load_started: bool,
     query: String,
@@ -108,18 +111,21 @@ impl ConnectChoice<'_> {
 #[derive(Clone, Copy)]
 pub(super) enum Picker {
     Open,
-    Folder,
     Save(u64),
 }
 impl RemoteUi {
     pub(super) fn overlay_open(&self) -> bool {
-        self.dialog || self.picker.is_some() || self.connect_picker.is_some()
+        self.dialog
+            || self.picker.is_some()
+            || self.connect_picker.is_some()
+            || self.folder_picker.is_some()
     }
 
     pub(super) fn close_overlay(&mut self) {
         self.dialog = false;
         self.picker = None;
         self.connect_picker = None;
+        self.folder_picker = None;
     }
 
     fn ready(&self) -> bool {
@@ -233,6 +239,18 @@ impl RemoteUi {
     }
 }
 impl HeditApp {
+    pub(super) fn open_remote_folder(&mut self, ctx: &egui::Context) {
+        if self.remote_ui.folder_picker.is_some() {
+            return;
+        }
+        if let Some(remote) = self.workspace.remote.clone() {
+            self.close_transient(ctx);
+            self.remote_ui.folder_picker = Some(FolderPicker::open(ctx, &remote));
+            self.focus_editor = false;
+            ctx.request_repaint();
+        }
+    }
+
     pub(super) fn show_ssh_picker(&mut self, ctx: &egui::Context) {
         if self.workspace.remote.is_some()
             || self.remote_ui.connecting.is_some()
@@ -939,12 +957,31 @@ impl HeditApp {
                 }
             }
         }
+        if let Some(browser) = self.remote_ui.folder_picker.as_mut() {
+            let outcome = remote
+                .as_ref()
+                .map_or(folder_picker::Outcome::Closed, |remote| {
+                    browser.show(ctx, remote)
+                });
+            match outcome {
+                folder_picker::Outcome::Browsing => (),
+                folder_picker::Outcome::Closed => {
+                    self.remote_ui.folder_picker = None;
+                    self.focus_editor = true;
+                }
+                folder_picker::Outcome::Opened(listing) => {
+                    self.remote_ui.folder_picker = None;
+                    self.sidebar = workbench_navigation::Sidebar::Files;
+                    self.set_folder(listing);
+                    self.focus_editor = true;
+                }
+            }
+        }
         if let Some(picker) = self.remote_ui.picker {
             let mut open = true;
             let mut submit = false;
             egui::Window::new(match picker {
                 Picker::Open => "Open remote file",
-                Picker::Folder => "Open remote folder",
                 Picker::Save(_) => "Save on SSH host",
             })
             .open(&mut open)
@@ -965,9 +1002,6 @@ impl HeditApp {
                             self.remote_ui.picker = None;
                             match picker {
                                 Picker::Open => self.open(ctx, Some(path)),
-                                Picker::Folder => self.job(ctx, move || {
-                                    hedit::folder::read_directory(path).map(Action::Folder)
-                                }),
                                 Picker::Save(id) => self.save_to_path(ctx, id, Some(path)),
                             }
                         }

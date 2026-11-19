@@ -206,6 +206,13 @@ tab open. **Trust for Git, builds and terminal…** permits host scripts, hooks 
 shells to execute as the SSH account. Reconnect clears trust; revoking it stops
 tracked jobs. Terminals also need their regular opt-in setting.
 
+In a remote window, choose **File → Open folder…** to browse within the active
+SSH workspace. Use the arrow keys and **Enter** to browse subfolders, or type a
+path relative to the workspace and press **Enter**. **Up** returns to the parent
+inside the workspace. **Add Folder** shows the current folder in the Files
+sidebar and keeps the same SSH connection and recovery directory. Use **Tab**
+to reach the buttons and **Escape** to dismiss the browser.
+
 ### Privacy and recovery
 
 Remote content, drafts, undo history, searches, patches, and terminal output stay
