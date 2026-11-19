@@ -50,12 +50,9 @@ pub struct Config {
 }
 impl Config {
     pub fn validate(&self) -> Result<(), String> {
-        (if self.managed {
-            self.target.command_for(":")
-        } else {
-            self.target.command()
-        })
-        .map_err(|e| format!("Invalid SSH settings: {e}"))?;
+        self.target
+            .validate_settings(self.managed)
+            .map_err(|e| format!("Invalid SSH settings: {e}"))?;
         if !(self.root.starts_with('/') || self.managed && self.root.is_empty())
             || self.root.contains(['\0', '\r', '\n'])
         {
@@ -76,6 +73,7 @@ struct State {
     token: String,
     session: String,
     connected: bool,
+    forwarded_ports: Vec<u16>,
     reconnecting: bool,
     retry: Retry,
     error: Option<String>,
@@ -310,6 +308,7 @@ fn reconnect(
         match &result {
             Ok(_) => {
                 state.connected = true;
+                state.forwarded_ports = client.forwarded_ports();
                 state.error = None;
                 state.retry = Retry::default();
             }
@@ -383,6 +382,7 @@ impl Connection {
             token,
             session: session.clone(),
             connected: true,
+            forwarded_ports: client.forwarded_ports(),
             reconnecting: false,
             retry: Retry::default(),
             error: None,
@@ -665,6 +665,15 @@ impl Connection {
             .checked_duration_since(Instant::now())?;
         (!delay.is_zero()).then_some(delay)
     }
+    pub fn forwarded_ports(&self) -> Vec<u16> {
+        let state = self.state.lock().unwrap();
+        if state.connected {
+            state.forwarded_ports.clone()
+        } else {
+            Vec::new()
+        }
+    }
+
     pub fn status(&self) -> (bool, bool, usize, String) {
         let s = self.state.lock().unwrap();
         (
@@ -1596,6 +1605,7 @@ pub(crate) mod tests {
         Connection {
             config: Config {
                 target: SshTarget {
+                    routing: Default::default(),
                     host: "test".into(),
                     user: None,
                     port: 22,
@@ -1614,6 +1624,7 @@ pub(crate) mod tests {
                 token: String::new(),
                 session: String::new(),
                 connected: false,
+                forwarded_ports: Vec::new(),
                 reconnecting: false,
                 retry: Retry::default(),
                 error: None,

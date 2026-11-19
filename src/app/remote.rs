@@ -1,7 +1,10 @@
 //! Connect to SSH hosts and workspaces, and control the active remote session.
 use super::*;
 use hedit::remote::{explorer::Catalog, Config as RemoteConfig};
-use hedit_remote::{client::SshTarget, ssh_config};
+use hedit_remote::{
+    client::{Routing, SshTarget},
+    ssh_config,
+};
 use std::sync::atomic::{AtomicBool, Ordering};
 mod folder_picker;
 mod host_import;
@@ -29,6 +32,7 @@ pub(super) struct RemoteUi {
     host: String,
     user: String,
     port: String,
+    routing: Routing,
     root: String,
     helper: String,
     state: String,
@@ -117,6 +121,7 @@ impl ConnectChoice<'_> {
                     .map_or((None, *input), |(user, host)| (Some(user.into()), host));
                 RemoteConfig {
                     target: SshTarget {
+                        routing: Default::default(),
                         host: host.into(),
                         user,
                         port: 0,
@@ -229,6 +234,7 @@ impl RemoteUi {
     fn edit(&mut self, config: Option<&RemoteConfig>, default_config: &str) {
         self.editing = config.cloned();
         self.manual_helper = config.is_some_and(|c| !c.managed);
+        self.routing = config.map(|c| c.target.routing).unwrap_or_default();
         self.host = config.map(|c| c.target.host.clone()).unwrap_or_default();
         self.user = config
             .and_then(|c| c.target.user.clone())
@@ -263,6 +269,7 @@ impl RemoteUi {
         };
         let config = RemoteConfig {
             target: SshTarget {
+                routing: self.routing,
                 host: self.host.trim().into(),
                 user: (!self.user.trim().is_empty()).then(|| self.user.trim().into()),
                 port,
@@ -577,7 +584,7 @@ impl HeditApp {
         self.remote_background(ctx, move || {
             config
                 .target
-                .command()
+                .validate_settings(false)
                 .map_err(|e| format!("Invalid SSH settings: {e}"))?;
             let mut command = std::process::Command::new(
                 hedit::windows::executable().map_err(|e| e.to_string())?,
@@ -600,6 +607,12 @@ impl HeditApp {
             }
             if let Some(path) = &config.target.config {
                 command.arg("--ssh-config").arg(path);
+            }
+            if config.target.routing.jump {
+                command.arg("--ssh-use-config-jump");
+            }
+            if config.target.routing.forwards {
+                command.arg("--ssh-forward-config-ports");
             }
             if config.takeover {
                 command.arg("--ssh-takeover");
@@ -708,6 +721,15 @@ impl HeditApp {
                 }
             ));
             ui.label(status);
+            let forwarded = remote.forwarded_ports();
+            if !forwarded.is_empty() {
+                let ports = forwarded
+                    .iter()
+                    .map(u16::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                ui.label(format!("Forwarded localhost ports · {ports}"));
+            }
             ui.horizontal(|ui| {
                 if ui
                     .add_enabled(
@@ -1036,7 +1058,7 @@ impl HeditApp {
                         ui.label("Git, builds, and terminals execute code with your SSH account’s permissions. Repository configuration, hooks, filters, and build scripts may run programs. Trust only a workspace and host you control.");
                         trust = ui.add_enabled(self.remote_ui.pending.is_none(), egui::Button::new("Trust this connection for execution")).clicked();
                     } else {
-                        ui.label("Direct SSH · pinned host keys · recovery stays on the host");
+                        ui.label("Pinned SSH host keys · recovery stays on the host");
                         egui::Grid::new("ssh-fields").num_columns(2).show(ui, |ui| {
                             for (label, value) in [
                                 ("Host / SSH alias", &mut self.remote_ui.host),
@@ -1051,6 +1073,8 @@ impl HeditApp {
                                 ui.end_row();
                             }
                         });
+                        ui.add_enabled(cfg!(unix), egui::Checkbox::new(&mut self.remote_ui.routing.jump, "Use SSH config jump hosts"));
+                        ui.add_enabled(cfg!(unix), egui::Checkbox::new(&mut self.remote_ui.routing.forwards, "Forward SSH config ports to localhost"));
                         ui.checkbox(&mut self.remote_ui.manual_helper,"Use a manually installed helper");
                         if self.remote_ui.manual_helper {
                             ui.label("Installed helper (absolute)");ui.text_edit_singleline(&mut self.remote_ui.helper);
@@ -1905,6 +1929,7 @@ mod tests {
         let (_dir, _ctx, mut app) = app();
         let original = RemoteConfig {
             target: SshTarget {
+                routing: Default::default(),
                 host: "devbox".into(),
                 user: None,
                 port: 0,
@@ -2074,6 +2099,7 @@ mod tests {
         .unwrap();
         let config = hedit::remote::Config {
             target: hedit_remote::client::SshTarget {
+                routing: Default::default(),
                 host: "lab".into(),
                 user: None,
                 port: fixture["port"].as_u64().unwrap() as u16,

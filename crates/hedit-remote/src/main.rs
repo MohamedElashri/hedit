@@ -95,6 +95,7 @@ fn run() -> Result<(), Error> {
         "bridge" => hedit_remote::server::bridge(std::path::Path::new(&state)),
         "connect" => {
             let target = SshTarget {
+                routing: Default::default(),
                 host: host.ok_or(Error::Protocol)?,
                 helper: helper.ok_or(Error::Protocol)?,
                 state,

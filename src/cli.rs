@@ -38,6 +38,7 @@ impl Options {
         let mut user = None;
         let mut config = None;
         let mut port = 0;
+        let mut routing = hedit_remote::client::Routing::default();
         let mut takeover = false;
         while let Some(arg) = args.next() {
             if literal {
@@ -134,6 +135,8 @@ impl Options {
                     }
                 }
                 Some("--ssh-takeover") => takeover = true,
+                Some("--ssh-use-config-jump") => routing.jump = true,
+                Some("--ssh-forward-config-ports") => routing.forwards = true,
                 Some("--session-dir") => {
                     options.session_dir =
                         Some(args.next().ok_or("--session-dir needs a directory")?.into())
@@ -161,6 +164,7 @@ impl Options {
             }
             options.remote = Some(crate::remote::Config {
                 target: hedit_remote::client::SshTarget {
+                    routing,
                     host,
                     user,
                     port,
@@ -181,6 +185,7 @@ impl Options {
             || user.is_some()
             || config.is_some()
             || port != 0
+            || !routing.is_default()
             || takeover
         {
             return Err("SSH options require --ssh HOST.".into());
