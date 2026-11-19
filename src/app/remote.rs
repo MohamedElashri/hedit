@@ -92,7 +92,14 @@ impl RemoteUi {
                 port,
                 config: (!self.config.trim().is_empty()).then(|| self.config.trim().into()),
                 helper: self.helper.trim().into(),
-                state: self.state.trim().into(),
+                state: if !self.manual_helper
+                    && self.editing.as_ref().is_some_and(|c| {
+                        c.root != self.root.trim() && c.target.state == self.state.trim()
+                    }) {
+                    String::new()
+                } else {
+                    self.state.trim().into()
+                },
             },
             root: self.root.trim().into(),
             managed: !self.manual_helper,
@@ -646,6 +653,7 @@ impl HeditApp {
                                 ("User (from SSH config)", &mut self.remote_ui.user),
                                 ("Port (from SSH config)", &mut self.remote_ui.port),
                                 ("Workspace (blank opens remote home)", &mut self.remote_ui.root),
+                                ("Recovery directory (automatic if blank)", &mut self.remote_ui.state),
                                 ("SSH config (blank uses default)", &mut self.remote_ui.config),
                             ] {
                                 ui.label(label);
@@ -656,7 +664,6 @@ impl HeditApp {
                         ui.checkbox(&mut self.remote_ui.manual_helper,"Use a manually installed helper");
                         if self.remote_ui.manual_helper {
                             ui.label("Installed helper (absolute)");ui.text_edit_singleline(&mut self.remote_ui.helper);
-                            ui.label("Private recovery directory (absolute)");ui.text_edit_singleline(&mut self.remote_ui.state);
                         } else {ui.label("The matching helper is installed automatically for your remote user.");}
                         ui.checkbox(&mut self.remote_ui.takeover, "Take over an existing writer (fences its edits)");
                         ui.label("SSH keys remain managed by OpenSSH and your agent.");
@@ -1064,6 +1071,41 @@ mod tests {
         assert!(config.managed && config.root.is_empty() && config.target.helper.is_empty());
         app.remote_ui.manual_helper = true;
         assert!(app.remote_ui.connection_config().is_err());
+    }
+    #[test]
+    fn enabling_automatic_helpers_retains_existing_recovery_and_new_roots_get_new_storage() {
+        let (_dir, _ctx, mut app) = app();
+        let original = RemoteConfig {
+            target: SshTarget {
+                host: "devbox".into(),
+                user: None,
+                port: 0,
+                config: None,
+                helper: "/old/helper".into(),
+                state: "/private/existing-drafts".into(),
+            },
+            root: "/work/project".into(),
+            managed: false,
+            takeover: false,
+        };
+        app.remote_ui.edit(Some(&original), "");
+        app.remote_ui.manual_helper = false;
+        let config = app.remote_ui.connection_config().unwrap();
+        assert!(config.managed);
+        assert_eq!(config.target.state, original.target.state);
+        app.remote_ui.root = "/work/other".into();
+        assert!(app
+            .remote_ui
+            .connection_config()
+            .unwrap()
+            .target
+            .state
+            .is_empty());
+        app.remote_ui.state = "/private/other-recovery".into();
+        assert_eq!(
+            app.remote_ui.connection_config().unwrap().target.state,
+            "/private/other-recovery"
+        );
     }
     #[test]
     fn host_connection_settings_are_on_the_context_menu_without_starting_ssh() {

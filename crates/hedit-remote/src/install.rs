@@ -11,7 +11,7 @@ use std::{
 
 pub use crate::client::SetupInfo as Installation;
 
-pub fn setup(workspace: &str) -> Result<Installation, String> {
+pub fn setup(workspace: &str, state: &str) -> Result<Installation, String> {
     let uid = rustix::process::geteuid().as_raw();
     if uid == 0 {
         return Err("Automatic SSH setup requires a non-root SSH account.".into());
@@ -20,12 +20,19 @@ pub fn setup(workspace: &str) -> Result<Installation, String> {
     setup_in(
         &home,
         workspace,
+        state,
         uid,
         &std::env::current_exe().map_err(|e| e.to_string())?,
     )
 }
 
-fn setup_in(home: &Path, workspace: &str, uid: u32, source: &Path) -> Result<Installation, String> {
+fn setup_in(
+    home: &Path,
+    workspace: &str,
+    recovery: &str,
+    uid: u32,
+    source: &Path,
+) -> Result<Installation, String> {
     if uid == 0 {
         return Err("Automatic SSH setup requires a non-root SSH account.".into());
     }
@@ -104,7 +111,11 @@ fn setup_in(home: &Path, workspace: &str, uid: u32, source: &Path) -> Result<Ins
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect::<String>();
-    let state = home.join(".local/state/hedit/remote").join(key);
+    let state = if recovery.is_empty() {
+        home.join(".local/state/hedit/remote").join(key)
+    } else {
+        PathBuf::from(recovery)
+    };
     host::private_directory(&state).map_err(|e| {
         format!("Cannot create private durable recovery storage in this account: {e}")
     })?;
@@ -167,7 +178,7 @@ mod tests {
     #[test]
     fn root_is_rejected_before_creating_any_directories() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(setup_in(dir.path(), "", 0, Path::new("/missing"))
+        assert!(setup_in(dir.path(), "", "", 0, Path::new("/missing"))
             .unwrap_err()
             .contains("non-root"));
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
@@ -223,11 +234,39 @@ mod tests {
         let home_path = home.path().canonicalize().unwrap();
         let outside_path = outside.path().canonicalize().unwrap();
         symlink(&outside_path, home_path.join(".local")).unwrap();
-        assert!(setup_in(&home_path, "", uid, Path::new("/missing")).is_err());
+        assert!(setup_in(&home_path, "", "", uid, Path::new("/missing")).is_err());
         assert_eq!(std::fs::read_dir(&outside_path).unwrap().count(), 0);
         std::fs::remove_file(home_path.join(".local")).unwrap();
         std::fs::set_permissions(&home_path, std::fs::Permissions::from_mode(0o777)).unwrap();
-        assert!(setup_in(&home_path, "", uid, Path::new("/missing")).is_err());
+        assert!(setup_in(&home_path, "", "", uid, Path::new("/missing")).is_err());
         assert_eq!(std::fs::read_dir(&home_path).unwrap().count(), 0);
+    }
+    #[test]
+    fn setup_retains_an_existing_private_recovery_directory_and_its_contents() {
+        use std::os::unix::fs::PermissionsExt;
+        let uid = rustix::process::geteuid().as_raw();
+        if uid == 0 {
+            return;
+        }
+        let home = tempfile::Builder::new()
+            .permissions(std::fs::Permissions::from_mode(0o700))
+            .tempdir()
+            .unwrap();
+        let recovery = tempfile::Builder::new()
+            .permissions(std::fs::Permissions::from_mode(0o700))
+            .tempdir()
+            .unwrap();
+        let home = home.path().canonicalize().unwrap();
+        let state = recovery.path().canonicalize().unwrap();
+        std::fs::write(state.join("draft-marker"), b"keep existing host recovery").unwrap();
+        let source = home.join("source-helper");
+        std::fs::write(&source, b"fixture helper").unwrap();
+        let info = setup_in(&home, "", state.to_str().unwrap(), uid, &source).unwrap();
+        assert_eq!(info.state, state.to_str().unwrap());
+        assert_eq!(
+            std::fs::read(state.join("draft-marker")).unwrap(),
+            b"keep existing host recovery"
+        );
+        assert!(Path::new(&info.helper).starts_with(&home));
     }
 }

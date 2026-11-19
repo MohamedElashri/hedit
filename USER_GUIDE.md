@@ -165,7 +165,9 @@ versioned user-local installation. Setup progress and cancellation appear in the
 sidebar. Automatic setup refuses root accounts and unsafe directory permissions.
 
 Right-click a host for **Connection settings…** or **SSH configuration…**. Connection
-settings let you select a workspace and override user, port, or trusted config.
+settings let you select a workspace and override user, port, trusted config, or
+private recovery directory. Existing recovery paths are retained when enabling
+automatic helper management.
 For an existing custom installation, enable **Use a manually installed helper**
 and supply absolute helper and private recovery paths. Saved workspaces also
 have right-click actions to edit or remove them. Filter by host or workspace path.
@@ -186,9 +188,9 @@ hedit --ssh devbox --ssh-root /home/me/project src/main.rs
 ```
 
 Advanced flags: `--ssh-user USER`, `--ssh-port PORT`,
-`--ssh-config /absolute/config`, and `--ssh-takeover`. Supplying
-`--ssh-helper`, `--ssh-state`, and `--ssh-root` together selects a manually managed
-helper. Takeover fences the previous writer and does not merge edits.
+`--ssh-config /absolute/config`, and `--ssh-takeover`. `--ssh-state` can retain an existing private recovery directory while managing
+the helper automatically. Supplying `--ssh-helper` also requires `--ssh-state` and
+`--ssh-root` and selects a manually managed helper. Takeover fences the previous writer and does not merge edits.
 
 The **SSH · host** menu and Remote Explorer show connection status, pending edits,
 reconnect, disconnect, and execution trust. Disconnect retains documents and

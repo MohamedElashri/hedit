@@ -31,6 +31,7 @@ pub struct SetupInfo {
     pub helper: String,
     pub state: String,
 }
+pub const SETUP_VERSION: u32 = 1;
 
 fn quote(s: &str) -> Result<String> {
     if s.contains(['\0', '\n', '\r']) || !s.starts_with('/') {

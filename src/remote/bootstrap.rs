@@ -1,6 +1,6 @@
 //! Bounded SSH setup; helper bytes come from this installation or its exact release.
 use super::Config;
-use hedit_remote::client::SetupInfo;
+use hedit_remote::client::{SetupInfo, SETUP_VERSION};
 use sha2::{Digest, Sha256};
 use std::{
     fs::File,
@@ -81,7 +81,11 @@ impl Account {
             .iter()
             .map(|b| format!("{b:02x}"))
             .collect::<String>();
-        let state = format!("{}/.local/state/hedit/remote/{key}", self.home);
+        let state = if config.target.state.is_empty() {
+            format!("{}/.local/state/hedit/remote/{key}", self.home)
+        } else {
+            config.target.state.clone()
+        };
         if info.version != VERSION
             || info.uid != self.uid
             || info.home != self.home
@@ -99,7 +103,7 @@ impl Account {
     }
 }
 
-fn absolute(value: &str) -> Result<(), String> {
+pub(super) fn absolute(value: &str) -> Result<(), String> {
     if !value.starts_with('/')
         || value.len() > 4096
         || value.contains(['\0', '\r', '\n'])
@@ -125,6 +129,9 @@ pub fn prepare(
     }
     if !config.root.is_empty() {
         absolute(&config.root)?;
+    }
+    if !config.target.state.is_empty() {
+        absolute(&config.target.state)?;
     }
     progress("Connecting to SSH host…");
     let (status, output) = run(
@@ -159,7 +166,8 @@ test -n "$(find "$path" -prune -type d -user "$uid" -perm 0700)" || exit 78
 test -f {helper} && test -x {helper} && test ! -L {helper} || exit 78
 test -n "$(find {helper} -prune -type f -user "$uid" -perm 0700)" || exit 78
 test "$({helper} --version)" = {expected} || exit 78
-exec {helper} setup --workspace {workspace}
+test "$({helper} --setup-version)" = {setup_version} || exit 78
+exec {helper} setup --workspace {workspace} --state {state}
 "#,
         uid = account.uid,
         home = quote(&account.home),
@@ -167,7 +175,9 @@ exec {helper} setup --workspace {workspace}
         platform = quote(&format!("{}-{}", account.os, account.arch)),
         helper = quote(&helper),
         expected = quote(&format!("hedit-remote {VERSION}")),
-        workspace = quote(&config.root)
+        workspace = quote(&config.root),
+        state = quote(&config.target.state),
+        setup_version = SETUP_VERSION,
     );
     let (status, output) = run(
         config
@@ -221,12 +231,13 @@ trap 'exit 1' 1 2 15
 cat > "$stage/hedit-remote"
 chmod 700 "$stage/hedit-remote"
 test "$("$stage/hedit-remote" --version)" = {expected}
-"$stage/hedit-remote" setup --workspace {workspace}
+"$stage/hedit-remote" setup --workspace {workspace} --state {state}
 "#,
         uid = account.uid,
         home = quote(&account.home),
         expected = quote(&format!("hedit-remote {VERSION}")),
-        workspace = quote(&config.root)
+        workspace = quote(&config.root),
+        state = quote(&config.target.state),
     );
     let input = File::open(&source).map_err(|e| e.to_string())?;
     let size = input.metadata().map_err(|e| e.to_string())?.len();
@@ -424,6 +435,18 @@ mod tests {
                 "{field}"
             );
         }
+        let mut custom = config.clone();
+        custom.target.state = "/private/existing-recovery".into();
+        let mut response = value.clone();
+        response["state"] = serde_json::json!(custom.target.state);
+        assert_eq!(
+            account
+                .resolve(custom, &response.to_string())
+                .unwrap()
+                .target
+                .state,
+            "/private/existing-recovery"
+        );
     }
     #[cfg(unix)]
     #[test]

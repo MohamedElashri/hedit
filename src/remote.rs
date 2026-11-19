@@ -57,6 +57,13 @@ impl Config {
         {
             return Err("Use an absolute SSH workspace path.".into());
         }
+        if self.managed {
+            for path in [&self.root, &self.target.state] {
+                if !path.is_empty() {
+                    bootstrap::absolute(path)?;
+                }
+            }
+        }
         Ok(())
     }
 }

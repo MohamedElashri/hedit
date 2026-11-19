@@ -152,7 +152,7 @@ impl Options {
             }
         }
         if let Some(host) = ssh {
-            let managed = helper.is_none() && state.is_none();
+            let managed = helper.is_none();
             if !managed && (helper.is_none() || state.is_none() || root.is_none()) {
                 return Err(
                     "Custom SSH setup requires --ssh-root, --ssh-helper, and --ssh-state together."
@@ -243,6 +243,12 @@ mod language_server_tests {
             .unwrap();
         assert!(config.managed);
         assert_eq!(config.root, "/work");
+        let config = parse(&["--ssh", "devbox", "--ssh-state", "/private/existing"])
+            .unwrap()
+            .remote
+            .unwrap();
+        assert!(config.managed);
+        assert_eq!(config.target.state, "/private/existing");
     }
     #[test]
     fn ssh_port_inherits_config_but_explicit_zero_is_rejected() {
