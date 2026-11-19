@@ -622,10 +622,11 @@ such as `{"python": {"tab_size": 4}}`, and custom `build_systems`.
 
 Extensions can add snippet commands to the Command Palette. To try the
 experimental extension API, copy [markdown-task.json](examples/extensions/markdown-task.json)
-into `extensions/` inside your configuration folder and restart hedit. Open the
-Command Palette and choose **Insert Markdown task** in a writable editor with
-one caret or selection. Type over the prompt and press **Tab** to finish the
-snippet. Remove the file and restart to uninstall it.
+into `extensions/` inside your configuration folder. In the bundled guide, use
+**Copy code** and save the contents as `markdown-task.json` in that folder.
+Restart hedit, open the Command Palette, and choose **Insert Markdown task** in
+a writable editor with one caret or selection. Type over the prompt and press
+**Tab** to finish the snippet. Remove the file and restart to uninstall it.
 
 The [extension manifest reference](docs/extensions.md) describes the fields and limits.
 

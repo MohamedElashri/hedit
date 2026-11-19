@@ -17,5 +17,7 @@ install -m644 "$package_dir/README.md" "$package_dir/USER_GUIDE.md" \
     "$package_dir/DEVELOPER_GUIDE.md" "$package_dir/CHANGELOG.md" "$package_dir/LICENSE" \
     "$install_prefix/share/doc/hedit/"
 cp -R "$package_dir/assets" "$package_dir/docs" "$package_dir/vendor" "$install_prefix/share/doc/hedit/"
+install -Dm644 "$package_dir/examples/extensions/markdown-task.json" \
+    "$install_prefix/share/doc/hedit/examples/extensions/markdown-task.json"
 printf 'Installed hedit in %s\n' "$install_prefix"
 printf 'Launch: %s/bin/hedit\n' "$install_prefix"

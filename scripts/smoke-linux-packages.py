@@ -27,7 +27,10 @@ def payload(root, helper):
     assert (prefix / 'bin/hedit-remote').read_bytes() == helper.read_bytes()
     assert subprocess.check_output([str(prefix / 'bin/hedit-remote'), '--version'], text=True).strip() == f'hedit-remote {VERSION}'
     assert (prefix / 'share/hedit/package-managed').is_file()
-    for relative in ['README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md', 'CHANGELOG.md', 'LICENSE'] + [p.relative_to(ROOT).as_posix() for p in (ROOT / 'docs/images').iterdir() if p.is_file()]:
+    documents = ['README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md', 'CHANGELOG.md', 'LICENSE',
+                 'docs/extensions.md', 'examples/extensions/markdown-task.json']
+    images = [p.relative_to(ROOT).as_posix() for p in (ROOT / 'docs/images').iterdir() if p.is_file()]
+    for relative in documents + images:
         assert (prefix / 'share/doc/hedit' / relative).read_bytes() == (ROOT / relative).read_bytes(), relative
     assert (prefix / 'share/icons/hicolor/scalable/apps/hedit.svg').is_file()
     run('desktop-file-validate', str(prefix / 'share/applications/hedit.desktop'))
