@@ -613,6 +613,17 @@ Override with `HEDIT_CONFIG_DIR`. The folder also holds `keybindings.json`,
 options/defaults; JSON also supports `syntax_specific` formatting overrides,
 such as `{"python": {"tab_size": 4}}`, and custom `build_systems`.
 
+### Extensions
+
+Extensions can add snippet commands to the Command Palette. To try the
+experimental extension API, copy [markdown-task.json](examples/extensions/markdown-task.json)
+into `extensions/` inside your configuration folder and restart hedit. Open the
+Command Palette and choose **Insert Markdown task** in a writable editor with
+one caret or selection. Type over the prompt and press **Tab** to finish the
+snippet. Remove the file and restart to uninstall it.
+
+The [extension manifest reference](docs/extensions.md) describes the fields and limits.
+
 ## Appearance
 
 **Preferences → Color theme…** previews built-in/custom themes; Enter keeps one,

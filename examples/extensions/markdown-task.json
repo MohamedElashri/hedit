@@ -1,0 +1,14 @@
+{
+  "api_version": 1,
+  "id": "markdown-task",
+  "commands": [
+    {
+      "id": "insert-task",
+      "title": "Insert Markdown task",
+      "action": {
+        "kind": "insert_snippet",
+        "body": "- [ ] ${1:Describe the task}$0"
+      }
+    }
+  ]
+}
