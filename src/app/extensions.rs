@@ -87,6 +87,13 @@ mod tests {
         (session, ctx, app)
     }
 
+    fn select_palette_command(ctx: &egui::Context, app: &mut HeditApp, query: &str) {
+        app.execute(ctx, Command::Palette);
+        frame(ctx, app, Vec::new());
+        frame(ctx, app, vec![egui::Event::Text(query.into())]);
+        frame(ctx, app, vec![key(egui::Key::Enter, egui::Modifiers::NONE)]);
+    }
+
     #[test]
     fn extension_command_palette_edits_crlf_and_undoes_in_one_step() {
         let config = tempfile::tempdir().unwrap();
@@ -102,18 +109,7 @@ mod tests {
         app.edit_command(Operation::ToCrlf);
         let original = app.active().page.text.clone();
         app.set_selections(vec![Selection { anchor: 6, head: 7 }]);
-        app.execute(&ctx, Command::Palette);
-        frame(&ctx, &mut app, Vec::new());
-        frame(
-            &ctx,
-            &mut app,
-            vec![egui::Event::Text("markdown-task.insert-task".into())],
-        );
-        frame(
-            &ctx,
-            &mut app,
-            vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
-        );
+        select_palette_command(&ctx, &mut app, "markdown-task.insert-task");
         assert_eq!(
             app.active().page.text,
             "head\r\n- [ ] Describe the task\r\ntail\r\n"
@@ -123,6 +119,44 @@ mod tests {
         app.execute(&ctx, Command::Undo);
         finish_app_job(&mut app, &ctx);
         assert_eq!(app.active().page.text, original);
+    }
+
+    #[test]
+    fn extension_command_palette_prioritizes_an_exact_namespaced_id() {
+        let (_session, ctx, mut app) = app_with("", None);
+        app.extensions = vec![
+            Contribution {
+                id: "first.insert".into(),
+                title: "second.insert".into(),
+                body: "wrong command".into(),
+            },
+            Contribution {
+                id: "second.insert".into(),
+                title: "Insert note".into(),
+                body: "correct command".into(),
+            },
+        ];
+        select_palette_command(&ctx, &mut app, "second.insert");
+        assert_eq!(app.active().page.text, "correct command");
+    }
+
+    #[test]
+    fn extension_duplicate_defaults_keep_a_preceding_caret_marker() {
+        let config = tempfile::tempdir().unwrap();
+        let directory = config.path().join("extensions");
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::write(
+            directory.join("duplicate.json"),
+            r#"{"api_version":1,"id":"test","commands":[{"id":"insert","title":"Insert text",
+             "action":{"kind":"insert_snippet","body":"${1:α}$0${1:β}"}}]}"#,
+        )
+        .unwrap();
+        let (_session, _ctx, mut app) = app_with("", Some(config.path()));
+        assert!(app.error.is_none(), "{:?}", app.error);
+        app.run_extension(0);
+        assert_eq!(app.active().page.text, "αα");
+        assert!(app.next_field(false));
+        assert_eq!(app.selections(), [Selection::caret(1)]);
     }
 
     #[test]

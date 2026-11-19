@@ -1,6 +1,6 @@
 //! Lightweight text navigation and completion; does not require a language server.
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     io::Read,
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -184,11 +184,15 @@ pub fn expand_fields(body: &str, selection: &str) -> Expansion {
     let FieldParser {
         text,
         count,
-        mut fields,
+        fields,
         ..
     } = parser;
-    let last = fields.remove(&0).unwrap_or_else(|| vec![(count, count)]);
-    let mut fields: Vec<_> = fields.into_values().collect();
+    let mut by_number = BTreeMap::<u32, Vec<_>>::new();
+    for (number, range) in fields {
+        by_number.entry(number).or_default().push(range);
+    }
+    let last = by_number.remove(&0).unwrap_or_else(|| vec![(count, count)]);
+    let mut fields: Vec<_> = by_number.into_values().collect();
     fields.push(last);
     Expansion { text, fields }
 }
@@ -200,7 +204,7 @@ struct FieldParser<'a> {
     text: String,
     /// Characters in `text`.
     count: usize,
-    fields: std::collections::BTreeMap<u32, Vec<(usize, usize)>>,
+    fields: Vec<(u32, (usize, usize))>,
 }
 
 impl FieldParser<'_> {
@@ -222,10 +226,7 @@ impl FieldParser<'_> {
         Some(number)
     }
     fn field(&mut self, number: u32, start: usize) {
-        self.fields
-            .entry(number)
-            .or_default()
-            .push((start, self.count));
+        self.fields.push((number, (start, self.count)));
     }
     /// Parse until the end, or until an unescaped `}` when `nested`.
     fn parse(&mut self, at: &mut usize, nested: bool) {
@@ -275,6 +276,7 @@ impl FieldParser<'_> {
                                 Some(':') => {
                                     let start = self.count;
                                     let byte = self.text.len();
+                                    let previous_fields = self.fields.len();
                                     *at = inner + 1;
                                     self.parse(at, true);
                                     let default = self.text[byte..].to_owned();
@@ -284,9 +286,7 @@ impl FieldParser<'_> {
                                     if self.text[byte..] != first {
                                         self.text.truncate(byte);
                                         self.count = start;
-                                        for places in self.fields.values_mut() {
-                                            places.retain(|&(a, _)| a < start);
-                                        }
+                                        self.fields.truncate(previous_fields);
                                         self.push(&first);
                                     }
                                     self.field(number, start);

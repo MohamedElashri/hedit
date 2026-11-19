@@ -2158,7 +2158,12 @@ impl HeditApp {
                     }
                 }
                 for (index, command) in self.extension_commands().iter().enumerate() {
-                    if let Some(found) = score(&command.title).or_else(|| score(&command.id).map(|score| score - 50)) {
+                    let found = if command.id == filter {
+                        Some(i64::MAX)
+                    } else {
+                        score(&command.title).or_else(|| score(&command.id).map(|score| score - 50))
+                    };
+                    if let Some(found) = found {
                         scored.push((found, (command.title.clone(), command.id.clone(), Item::Extension(index))));
                     }
                 }
