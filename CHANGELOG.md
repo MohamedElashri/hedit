@@ -1,5 +1,23 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Open a keyboard-first SSH connection picker from the Command Palette. Connect by alias or hostname, or reopen a specific saved workspace with its recovery settings. Setup errors identify the failed phase and suggest what to check.
+- Browse folders by keyboard within the connected SSH workspace. Add a folder to Files while keeping the active connection and recovery root.
+- Install experimental local extensions from versioned JSON manifests. Extensions can add snippet commands to the Command Palette. See the [Extensions guide](USER_GUIDE.md#extensions).
+
+### Changed
+
+- Stop local Git marker scheduling in remote windows and when change markers are off. Release derived editor and Git caches for closed tabs and splits.
+- Reuse the validated SSH handshake reply and wake disconnected sessions only for a scheduled retry or user action.
+
+### Fixed
+
+- Report unreadable positions in malformed paged files without stalling the open worker.
+- Use atomic creation for new Save As destinations so another file created during the save stays intact and pending edits remain available for retry.
+
 ## [0.6.2] - 2026-11-19
 
 - Connect to SSH-config hosts with one sidebar click; move connection settings and configuration controls into right-click menus.
