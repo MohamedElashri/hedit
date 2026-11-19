@@ -13,7 +13,7 @@ use serde_json::Value;
 pub mod bootstrap;
 pub mod explorer;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -27,6 +27,9 @@ const URI_SET: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
     .remove(b'_')
     .remove(b'~');
 const CHANGE_POLL_INTERVAL: Duration = Duration::from_millis(750);
+const EDIT_AGE_LIMIT: Duration = Duration::from_secs(2);
+const MAX_PENDING_EDITS: usize = 64;
+const MAX_PENDING_BYTES: usize = 1024 * 1024;
 type Reply = mpsc::SyncSender<Result<Response, String>>;
 enum Work {
     Call(Request, Reply),
@@ -76,13 +79,41 @@ struct State {
     reconnecting: bool,
     retry: Retry,
     error: Option<String>,
-    pending: Vec<(Request, String)>,
+    pending: VecDeque<PendingEdit>,
     pending_bytes: usize,
-    oldest: Option<Instant>,
     infos: HashMap<String, DocumentInfo>,
     changed: HashMap<u64, bool>,
     trusted: bool,
     wake: Option<Arc<dyn Fn() + Send + Sync>>,
+}
+#[derive(Clone)]
+struct PendingEdit {
+    request: Request,
+    path: String,
+    queued_at: Instant,
+}
+impl State {
+    fn oldest_edit_deadline(&self) -> Option<Instant> {
+        self.pending
+            .front()
+            .map(|edit| edit.queued_at + EDIT_AGE_LIMIT)
+    }
+    fn can_edit_until_deadline(&self) -> bool {
+        self.connected
+            && self.error.is_none()
+            && self.pending.len() < MAX_PENDING_EDITS
+            && self.pending_bytes < MAX_PENDING_BYTES
+    }
+    fn acknowledge_edit(&mut self, path: &str, info: DocumentInfo) {
+        if let Some(edit) = self.pending.pop_front() {
+            self.pending_bytes -= edit_cost(&edit.request);
+        }
+        if let Some(current) = self.infos.get_mut(path) {
+            if info.revision >= current.revision {
+                *current = info;
+            }
+        }
+    }
 }
 fn notify(state: &Mutex<State>) {
     // Never invoke a UI callback while holding the transport's state lock.
@@ -134,7 +165,7 @@ fn queued_edit_pending(state: &State, request: &Request) -> bool {
         state
             .pending
             .iter()
-            .any(|(pending, _)| edit_identity(pending) == Some(id))
+            .any(|pending| edit_identity(&pending.request) == Some(id))
     })
 }
 fn barrier_result(state: &State, through: &[(u64, u64)]) -> Result<(), String> {
@@ -142,7 +173,7 @@ fn barrier_result(state: &State, through: &[(u64, u64)]) -> Result<(), String> {
         && !state
             .pending
             .iter()
-            .any(|(request, _)| edit_identity(request).is_some_and(|id| through.contains(&id)))
+            .any(|edit| edit_identity(&edit.request).is_some_and(|id| through.contains(&id)))
     {
         Ok(())
     } else {
@@ -235,23 +266,16 @@ fn replay_pending(
     mut send: impl FnMut(Request) -> Result<Response, String>,
 ) -> Result<(), String> {
     let pending = shared.lock().unwrap().pending.clone();
-    for (mut request, path) in pending {
+    for PendingEdit {
+        mut request, path, ..
+    } in pending
+    {
         if let Request::Apply { epoch: e, .. } = &mut request {
             *e = epoch;
         }
         let response = send(request.clone())?;
         let info = durable_info(&request, response)?;
-        let mut state = shared.lock().unwrap();
-        state.pending.remove(0);
-        state.pending_bytes = state.pending.iter().map(|(r, _)| edit_cost(r)).sum();
-        if state.pending.is_empty() {
-            state.oldest = None;
-        }
-        if let Some(current) = state.infos.get_mut(&path) {
-            if info.revision >= current.revision {
-                *current = info;
-            }
-        }
+        shared.lock().unwrap().acknowledge_edit(&path, info);
     }
     Ok(())
 }
@@ -303,6 +327,48 @@ fn reconnect(
     notify(shared);
     result
 }
+fn poll_changes(client: &mut Client, shared: &Mutex<State>, cursor: &mut usize) {
+    let documents = {
+        let state = shared.lock().unwrap();
+        let mut ids = state.infos.values().map(|i| i.document).collect::<Vec<_>>();
+        ids.sort_unstable();
+        ids.dedup();
+        let total = ids.len();
+        let selected = ids
+            .into_iter()
+            .cycle()
+            .skip(if total == 0 { 0 } else { *cursor % total })
+            .take(total.min(8))
+            .collect();
+        *cursor = cursor.wrapping_add(8);
+        selected
+    };
+    let mut changed_state = false;
+    match rpc(client, Request::Changes { documents }) {
+        Ok(Response::Value { value }) => {
+            if let Ok(values) = serde_json::from_value::<Vec<(u64, bool)>>(value) {
+                let mut state = shared.lock().unwrap();
+                for (id, changed) in values {
+                    changed_state |= state.changed.insert(id, changed).unwrap_or(false) != changed;
+                }
+            }
+        }
+        other => {
+            let mut state = shared.lock().unwrap();
+            changed_state = true;
+            state.connected = false;
+            state.trusted = false;
+            state.error = Some(
+                other
+                    .err()
+                    .unwrap_or_else(|| "Invalid host change response.".into()),
+            );
+        }
+    }
+    if changed_state {
+        notify(shared);
+    }
+}
 impl Connection {
     pub fn connect(config: Config) -> Result<Arc<Self>, String> {
         config.validate()?;
@@ -320,9 +386,8 @@ impl Connection {
             reconnecting: false,
             retry: Retry::default(),
             error: None,
-            pending: vec![],
+            pending: VecDeque::new(),
             pending_bytes: 0,
-            oldest: None,
             infos: HashMap::new(),
             changed: HashMap::new(),
             trusted: false,
@@ -333,21 +398,29 @@ impl Connection {
         let settings = config.clone();
         std::thread::spawn(move || {
             let mut change_cursor = 0usize;
+            let mut next_change = Instant::now() + CHANGE_POLL_INTERVAL;
             loop {
-                let (retry, deadline) = {
+                let (connected, retry, deadline) = {
                     let mut state = shared.lock().unwrap();
                     let now = Instant::now();
                     if state.connected {
-                        (false, Some(now + CHANGE_POLL_INTERVAL))
+                        (true, false, Some(next_change))
                     } else if !state.reconnecting && client.is_failed() {
                         let deadline = state.retry.schedule(now);
-                        (state.retry.due(now), deadline)
+                        (false, state.retry.due(now), deadline)
                     } else {
-                        (false, None)
+                        (false, false, None)
                     }
                 };
                 if retry {
                     let _ = reconnect(&settings, &mut client, &shared);
+                    next_change = Instant::now() + CHANGE_POLL_INTERVAL;
+                    continue;
+                }
+                // Servicing queued work must not postpone file changes forever.
+                if connected && Instant::now() >= next_change {
+                    poll_changes(&mut client, &shared, &mut change_cursor);
+                    next_change = Instant::now() + CHANGE_POLL_INTERVAL;
                     continue;
                 }
                 // A disconnected workspace without a scheduled retry can sleep
@@ -361,73 +434,33 @@ impl Connection {
                 let work = match next_work {
                     Ok(w) => w,
                     Err(mpsc::RecvTimeoutError::Disconnected) => break,
-                    Err(_) => {
-                        let connected = shared.lock().unwrap().connected;
-                        if connected {
-                            let mut changed_state = false;
-                            let ids = {
-                                let s = shared.lock().unwrap();
-                                let mut ids =
-                                    s.infos.values().map(|i| i.document).collect::<Vec<_>>();
-                                ids.sort_unstable();
-                                ids.dedup();
-                                let total = ids.len();
-                                let selected = ids
-                                    .into_iter()
-                                    .cycle()
-                                    .skip(if total == 0 { 0 } else { change_cursor % total })
-                                    .take(total.min(8))
-                                    .collect::<Vec<_>>();
-                                change_cursor = change_cursor.wrapping_add(8);
-                                selected
-                            };
-                            match rpc(&mut client, Request::Changes { documents: ids }) {
-                                Ok(Response::Value { value }) => {
-                                    if let Ok(values) =
-                                        serde_json::from_value::<Vec<(u64, bool)>>(value)
-                                    {
-                                        let mut s = shared.lock().unwrap();
-                                        for (id, changed) in values {
-                                            changed_state |=
-                                                s.changed.insert(id, changed).unwrap_or(false)
-                                                    != changed;
-                                        }
-                                    }
-                                }
-                                other => {
-                                    let mut s = shared.lock().unwrap();
-                                    changed_state = true;
-                                    s.connected = false;
-                                    s.trusted = false;
-                                    s.error =
-                                        Some(other.err().unwrap_or_else(|| {
-                                            "Invalid host change response.".into()
-                                        }));
-                                }
-                            }
-                            if changed_state {
-                                notify(&shared);
-                            }
-                        }
-                        continue;
-                    }
+                    Err(mpsc::RecvTimeoutError::Timeout) => continue,
                 };
                 match work {
                     Work::Call(request, reply) => {
-                        let result = if shared.lock().unwrap().connected {
-                            rpc(&mut client, request)
+                        let result = if connected {
+                            let trust = match &request {
+                                Request::Trust { allow, .. } => Some(*allow),
+                                _ => None,
+                            };
+                            let result = rpc(&mut client, request);
+                            if client.is_failed() {
+                                let mut state = shared.lock().unwrap();
+                                state.connected = false;
+                                state.trusted = false;
+                                state.error = result.as_ref().err().cloned();
+                            } else if let (Some(allow), Ok(Response::Pong {})) = (trust, &result) {
+                                // Publish trust on the serialized transport worker
+                                // before the caller can observe the acknowledgement.
+                                shared.lock().unwrap().trusted = allow;
+                            }
+                            result
                         } else {
                             Err(
                             "The remote workspace is disconnected. Reconnect before continuing."
                                 .into(),
                         )
                         };
-                        if client.is_failed() {
-                            let mut state = shared.lock().unwrap();
-                            state.connected = false;
-                            state.trusted = false;
-                            state.error = result.as_ref().err().cloned();
-                        }
                         let _ = reply.send(result);
                     }
                     Work::Edit(request, path) => {
@@ -442,20 +475,7 @@ impl Connection {
                             .and_then(|response| durable_info(&request, response));
                         let mut s = shared.lock().unwrap();
                         match result {
-                            Ok(info) => {
-                                if !s.pending.is_empty() {
-                                    s.pending.remove(0);
-                                }
-                                s.pending_bytes = s.pending.iter().map(|(r, _)| edit_cost(r)).sum();
-                                if s.pending.is_empty() {
-                                    s.oldest = None;
-                                }
-                                if let Some(current) = s.infos.get_mut(&path) {
-                                    if info.revision >= current.revision {
-                                        *current = info;
-                                    }
-                                }
-                            }
+                            Ok(info) => s.acknowledge_edit(&path, info),
                             other => {
                                 s.connected = false;
                                 s.trusted = false;
@@ -484,6 +504,7 @@ impl Connection {
                     Work::Reconnect(reply) => {
                         shared.lock().unwrap().retry = Retry::default();
                         let result = reconnect(&settings, &mut client, &shared);
+                        next_change = Instant::now() + CHANGE_POLL_INTERVAL;
                         let _ = reply.send(result);
                     }
                 }
@@ -587,7 +608,7 @@ impl Connection {
             let through = state
                 .pending
                 .iter()
-                .filter_map(|(request, _)| edit_identity(request))
+                .filter_map(|edit| edit_identity(&edit.request))
                 .collect();
             self.tx
                 .try_send(Work::Barrier(through, tx))
@@ -618,19 +639,31 @@ impl Connection {
     pub fn trust(&self, allow: bool) -> Result<(), String> {
         self.flush()?;
         let epoch = self.state.lock().unwrap().epoch;
-        self.call(Request::Trust { epoch, allow })?;
-        self.state.lock().unwrap().trusted = allow;
-        notify(&self.state);
+        if !matches!(
+            self.call(Request::Trust { epoch, allow })?,
+            Response::Pong {}
+        ) {
+            return Err("Invalid SSH execution trust reply.".into());
+        }
         Ok(())
     }
     pub fn writable(&self) -> bool {
         let s = self.state.lock().unwrap();
-        s.connected
-            && s.error.is_none()
-            && s.pending.len() < 64
-            && s.pending_bytes < 1024 * 1024
-            && s.oldest
-                .is_none_or(|t| t.elapsed() < Duration::from_secs(2))
+        s.can_edit_until_deadline()
+            && s.oldest_edit_deadline()
+                .is_none_or(|deadline| deadline > Instant::now())
+    }
+    /// Repaint once when a still-editable workspace would pause for durability.
+    /// Acknowledgements and connection transitions wake the UI independently.
+    pub fn backpressure_repaint_after(&self) -> Option<Duration> {
+        let s = self.state.lock().unwrap();
+        if !s.can_edit_until_deadline() {
+            return None;
+        }
+        let delay = s
+            .oldest_edit_deadline()?
+            .checked_duration_since(Instant::now())?;
+        (!delay.is_zero()).then_some(delay)
     }
     pub fn status(&self) -> (bool, bool, usize, String) {
         let s = self.state.lock().unwrap();
@@ -795,10 +828,10 @@ impl Connection {
             Action::Edit { text, .. } | Action::EditBytes { text, .. } => text.len() + 128,
             _ => 128,
         };
-        if s.pending.len() >= 64
-            || s.pending_bytes + cost > 1024 * 1024
-            || s.oldest
-                .is_some_and(|t| t.elapsed() > Duration::from_secs(2))
+        if s.pending.len() >= MAX_PENDING_EDITS
+            || s.pending_bytes + cost > MAX_PENDING_BYTES
+            || s.oldest_edit_deadline()
+                .is_some_and(|deadline| deadline <= Instant::now())
         {
             return Err(
                 "Host durability is behind. Wait for receipts before editing further.".into(),
@@ -820,11 +853,12 @@ impl Connection {
         self.tx
             .try_send(Work::Edit(request.clone(), key.clone()))
             .map_err(|_| "Remote edit queue is full.")?;
-        s.pending.push((request, key.clone()));
+        s.pending.push_back(PendingEdit {
+            request,
+            path: key.clone(),
+            queued_at: Instant::now(),
+        });
         s.pending_bytes += cost;
-        if s.oldest.is_none() {
-            s.oldest = Some(Instant::now());
-        }
         s.infos.get_mut(&key).unwrap().revision = sequence;
         drop(s);
         Ok(())
@@ -1429,6 +1463,14 @@ impl Connection {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    fn push_edit(state: &mut State, request: Request, queued_at: Instant) {
+        state.pending_bytes += edit_cost(&request);
+        state.pending.push_back(PendingEdit {
+            request,
+            path: "file".into(),
+            queued_at,
+        });
+    }
     #[test]
     fn reconnect_replays_in_order_and_retains_the_unacknowledged_tail() {
         let remote = disconnected();
@@ -1442,9 +1484,8 @@ pub(crate) mod tests {
         };
         {
             let mut state = remote.state.lock().unwrap();
-            state.pending = vec![(request(1), "file".into()), (request(2), "file".into())];
-            state.pending_bytes = state.pending.iter().map(|(r, _)| edit_cost(r)).sum();
-            state.oldest = Some(Instant::now());
+            push_edit(&mut state, request(1), Instant::now());
+            push_edit(&mut state, request(2), Instant::now());
         }
         let mut received = vec![];
         let result = replay_pending(&remote.state, 7, |request| {
@@ -1477,14 +1518,14 @@ pub(crate) mod tests {
         assert_eq!(received, [1, 2]);
         let state = remote.state.lock().unwrap();
         assert_eq!(state.pending.len(), 1);
-        assert_eq!(edit_identity(&state.pending[0].0), Some((4, 2)));
-        assert_eq!(state.pending_bytes, edit_cost(&state.pending[0].0));
-        assert!(state.oldest.is_some());
+        assert_eq!(edit_identity(&state.pending[0].request), Some((4, 2)));
+        assert_eq!(state.pending_bytes, edit_cost(&state.pending[0].request));
     }
     #[test]
     fn receipt_for_another_sequence_cannot_discard_a_pending_edit() {
         let remote = disconnected();
-        remote.state.lock().unwrap().pending.push((
+        push_edit(
+            &mut remote.state.lock().unwrap(),
             Request::Apply {
                 session: "test".into(),
                 epoch: 1,
@@ -1493,8 +1534,8 @@ pub(crate) mod tests {
                 base_revision: 0,
                 action: Action::Undo {},
             },
-            "file".into(),
-        ));
+            Instant::now(),
+        );
         let result = replay_pending(&remote.state, 2, |_| {
             Ok(Response::Durable {
                 sequence: 2,
@@ -1545,7 +1586,7 @@ pub(crate) mod tests {
             action: Action::Undo {},
         };
         let mut state = remote.state.lock().unwrap();
-        state.pending.push((request.clone(), "file".into()));
+        push_edit(&mut state, request.clone(), Instant::now());
         assert!(queued_edit_pending(&state, &request));
         state.pending.clear();
         assert!(!queued_edit_pending(&state, &request));
@@ -1576,9 +1617,8 @@ pub(crate) mod tests {
                 reconnecting: false,
                 retry: Retry::default(),
                 error: None,
-                pending: vec![],
+                pending: VecDeque::new(),
                 pending_bytes: 0,
-                oldest: None,
                 infos: HashMap::new(),
                 changed: HashMap::new(),
                 trusted: false,
@@ -1643,7 +1683,7 @@ pub(crate) mod tests {
             },
         };
         let mut state = state.lock().unwrap();
-        state.pending.push((edit, "path".into()));
+        push_edit(&mut state, edit, Instant::now());
         assert!(
             barrier_result(&state, &[(1, 1)]).is_err(),
             "an earlier unacknowledged edit cannot pass"
@@ -1670,6 +1710,81 @@ pub(crate) mod tests {
         notify(&remote.state);
         assert!(called.load(Ordering::Relaxed));
         remote.state.lock().unwrap().wake = None;
+    }
+    #[test]
+    fn durability_deadline_follows_the_oldest_unacknowledged_edit() {
+        let remote = disconnected();
+        let edit = |sequence| Request::Apply {
+            session: "test".into(),
+            epoch: 1,
+            document: 4,
+            sequence,
+            base_revision: sequence - 1,
+            action: Action::Undo {},
+        };
+        let right_now = Instant::now();
+        {
+            let mut state = remote.state.lock().unwrap();
+            state.connected = true;
+            push_edit(&mut state, edit(1), right_now - EDIT_AGE_LIMIT);
+            push_edit(&mut state, edit(2), right_now);
+        }
+        assert!(!remote.writable());
+        assert!(remote.backpressure_repaint_after().is_none());
+        {
+            let mut state = remote.state.lock().unwrap();
+            state.acknowledge_edit(
+                "file",
+                DocumentInfo {
+                    document: 4,
+                    revision: 1,
+                    bytes: 0,
+                    path: b"file".to_vec(),
+                    saved_revision: 0,
+                    encoding: "UTF-8".into(),
+                    bom: false,
+                    dirty: true,
+                },
+            );
+            assert_eq!(
+                state.oldest_edit_deadline(),
+                Some(right_now + EDIT_AGE_LIMIT)
+            );
+            assert_eq!(state.pending_bytes, edit_cost(&edit(2)));
+        }
+        assert!(remote.writable());
+        assert!(remote.backpressure_repaint_after().is_some());
+        let mut state = remote.state.lock().unwrap();
+        state.connected = false;
+        assert_eq!(state.pending.len(), 1);
+        drop(state);
+        assert!(!remote.writable());
+        assert!(remote.backpressure_repaint_after().is_none());
+    }
+
+    #[test]
+    fn a_trust_reply_cannot_restore_trust_after_disconnect() {
+        let mut remote = disconnected();
+        let (tx, rx) = mpsc::sync_channel(1);
+        remote.tx = tx;
+        let state = remote.state.clone();
+        state.lock().unwrap().connected = true;
+        let caller = std::thread::spawn(move || remote.trust(true));
+        let Work::Barrier(_, reply) = rx.recv_timeout(Duration::from_secs(5)).unwrap() else {
+            panic!("expected durability check before trust");
+        };
+        reply.send(Ok(())).unwrap();
+        let Work::Call(Request::Trust { allow: true, .. }, reply) =
+            rx.recv_timeout(Duration::from_secs(5)).unwrap()
+        else {
+            panic!("expected trust request");
+        };
+        // The transport can process a disconnect after sending the trust
+        // acknowledgement, before the trust caller regains the state lock.
+        state.lock().unwrap().connected = false;
+        reply.send(Ok(Response::Pong {})).unwrap();
+        caller.join().unwrap().unwrap();
+        assert!(!state.lock().unwrap().trusted);
     }
     #[test]
     fn host_paths_cannot_become_local_filesystem_capabilities() {

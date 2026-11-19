@@ -66,6 +66,24 @@ fn run() -> Result<(), String> {
         remote.disconnect()?;
         return Ok(());
     }
+    if args.get(5).is_some_and(|mode| mode == "continuous_work") {
+        use std::io::Read;
+        println!("CHANGE_POLL_READY");
+        std::io::stdin()
+            .read_exact(&mut [0u8])
+            .map_err(|e| e.to_string())?;
+        let end = Instant::now() + Duration::from_secs(6);
+        while !remote.changed(&path).0 {
+            if Instant::now() >= end {
+                return Err("External change was not detected while work stayed active.".into());
+            }
+            remote.flush()?;
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        println!("CHANGE_POLL_OK");
+        remote.disconnect()?;
+        return Ok(());
+    }
     if args.get(5).is_some_and(|mode| mode == "language_servers") {
         use hedit::language_server::{
             manager::{Launch, Registration},
