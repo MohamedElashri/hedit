@@ -593,6 +593,7 @@ class LiveTests(unittest.TestCase):
         self.assertEqual(process.returncode, 0, stderr.decode())
         self.assertIn(b"PENDING_RECONCILIATION_OK", stdout)
         self.assertEqual(self.root.joinpath("file").read_text(), "PENDING_ONCEbase")
+        print(f"\n{stdout.decode().splitlines()[0]}", flush=True)
 
     def test_editor_flush_frontier_allows_later_edits_behind_a_delayed_read(self):
         worker, _ = self.worker()
@@ -700,6 +701,21 @@ class LiveTests(unittest.TestCase):
               f"p95={timings[94]:.2f} p99={timings[98]:.2f}", flush=True)
         self.assertEqual(self.text(wire, doc), "ب🦀"*100)
         self.assertLess(timings[98], 2000, "local commit stalled; inspect storage/transport")
+
+    def test_managed_ssh_cold_and_warm_connection_timings(self):
+        if os.geteuid() == 0:
+            self.skipTest("managed SSH setup requires a non-root account")
+        self.root.joinpath("file").write_text("base")
+        probe = ROOT / "target/debug/examples/remote_workspace_probe"
+        for condition in ("cold", "warm"):
+            result = subprocess.run(
+                [str(probe), str(LAB.client_config), "", str(self.state),
+                 str(self.root), str(LAB.port), "managed_timings"],
+                capture_output=True, text=True, timeout=60,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("Managed SSH ms:", result.stdout)
+            print(f"\n{condition.capitalize()} {result.stdout.strip()}", flush=True)
 
 
 def parse_args(arguments=None):

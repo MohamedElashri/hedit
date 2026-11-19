@@ -163,12 +163,20 @@ impl Client {
     }
 
     pub fn connect_detailed(target: &SshTarget) -> std::result::Result<Self, String> {
-        let mut client = Self::spawn_transport(target.command().map_err(|e| e.to_string())?)
-            .map_err(|e| e.to_string())?;
-        client
+        Self::connect_with_session(target).map(|(client, _)| client)
+    }
+
+    /// Connect and return the recovery session from the validated handshake.
+    pub fn connect_with_session(target: &SshTarget) -> std::result::Result<(Self, String), String> {
+        Self::spawn_with_session(target.command().map_err(|e| e.to_string())?)
+    }
+
+    fn spawn_with_session(command: Command) -> std::result::Result<(Self, String), String> {
+        let mut client = Self::spawn_transport(command).map_err(|e| e.to_string())?;
+        let session = client
             .handshake()
             .map_err(|e| format!("{e}: {}", client.diagnostics().trim()))?;
-        Ok(client)
+        Ok((client, session))
     }
     pub fn spawn(command: Command) -> Result<Self> {
         let mut client = Self::spawn_transport(command)?;
@@ -246,18 +254,17 @@ impl Client {
             diagnostics,
         })
     }
-    fn handshake(&mut self) -> Result<()> {
-        if !matches!(
-            self.call(Request::Hello {})?,
-            Response::Hello {
-                version: VERSION,
-                max_frame: protocol::MAX_FRAME,
-                ..
-            }
-        ) {
+    fn handshake(&mut self) -> Result<String> {
+        let Response::Hello {
+            session,
+            version: VERSION,
+            max_frame: protocol::MAX_FRAME,
+            ..
+        } = self.call(Request::Hello {})?
+        else {
             return Err(Error::Protocol);
-        }
-        Ok(())
+        };
+        Ok(session)
     }
 
     pub fn disconnect(&mut self) {
@@ -408,7 +415,7 @@ impl Drop for Client {
 mod tests {
     use super::*;
 
-    fn fake(mode: &str) -> Client {
+    fn fake_command(mode: &str) -> Command {
         let program = r#"
 import sys,json,struct,time
 def request():
@@ -418,16 +425,38 @@ def request():
 def reply(i,body):
     b=json.dumps(dict(version=wire_version,id=i,result=dict(Ok=body))).encode()
     sys.stdout.buffer.write(struct.pack('>I',len(b))+b);sys.stdout.buffer.flush()
-r=request();wire_version=r['version'];reply(r['id'],dict(kind='hello',version=wire_version,max_frame=65536,session='a'*64,worker_pid=1))
+r=request();wire_version=r['version'];mode=sys.argv[1]
+assert r['request']['op']=='hello'
+reply(r['id'],dict(kind='hello',version=wire_version,max_frame=42 if mode=='wrong_frame' else 65536,session='a'*64,worker_pid=1))
+if mode=='wrong_frame':sys.exit(0)
 r=request()
-if sys.argv[1]=='wrong_id':reply(r['id']+1,dict(kind='pong'))
+if mode=='hello_once':
+    assert r['id']==1 and r['request']['op']=='ping'
+    reply(r['id'],dict(kind='pong'))
+    sys.exit(0)
+if mode=='wrong_id':reply(r['id']+1,dict(kind='pong'))
 time.sleep(10)
 "#;
         let mut command = Command::new("python3");
         command.arg("-c").arg(program).arg(mode);
-        let mut client = Client::spawn(command).unwrap();
+        command
+    }
+
+    fn fake(mode: &str) -> Client {
+        let mut client = Client::spawn(fake_command(mode)).unwrap();
         client.deadline = Duration::from_millis(100);
         client
+    }
+
+    #[test]
+    fn validated_handshake_returns_the_session_without_a_second_hello() {
+        let (mut client, session) = Client::spawn_with_session(fake_command("hello_once")).unwrap();
+        assert_eq!(session, "a".repeat(64));
+        assert!(matches!(
+            client.call(Request::Ping {}),
+            Ok(Response::Pong {})
+        ));
+        assert!(Client::spawn_with_session(fake_command("wrong_frame")).is_err());
     }
 
     #[test]

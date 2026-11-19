@@ -26,6 +26,7 @@ const URI_SET: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
     .remove(b'-')
     .remove(b'_')
     .remove(b'~');
+const CHANGE_POLL_INTERVAL: Duration = Duration::from_millis(750);
 type Reply = mpsc::SyncSender<Result<Response, String>>;
 enum Work {
     Call(Request, Reply),
@@ -163,10 +164,9 @@ fn establish(
     config: &Config,
     expected: Option<&str>,
 ) -> Result<(Client, String, u64, String), String> {
-    let mut client=Client::connect_detailed(&config.target).map_err(|e|format!("Cannot connect securely: {e}. Check the pinned host key, SSH key, and installed helper."))?;
-    let Response::Hello { session, .. } = rpc(&mut client, Request::Hello {})? else {
-        return Err("Invalid helper handshake.".into());
-    };
+    let (mut client, session) = Client::connect_with_session(&config.target).map_err(|e| {
+        format!("Cannot connect securely: {e}. Check the pinned host key, SSH key, and installed helper.")
+    })?;
     if expected.is_some_and(|s| s != session) {
         return Err("The host recovery session changed. Pending edits remain in memory; reconnect to the original state directory.".into());
     }
@@ -211,13 +211,16 @@ impl Default for Retry {
     }
 }
 impl Retry {
-    fn schedule(&mut self) {
-        if self.enabled && self.attempts < 5 && self.next.is_none() {
-            self.next = Some(Instant::now() + Duration::from_secs(1 << self.attempts));
+    fn schedule(&mut self, now: Instant) -> Option<Instant> {
+        if self.enabled && self.attempts < 5 {
+            let delay = Duration::from_secs(1 << self.attempts);
+            Some(*self.next.get_or_insert(now + delay))
+        } else {
+            None
         }
     }
-    fn due(&mut self) -> bool {
-        if self.next.is_some_and(|next| Instant::now() >= next) {
+    fn due(&mut self, now: Instant) -> bool {
+        if self.next.is_some_and(|next| now >= next) {
             self.next = None;
             self.attempts += 1;
             true
@@ -331,19 +334,31 @@ impl Connection {
         std::thread::spawn(move || {
             let mut change_cursor = 0usize;
             loop {
-                let retry = {
+                let (retry, deadline) = {
                     let mut state = shared.lock().unwrap();
-                    if !state.connected && !state.reconnecting && client.is_failed() {
-                        state.retry.schedule();
-                        state.retry.due()
+                    let now = Instant::now();
+                    if state.connected {
+                        (false, Some(now + CHANGE_POLL_INTERVAL))
+                    } else if !state.reconnecting && client.is_failed() {
+                        let deadline = state.retry.schedule(now);
+                        (state.retry.due(now), deadline)
                     } else {
-                        false
+                        (false, None)
                     }
                 };
                 if retry {
                     let _ = reconnect(&settings, &mut client, &shared);
+                    continue;
                 }
-                let work = match rx.recv_timeout(Duration::from_millis(750)) {
+                // A disconnected workspace without a scheduled retry can sleep
+                // until the next user action arrives.
+                let next_work = match deadline {
+                    Some(deadline) => {
+                        rx.recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                    }
+                    None => rx.recv().map_err(|_| mpsc::RecvTimeoutError::Disconnected),
+                };
+                let work = match next_work {
                     Ok(w) => w,
                     Err(mpsc::RecvTimeoutError::Disconnected) => break,
                     Err(_) => {
@@ -1501,25 +1516,22 @@ mod tests {
     #[test]
     fn automatic_retries_are_bounded_and_intentional_disconnect_stops_them() {
         let mut retry = Retry::default();
+        let mut now = Instant::now();
         for attempt in 0..5 {
-            retry.schedule();
-            let delay = retry
-                .next
-                .unwrap()
-                .saturating_duration_since(Instant::now());
-            assert!(delay <= Duration::from_secs(1 << attempt));
-            assert!(!retry.due());
-            retry.next = Some(Instant::now());
-            assert!(retry.due());
+            let deadline = now + Duration::from_secs(1 << attempt);
+            assert_eq!(retry.schedule(now), Some(deadline));
+            let before = deadline - Duration::from_millis(1);
+            assert_eq!(retry.schedule(before), Some(deadline));
+            assert!(!retry.due(before));
+            assert!(retry.due(deadline));
+            now = deadline;
         }
-        retry.schedule();
-        assert!(retry.next.is_none());
+        assert_eq!(retry.schedule(now), None);
         let mut stopped = Retry {
             enabled: false,
             ..Retry::default()
         };
-        stopped.schedule();
-        assert!(stopped.next.is_none());
+        assert_eq!(stopped.schedule(now), None);
     }
     #[test]
     fn edits_already_replayed_during_reconnect_are_not_sent_from_the_queue_again() {
