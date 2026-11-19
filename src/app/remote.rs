@@ -1,10 +1,11 @@
-//! SSH controls stay in the remote window; connection settings contain no secrets.
+//! Connect to SSH hosts and workspaces, and control the active remote session.
 use super::*;
 use hedit::remote::{explorer::Catalog, Config as RemoteConfig};
 use hedit_remote::{client::SshTarget, ssh_config};
 #[derive(Default)]
 pub(super) struct RemoteUi {
-    pub dialog: bool,
+    dialog: bool,
+    connect_picker: Option<ConnectPicker>,
     selected_config: String,
     load_started: bool,
     query: String,
@@ -32,6 +33,7 @@ pub(super) struct RemoteUi {
 struct Connecting {
     events: mpsc::Receiver<ConnectEvent>,
     cancel: Arc<std::sync::atomic::AtomicBool>,
+    implicit_home: bool,
 }
 impl Drop for Connecting {
     fn drop(&mut self) {
@@ -43,6 +45,66 @@ enum ConnectEvent {
     Progress(String),
     Prepared(Result<RemoteConfig, String>),
 }
+struct ConnectPicker {
+    query: String,
+    selected: usize,
+    focus: bool,
+    error: Option<String>,
+}
+
+enum ConnectChoice<'a> {
+    Host(&'a str),
+    Workspace(&'a RemoteConfig),
+}
+
+impl ConnectChoice<'_> {
+    fn label(&self) -> String {
+        match self {
+            Self::Host(host) => format!("Connect to {host} · Remote home"),
+            Self::Workspace(config) => {
+                let target = &config.target;
+                let mut host = target.host.clone();
+                if let Some(user) = &target.user {
+                    host = format!("{user}@{host}");
+                }
+                if target.port != 0 {
+                    host.push_str(&format!(":{}", target.port));
+                }
+                let root = if config.root.is_empty() {
+                    "Remote home"
+                } else {
+                    &config.root
+                };
+                format!("Reopen {host} · {root}")
+            }
+        }
+    }
+
+    fn config(&self, ssh_config: Option<PathBuf>) -> RemoteConfig {
+        match self {
+            Self::Host(input) => {
+                let (user, host) = input
+                    .split_once('@')
+                    .map_or((None, *input), |(user, host)| (Some(user.into()), host));
+                RemoteConfig {
+                    target: SshTarget {
+                        host: host.into(),
+                        user,
+                        port: 0,
+                        config: ssh_config,
+                        helper: String::new(),
+                        state: String::new(),
+                    },
+                    root: String::new(),
+                    managed: true,
+                    takeover: false,
+                }
+            }
+            Self::Workspace(config) => (*config).clone(),
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(super) enum Picker {
     Open,
@@ -50,6 +112,66 @@ pub(super) enum Picker {
     Save(u64),
 }
 impl RemoteUi {
+    pub(super) fn overlay_open(&self) -> bool {
+        self.dialog || self.picker.is_some() || self.connect_picker.is_some()
+    }
+
+    pub(super) fn close_overlay(&mut self) {
+        self.dialog = false;
+        self.picker = None;
+        self.connect_picker = None;
+    }
+
+    fn ready(&self) -> bool {
+        self.loading.is_none()
+            && self.saving.is_none()
+            && self.connecting.is_none()
+            && self.pending.is_none()
+    }
+
+    fn ssh_config(&self) -> Option<PathBuf> {
+        self.catalog
+            .as_ref()
+            .and_then(|catalog| catalog.config.clone())
+    }
+
+    fn connect_choices<'a>(&'a self, query: &'a str) -> Vec<ConnectChoice<'a>> {
+        let query = query.trim();
+        let filter = query.to_ascii_lowercase();
+        let mut choices = Vec::new();
+        let exact_host = self
+            .hosts
+            .aliases
+            .iter()
+            .find(|host| host.eq_ignore_ascii_case(query));
+        if let Some(host) = exact_host {
+            choices.push(ConnectChoice::Host(host));
+        }
+        choices.extend(
+            self.hosts
+                .aliases
+                .iter()
+                .filter(|host| {
+                    !host.eq_ignore_ascii_case(query) && host.to_ascii_lowercase().contains(&filter)
+                })
+                .map(|host| ConnectChoice::Host(host)),
+        );
+        if !query.is_empty() && exact_host.is_none() && !query.contains(['/', ' ']) {
+            choices.push(ConnectChoice::Host(query));
+        }
+        if let Some(catalog) = &self.catalog {
+            choices.extend(catalog.workspaces.iter().rev().filter_map(|config| {
+                let choice = ConnectChoice::Workspace(config);
+                choice
+                    .label()
+                    .to_ascii_lowercase()
+                    .contains(&filter)
+                    .then_some(choice)
+            }));
+        }
+        choices
+    }
+
     fn edit(&mut self, config: Option<&RemoteConfig>, default_config: &str) {
         self.editing = config.cloned();
         self.manual_helper = config.is_some_and(|c| !c.managed);
@@ -111,6 +233,128 @@ impl RemoteUi {
     }
 }
 impl HeditApp {
+    pub(super) fn show_ssh_picker(&mut self, ctx: &egui::Context) {
+        if self.workspace.remote.is_some()
+            || self.remote_ui.connecting.is_some()
+            || self.remote_ui.pending.is_some()
+        {
+            self.show_remote_explorer(ctx);
+            return;
+        }
+        self.ensure_remote_catalog(ctx);
+        self.remote_ui.connect_picker = Some(ConnectPicker {
+            query: String::new(),
+            selected: 0,
+            focus: true,
+            error: None,
+        });
+        self.focus_editor = false;
+        ctx.request_repaint();
+    }
+
+    fn ssh_picker(&mut self, ctx: &egui::Context) -> Option<RemoteConfig> {
+        let mut picker = self.remote_ui.connect_picker.take()?;
+        let input_id = egui::Id::new("ssh-connect-input");
+        let focused = ctx.memory(|memory| memory.has_focus(input_id));
+        let take = |key| focused && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, key));
+        let down = take(Key::ArrowDown);
+        let up = take(Key::ArrowUp);
+        let enter = take(Key::Enter);
+        let ready = self.remote_ui.ready();
+        let mut choice = None;
+        let mut advanced = false;
+        let shown = egui::Modal::new(egui::Id::new("ssh-connect-picker")).show(ctx, |ui| {
+            ui.set_width((ctx.screen_rect().width() - 40.0).clamp(0.0, 460.0));
+            ui.heading("Connect via SSH");
+            let input = ui.add(
+                egui::TextEdit::singleline(&mut picker.query)
+                    .id(input_id)
+                    .hint_text("Hostname, SSH alias, user@host, or workspace path")
+                    .desired_width(f32::INFINITY),
+            );
+            if picker.focus {
+                input.request_focus();
+                picker.focus = false;
+            }
+            if input.changed() {
+                picker.selected = 0;
+                picker.error = None;
+            }
+            let choices = self.remote_ui.connect_choices(&picker.query);
+            let adjusted = if down {
+                picker.selected.saturating_add(1)
+            } else if up {
+                picker.selected.saturating_sub(1)
+            } else {
+                picker.selected
+            };
+            picker.selected = adjusted.min(choices.len().saturating_sub(1));
+            if self.remote_ui.loading.is_some() {
+                ui.label("Reading SSH configuration…");
+            } else if choices.is_empty() {
+                ui.label("Enter a hostname, SSH alias, or user@host.");
+            }
+            egui::ScrollArea::vertical()
+                .max_height(250.0_f32.min(ctx.screen_rect().height() * 0.45))
+                .show(ui, |ui| {
+                    for (index, option) in choices.iter().enumerate() {
+                        let selected = index == picker.selected;
+                        let row = ui.add_enabled(
+                            ready,
+                            egui::Button::new(option.label()).selected(selected).wrap(),
+                        );
+                        if selected && (up || down || input.changed()) {
+                            row.scroll_to_me(Some(egui::Align::Center));
+                        }
+                        if row.clicked() || (ready && selected && enter) {
+                            choice = Some(option.config(self.remote_ui.ssh_config()));
+                        }
+                    }
+                });
+            if let Some(error) = &picker.error {
+                ui.colored_label(self.theme.warning.color(), error);
+            }
+            advanced = ui
+                .add_enabled(ready, egui::Button::new("Connection settings…"))
+                .clicked();
+            if advanced {
+                choice = choices
+                    .get(picker.selected)
+                    .map(|option| option.config(self.remote_ui.ssh_config()));
+            }
+        });
+        if shown.should_close() {
+            self.focus_editor = true;
+            return None;
+        }
+        if advanced {
+            let default_config = if choice.is_none() {
+                self.remote_ui.selected_config.clone()
+            } else {
+                String::new()
+            };
+            self.remote_ui.edit(choice.as_ref(), &default_config);
+            return None;
+        }
+        if let Some(config) = choice {
+            match config.validate() {
+                Ok(()) => {
+                    self.focus_editor = true;
+                    return Some(config);
+                }
+                Err(error) => {
+                    picker.error = Some(format!(
+                        "Check the SSH host and connection settings. {error}"
+                    ));
+                    picker.focus = true;
+                    ctx.request_repaint();
+                }
+            }
+        }
+        self.remote_ui.connect_picker = Some(picker);
+        None
+    }
+
     pub(super) fn remote_sidebar_button(&mut self, ui: &mut egui::Ui) {
         if ui
             .add(
@@ -213,6 +457,7 @@ impl HeditApp {
             self.remote_ui.connecting = Some(Connecting {
                 events: rx,
                 cancel: cancel.clone(),
+                implicit_home: config.root.is_empty() && config.target.state.is_empty(),
             });
             self.remote_ui.connection_status = "Connecting to SSH host…".into();
             let ctx = ctx.clone();
@@ -283,10 +528,7 @@ impl HeditApp {
                 ui.close_menu();
             }
         });
-        let ready = self.remote_ui.loading.is_none()
-            && self.remote_ui.saving.is_none()
-            && self.remote_ui.connecting.is_none()
-            && self.remote_ui.pending.is_none();
+        let ready = self.remote_ui.ready();
         ui.horizontal(|ui| {
             if ui
                 .add_enabled(
@@ -295,8 +537,7 @@ impl HeditApp {
                 )
                 .clicked()
             {
-                self.remote_ui
-                    .edit(None, &self.remote_ui.selected_config.clone());
+                self.show_ssh_picker(ui.ctx());
             }
             if ui
                 .add_enabled(ready, egui::Button::new("Refresh"))
@@ -430,55 +671,30 @@ impl HeditApp {
                 });
             }
         }
+        let ssh_config = self.remote_ui.ssh_config();
         for host in &self.remote_ui.hosts.aliases {
             if !host.to_lowercase().contains(&query) {
                 continue;
             }
-            let config = self
-                .remote_ui
-                .catalog
-                .as_ref()
-                .and_then(|catalog| {
-                    catalog
-                        .workspaces
-                        .iter()
-                        .rev()
-                        .find(|c| c.target.host == *host && c.target.config == catalog.config)
-                })
-                .cloned()
-                .unwrap_or_else(|| RemoteConfig {
-                    target: SshTarget {
-                        host: host.clone(),
-                        user: None,
-                        port: 0,
-                        config: self
-                            .remote_ui
-                            .catalog
-                            .as_ref()
-                            .and_then(|c| c.config.clone()),
-                        helper: String::new(),
-                        state: String::new(),
-                    },
-                    root: String::new(),
-                    managed: true,
-                    takeover: false,
-                });
+            let config = || ConnectChoice::Host(host).config(ssh_config.clone());
             let row = ui
                 .add_enabled(
                     ready && self.workspace.remote.is_none() && self.remote_ui.connecting.is_none(),
                     egui::Button::new(format!("{host}  →")).frame(false),
                 )
-                .on_hover_text("Connect to this host. Right-click for connection settings.");
+                .on_hover_text(
+                    "Open the remote home directory. Right-click for connection settings.",
+                );
             if row.clicked() {
-                launch = Some(config.clone());
+                launch = Some(config());
             }
             row.context_menu(|ui| {
-                if ui.button("Connect").clicked() {
-                    launch = Some(config.clone());
+                if ui.button("Connect to remote home").clicked() {
+                    launch = Some(config());
                     ui.close_menu();
                 }
                 if ui.button("Connection settings…").clicked() {
-                    edit = Some(config.clone());
+                    edit = Some(config());
                     ui.close_menu();
                 }
                 if ui.button("SSH configuration…").clicked() {
@@ -525,12 +741,10 @@ impl HeditApp {
                     self.remote_ui.connection_status = message
                 }
                 Some(Ok(ConnectEvent::Prepared(result))) => {
-                    let cancelled = self
-                        .remote_ui
-                        .connecting
+                    let connecting = self.remote_ui.connecting.take();
+                    let cancelled = connecting
                         .as_ref()
                         .is_some_and(|t| t.cancel.load(std::sync::atomic::Ordering::Relaxed));
-                    self.remote_ui.connecting = None;
                     if cancelled {
                         self.notice = "SSH connection cancelled.".into();
                         break;
@@ -538,8 +752,16 @@ impl HeditApp {
                     match result {
                         Ok(config) => {
                             if let Some(mut catalog) = self.remote_ui.catalog.clone() {
-                                match catalog.remember(config.clone()) {
-                                    Ok(()) => self.save_remote_catalog(ctx, catalog),
+                                let result = if connecting.is_some_and(|t| t.implicit_home) {
+                                    catalog.remember_host_home(config.clone())
+                                } else {
+                                    catalog.remember(config.clone())
+                                };
+                                match result {
+                                    Ok(()) if self.remote_ui.catalog.as_ref() != Some(&catalog) => {
+                                        self.save_remote_catalog(ctx, catalog);
+                                    }
+                                    Ok(()) => (),
                                     Err(e) => self.error = Some(e),
                                 }
                             }
@@ -547,7 +769,10 @@ impl HeditApp {
                             resolved.managed = false;
                             self.launch_remote(ctx, resolved);
                         }
-                        Err(e) => self.error = Some(e),
+                        Err(error) => {
+                            self.error =
+                                Some(ssh_setup_error(&self.remote_ui.connection_status, &error));
+                        }
                     }
                     break;
                 }
@@ -634,6 +859,10 @@ impl HeditApp {
             }
         }
         let remote = self.workspace.remote.clone();
+        if let Some(config) = self.ssh_picker(ctx) {
+            self.show_remote_explorer(ctx);
+            self.launch_remote(ctx, config);
+        }
         if self.remote_ui.dialog {
             let mut open = true;
             let mut connect = false;
@@ -883,6 +1112,20 @@ impl HeditApp {
     }
 }
 
+fn ssh_setup_error(progress: &str, error: &str) -> String {
+    let action = if error.contains("Host key verification failed")
+        || error.contains("REMOTE HOST IDENTIFICATION HAS CHANGED")
+    {
+        " Verify the host key in OpenSSH, then retry."
+    } else if error.contains("Permission denied (publickey") {
+        " Check the SSH user and load your key into the SSH agent, then retry."
+    } else {
+        ""
+    };
+    let stage = progress.trim_end_matches('…').to_lowercase();
+    format!("SSH setup failed while {stage}.{} {error}", action)
+}
+
 fn wait_for_window(mut child: std::process::Child) -> Result<(), String> {
     use std::io::Read;
     let start = Instant::now();
@@ -942,9 +1185,140 @@ mod tests {
                 app.shortcuts(ctx);
                 app.chrome(ctx);
                 app.editor(ctx);
+                app.command_palette(ctx);
             },
         )
     }
+
+    fn picker_frame(
+        ctx: &egui::Context,
+        app: &mut HeditApp,
+        events: Vec<egui::Event>,
+    ) -> Option<RemoteConfig> {
+        let mut choice = None;
+        let _ = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(720.0, 480.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ctx| choice = app.ssh_picker(ctx),
+        );
+        choice
+    }
+
+    #[test]
+    fn palette_connect_command_opens_picker_and_escape_closes_it() {
+        let (_dir, ctx, mut app) = app();
+        let size = egui::vec2(720.0, 480.0);
+        app.execute(&ctx, Command::Palette);
+        frame(&ctx, &mut app, size, vec![]);
+        frame(
+            &ctx,
+            &mut app,
+            size,
+            vec![
+                egui::Event::Text("Connect via SSH".into()),
+                crate::app::tests::key(Key::Enter, Modifiers::NONE),
+            ],
+        );
+        assert!(!app.palette);
+        assert!(app.remote_ui.overlay_open());
+        assert!(app.remote_ui.connect_picker.is_some());
+        frame(&ctx, &mut app, size, vec![]);
+        frame(
+            &ctx,
+            &mut app,
+            size,
+            vec![crate::app::tests::key(Key::Escape, Modifiers::NONE)],
+        );
+        assert!(!app.remote_ui.overlay_open());
+        assert!(app.remote_ui.connecting.is_none());
+    }
+
+    #[test]
+    fn ssh_picker_distinguishes_host_home_from_saved_workspace() {
+        let (dir, ctx, mut app) = app();
+        let key = |key| crate::app::tests::key(key, Modifiers::NONE);
+        let ssh_config = dir.path().join("custom-config");
+        let mut workspace = ConnectChoice::Host("devbox").config(Some(ssh_config.clone()));
+        workspace.root = "/projects/demo repo".into();
+        workspace.target.state = "/private/saved-recovery".into();
+        let catalog = app.remote_ui.catalog.as_mut().unwrap();
+        catalog.config = Some(ssh_config.clone());
+        catalog.remember(workspace.clone()).unwrap();
+
+        for (query, use_arrow, saved) in [
+            ("DEVBOX", false, false),
+            ("devbox", true, true),
+            ("demo repo", false, true),
+        ] {
+            app.show_ssh_picker(&ctx);
+            picker_frame(&ctx, &mut app, vec![]);
+            picker_frame(&ctx, &mut app, vec![egui::Event::Text(query.into())]);
+            if use_arrow {
+                picker_frame(&ctx, &mut app, vec![key(Key::ArrowDown)]);
+            }
+            let choice = picker_frame(&ctx, &mut app, vec![key(Key::Enter)]).unwrap();
+            if saved {
+                assert_eq!(choice, workspace);
+            } else {
+                assert_eq!(choice.target.host, "devbox");
+                assert_eq!(choice.target.config.as_ref(), Some(&ssh_config));
+                assert!(choice.managed && choice.root.is_empty() && choice.target.state.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn ssh_picker_validates_direct_user_and_host_without_launching() {
+        let (_dir, ctx, mut app) = app();
+        let key = |key| crate::app::tests::key(key, Modifiers::NONE);
+        app.show_ssh_picker(&ctx);
+        picker_frame(&ctx, &mut app, vec![]);
+        picker_frame(&ctx, &mut app, vec![egui::Event::Text("-invalid".into())]);
+        assert!(picker_frame(&ctx, &mut app, vec![key(Key::Enter)]).is_none());
+        assert!(app
+            .remote_ui
+            .connect_picker
+            .as_ref()
+            .unwrap()
+            .error
+            .is_some());
+
+        app.show_ssh_picker(&ctx);
+        picker_frame(&ctx, &mut app, vec![]);
+        picker_frame(
+            &ctx,
+            &mut app,
+            vec![egui::Event::Text("editor@remote.example".into())],
+        );
+        let choice = picker_frame(&ctx, &mut app, vec![key(Key::Enter)]).unwrap();
+        assert_eq!(choice.target.host, "remote.example");
+        assert_eq!(choice.target.user.as_deref(), Some("editor"));
+        assert_eq!(choice.target.port, 0);
+        assert!(choice.target.config.is_none());
+        assert!(choice.root.is_empty());
+    }
+
+    #[test]
+    fn setup_failure_explains_host_key_and_agent_errors() {
+        let stage = "Connecting to SSH host…";
+        let host_key = ssh_setup_error(stage, "Host key verification failed.");
+        assert!(host_key.contains("Verify the host key in OpenSSH"));
+        let auth = ssh_setup_error(stage, "editor@devbox: Permission denied (publickey).");
+        assert!(auth.contains("load your key into the SSH agent"));
+        assert!(auth.contains("editor@devbox"));
+        let other = ssh_setup_error("Installing helper…", "Unsafe directory permissions.");
+        assert_eq!(
+            other,
+            "SSH setup failed while installing helper. Unsafe directory permissions."
+        );
+    }
+
     #[test]
     fn remote_explorer_is_available_from_the_sidebar_and_filters_hosts() {
         use crate::app::tests::text_rect;
