@@ -37,6 +37,7 @@ class MacPackage(unittest.TestCase):
             intel = root / 'intel'
             arm.write_bytes(b'arm fixture')
             intel.write_bytes(b'intel fixture')
+            (root / 'hedit-remote').write_bytes(b'helper fixture')
             project = root / 'source'
             project.mkdir()
             for filename in ['Cargo.toml', 'README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md', 'CHANGELOG.md', 'LICENSE']:
@@ -63,7 +64,7 @@ class MacPackage(unittest.TestCase):
                             if path.is_file():
                                 output.write(path, path.relative_to(app.parent))
                 version = tomllib.loads((packager.ROOT / 'Cargo.toml').read_text())['package']['version']
-                return subprocess.CompletedProcess(arguments, 0, stdout=f'hedit {version}\n')
+                return subprocess.CompletedProcess(arguments, 0, stdout=f'{"hedit-remote" if str(arguments[0]).endswith("/hedit-remote") else "hedit"} {version}\n')
             with patch.object(packager, 'ROOT', project), patch.object(packager.sys, 'platform', 'darwin'), patch.object(packager.subprocess, 'run', side_effect=run):
                 archive = packager.package(arm, intel, root / 'out')
             with zipfile.ZipFile(archive) as bundle:
@@ -71,6 +72,7 @@ class MacPackage(unittest.TestCase):
                 self.assertEqual(info['CFBundleIdentifier'], 'hedit.hedit')
                 self.assertIn(info['CFBundleShortVersionString'], archive.name)
                 self.assertEqual(bundle.read('hedit.app/Contents/MacOS/hedit'), b'universal fixture')
+                self.assertEqual(bundle.read('hedit.app/Contents/MacOS/hedit-remote'), b'universal fixture')
                 self.assertIn('hedit.app/Contents/Resources/hedit.icns', bundle.namelist())
                 self.assertIn('hedit.app/Contents/Resources/Documentation/LICENSE', bundle.namelist())
                 self.assertEqual(bundle.read('hedit.app/Contents/Resources/Documentation/assets/licenses/egui_commonmark-MIT.txt'),
@@ -98,6 +100,7 @@ class MacPackage(unittest.TestCase):
             arm, intel = root / 'arm', root / 'intel'
             arm.touch()
             intel.touch()
+            (root / 'hedit-remote').touch()
             output = root / 'out'
             output.mkdir()
             version = tomllib.loads((packager.ROOT / 'Cargo.toml').read_text())['package']['version']

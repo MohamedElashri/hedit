@@ -42,11 +42,12 @@ class LinuxRelease(unittest.TestCase):
             names = [f'hedit-1.2.3-linux-{arch}.{kind}' for arch in ['x86_64', 'aarch64']
                      for kind in ['tar.gz', 'deb', 'rpm', 'AppImage']]
             names += ['hedit-1.2.3-macos-universal.zip', 'hedit-1.2.3-windows-x86_64.zip']
+            names += [f'hedit-remote-1.2.3-{platform}' for platform in ['linux-x86_64', 'linux-aarch64', 'macos-universal']]
             for name in names:
                 (directory / name).write_bytes(name.encode())
                 digest = hashlib.sha256(name.encode()).hexdigest()
                 (directory / (name + '.sha256')).write_text(f'{digest}  {name}\n')
-            self.assertEqual(assets.validate(directory, '1.2.3'), 10)
+            self.assertEqual(assets.validate(directory, '1.2.3'), 13)
             missing = directory / 'hedit-1.2.3-linux-aarch64.AppImage'
             data = missing.read_bytes(); missing.unlink()
             with self.assertRaisesRegex(ValueError, 'missing='):

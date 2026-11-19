@@ -10,6 +10,7 @@ use hedit_remote::{
     protocol::{Action, DocumentInfo, Request, Response},
 };
 use serde_json::Value;
+pub mod bootstrap;
 pub mod explorer;
 use std::{
     collections::HashMap,
@@ -37,15 +38,23 @@ enum Work {
 pub struct Config {
     pub target: SshTarget,
     pub root: String,
+    /// Resolve account paths and install the matching user-local helper.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub managed: bool,
     #[serde(skip)]
     pub takeover: bool,
 }
 impl Config {
     pub fn validate(&self) -> Result<(), String> {
-        self.target
-            .command()
-            .map_err(|e| format!("Invalid SSH settings: {e}"))?;
-        if !self.root.starts_with('/') || self.root.contains(['\0', '\r', '\n']) {
+        (if self.managed {
+            self.target.command_for(":")
+        } else {
+            self.target.command()
+        })
+        .map_err(|e| format!("Invalid SSH settings: {e}"))?;
+        if !(self.root.starts_with('/') || self.managed && self.root.is_empty())
+            || self.root.contains(['\0', '\r', '\n'])
+        {
             return Err("Use an absolute SSH workspace path.".into());
         }
         Ok(())
@@ -287,6 +296,11 @@ fn reconnect(
 impl Connection {
     pub fn connect(config: Config) -> Result<Arc<Self>, String> {
         config.validate()?;
+        let config = if config.managed {
+            bootstrap::prepare(config, &AtomicBool::new(false), |_| {})?
+        } else {
+            config
+        };
         let (mut client, session, epoch, token) = establish(&config, None)?;
         let state = Arc::new(Mutex::new(State {
             epoch,
@@ -1530,6 +1544,7 @@ mod tests {
                     state: "/state".into(),
                 },
                 root: "/srv/work".into(),
+                managed: false,
                 takeover: false,
             },
             prefix: "hedit-ssh://test/".into(),

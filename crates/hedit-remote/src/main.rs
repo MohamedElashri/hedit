@@ -8,6 +8,25 @@ use std::{
 };
 
 fn main() {
+    #[cfg(unix)]
+    if std::env::args().nth(1).as_deref() == Some("setup") {
+        let args: Vec<_> = std::env::args().skip(2).collect();
+        let result = if args.is_empty() {
+            hedit_remote::install::setup("")
+        } else if args.len() == 2 && args[0] == "--workspace" {
+            hedit_remote::install::setup(&args[1])
+        } else {
+            Err("Usage: hedit-remote setup [--workspace ABSOLUTE_DIRECTORY]".into())
+        };
+        match result {
+            Ok(info) => println!("{}", serde_json::to_string(&info).unwrap()),
+            Err(error) => {
+                eprintln!("hedit-remote: {error}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     if let Err(error) = run() {
         eprintln!("hedit-remote: {error}");
         std::process::exit(1);
@@ -19,6 +38,10 @@ fn run() -> Result<(), Error> {
     let Some(mode) = args.next() else {
         return Err(Error::Protocol);
     };
+    if mode == "--version" {
+        println!("hedit-remote {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
     if mode == "--help" {
         println!("hedit SSH workspace helper\n\
             worker --state ABSOLUTE_PRIVATE_DIRECTORY [--idle-seconds N]\n\
@@ -30,7 +53,7 @@ fn run() -> Result<(), Error> {
         return Ok(());
     }
     let (mut state, mut host, mut helper, mut user, mut config) = (None, None, None, None, None);
-    let (mut port, mut idle) = (22, 300_u64);
+    let (mut port, mut idle) = (0, 300_u64);
     while let Some(key) = args.next() {
         let value = args.next().ok_or(Error::Protocol)?;
         match key.as_str() {

@@ -152,16 +152,24 @@ impl Options {
             }
         }
         if let Some(host) = ssh {
+            let managed = helper.is_none() && state.is_none();
+            if !managed && (helper.is_none() || state.is_none() || root.is_none()) {
+                return Err(
+                    "Custom SSH setup requires --ssh-root, --ssh-helper, and --ssh-state together."
+                        .into(),
+                );
+            }
             options.remote = Some(crate::remote::Config {
                 target: hedit_remote::client::SshTarget {
                     host,
                     user,
                     port,
                     config,
-                    helper: helper.ok_or("--ssh-helper is required")?,
-                    state: state.ok_or("--ssh-state is required")?,
+                    helper: helper.unwrap_or_default(),
+                    state: state.unwrap_or_default(),
                 },
-                root: root.ok_or("--ssh-root is required")?,
+                root: root.unwrap_or_default(),
+                managed,
                 takeover,
             });
             if options.stdin || options.wait {
@@ -221,6 +229,20 @@ mod language_server_tests {
     use super::*;
     fn parse(args: &[&str]) -> Result<Options, String> {
         Options::parse(args.iter().map(OsString::from))
+    }
+    #[test]
+    fn ssh_alias_only_uses_managed_setup_and_optional_workspace() {
+        let config = parse(&["--ssh", "devbox"]).unwrap().remote.unwrap();
+        assert!(config.managed && config.root.is_empty());
+        assert_eq!(config.target.port, 0);
+        assert!(config.target.user.is_none());
+        assert!(parse(&["--ssh", "devbox", "--ssh-helper", "/helper"]).is_err());
+        let config = parse(&["--ssh", "devbox", "--ssh-root", "/work"])
+            .unwrap()
+            .remote
+            .unwrap();
+        assert!(config.managed);
+        assert_eq!(config.root, "/work");
     }
     #[test]
     fn ssh_port_inherits_config_but_explicit_zero_is_rejected() {

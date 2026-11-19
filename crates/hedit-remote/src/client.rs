@@ -16,7 +16,18 @@ pub struct SshTarget {
     pub port: u16,
     /// Explicitly trusted local configuration, never read from a workspace.
     pub config: Option<PathBuf>,
-    /// Manually installed trusted executable and private state on the host.
+    /// Trusted executable and private state on the host.
+    pub helper: String,
+    pub state: String,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetupInfo {
+    pub version: String,
+    pub uid: u32,
+    pub home: String,
+    pub root: String,
     pub helper: String,
     pub state: String,
 }
@@ -30,6 +41,16 @@ fn quote(s: &str) -> Result<String> {
 
 impl SshTarget {
     pub fn command(&self) -> Result<Command> {
+        self.command_for(&format!(
+            "exec {} bridge --state {}",
+            quote(&self.helper)?,
+            quote(&self.state)?
+        ))
+    }
+
+    /// Run application-owned bootstrap code using exactly the RPC SSH policy.
+    /// Callers must quote any data interpolated into the remote command.
+    pub fn command_for(&self, remote_command: &str) -> Result<Command> {
         if self.host.is_empty()
             || self.host.starts_with('-')
             || self.host.len() > 253
@@ -102,11 +123,7 @@ impl SshTarget {
         if let Some(user) = &self.user {
             command.arg("-l").arg(user);
         }
-        command.arg("--").arg(&self.host).arg(format!(
-            "exec {} bridge --state {}",
-            quote(&self.helper)?,
-            quote(&self.state)?
-        ));
+        command.arg("--").arg(&self.host).arg(remote_command);
         // Do not transmit editor/tool environment secrets through inherited SendEnv.
         let allowed = [
             "HOME",

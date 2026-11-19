@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 VERSION = tomllib.loads((ROOT / 'Cargo.toml').read_text())['package']['version']
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--binary', type=Path, default=ROOT / 'target/release/hedit')
+parser.add_argument('--helper', type=Path, default=ROOT / 'target/release/hedit-remote')
 args = parser.parse_args()
 with tempfile.TemporaryDirectory(prefix='hedit-package-smoke-') as work:
     work = Path(work)
@@ -29,7 +30,7 @@ with tempfile.TemporaryDirectory(prefix='hedit-package-smoke-') as work:
         shutil.copy2(ROOT / relative, source / relative)
     (source / 'examples/development_probe.rs').write_text('not a release resource')
     subprocess.run([sys.executable, str(source / 'scripts/package-linux.py'),
-                    '--binary', str(args.binary.resolve()), '--out-dir', str(work)], check=True)
+                    '--binary', str(args.binary.resolve()), '--helper', str(args.helper.resolve()), '--out-dir', str(work)], check=True)
     archive = next(work.glob('hedit-*.tar.gz'))
     checksum = archive.with_name(archive.name + '.sha256').read_text().split()[0]
     assert hashlib.sha256(archive.read_bytes()).hexdigest() == checksum
@@ -41,6 +42,8 @@ with tempfile.TemporaryDirectory(prefix='hedit-package-smoke-') as work:
     result = subprocess.run([str(prefix / 'bin/hedit'), '--version'], check=True,
                             capture_output=True, text=True, timeout=10)
     assert result.stdout.strip() == f'hedit {VERSION}', result.stdout
+    helper = prefix / 'bin/hedit-remote'
+    assert subprocess.check_output([str(helper), '--version'], text=True).strip() == f'hedit-remote {VERSION}'
     for relative in ['share/applications/hedit.desktop',
                      'share/icons/hicolor/scalable/apps/hedit.svg',
                      'share/doc/hedit/README.md', 'share/doc/hedit/USER_GUIDE.md',

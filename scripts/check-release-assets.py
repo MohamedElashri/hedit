@@ -12,6 +12,7 @@ def validate(directory, version):
     packages = [f'hedit-{version}-linux-{arch}.{kind}'
                 for arch in ['x86_64', 'aarch64'] for kind in ['tar.gz', 'deb', 'rpm', 'AppImage']]
     packages += [f'hedit-{version}-macos-universal.zip', f'hedit-{version}-windows-x86_64.zip']
+    packages += [f'hedit-remote-{version}-{platform}' for platform in ['linux-x86_64', 'linux-aarch64', 'macos-universal']]
     expected = set(packages + [name + '.sha256' for name in packages])
     actual = {p.name for p in directory.iterdir()}
     if actual != expected:

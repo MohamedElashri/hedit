@@ -122,6 +122,24 @@ for consistent focus/Escape. Help resolves only explicitly bundled documents.
 
 ## SSH architecture and testing
 
+Managed SSH connections use a bounded bootstrap before opening the RPC transport.
+The client probes UID, home, OS, and architecture with the same restricted OpenSSH
+options as RPC; root accounts are rejected before setup writes anything. Native
+packages include `hedit-remote`; cross-platform clients fetch an exact-version
+standalone helper and verify its release checksum before uploading. Published Linux
+helpers use static musl targets so remote hosts do not need a matching glibc. Release
+publication requires all three standalone helpers and their checksums in addition
+to the editor packages.
+
+The helper's `setup` command installs atomically under
+`~/.local/share/hedit/remote/<version>/<os>-<arch>/hedit-remote` with mode 0700.
+Descriptor-relative, no-symlink checks validate ownership and mutable ancestors;
+an install lock serializes concurrent setup. Recovery directories remain under
+`~/.local/state/hedit/remote/<workspace-sha256>` across helper upgrades. Temporary
+uploads use private directories under the same account's home and are removed
+on completion. No sudo, package manager, or remote download command is used.
+
+
 [User setup and limits](USER_GUIDE.md#ssh-remote-workspaces). Each connection owns
 a native window. Remote documents are memory-backed/ephemeral; local recovery
 rejects them and launch metadata excludes content/tool output. Recovery, undo,

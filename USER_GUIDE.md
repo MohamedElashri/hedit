@@ -150,57 +150,54 @@ builds, terminals, and recovery run on the host; the interface runs locally.
 
 ### Connect
 
-Install the helper from the same release on a Linux or macOS host:
+Click a host in **Remote Explorer** to connect. The first connection opens the
+remote account's home directory; saved workspaces reopen their saved folder.
+The sidebar discovers aliases from `~/.ssh/config`, the system config, and
+included files. User and port come from OpenSSH unless explicitly overridden.
+Wildcard and negated selectors do not appear as destinations.
+
+hedit checks the host platform, installs the matching helper for the non-root SSH
+account, and opens a separate remote window. It uses a bundled helper when the
+platform matches, or downloads the exact editor version and verifies its SHA-256
+checksum locally before transferring it over SSH. The host needs no Cargo,
+compiler, internet access, or elevated privileges. Later connections reuse the
+versioned user-local installation. Setup progress and cancellation appear in the
+sidebar. Automatic setup refuses root accounts and unsafe directory permissions.
+
+Right-click a host for **Connection settings…** or **SSH configuration…**. Connection
+settings let you select a workspace and override user, port, or trusted config.
+For an existing custom installation, enable **Use a manually installed helper**
+and supply absolute helper and private recovery paths. Saved workspaces also
+have right-click actions to edit or remove them. Filter by host or workspace path.
+SSH configuration settings provide **Open SSH config…** and **Refresh hosts**.
+Discovery reads files without executing `Match exec`; OpenSSH resolves options
+when connecting, so configuration files must be trusted.
+
+Host keys must already be verified with OpenSSH. Authentication uses keys or an
+existing agent; passwords and interactive MFA remain unsupported. Unlock the
+agent before connecting. Saved metadata contains host names and paths, without
+keys, passwords, or document content. Corrupt metadata is reported and preserved.
+
+The command line uses the same automatic setup:
 
 ```sh
-cargo build --release --locked -p hedit-remote
-mkdir -p "$HOME/.local/bin"
-install -m 700 target/release/hedit-remote "$HOME/.local/bin/hedit-remote"
+hedit --ssh devbox
+hedit --ssh devbox --ssh-root /home/me/project src/main.rs
 ```
 
-Verify the host key with OpenSSH first. Unknown/changed keys are refused.
-Authentication uses keys or an existing agent; passwords and interactive MFA are
-unsupported. Unlock the agent and approve its prompt within the 15-second startup
-budget. Open **Remote Explorer** in the sidebar (also available through
-**File → Connect via SSH…**). It lists concrete `Host` aliases from your
-`~/.ssh/config`, the system SSH config, and included files. Discovery reads files
-without executing `Match exec`; OpenSSH resolves connection options when you
-connect. Wildcard and negated host selectors do not appear as destinations.
-
-Select an alias or **+ Connect…**, enter the absolute workspace, helper and private
-state paths, then choose **Open remote window** or **Save workspace**. Saved
-workspaces reopen with one click; right-click to edit or remove them. Filter the
-list by host or workspace path. **Open SSH config…** opens the local config for
-adding or editing hosts; choose **Refresh** afterwards. To use another trusted
-config, enter its absolute path and Refresh. The selection and workspace settings
-are kept in `ssh-workspaces.json` beside your local editor settings, without keys,
-passwords, or document content. A corrupt metadata file is reported and preserved.
-
-You can also connect from the command line:
-
-```sh
-hedit --ssh devbox \
-  --ssh-root /home/me/project \
-  --ssh-helper /home/me/.local/bin/hedit-remote \
-  --ssh-state /home/me/.local/state/hedit/project \
-  src/main.rs
-```
-
-Paths must be absolute; use a separate private state directory per workspace.
-Optional flags: `--ssh-user USER`, `--ssh-port PORT`, `--ssh-config /absolute/config`,
-`--ssh-takeover`. User and port inherit your SSH configuration unless explicitly
-overridden. Leave these fields blank in the connection dialog to inherit them.
-The configuration must be a trusted local file: includes and `Match exec` can
-execute code. Takeover fences the previous writer and does not merge edits.
+Advanced flags: `--ssh-user USER`, `--ssh-port PORT`,
+`--ssh-config /absolute/config`, and `--ssh-takeover`. Supplying
+`--ssh-helper`, `--ssh-state`, and `--ssh-root` together selects a manually managed
+helper. Takeover fences the previous writer and does not merge edits.
 
 The **SSH · host** menu and Remote Explorer show connection status, pending edits,
-reconnect, disconnect and execution trust. The menu also offers remote paths and
-new files. Disconnect retains the window's documents and pending edits and stops
-automatic retries; Reconnect resumes the same host recovery session. Paths stay inside the workspace; new files start as recoverable host
-scratchpads and Save As refuses existing targets. Keep at least one remote tab
-open. **Trust for Git, builds and terminal…** permits host scripts, hooks and shells
-to execute as the SSH account. Reconnect clears trust; revoking it stops tracked
-jobs. Terminals also need their regular opt-in setting.
+reconnect, disconnect, and execution trust. Disconnect retains documents and
+pending edits and stops automatic retries; Reconnect resumes the same host
+recovery session. Paths stay inside the workspace. New files start as recoverable
+host scratchpads, and Save As refuses existing targets. Keep at least one remote
+tab open. **Trust for Git, builds and terminal…** permits host scripts, hooks and
+shells to execute as the SSH account. Reconnect clears trust; revoking it stops
+tracked jobs. Terminals also need their regular opt-in setting.
 
 ### Privacy and recovery
 
@@ -225,7 +222,7 @@ Closing ends tracked tools; idle workers exit after five minutes, leaving recove
 ### Limits
 
 - Direct SSH to Linux/macOS hosts; Windows clients work. No jump hosts, Windows
-  helpers, automatic helper installation, forwarding, local commands, or reuse of
+  helpers, forwarding, local commands, or reuse of
   multiplexed connections.
 - Private host-local ext-family, XFS, btrfs, ZFS (Linux) or APFS (macOS) recovery
   storage; ancestor permissions are checked. Network filesystems and tmpfs are

@@ -19,11 +19,29 @@ pub(super) struct RemoteUi {
     helper: String,
     state: String,
     config: String,
+    manual_helper: bool,
+    config_dialog: bool,
     takeover: bool,
     editing: Option<RemoteConfig>,
     pub picker: Option<Picker>,
     pub path: String,
     pending: Option<mpsc::Receiver<Result<(), String>>>,
+    connecting: Option<Connecting>,
+    connection_status: String,
+}
+struct Connecting {
+    events: mpsc::Receiver<ConnectEvent>,
+    cancel: Arc<std::sync::atomic::AtomicBool>,
+}
+impl Drop for Connecting {
+    fn drop(&mut self) {
+        self.cancel
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+enum ConnectEvent {
+    Progress(String),
+    Prepared(Result<RemoteConfig, String>),
 }
 #[derive(Clone, Copy)]
 pub(super) enum Picker {
@@ -34,6 +52,7 @@ pub(super) enum Picker {
 impl RemoteUi {
     fn edit(&mut self, config: Option<&RemoteConfig>, default_config: &str) {
         self.editing = config.cloned();
+        self.manual_helper = config.is_some_and(|c| !c.managed);
         self.host = config.map(|c| c.target.host.clone()).unwrap_or_default();
         self.user = config
             .and_then(|c| c.target.user.clone())
@@ -76,6 +95,7 @@ impl RemoteUi {
                 state: self.state.trim().into(),
             },
             root: self.root.trim().into(),
+            managed: !self.manual_helper,
             takeover: self.takeover,
         };
         let mut validate = Catalog::default();
@@ -177,7 +197,26 @@ impl HeditApp {
         });
     }
     fn launch_remote(&mut self, ctx: &egui::Context, config: RemoteConfig) {
-        if self.remote_ui.pending.is_some() {
+        if self.remote_ui.pending.is_some() || self.remote_ui.connecting.is_some() {
+            return;
+        }
+        if config.managed {
+            let (tx, rx) = mpsc::channel();
+            let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            self.remote_ui.connecting = Some(Connecting {
+                events: rx,
+                cancel: cancel.clone(),
+            });
+            self.remote_ui.connection_status = "Connecting to SSH host…".into();
+            let ctx = ctx.clone();
+            thread::spawn(move || {
+                let result = hedit::remote::bootstrap::prepare(config, &cancel, |message| {
+                    let _ = tx.send(ConnectEvent::Progress(message.into()));
+                    ctx.request_repaint();
+                });
+                let _ = tx.send(ConnectEvent::Prepared(result));
+                ctx.request_repaint();
+            });
             return;
         }
         self.remote_background(ctx, move || {
@@ -226,8 +265,21 @@ impl HeditApp {
     }
     fn remote_explorer_contents(&mut self, ui: &mut egui::Ui) {
         ui.add_space(8.0);
-        ui.strong("SSH REMOTES");
-        let ready = self.remote_ui.loading.is_none() && self.remote_ui.saving.is_none();
+        let header = ui.strong("SSH REMOTES");
+        header.context_menu(|ui| {
+            if ui.button("SSH configuration…").clicked() {
+                self.remote_ui.config_dialog = true;
+                ui.close_menu();
+            }
+            if ui.button("Refresh hosts").clicked() {
+                self.load_remote_catalog(ui.ctx(), true);
+                ui.close_menu();
+            }
+        });
+        let ready = self.remote_ui.loading.is_none()
+            && self.remote_ui.saving.is_none()
+            && self.remote_ui.connecting.is_none()
+            && self.remote_ui.pending.is_none();
         ui.horizontal(|ui| {
             if ui
                 .add_enabled(
@@ -246,36 +298,7 @@ impl HeditApp {
                 self.load_remote_catalog(ui.ctx(), true);
             }
         });
-        ui.label("SSH configuration");
-        ui.add(
-            egui::TextEdit::singleline(&mut self.remote_ui.selected_config)
-                .desired_width(f32::INFINITY)
-                .hint_text("~/.ssh/config (default)"),
-        );
-        if ui.button("Open SSH config…").clicked() {
-            let path = if self.remote_ui.selected_config.trim().is_empty() {
-                directories::BaseDirs::new().map(|d| d.home_dir().join(".ssh/config"))
-            } else {
-                Some(PathBuf::from(self.remote_ui.selected_config.trim()))
-            };
-            if let Some(path) = path {
-                if !path.is_absolute() {
-                    self.error = Some("Use an absolute local SSH config path.".into());
-                } else if self.workspace.remote.is_none() {
-                    self.open(ui.ctx(), Some(path));
-                } else {
-                    self.error =
-                        Some("Open the local SSH config from a local editor window.".into());
-                }
-            }
-        }
-        ui.label(
-            RichText::new(
-                "Edit hosts in this file, then Refresh. Includes are discovered automatically.",
-            )
-            .small()
-            .color(self.theme.muted.color()),
-        );
+        ui.weak("Click a host to connect · Right-click for options");
         if self.remote_ui.loading.is_some() {
             ui.spinner();
             ui.label("Reading SSH configuration…");
@@ -283,6 +306,14 @@ impl HeditApp {
         if self.remote_ui.pending.is_some() {
             ui.spinner();
             ui.label("Connecting / updating SSH session…");
+        }
+        if let Some(task) = &self.remote_ui.connecting {
+            ui.spinner();
+            ui.label(&self.remote_ui.connection_status);
+            if ui.button("Cancel connection").clicked() {
+                task.cancel
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+            }
         }
         if self.remote_ui.saving.is_some() {
             ui.label("Saving workspace…");
@@ -365,7 +396,9 @@ impl HeditApp {
                 }
                 ui.push_id(index, |ui| {
                     let row = ui.add_enabled(
-                        ready && self.remote_ui.pending.is_none(),
+                        ready
+                            && self.remote_ui.pending.is_none()
+                            && self.remote_ui.connecting.is_none(),
                         egui::Button::new(&title).wrap(),
                     );
                     if row.clicked() {
@@ -394,15 +427,19 @@ impl HeditApp {
             if !host.to_lowercase().contains(&query) {
                 continue;
             }
-            if ui
-                .add_enabled(
-                    ready && self.workspace.remote.is_none(),
-                    egui::Button::new(format!("{host}  →")).frame(false),
-                )
-                .on_hover_text("Configure and open a workspace on this host")
-                .clicked()
-            {
-                edit = Some(RemoteConfig {
+            let config = self
+                .remote_ui
+                .catalog
+                .as_ref()
+                .and_then(|catalog| {
+                    catalog
+                        .workspaces
+                        .iter()
+                        .rev()
+                        .find(|c| c.target.host == *host && c.target.config == catalog.config)
+                })
+                .cloned()
+                .unwrap_or_else(|| RemoteConfig {
                     target: SshTarget {
                         host: host.clone(),
                         user: None,
@@ -416,9 +453,32 @@ impl HeditApp {
                         state: String::new(),
                     },
                     root: String::new(),
+                    managed: true,
                     takeover: false,
                 });
+            let row = ui
+                .add_enabled(
+                    ready && self.workspace.remote.is_none() && self.remote_ui.connecting.is_none(),
+                    egui::Button::new(format!("{host}  →")).frame(false),
+                )
+                .on_hover_text("Connect to this host. Right-click for connection settings.");
+            if row.clicked() {
+                launch = Some(config.clone());
             }
+            row.context_menu(|ui| {
+                if ui.button("Connect").clicked() {
+                    launch = Some(config.clone());
+                    ui.close_menu();
+                }
+                if ui.button("Connection settings…").clicked() {
+                    edit = Some(config.clone());
+                    ui.close_menu();
+                }
+                if ui.button("SSH configuration…").clicked() {
+                    self.remote_ui.config_dialog = true;
+                    ui.close_menu();
+                }
+            });
         }
         if self.remote_ui.hosts.aliases.is_empty() && self.remote_ui.loading.is_none() {
             ui.label("No SSH aliases found. Add a Host entry to your SSH config or connect to a hostname.");
@@ -447,6 +507,90 @@ impl HeditApp {
         }
     }
     pub(super) fn remote_controls(&mut self, ctx: &egui::Context) {
+        loop {
+            let event = self
+                .remote_ui
+                .connecting
+                .as_ref()
+                .map(|task| task.events.try_recv());
+            match event {
+                Some(Ok(ConnectEvent::Progress(message))) => {
+                    self.remote_ui.connection_status = message
+                }
+                Some(Ok(ConnectEvent::Prepared(result))) => {
+                    let cancelled = self
+                        .remote_ui
+                        .connecting
+                        .as_ref()
+                        .is_some_and(|t| t.cancel.load(std::sync::atomic::Ordering::Relaxed));
+                    self.remote_ui.connecting = None;
+                    if cancelled {
+                        self.notice = "SSH connection cancelled.".into();
+                        break;
+                    }
+                    match result {
+                        Ok(config) => {
+                            if let Some(mut catalog) = self.remote_ui.catalog.clone() {
+                                match catalog.remember(config.clone()) {
+                                    Ok(()) => self.save_remote_catalog(ctx, catalog),
+                                    Err(e) => self.error = Some(e),
+                                }
+                            }
+                            let mut resolved = config;
+                            resolved.managed = false;
+                            self.launch_remote(ctx, resolved);
+                        }
+                        Err(e) => self.error = Some(e),
+                    }
+                    break;
+                }
+                Some(Err(mpsc::TryRecvError::Disconnected)) => {
+                    self.remote_ui.connecting = None;
+                    self.error =
+                        Some("SSH setup worker stopped unexpectedly. Retry the connection.".into());
+                    break;
+                }
+                _ => break,
+            }
+        }
+        if self.remote_ui.config_dialog {
+            let mut open = true;
+            let mut refresh = false;
+            let mut edit = false;
+            egui::Window::new("SSH configuration")
+                .open(&mut open)
+                .collapsible(false)
+                .show(ctx, |ui| {
+                    ui.label("SSH config (blank uses ~/.ssh/config and system config)");
+                    ui.text_edit_singleline(&mut self.remote_ui.selected_config);
+                    ui.horizontal(|ui| {
+                        edit = ui.button("Open SSH config…").clicked();
+                        refresh = ui.button("Refresh hosts").clicked();
+                    });
+                });
+            self.remote_ui.config_dialog = open;
+            if refresh {
+                self.load_remote_catalog(ctx, true);
+            }
+            if edit {
+                let path = if self.remote_ui.selected_config.trim().is_empty() {
+                    directories::BaseDirs::new().map(|d| d.home_dir().join(".ssh/config"))
+                } else {
+                    Some(PathBuf::from(self.remote_ui.selected_config.trim()))
+                };
+                if let Some(path) = path {
+                    if !path.is_absolute() {
+                        self.error = Some("Use an absolute local SSH config path.".into());
+                    } else if self.workspace.remote.is_some() {
+                        self.error =
+                            Some("Open the local SSH config from a local editor window.".into());
+                    } else {
+                        self.open(ctx, Some(path));
+                        self.remote_ui.config_dialog = false;
+                    }
+                }
+            }
+        }
         if let Some(rx) = &self.remote_ui.pending {
             if let Ok(result) = rx.try_recv() {
                 self.remote_ui.pending = None;
@@ -501,9 +645,7 @@ impl HeditApp {
                                 ("Host / SSH alias", &mut self.remote_ui.host),
                                 ("User (from SSH config)", &mut self.remote_ui.user),
                                 ("Port (from SSH config)", &mut self.remote_ui.port),
-                                ("Workspace (absolute)", &mut self.remote_ui.root),
-                                ("Installed helper (absolute)", &mut self.remote_ui.helper),
-                                ("Private state directory (absolute)", &mut self.remote_ui.state),
+                                ("Workspace (blank opens remote home)", &mut self.remote_ui.root),
                                 ("SSH config (blank uses default)", &mut self.remote_ui.config),
                             ] {
                                 ui.label(label);
@@ -511,10 +653,15 @@ impl HeditApp {
                                 ui.end_row();
                             }
                         });
+                        ui.checkbox(&mut self.remote_ui.manual_helper,"Use a manually installed helper");
+                        if self.remote_ui.manual_helper {
+                            ui.label("Installed helper (absolute)");ui.text_edit_singleline(&mut self.remote_ui.helper);
+                            ui.label("Private recovery directory (absolute)");ui.text_edit_singleline(&mut self.remote_ui.state);
+                        } else {ui.label("The matching helper is installed automatically for your remote user.");}
                         ui.checkbox(&mut self.remote_ui.takeover, "Take over an existing writer (fences its edits)");
-                        ui.label("Install the matching hedit-remote helper and verify the host key with OpenSSH first. SSH keys remain managed by OpenSSH and your agent.");
+                        ui.label("SSH keys remain managed by OpenSSH and your agent.");
                         ui.horizontal(|ui| {
-                            let ready = self.remote_ui.pending.is_none() && self.remote_ui.saving.is_none();
+                            let ready = self.remote_ui.pending.is_none() && self.remote_ui.saving.is_none() && self.remote_ui.connecting.is_none();
                             connect = ui.add_enabled(ready, egui::Button::new("Open remote window")).clicked();
                             save = ui.add_enabled(ready && self.remote_ui.catalog.is_some(), egui::Button::new("Save workspace")).clicked();
                         });
@@ -530,6 +677,11 @@ impl HeditApp {
             if connect || save {
                 match self.remote_ui.connection_config() {
                     Ok(config) => {
+                        if connect && config.managed {
+                            self.launch_remote(ctx, config);
+                            self.remote_ui.dialog = false;
+                            return;
+                        }
                         if let Some(mut catalog) = self.remote_ui.catalog.clone() {
                             if let Some(original) = &self.remote_ui.editing {
                                 catalog.workspaces.retain(|c| c != original);
@@ -904,6 +1056,74 @@ mod tests {
         assert!(app.remote_ui.connection_config().is_err());
     }
     #[test]
+    fn new_connections_need_only_a_host_and_manual_paths_are_explicit() {
+        let (_dir, _ctx, mut app) = app();
+        app.remote_ui.edit(None, "");
+        app.remote_ui.host = "devbox".into();
+        let config = app.remote_ui.connection_config().unwrap();
+        assert!(config.managed && config.root.is_empty() && config.target.helper.is_empty());
+        app.remote_ui.manual_helper = true;
+        assert!(app.remote_ui.connection_config().is_err());
+    }
+    #[test]
+    fn host_connection_settings_are_on_the_context_menu_without_starting_ssh() {
+        use crate::app::tests::text_rect;
+        let (_dir, ctx, mut app) = app();
+        let size = egui::vec2(720.0, 480.0);
+        app.show_remote_explorer(&ctx);
+        for _ in 0..4 {
+            frame(&ctx, &mut app, size, vec![]);
+        }
+        let output = frame(&ctx, &mut app, size, vec![]);
+        let row = output
+            .shapes
+            .iter()
+            .find_map(|s| text_rect(&s.shape, "devbox  →"))
+            .unwrap();
+        for pressed in [true, false] {
+            frame(
+                &ctx,
+                &mut app,
+                size,
+                vec![
+                    egui::Event::PointerMoved(row.center()),
+                    egui::Event::PointerButton {
+                        pos: row.center(),
+                        button: egui::PointerButton::Secondary,
+                        pressed,
+                        modifiers: Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+        let output = frame(&ctx, &mut app, size, vec![]);
+        let settings = output
+            .shapes
+            .iter()
+            .find_map(|s| text_rect(&s.shape, "Connection settings…"))
+            .unwrap();
+        for pressed in [true, false] {
+            frame(
+                &ctx,
+                &mut app,
+                size,
+                vec![
+                    egui::Event::PointerMoved(settings.center()),
+                    egui::Event::PointerButton {
+                        pos: settings.center(),
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+        assert!(app.remote_ui.dialog);
+        assert_eq!(app.remote_ui.host, "devbox");
+        assert!(!app.remote_ui.manual_helper);
+        assert!(app.remote_ui.connecting.is_none());
+    }
+    #[test]
     #[ignore = "writes Remote Explorer PNG previews to HEDIT_PREVIEW_DIR"]
     fn export_remote_explorer() {
         let path =
@@ -970,6 +1190,7 @@ mod tests {
                 state: fixture["state"].as_str().unwrap().into(),
             },
             root: fixture["root"].as_str().unwrap().into(),
+            managed: false,
             takeover: false,
         };
         let directory = tempfile::tempdir().unwrap();
