@@ -56,9 +56,10 @@ fn idle_git_refresh_uses_the_same_deadline_as_the_worker() {
         app.settings.mini_diff.clone(),
     ));
     app.quality.git_at = Some(Instant::now());
-    let delay = app.git_refresh_delay(&ctx).unwrap();
-    assert!(delay > Duration::from_secs(29));
-    assert!(delay <= Duration::from_secs(30));
+    assert!(app.git_refresh_delay(&ctx).is_none());
+
+    app.quality.git_at = Some(Instant::now() - Duration::from_secs(35));
+    assert_eq!(app.git_refresh_delay(&ctx), Some(Duration::ZERO));
 
     app.settings.mini_diff = "off".into();
     assert!(app.git_refresh_delay(&ctx).is_none());

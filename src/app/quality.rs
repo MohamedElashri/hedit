@@ -1578,12 +1578,13 @@ impl HeditApp {
                 && key.2 == b.page.info.dirty
                 && key.3 == self.settings.mini_diff
         });
-        let interval = Duration::from_secs(if same { 30 } else { 2 });
-        Some(
-            self.quality
-                .git_at
-                .map_or(Duration::ZERO, |at| interval.saturating_sub(at.elapsed())),
-        )
+        let age = self.quality.git_at.map_or(Duration::MAX, |at| at.elapsed());
+        if same && age < Duration::from_secs(30) {
+            // Recheck the baseline on the next input or watcher update.
+            // A fresh marker cache should neither force an idle frame nor run Git.
+            return None;
+        }
+        Some(Duration::from_secs(2).saturating_sub(age))
     }
     pub(super) fn poll_git(&mut self, ctx: &egui::Context) {
         if self.settings.mini_diff == "off" {
@@ -1640,6 +1641,7 @@ impl HeditApp {
             });
             let diff = base
                 .as_deref()
+                .filter(|base| *base != text)
                 .map(|base| hedit::search::diff(base, &text, path))
                 .unwrap_or_default();
             let _ = tx.send(Ok(Action::Quality(Box::new(Event::GitMarkers(
