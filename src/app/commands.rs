@@ -1258,7 +1258,7 @@ impl HeditApp {
                 .path
                 .as_ref()
                 .is_some_and(|p| hedit::counterpart::supported(std::path::Path::new(p))),
-            Command::ConnectSsh => self.workspace.remote.is_none(),
+            Command::ConnectSsh => true,
             Command::OpenRecent => !self.recent_files.is_empty(),
             Command::SelectBookmarks => {
                 !self.active().view.bookmarks.is_empty() && !self.active().page.info.paged
@@ -1750,7 +1750,7 @@ impl HeditApp {
                 }
                 self.report(r);
             }
-            Command::ConnectSsh => self.remote_ui.dialog = true,
+            Command::ConnectSsh => self.show_remote_explorer(ctx),
             Command::Open => self.open(ctx, None),
             Command::NewWindow => {
                 let session = hedit::windows::new_session(self.workspace.store.directory());

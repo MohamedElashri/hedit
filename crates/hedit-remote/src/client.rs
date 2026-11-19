@@ -8,10 +8,11 @@ use std::{
     time::Duration,
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SshTarget {
     pub host: String,
     pub user: Option<String>,
+    /// Zero inherits Port from OpenSSH configuration (or OpenSSH's default).
     pub port: u16,
     /// Explicitly trusted local configuration, never read from a workspace.
     pub config: Option<PathBuf>,
@@ -29,8 +30,7 @@ fn quote(s: &str) -> Result<String> {
 
 impl SshTarget {
     pub fn command(&self) -> Result<Command> {
-        if self.port == 0
-            || self.host.is_empty()
+        if self.host.is_empty()
             || self.host.starts_with('-')
             || self.host.len() > 253
             || !self
@@ -95,7 +95,10 @@ impl SshTarget {
             }
             command.arg("-F").arg(config);
         }
-        command.arg("-T").arg("-p").arg(self.port.to_string());
+        command.arg("-T");
+        if self.port != 0 {
+            command.arg("-p").arg(self.port.to_string());
+        }
         if let Some(user) = &self.user {
             command.arg("-l").arg(user);
         }
@@ -134,21 +137,53 @@ pub struct Client {
     next: u64,
     deadline: Duration,
     failed: bool,
+    diagnostics: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
 }
 impl Client {
     pub fn connect(target: &SshTarget) -> Result<Self> {
         Self::spawn(target.command()?)
     }
 
-    pub fn spawn(mut command: Command) -> Result<Self> {
+    pub fn connect_detailed(target: &SshTarget) -> std::result::Result<Self, String> {
+        let mut client = Self::spawn_transport(target.command().map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+        client
+            .handshake()
+            .map_err(|e| format!("{e}: {}", client.diagnostics().trim()))?;
+        Ok(client)
+    }
+    pub fn spawn(command: Command) -> Result<Self> {
+        let mut client = Self::spawn_transport(command)?;
+        client.handshake()?;
+        Ok(client)
+    }
+    fn spawn_transport(mut command: Command) -> Result<Self> {
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(|_| Error::Unavailable)?;
         let mut input = child.stdin.take().ok_or(Error::Unavailable)?;
         let mut output = child.stdout.take().ok_or(Error::Unavailable)?;
+        // Drain stderr for the lifetime of SSH, retaining only a bounded tail.
+        // A full pipe must never stall the protocol or the child shutdown path.
+        let diagnostics = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let tail = diagnostics.clone();
+        let mut stderr = child.stderr.take().ok_or(Error::Unavailable)?;
+        thread::spawn(move || {
+            use std::io::Read;
+            let mut chunk = [0; 1024];
+            while let Ok(n) = stderr.read(&mut chunk) {
+                if n == 0 {
+                    break;
+                }
+                let mut bytes = tail.lock().unwrap();
+                bytes.extend_from_slice(&chunk[..n]);
+                let remove = bytes.len().saturating_sub(8192);
+                bytes.drain(..remove);
+            }
+        });
         let (tx, rx) = mpsc::sync_channel::<Job>(1);
         let worker = thread::spawn(move || {
             for job in rx {
@@ -183,16 +218,19 @@ impl Client {
                 }
             }
         });
-        let mut client = Self {
+        Ok(Self {
             child,
             tx: Some(tx),
             worker: Some(worker),
             next: 0,
             deadline: Duration::from_secs(15),
             failed: false,
-        };
+            diagnostics,
+        })
+    }
+    fn handshake(&mut self) -> Result<()> {
         if !matches!(
-            client.call(Request::Hello {})?,
+            self.call(Request::Hello {})?,
             Response::Hello {
                 version: VERSION,
                 max_frame: protocol::MAX_FRAME,
@@ -201,13 +239,23 @@ impl Client {
         ) {
             return Err(Error::Protocol);
         }
-        Ok(client)
+        Ok(())
     }
 
     pub fn disconnect(&mut self) {
         self.failed = true;
         let _ = self.child.kill();
         let _ = self.child.wait();
+    }
+    pub fn is_failed(&self) -> bool {
+        self.failed
+    }
+    /// Memory only; never write SSH diagnostics into document recovery.
+    pub fn diagnostics(&self) -> String {
+        String::from_utf8_lossy(&self.diagnostics.lock().unwrap())
+            .chars()
+            .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
+            .collect()
     }
     pub fn call(&mut self, request: Request) -> Result<Response> {
         let response = if protocol::encode(&Envelope {

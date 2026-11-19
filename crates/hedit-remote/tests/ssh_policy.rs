@@ -70,3 +70,48 @@ fn trusted_install_paths_are_shell_quoted_and_invalid_ones_rejected() {
         assert!(t.command().is_err());
     }
 }
+
+#[test]
+fn config_ports_are_inherited_unless_explicitly_overridden() {
+    let mut t = target();
+    t.port = 0;
+    let command = t.command().unwrap();
+    assert!(!command.get_args().any(|a| a == "-p"));
+    t.port = 2222;
+    let command = t.command().unwrap();
+    let args = command
+        .get_args()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    assert!(args.windows(2).any(|w| w == ["-p", "2222"]));
+}
+
+#[cfg(unix)]
+#[test]
+fn openssh_resolves_alias_user_port_and_identity_from_selected_config() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config");
+    std::fs::write(&config, "Host dev-box\n HostName 127.0.0.1\n User configured-user\n Port 2244\n IdentityFile /keys/dev\n").unwrap();
+    let mut t = target();
+    t.port = 0;
+    t.user = None;
+    t.config = Some(config);
+    let base = t.command().unwrap();
+    let mut command = std::process::Command::new(base.get_program());
+    command.arg("-G").args(base.get_args());
+    let output = command.output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let config = String::from_utf8(output.stdout).unwrap();
+    for line in [
+        "hostname 127.0.0.1",
+        "user configured-user",
+        "port 2244",
+        "identityfile /keys/dev",
+    ] {
+        assert!(config.lines().any(|s| s == line), "missing {line}");
+    }
+}

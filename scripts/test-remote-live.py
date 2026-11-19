@@ -571,12 +571,12 @@ class LiveTests(unittest.TestCase):
             time.sleep(0.02)
         wire.call(op="ping")
 
-    def test_editor_reconnect_replays_lost_receipt_once(self):
+    def test_editor_automatic_reconnect_replays_lost_receipt_once(self):
         _, marker = self.worker("after_commit")
         self.root.joinpath("file").write_text("base")
         probe = ROOT / "target/debug/examples/remote_workspace_probe"
         process = subprocess.Popen([str(probe), str(LAB.client_config), str(ARGS.binary),
-                                    str(self.state), str(self.root), str(LAB.port), "recover_pending"],
+                                    str(self.state), str(self.root), str(LAB.port), "recover_pending_auto"],
                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         self.clients.append(process)
         wait_for(marker.exists)

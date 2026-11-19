@@ -983,9 +983,21 @@ impl HeditApp {
             )
             .show(ctx, |ui| {
                 ui.set_min_width(ui.available_width());
+                if self.sidebar == workbench_navigation::Sidebar::Remote {
+                    self.ensure_remote_catalog(ctx);
+                    if !self.settings.show_activity_bar
+                        && self.workspace_header(ui, false) == Some(true)
+                    {
+                        self.show_git_sidebar(ctx);
+                    }
+                    self.remote_sidebar_button(ui);
+                    self.remote_explorer(ui);
+                    return;
+                }
                 if self.workspace_header(ui, false) == Some(true) {
                     self.show_git_sidebar(ctx);
                 }
+                self.remote_sidebar_button(ui);
                 ui.add_space(8.0);
                 ui.spacing_mut().item_spacing.y = 0.0;
                 if ui

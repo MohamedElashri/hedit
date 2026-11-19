@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1] - 2026-11-19
+
+- Add a sidebar Remote Explorer with SSH-config host discovery, included files, filtering, and saved workspace management.
+- Inherit SSH alias users and ports unless explicitly overridden, and show bounded OpenSSH connection diagnostics.
+- Add disconnect and bounded automatic reconnect with pending-edit reconciliation, receipt validation, and execution-trust reset.
+- Preserve the current workbench sidebars and activity-bar navigation when switching to remote connections.
+
 ## [0.6.0] - 2026-11-18
 
 ### Added

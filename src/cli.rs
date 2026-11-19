@@ -37,7 +37,7 @@ impl Options {
         let mut state = None;
         let mut user = None;
         let mut config = None;
-        let mut port = 22;
+        let mut port = 0;
         let mut takeover = false;
         while let Some(arg) = args.next() {
             if literal {
@@ -128,7 +128,10 @@ impl Options {
                         .ok_or("--ssh-port needs a port")?
                         .to_string_lossy()
                         .parse()
-                        .map_err(|_| "Invalid SSH port")?
+                        .map_err(|_| "Invalid SSH port")?;
+                    if port == 0 {
+                        return Err("Invalid SSH port".into());
+                    }
                 }
                 Some("--ssh-takeover") => takeover = true,
                 Some("--session-dir") => {
@@ -169,7 +172,7 @@ impl Options {
             || state.is_some()
             || user.is_some()
             || config.is_some()
-            || port != 22
+            || port != 0
             || takeover
         {
             return Err("SSH options require --ssh HOST.".into());
@@ -219,6 +222,26 @@ mod language_server_tests {
     fn parse(args: &[&str]) -> Result<Options, String> {
         Options::parse(args.iter().map(OsString::from))
     }
+    #[test]
+    fn ssh_port_inherits_config_but_explicit_zero_is_rejected() {
+        let args = [
+            "--ssh",
+            "dev",
+            "--ssh-root",
+            "/work",
+            "--ssh-helper",
+            "/helper",
+            "--ssh-state",
+            "/state",
+        ];
+        assert_eq!(parse(&args).unwrap().remote.unwrap().target.port, 0);
+        let mut explicit = args.to_vec();
+        explicit.extend(["--ssh-port", "2222"]);
+        assert_eq!(parse(&explicit).unwrap().remote.unwrap().target.port, 2222);
+        *explicit.last_mut().unwrap() = "0";
+        assert!(parse(&explicit).is_err());
+    }
+
     #[test]
     fn language_server_commands_do_not_open_files_or_accept_ambiguous_arguments() {
         assert_eq!(

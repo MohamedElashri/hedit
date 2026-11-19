@@ -76,7 +76,9 @@ Improvements awaiting a release can be tried by [building from source](DEVELOPER
 - **Resume unfinished work.** Restore tabs, unsaved notes, and undo history;
   recover closed notes from Closed Files. Checkpoints run every few seconds,
   so save important work. [Recovery details](USER_GUIDE.md#recovery).
-- **Move between local and remote projects.** Edit and search over SSH, review Git,
+- **Move between local and remote projects.** Choose SSH-config hosts and saved
+  workspaces from the sidebar's Remote Explorer, with connection status and
+  automatic reconnect. Edit and search over SSH, review Git,
   and run builds or shells with explicit execution trust. Remote document content
   stays out of Hedit's local recovery. SSH is experimental and requires a matching
   host helper. [Setup, privacy, and limits](USER_GUIDE.md#ssh-remote-workspaces).
