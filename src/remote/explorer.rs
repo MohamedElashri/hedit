@@ -153,6 +153,7 @@ mod tests {
     fn config() -> Config {
         Config {
             target: hedit_remote::client::SshTarget {
+                routing: Default::default(),
                 host: "devbox".into(),
                 user: None,
                 port: 0,

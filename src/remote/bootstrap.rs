@@ -135,10 +135,7 @@ pub fn prepare(
     }
     progress("Connecting to SSH host…");
     let (status, output) = run(
-        config
-            .target
-            .command_for(PROBE)
-            .map_err(|e| e.to_string())?,
+        config.target.command_for_detailed(PROBE, false)?,
         None,
         cancel,
     )?;
@@ -180,10 +177,7 @@ exec {helper} setup --workspace {workspace} --state {state}
         setup_version = SETUP_VERSION,
     );
     let (status, output) = run(
-        config
-            .target
-            .command_for(&cached)
-            .map_err(|e| e.to_string())?,
+        config.target.command_for_detailed(&cached, false)?,
         None,
         cancel,
     )?;
@@ -245,10 +239,7 @@ test "$("$stage/hedit-remote" --version)" = {expected}
         return Err("Invalid SSH helper size.".into());
     }
     let (status, output) = run(
-        config
-            .target
-            .command_for(&command)
-            .map_err(|e| e.to_string())?,
+        config.target.command_for_detailed(&command, false)?,
         Some(input),
         cancel,
     )?;
@@ -391,6 +382,7 @@ mod tests {
         let account = Account::parse("HEDIT_SETUP_V1\n1000\nLinux\nx86_64\n/home/me").unwrap();
         let config = Config {
             target: hedit_remote::client::SshTarget {
+                routing: Default::default(),
                 host: "devbox".into(),
                 user: None,
                 port: 0,

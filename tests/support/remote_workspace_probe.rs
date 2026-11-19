@@ -27,6 +27,7 @@ fn run() -> Result<(), String> {
     let started = Instant::now();
     let remote = Connection::connect(Config {
         target: hedit_remote::client::SshTarget {
+            routing: Default::default(),
             host: "lab".into(),
             user: None,
             port: args[4].parse().map_err(|_| "Invalid port")?,

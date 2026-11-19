@@ -1,5 +1,7 @@
 //! Explicit OpenSSH arguments and a memory-only client with an RPC deadline.
 use crate::protocol::{self, Envelope, Error, Reply, Request, Response, Result, VERSION};
+mod routing;
+pub use routing::Routing;
 use std::{
     path::PathBuf,
     process::{Child, Command, Stdio},
@@ -16,6 +18,9 @@ pub struct SshTarget {
     pub port: u16,
     /// Explicitly trusted local configuration, never read from a workspace.
     pub config: Option<PathBuf>,
+    /// Opt in to approved routing options from the selected local SSH config.
+    #[serde(default, skip_serializing_if = "Routing::is_default")]
+    pub routing: Routing,
     /// Trusted executable and private state on the host.
     pub helper: String,
     pub state: String,
@@ -41,8 +46,20 @@ fn quote(s: &str) -> Result<String> {
 }
 
 impl SshTarget {
+    pub fn validate_settings(&self, managed: bool) -> Result<()> {
+        self.base_command(false)?;
+        if !managed {
+            self.bridge_command()?;
+        }
+        Ok(())
+    }
+
     pub fn command(&self) -> Result<Command> {
-        self.command_for(&format!(
+        self.command_for(&self.bridge_command()?)
+    }
+
+    fn bridge_command(&self) -> Result<String> {
+        Ok(format!(
             "exec {} bridge --state {}",
             quote(&self.helper)?,
             quote(&self.state)?
@@ -52,6 +69,58 @@ impl SshTarget {
     /// Run application-owned bootstrap code using exactly the RPC SSH policy.
     /// Callers must quote any data interpolated into the remote command.
     pub fn command_for(&self, remote_command: &str) -> Result<Command> {
+        self.command_for_with_auth(remote_command, false)
+    }
+
+    pub fn command_for_with_auth(
+        &self,
+        remote_command: &str,
+        interactive: bool,
+    ) -> Result<Command> {
+        self.command_for_detailed(remote_command, interactive)
+            .map_err(|_| Error::Permission)
+    }
+
+    pub fn command_for_detailed(
+        &self,
+        remote_command: &str,
+        interactive: bool,
+    ) -> std::result::Result<Command, String> {
+        let plan = routing::Plan::resolve(self, interactive, false)?;
+        let mut command = self.routed_command(interactive, &plan)?;
+        Self::disable_control(&mut command);
+        self.destination(&mut command);
+        command.arg(remote_command);
+        Ok(command)
+    }
+
+    fn routed_command(
+        &self,
+        interactive: bool,
+        plan: &routing::Plan,
+    ) -> std::result::Result<Command, String> {
+        let mut command = self
+            .base_command(interactive)
+            .map_err(|error| error.to_string())?;
+        self.set_proxy(&mut command, plan.proxy.as_deref());
+        command.args(["-o", "ClearAllForwardings=yes", "-T"]);
+        Ok(command)
+    }
+
+    fn disable_control(command: &mut Command) {
+        command.args(["-o", "ControlMaster=no", "-o", "ControlPath=none"]);
+    }
+
+    fn set_proxy(&self, command: &mut Command, proxy: Option<&str>) {
+        // An application-generated ssh -W command keeps the same verification
+        // policy on every hop. The configured ProxyCommand is never inherited.
+        command
+            .arg("-o")
+            .arg(format!("ProxyCommand={}", proxy.unwrap_or("none")));
+        command.args(["-o", "ProxyJump=none", "-o", "ProxyUseFdpass=no"]);
+    }
+
+    fn base_command(&self, interactive: bool) -> Result<Command> {
         if self.host.is_empty()
             || self.host.starts_with('-')
             || self.host.len() > 253
@@ -82,19 +151,24 @@ impl SshTarget {
         command.current_dir("/");
         #[cfg(windows)]
         command.current_dir(std::env::temp_dir());
-        // Use keys or an existing agent; there is no password-prompt UI.
+        command.args([
+            "-o",
+            if interactive {
+                "BatchMode=no"
+            } else {
+                "BatchMode=yes"
+            },
+        ]);
         for option in [
-            "BatchMode=yes",
             "StrictHostKeyChecking=yes",
             "ForwardAgent=no",
             "ForwardX11=no",
             "ForwardX11Trusted=no",
             "GSSAPIDelegateCredentials=no",
-            "ClearAllForwardings=yes",
             "PermitLocalCommand=no",
-            "ControlMaster=no",
-            "ControlPath=none",
             "ControlPersist=no",
+            "ForkAfterAuthentication=no",
+            "StdinNull=no",
             "RemoteCommand=none",
             "RequestTTY=no",
             "Tunnel=no",
@@ -104,9 +178,7 @@ impl SshTarget {
             "ConnectTimeout=10",
             "ConnectionAttempts=1",
             "UpdateHostKeys=no",
-            // Direct SSH only; proxy hops need their own trust policy.
-            "ProxyJump=none",
-            "ProxyCommand=none",
+            "GatewayPorts=no",
             "LogLevel=ERROR",
         ] {
             command.arg("-o").arg(option);
@@ -117,14 +189,6 @@ impl SshTarget {
             }
             command.arg("-F").arg(config);
         }
-        command.arg("-T");
-        if self.port != 0 {
-            command.arg("-p").arg(self.port.to_string());
-        }
-        if let Some(user) = &self.user {
-            command.arg("-l").arg(user);
-        }
-        command.arg("--").arg(&self.host).arg(remote_command);
         // Do not transmit editor/tool environment secrets through inherited SendEnv.
         let allowed = [
             "HOME",
@@ -142,6 +206,16 @@ impl SshTarget {
         command.env_clear().envs(environment).env("LC_ALL", "C");
         Ok(command)
     }
+
+    fn destination(&self, command: &mut Command) {
+        if self.port != 0 {
+            command.arg("-p").arg(self.port.to_string());
+        }
+        if let Some(user) = &self.user {
+            command.arg("-l").arg(user);
+        }
+        command.arg("--").arg(&self.host);
+    }
 }
 
 struct Job {
@@ -149,6 +223,7 @@ struct Job {
     reply: SyncSender<Result<Vec<Response>>>,
 }
 pub struct Client {
+    forwards: Option<routing::Forwards>,
     child: Child,
     tx: Option<SyncSender<Job>>,
     worker: Option<thread::JoinHandle<()>>,
@@ -168,7 +243,30 @@ impl Client {
 
     /// Connect and return the recovery session from the validated handshake.
     pub fn connect_with_session(target: &SshTarget) -> std::result::Result<(Self, String), String> {
-        Self::spawn_with_session(target.command().map_err(|e| e.to_string())?)
+        Self::connect_with_session_using(target, false, |_| Ok(()))
+    }
+
+    pub fn connect_with_session_using(
+        target: &SshTarget,
+        interactive: bool,
+        configure: impl FnOnce(&mut Command) -> std::result::Result<(), String>,
+    ) -> std::result::Result<(Self, String), String> {
+        let bridge = target.bridge_command().map_err(|error| error.to_string())?;
+        let plan = routing::Plan::resolve(target, interactive, true)?;
+        let mut command = target.routed_command(interactive, &plan)?;
+        let mut forwards = plan.prepare_forwards(&mut command)?;
+        if forwards.is_none() {
+            SshTarget::disable_control(&mut command);
+        }
+        target.destination(&mut command);
+        command.arg(bridge);
+        configure(&mut command)?;
+        let (mut client, session) = Self::spawn_with_session(command)?;
+        if let Some(forwards) = &mut forwards {
+            forwards.activate(&target.host)?;
+        }
+        client.forwards = forwards;
+        Ok((client, session))
     }
 
     fn spawn_with_session(command: Command) -> std::result::Result<(Self, String), String> {
@@ -245,6 +343,7 @@ impl Client {
             }
         });
         Ok(Self {
+            forwards: None,
             child,
             tx: Some(tx),
             worker: Some(worker),
@@ -274,6 +373,12 @@ impl Client {
     }
     pub fn is_failed(&self) -> bool {
         self.failed
+    }
+    pub fn forwarded_ports(&self) -> Vec<u16> {
+        self.forwards
+            .iter()
+            .flat_map(routing::Forwards::ports)
+            .collect()
     }
     /// Memory only; never write SSH diagnostics into document recovery.
     pub fn diagnostics(&self) -> String {

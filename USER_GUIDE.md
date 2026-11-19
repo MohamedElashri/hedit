@@ -188,6 +188,15 @@ SSH configuration settings provide **Open SSH config…** and **Refresh hosts**.
 Discovery reads files without executing `Match exec`; OpenSSH resolves options
 when connecting, so configuration files must be trusted.
 
+On Linux and macOS clients, **Use SSH config jump hosts** applies the alias's
+`ProxyJump` route. Pin the keys of every hop and of the destination first.
+**Forward SSH config ports to localhost** enables the alias's TCP `LocalForward`
+rules for the life of the connection. Use a numeric port or a loopback bind
+such as `127.0.0.1:8080`. Remote Explorer shows the active local ports. An
+occupied port or a host that refuses forwarding is reported during connection.
+Both options are saved with the workspace and are available on the command
+line as `--ssh-use-config-jump` and `--ssh-forward-config-ports`.
+
 Host keys must already be verified with OpenSSH. Authentication uses keys or an
 existing agent; passwords and interactive MFA remain unsupported. Unlock the
 agent before connecting. Saved metadata contains host names and paths, without
@@ -243,9 +252,9 @@ Closing ends tracked tools; idle workers exit after five minutes, leaving recove
 
 ### Limits
 
-- Direct SSH to Linux/macOS hosts; Windows clients work. No jump hosts, Windows
-  helpers, forwarding, local commands, or reuse of
-  multiplexed connections.
+- Linux/macOS hosts and Windows clients are supported. Jump hosts and localhost
+  TCP forwarding require a Linux or macOS client and explicit opt-in. Arbitrary
+  `ProxyCommand`, reverse and dynamic forwarding, and Windows helpers are unavailable.
 - Private host-local ext-family, XFS, btrfs, ZFS (Linux) or APFS (macOS) recovery
   storage; ancestor permissions are checked. Network filesystems and tmpfs are
   unsupported. Recovery and undo capacity are bounded.
