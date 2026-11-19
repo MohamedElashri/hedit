@@ -199,7 +199,7 @@ On Linux and macOS clients, **Use SSH config jump hosts** applies the alias's
 `ProxyJump` route. Pin the keys of every hop and of the destination first.
 **Forward SSH config ports to localhost** enables the alias's TCP `LocalForward`
 rules for the life of the connection. Use a numeric port or a loopback bind
-such as `127.0.0.1:8080`. Remote Explorer shows the active local ports. An
+such as `localhost:8080`. Remote Explorer shows the active local ports. An
 occupied port or a host that refuses forwarding is reported during connection.
 Both options are saved with the workspace and are available on the command
 line as `--ssh-use-config-jump` and `--ssh-forward-config-ports`.
