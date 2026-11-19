@@ -214,6 +214,13 @@ tab open. **Trust for Git, builds and terminal…** permits host scripts, hooks 
 shells to execute as the SSH account. Reconnect clears trust; revoking it stops
 tracked jobs. Terminals also need their regular opt-in setting.
 
+Choose **Show SSH Output** in Remote Explorer, the SSH menu, or the Command
+Palette to see recent connection, helper setup, workspace opening, and reconnect
+events. **Copy SSH summary** copies the last 64 events as fixed descriptions
+without raw SSH messages, host names, paths, or credentials. From that view you
+can retry a failed launch, reconnect a remote window, or open your SSH config
+from a local window.
+
 In a remote window, choose **File → Open folder…** to browse within the active
 SSH workspace. Use the arrow keys and **Enter** to browse subfolders, or type a
 path relative to the workspace and press **Enter**. **Up** returns to the parent
@@ -252,8 +259,9 @@ Closing ends tracked tools; idle workers exit after five minutes, leaving recove
 - Up to 128 retained documents, each with at most 8 MiB decoded text.
 - Remote browsing skips symlinks and non-UTF-8 names; directory duplication and
   cross-filesystem trash moves are unavailable.
-- No remote project persistence, Markdown preview, CUDA/debugging, definition or
-  reference lookup, compare-disk, or mini-diff tools.
+- No remote project persistence, Markdown preview, CUDA/debugging, compare-disk,
+  or mini-diff tools. Trusted language servers on the host can provide code
+  navigation within the workspace.
 
 Helper details and tests: [developer guide](DEVELOPER_GUIDE.md#ssh-architecture-and-testing).
 

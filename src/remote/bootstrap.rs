@@ -1,5 +1,5 @@
 //! Bounded SSH setup; helper bytes come from this installation or its exact release.
-use super::Config;
+use super::{diagnostics::SetupPhase, Config};
 use hedit_remote::client::{SetupInfo, SETUP_VERSION};
 use sha2::{Digest, Sha256};
 use std::{
@@ -121,7 +121,7 @@ fn quote(value: &str) -> String {
 pub fn prepare(
     config: Config,
     cancel: &AtomicBool,
-    progress: impl Fn(&str),
+    progress: impl Fn(SetupPhase),
 ) -> Result<Config, String> {
     config.validate()?;
     if !config.managed {
@@ -133,7 +133,7 @@ pub fn prepare(
     if !config.target.state.is_empty() {
         absolute(&config.target.state)?;
     }
-    progress("Connecting to SSH host…");
+    progress(SetupPhase::Connect);
     let (status, output) = run(
         config
             .target
@@ -146,7 +146,7 @@ pub fn prepare(
         return Err(output);
     }
     let account = Account::parse(output.trim_end_matches(['\r', '\n']))?;
-    progress("Checking remote helper…");
+    progress(SetupPhase::CheckHelper);
     let helper = account.helper();
     // Only execute a cached helper below non-symlink, user-owned directories.
     // The Rust installer repeats descriptor-relative validation before writing.
@@ -188,6 +188,7 @@ exec {helper} setup --workspace {workspace} --state {state}
         cancel,
     )?;
     if status.success() {
+        progress(SetupPhase::OpenWorkspace);
         return account.resolve(config, &output);
     }
     if status.code() != Some(78) {
@@ -205,7 +206,7 @@ exec {helper} setup --workspace {workspace} --state {state}
     let source = match bundled(&account, cancel)? {
         Some(path) => path,
         None => {
-            progress("Downloading matching SSH helper…");
+            progress(SetupPhase::DownloadHelper);
             let path = download.path().join(account.asset());
             crate::update::Client::default().download_helper(
                 VERSION,
@@ -216,7 +217,7 @@ exec {helper} setup --workspace {workspace} --state {state}
             path
         }
     };
-    progress("Installing helper for your remote user…");
+    progress(SetupPhase::InstallHelper);
     let command = format!(
         r#"set -eu
 umask 077
@@ -257,7 +258,7 @@ test "$("$stage/hedit-remote" --version)" = {expected}
             "Could not install the SSH helper for this user. {output}"
         ));
     }
-    progress("Opening remote workspace…");
+    progress(SetupPhase::OpenWorkspace);
     account.resolve(config, &output)
 }
 
