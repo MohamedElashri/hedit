@@ -1389,8 +1389,7 @@ impl HeditApp {
                     return;
                 }
                 Command::OpenFolder => {
-                    self.remote_ui.picker = Some(remote::Picker::Folder);
-                    self.remote_ui.path.clear();
+                    self.open_folder(ctx);
                     return;
                 }
                 command if command.requires_local() => {
