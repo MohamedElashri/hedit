@@ -204,7 +204,7 @@ impl HeditApp {
                 self.error = None;
                 self.save_file(ctx, save_as);
             }
-            Action::Output => self.set_panel(workbench_panel::Panel::Output),
+            Action::Output => self.show_build_output(),
             Action::LanguageLog => {
                 self.notifications.open = false;
                 self.execute(ctx, Command::LanguageServers);

@@ -47,7 +47,40 @@ pub struct Catalog {
     pub config: Option<PathBuf>,
     pub workspaces: Vec<Config>,
     pub imports: HostImports,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    opened: Vec<WorkspaceKey>,
 }
+
+#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkspaceKey {
+    host: String,
+    user: Option<String>,
+    port: u16,
+    config: Option<PathBuf>,
+    root: String,
+}
+
+impl WorkspaceKey {
+    fn new(workspace: &Config) -> Self {
+        Self {
+            host: workspace.target.host.to_ascii_lowercase(),
+            user: workspace.target.user.clone(),
+            port: workspace.target.port,
+            config: workspace.target.config.clone(),
+            root: workspace.root.clone(),
+        }
+    }
+
+    fn matches(&self, workspace: &Config) -> bool {
+        self.host.eq_ignore_ascii_case(&workspace.target.host)
+            && self.user == workspace.target.user
+            && self.port == workspace.target.port
+            && self.config == workspace.target.config
+            && self.root == workspace.root
+    }
+}
+
 impl Catalog {
     pub fn load(path: &Path) -> Result<Self, String> {
         let value: Self = match crate::projects::read_json(path, 1024 * 1024) {
@@ -60,7 +93,7 @@ impl Catalog {
             }
             Err(error) => return Err(format!("Remote Explorer: {error}")),
         };
-        if value.workspaces.len() > 64 {
+        if value.workspaces.len() > 64 || value.opened.len() > 64 {
             return Err("Remote Explorer supports at most 64 saved workspaces.".into());
         }
         for workspace in &value.workspaces {
@@ -82,19 +115,39 @@ impl Catalog {
         Ok(())
     }
     pub fn remember(&mut self, config: Config) -> Result<(), String> {
-        self.remember_with_policy(config, false)
+        self.remember_with_policy(config, false).map(|_| ())
     }
 
-    /// Connecting directly to an account's home can resolve to a saved root.
-    pub fn remember_host_home(&mut self, config: Config) -> Result<(), String> {
-        self.remember_with_policy(config, true)
+    /// Record a successful window startup, preserving explicit recovery
+    /// settings when an implicit home connection resolves to a saved root.
+    pub fn remember_opened(&mut self, config: Config, implicit_home: bool) -> Result<(), String> {
+        let index = self.remember_with_policy(config, implicit_home)?;
+        let key = WorkspaceKey::new(&self.workspaces[index]);
+        self.opened.retain(|recent| *recent != key);
+        self.opened.push(key);
+        Ok(())
     }
 
-    fn remember_with_policy(&mut self, mut config: Config, keep_saved: bool) -> Result<(), String> {
+    pub fn open_order(&self, workspace: &Config) -> Option<usize> {
+        self.opened
+            .iter()
+            .rposition(|entry| entry.matches(workspace))
+    }
+
+    pub fn remove(&mut self, index: usize) {
+        let removed = self.workspaces.remove(index);
+        self.opened.retain(|entry| !entry.matches(&removed));
+    }
+
+    fn remember_with_policy(
+        &mut self,
+        mut config: Config,
+        keep_saved: bool,
+    ) -> Result<usize, String> {
         config.validate()?;
         config.takeover = false;
         let existing = self.workspaces.iter().position(|w| {
-            w.target.host == config.target.host
+            w.target.host.eq_ignore_ascii_case(&config.target.host)
                 && w.target.config == config.target.config
                 && w.target.user == config.target.user
                 && w.target.port == config.target.port
@@ -106,16 +159,20 @@ impl Catalog {
                 && (!saved.managed
                     || !saved.target.state.is_empty() && saved.target.state != config.target.state)
             {
-                return Ok(());
+                return Ok(index);
             }
-            self.workspaces.remove(index);
+            if !WorkspaceKey::new(saved).matches(&config) {
+                self.remove(index);
+            } else {
+                self.workspaces.remove(index);
+            }
             self.workspaces.push(config);
         } else if self.workspaces.len() < 64 {
             self.workspaces.push(config);
         } else {
             return Err("Remove a saved workspace before adding another (limit 64).".into());
         }
-        Ok(())
+        Ok(self.workspaces.len() - 1)
     }
     pub fn save(&self, path: &Path, expected: &Self) -> Result<(), String> {
         self.imports.validate()?;
@@ -182,7 +239,7 @@ mod tests {
             saved.managed = managed;
             let mut catalog = Catalog::default();
             catalog.remember(saved.clone()).unwrap();
-            catalog.remember_host_home(resolved.clone()).unwrap();
+            catalog.remember_opened(resolved.clone(), true).unwrap();
             assert_eq!(catalog.workspaces, [saved.clone()]);
             catalog.remember(resolved.clone()).unwrap();
             assert_eq!(catalog.workspaces, [resolved.clone()]);

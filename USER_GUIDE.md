@@ -169,6 +169,13 @@ alias disappears when removed from SSH config and returns if you add it back.
 Connections use the current OpenSSH settings for the alias. The connection
 picker can still find any discovered alias.
 
+Remote Explorer groups saved workspaces under their SSH host. **Reopen last
+workspace** uses the last successful connection and restores its open tabs and
+active file from host recovery. **Choose remote folder…** previews directories
+before opening a workspace or acquiring a writer. A new workspace uses its own
+recovery directory. If you use a manually installed helper, enter that new
+directory in connection settings before opening it.
+
 hedit checks the host platform, installs the matching helper for the non-root SSH
 account, and opens a separate remote window. It uses a bundled helper when the
 platform matches, or downloads the exact editor version and verifies its SHA-256
@@ -227,6 +234,13 @@ tab open. **Trust for Git, builds and terminal…** permits host scripts, hooks 
 shells to execute as the SSH account. Reconnect clears trust; revoking it stops
 tracked jobs. Terminals also need their regular opt-in setting.
 
+Choose **Show SSH Output** in Remote Explorer, the SSH menu, or the Command
+Palette to see recent connection, helper setup, workspace opening, and reconnect
+events. **Copy SSH summary** copies the last 64 events as fixed descriptions
+without raw SSH messages, host names, paths, or credentials. From that view you
+can retry a failed launch, reconnect a remote window, or open your SSH config
+from a local window.
+
 In a remote window, choose **File → Open folder…** to browse within the active
 SSH workspace. Use the arrow keys and **Enter** to browse subfolders, or type a
 path relative to the workspace and press **Enter**. **Up** returns to the parent
@@ -265,8 +279,9 @@ Closing ends tracked tools; idle workers exit after five minutes, leaving recove
 - Up to 128 retained documents, each with at most 8 MiB decoded text.
 - Remote browsing skips symlinks and non-UTF-8 names; directory duplication and
   cross-filesystem trash moves are unavailable.
-- No remote project persistence, Markdown preview, CUDA/debugging, definition or
-  reference lookup, compare-disk, or mini-diff tools.
+- No remote project persistence, Markdown preview, CUDA/debugging, compare-disk,
+  or mini-diff tools. Trusted language servers on the host can provide code
+  navigation within the workspace.
 
 Helper details and tests: [developer guide](DEVELOPER_GUIDE.md#ssh-architecture-and-testing).
 
