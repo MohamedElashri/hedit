@@ -169,6 +169,13 @@ alias disappears when removed from SSH config and returns if you add it back.
 Connections use the current OpenSSH settings for the alias. The connection
 picker can still find any discovered alias.
 
+Remote Explorer groups saved workspaces under their SSH host. **Reopen last
+workspace** uses the last successful connection and restores its open tabs and
+active file from host recovery. **Choose remote folder…** previews directories
+before opening a workspace or acquiring a writer. A new workspace uses its own
+recovery directory. If you use a manually installed helper, enter that new
+directory in connection settings before opening it.
+
 hedit checks the host platform, installs the matching helper for the non-root SSH
 account, and opens a separate remote window. It uses a bundled helper when the
 platform matches, or downloads the exact editor version and verifies its SHA-256

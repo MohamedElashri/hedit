@@ -661,6 +661,22 @@ class LiveTests(unittest.TestCase):
         self.assertEqual(self.root.joinpath("scratch-saved.txt").read_text(), "SCRATCH_HOST_ONLY")
         self.assertFalse(LAB.sentinel.exists())
 
+    def test_preview_and_workspace_reopen_preserve_host_recovery(self):
+        self.root.joinpath("first.txt").write_text("first")
+        self.root.joinpath("second.txt").write_text("second")
+        self.root.joinpath("subfolder").mkdir()
+        self.root.joinpath("link").symlink_to(self.root / "subfolder")
+        probe = ROOT / "target/debug/examples/remote_workspace_probe"
+        result = subprocess.run(
+            [str(probe), str(LAB.client_config), str(ARGS.binary), str(self.state),
+             str(self.root.resolve()), str(LAB.port), "reopen_workspace"],
+            capture_output=True, text=True, timeout=45,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("WORKSPACE_REOPEN_OK", result.stdout)
+        self.assertEqual(self.root.joinpath("first.txt").read_text(), "first")
+        self.assertFalse(LAB.sentinel.exists())
+
     def test_language_servers_run_on_host_and_stop_when_trust_is_revoked(self):
         self.root.joinpath("file").write_text("base")
         self.root.joinpath("main.rs").write_text("fo")

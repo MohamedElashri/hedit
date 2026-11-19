@@ -6,15 +6,19 @@ use std::sync::atomic::{AtomicBool, Ordering};
 mod folder_picker;
 mod host_import;
 mod host_watch;
+mod workspace_groups;
+mod workspace_picker;
 use folder_picker::FolderPicker;
 use host_import::ImportHosts;
 use host_watch::HostWatch;
+use workspace_picker::WorkspacePicker;
 
 #[derive(Default)]
 pub(super) struct RemoteUi {
     dialog: bool,
     connect_picker: Option<ConnectPicker>,
     folder_picker: Option<FolderPicker>,
+    workspace_picker: Option<WorkspacePicker>,
     import_hosts: Option<ImportHosts>,
     selected_config: String,
     load_started: bool,
@@ -40,6 +44,7 @@ pub(super) struct RemoteUi {
     pub picker: Option<Picker>,
     pub path: String,
     pending: Option<mpsc::Receiver<Result<(), String>>>,
+    opening_profile: Option<WorkspaceOpen>,
     connecting: Option<Connecting>,
     connection_status: String,
 }
@@ -63,6 +68,11 @@ struct Connecting {
     cancel: Arc<std::sync::atomic::AtomicBool>,
     implicit_home: bool,
     original_profile: Option<RemoteConfig>,
+}
+struct WorkspaceOpen {
+    config: RemoteConfig,
+    original: Option<RemoteConfig>,
+    implicit_home: bool,
 }
 impl Drop for Connecting {
     fn drop(&mut self) {
@@ -145,6 +155,7 @@ impl RemoteUi {
             || self.picker.is_some()
             || self.connect_picker.is_some()
             || self.folder_picker.is_some()
+            || self.workspace_picker.is_some()
             || self.import_hosts.is_some()
     }
 
@@ -153,6 +164,7 @@ impl RemoteUi {
         self.picker = None;
         self.connect_picker = None;
         self.folder_picker = None;
+        self.workspace_picker = None;
         self.import_hosts = None;
     }
 
@@ -209,17 +221,20 @@ impl RemoteUi {
         &self,
         config: RemoteConfig,
         original: Option<&RemoteConfig>,
-        implicit_home: bool,
+        opened_home: Option<bool>,
     ) -> Result<Option<Catalog>, String> {
         let Some(mut catalog) = self.catalog.clone() else {
             return Ok(None);
         };
-        let original = original.filter(|original| catalog.workspaces.contains(original));
-        if let Some(original) = original {
-            catalog.workspaces.retain(|profile| profile != original);
+        if let Some(index) =
+            original.and_then(|original| catalog.workspaces.iter().position(|p| p == original))
+        {
+            if catalog.workspaces[index] != config {
+                catalog.remove(index);
+            }
         }
-        if implicit_home && original.is_none() {
-            catalog.remember_host_home(config)?;
+        if let Some(implicit_home) = opened_home {
+            catalog.remember_opened(config, implicit_home && original.is_none())?;
         } else {
             catalog.remember(config)?;
         }
@@ -574,6 +589,20 @@ impl HeditApp {
             });
             return;
         }
+        let opening = WorkspaceOpen {
+            config,
+            original: original_profile,
+            implicit_home: false,
+        };
+        self.spawn_remote_window(ctx, opening);
+    }
+
+    fn spawn_remote_window(&mut self, ctx: &egui::Context, opening: WorkspaceOpen) {
+        if self.remote_ui.pending.is_some() {
+            return;
+        }
+        let config = opening.config.clone();
+        self.remote_ui.opening_profile = Some(opening);
         self.remote_background(ctx, move || {
             config
                 .target
@@ -612,6 +641,23 @@ impl HeditApp {
                 .map_err(|e| e.to_string())?;
             wait_for_window(child)
         });
+    }
+
+    fn complete_remote_workspace_open(&mut self, ctx: &egui::Context, result: Result<(), String>) {
+        let opening = self.remote_ui.opening_profile.take();
+        if let Err(error) = result {
+            self.error = Some(error);
+        } else if let Some(opening) = opening {
+            match self.remote_ui.updated_catalog(
+                opening.config,
+                opening.original.as_ref(),
+                Some(opening.implicit_home),
+            ) {
+                Ok(Some(catalog)) => self.save_remote_catalog(ctx, catalog),
+                Ok(None) => (),
+                Err(error) => self.error = Some(error),
+            }
+        }
     }
     pub(super) fn remote_explorer(&mut self, ui: &mut egui::Ui) {
         egui::ScrollArea::vertical()
@@ -669,7 +715,7 @@ impl HeditApp {
             self.focus_editor = false;
             ui.ctx().request_repaint();
         }
-        ui.weak("Click a host to connect · Right-click for options");
+        ui.weak("Right-click a host or workspace for options");
         if self.remote_ui.loading.is_some() {
             ui.spinner();
             ui.label("Reading SSH configuration…");
@@ -752,106 +798,29 @@ impl HeditApp {
                 .hint_text("Filter hosts and workspaces")
                 .desired_width(f32::INFINITY),
         );
-        let query = self.remote_ui.query.to_lowercase();
-        let mut edit = None;
-        let mut launch = None;
-        let mut remove = None;
         for warning in &self.remote_ui.hosts.warnings {
             ui.colored_label(self.theme.warning.color(), warning);
         }
-        if let Some(catalog) = &self.remote_ui.catalog {
-            for (index, config) in catalog.workspaces.iter().enumerate() {
-                let title = format!("{} · {}", config.target.host, config.root);
-                if !title.to_lowercase().contains(&query) {
-                    continue;
+        let local = self.workspace.remote.is_none();
+        match workspace_groups::show(ui, &self.remote_ui, ready, local) {
+            Some(workspace_groups::Action::Edit(config)) => self.remote_ui.edit(Some(&config), ""),
+            Some(workspace_groups::Action::Open(config)) => {
+                self.launch_remote(ui.ctx(), config, None)
+            }
+            Some(workspace_groups::Action::Browse(config)) => {
+                self.close_transient(ui.ctx());
+                self.remote_ui.workspace_picker = Some(WorkspacePicker::new(ui.ctx(), config));
+                self.focus_editor = false;
+                ui.ctx().request_repaint();
+            }
+            Some(workspace_groups::Action::Remove(index)) => {
+                if let Some(mut catalog) = self.remote_ui.catalog.clone() {
+                    catalog.remove(index);
+                    self.save_remote_catalog(ui.ctx(), catalog);
                 }
-                ui.push_id(index, |ui| {
-                    let row = ui.add_enabled(
-                        ready
-                            && self.remote_ui.pending.is_none()
-                            && self.remote_ui.connecting.is_none(),
-                        egui::Button::new(&title).wrap(),
-                    );
-                    if row.clicked() {
-                        launch = Some(config.clone());
-                    }
-                    row.context_menu(|ui| {
-                        if ui
-                            .add_enabled(
-                                self.workspace.remote.is_none(),
-                                egui::Button::new("Edit workspace…"),
-                            )
-                            .clicked()
-                        {
-                            edit = Some(config.clone());
-                            ui.close_menu();
-                        }
-                        if ui.button("Remove saved workspace").clicked() {
-                            remove = Some(index);
-                            ui.close_menu();
-                        }
-                    });
-                });
             }
-        }
-        let ssh_config = self.remote_ui.ssh_config();
-        let mut has_imports = false;
-        for host in &self.remote_ui.hosts.aliases {
-            if self
-                .remote_ui
-                .catalog
-                .as_ref()
-                .is_some_and(|catalog| !catalog.imports.includes(host))
-            {
-                continue;
-            }
-            has_imports = true;
-            if !host.to_lowercase().contains(&query) {
-                continue;
-            }
-            let config = || ConnectChoice::Host(host).config(ssh_config.clone());
-            let row = ui
-                .add_enabled(
-                    ready && self.workspace.remote.is_none() && self.remote_ui.connecting.is_none(),
-                    egui::Button::new(format!("{host}  →")).frame(false),
-                )
-                .on_hover_text(
-                    "Open the remote home directory. Right-click for connection settings.",
-                );
-            if row.clicked() {
-                launch = Some(config());
-            }
-            row.context_menu(|ui| {
-                if ui.button("Connect to remote home").clicked() {
-                    launch = Some(config());
-                    ui.close_menu();
-                }
-                if ui.button("Connection settings…").clicked() {
-                    edit = Some(config());
-                    ui.close_menu();
-                }
-                if ui.button("SSH configuration…").clicked() {
-                    self.remote_ui.config_dialog = true;
-                    ui.close_menu();
-                }
-            });
-        }
-        if self.remote_ui.hosts.aliases.is_empty() && self.remote_ui.loading.is_none() {
-            ui.label("No SSH aliases found. Add a Host entry to your SSH config or connect to a hostname.");
-        } else if !has_imports && self.remote_ui.loading.is_none() {
-            ui.label("No imported SSH hosts.");
-        }
-        if let Some(config) = edit {
-            self.remote_ui.edit(Some(&config), "");
-        }
-        if let Some(config) = launch {
-            self.launch_remote(ui.ctx(), config, None);
-        }
-        if let Some(index) = remove {
-            if let Some(mut catalog) = self.remote_ui.catalog.clone() {
-                catalog.workspaces.remove(index);
-                self.save_remote_catalog(ui.ctx(), catalog);
-            }
+            Some(workspace_groups::Action::SshConfig) => self.remote_ui.config_dialog = true,
+            None => (),
         }
     }
     pub(super) fn remote_new(&mut self, ctx: &egui::Context) {
@@ -886,23 +855,16 @@ impl HeditApp {
                     }
                     match result {
                         Ok(config) => {
-                            let original = connecting
-                                .as_ref()
-                                .and_then(|task| task.original_profile.as_ref());
-                            let implicit_home =
-                                connecting.as_ref().is_some_and(|task| task.implicit_home);
-                            match self.remote_ui.updated_catalog(
-                                config.clone(),
-                                original,
-                                implicit_home,
-                            ) {
-                                Ok(Some(catalog)) => self.save_remote_catalog(ctx, catalog),
-                                Ok(None) => (),
-                                Err(error) => self.error = Some(error),
-                            }
-                            let mut resolved = config;
-                            resolved.managed = false;
-                            self.launch_remote(ctx, resolved, None);
+                            let opening = WorkspaceOpen {
+                                config,
+                                original: connecting
+                                    .as_ref()
+                                    .and_then(|task| task.original_profile.clone()),
+                                implicit_home: connecting
+                                    .as_ref()
+                                    .is_some_and(|task| task.implicit_home),
+                            };
+                            self.spawn_remote_window(ctx, opening);
                         }
                         Err(error) => {
                             self.error =
@@ -962,9 +924,7 @@ impl HeditApp {
             }
         }
         if let Some(result) = remote_worker_result(&mut self.remote_ui.pending, "SSH operation") {
-            if let Err(error) = result {
-                self.error = Some(error);
-            }
+            self.complete_remote_workspace_open(ctx, result);
             ctx.request_repaint();
         }
         if let Some(result) =
@@ -1020,6 +980,18 @@ impl HeditApp {
             }
         }
         let remote = self.workspace.remote.clone();
+        if let Some(mut picker) = self.remote_ui.workspace_picker.take() {
+            match picker.show(ctx) {
+                workspace_picker::Outcome::Browsing => {
+                    self.remote_ui.workspace_picker = Some(picker)
+                }
+                workspace_picker::Outcome::Closed => (),
+                workspace_picker::Outcome::Open(config) => self.launch_remote(ctx, config, None),
+                workspace_picker::Outcome::Configure(config) => {
+                    self.remote_ui.edit(Some(&config), "")
+                }
+            }
+        }
         if let Some(config) = self.ssh_picker(ctx) {
             self.show_remote_explorer(ctx);
             self.launch_remote(ctx, config, None);
@@ -1074,7 +1046,7 @@ impl HeditApp {
             if connect || save {
                 match self.remote_ui.connection_config() {
                     Ok(config) => {
-                        if connect && config.managed {
+                        if connect {
                             let original = self.remote_ui.editing.take();
                             self.launch_remote(ctx, config, original);
                             self.remote_ui.dialog = false;
@@ -1083,7 +1055,7 @@ impl HeditApp {
                         match self.remote_ui.updated_catalog(
                             config.clone(),
                             self.remote_ui.editing.as_ref(),
-                            false,
+                            None,
                         ) {
                             Ok(Some(catalog)) => self.save_remote_catalog(ctx, catalog),
                             Ok(None) => (),
@@ -1091,9 +1063,6 @@ impl HeditApp {
                                 self.error = Some(error);
                                 return;
                             }
-                        }
-                        if connect {
-                            self.launch_remote(ctx, config, None);
                         }
                         self.remote_ui.dialog = false;
                     }
@@ -1543,7 +1512,7 @@ mod tests {
     }
 
     #[test]
-    fn managed_setup_replaces_an_edited_profile_only_on_success() {
+    fn startup_replaces_the_edited_profile_and_marks_it_recent_only_on_success() {
         let (_dir, ctx, mut app) = app();
         app.settings_files.dir = None;
         let mut original = ConnectChoice::Host("devbox").config(None);
@@ -1559,33 +1528,21 @@ mod tests {
         resolved.root = "/renamed".into();
         resolved.target.state = "/private/renamed".into();
 
-        // Keep the fixture from launching an actual SSH window after setup.
-        let (_keep_pending, pending) = mpsc::channel();
-        app.remote_ui.pending = Some(pending);
-        for result in [
-            Err("SSH setup failed in test.".into()),
-            Ok(resolved.clone()),
-        ] {
+        for result in [Err("SSH window failed in test.".into()), Ok(())] {
             let success = result.is_ok();
-            let (tx, events) = mpsc::channel();
-            tx.send(ConnectEvent::Prepared(result)).ok().unwrap();
-            app.remote_ui.connecting = Some(Connecting {
-                events,
-                cancel: Arc::new(AtomicBool::new(false)),
+            app.remote_ui.opening_profile = Some(WorkspaceOpen {
+                config: resolved.clone(),
                 implicit_home: false,
-                original_profile: Some(original.clone()),
+                original: Some(original.clone()),
             });
-            app.remote_controls(&ctx);
+            app.complete_remote_workspace_open(&ctx, result);
             let expected = if success { &resolved } else { &original };
+            let catalog = app.remote_ui.catalog.as_ref().unwrap();
             assert_eq!(
-                app.remote_ui
-                    .catalog
-                    .as_ref()
-                    .unwrap()
-                    .workspaces
-                    .as_slice(),
+                catalog.workspaces.as_slice(),
                 std::slice::from_ref(expected)
             );
+            assert_eq!(catalog.open_order(expected).is_some(), success);
         }
     }
 

@@ -1,4 +1,7 @@
 //! Bounded SSH setup; helper bytes come from this installation or its exact release.
+mod preview;
+pub use preview::{browse_directories, DirectoryPreview};
+
 use super::Config;
 use hedit_remote::client::{SetupInfo, SETUP_VERSION};
 use sha2::{Digest, Sha256};
