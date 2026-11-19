@@ -91,16 +91,16 @@ check: lint test ## Run static checks and tests without a release build
 ci: check package smoke ## Run the same full validation as GitHub CI; use before committing
 
 package: build ## Create the Linux release archive and SHA-256 file in dist/
-	$(PYTHON) scripts/package-linux.py --helper $(REMOTE_HELPER)
+	$(PYTHON) scripts/package-linux.py --helper "$(REMOTE_HELPER)"
 
 smoke: build ## Verify package extraction, installation, checksums, and the executable
-	$(PYTHON) scripts/smoke-package.py --helper $(REMOTE_HELPER)
+	$(PYTHON) scripts/smoke-package.py --helper "$(REMOTE_HELPER)"
 
 linux-packages: build ## Build Linux tarball, DEB, RPM, and AppImage (requires packaging tools)
-	$(PYTHON) scripts/package-linux.py --helper $(REMOTE_HELPER) --formats tar.gz deb rpm appimage
+	$(PYTHON) scripts/package-linux.py --helper "$(REMOTE_HELPER)" --formats tar.gz deb rpm appimage
 
 smoke-linux-packages: ## Verify Linux formats and distro installation (requires Docker)
-	$(PYTHON) scripts/smoke-linux-packages.py --helper $(REMOTE_HELPER) --containers
+	$(PYTHON) scripts/smoke-linux-packages.py --helper "$(REMOTE_HELPER)" --containers
 
 install: build ## Install under PREFIX; supports a DESTDIR staging directory
 	install -Dm755 target/release/hedit "$(DESTDIR)$(PREFIX)/bin/hedit"

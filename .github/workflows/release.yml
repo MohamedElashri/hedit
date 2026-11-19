@@ -72,7 +72,9 @@ jobs:
           python3 scripts/setup-appimage.py
       - name: Build portable SSH helper
         run: |
+          export CC_${{ matrix.arch }}_unknown_linux_musl=musl-gcc
           cargo build --release --locked -p hedit-remote --target ${{ matrix.arch }}-unknown-linux-musl
+          cargo test --release --locked -p hedit-remote --target ${{ matrix.arch }}-unknown-linux-musl
           helper=target/${{ matrix.arch }}-unknown-linux-musl/release/hedit-remote
           file "$helper"
           if readelf -l "$helper" | grep -q INTERP; then
