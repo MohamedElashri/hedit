@@ -138,6 +138,7 @@ the [manifest and Lua reference](docs/extensions.md); host integration lives in
 | --- | --- |
 | `runtime/engine.rs` | Bounded request/reply codec, Lua library allowlist, input validation, and instruction/memory limits |
 | `runtime/unix.rs`, `runtime/windows.rs` | Pipe delivery, cancellation, deadlines, and worker reaping |
+| `error.rs` | Typed runtime failures and fixed display messages; command/save activity classifies failures by type |
 | `sandbox/` | Native process confinement and resource checks; no Lua API or language policy |
 | Editor extension modules | Installation reviews, command consent, settings, previews, undoable edits, and save bindings |
 
@@ -148,6 +149,8 @@ no file, network, process, or editor APIs. The shared engine allows 16 MiB of Lu
 allocations and one million instructions. Normal invocations have a two-second
 deadline; save hooks have 400 ms. Native memory limits also cover allocations
 outside Lua.
+Worker failures carry fixed status codes. Lua error text stays inside the worker;
+only the corresponding typed failure and fixed display message reach the editor.
 
 | Platform | Native boundary | Worker layout |
 | --- | --- | --- |

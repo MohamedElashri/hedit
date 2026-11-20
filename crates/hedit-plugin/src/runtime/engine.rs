@@ -1,6 +1,9 @@
 //! Shared Lua 5.4 engine, bounded protocol, and invocation limits.
 use super::{Input, MAX_SELECTIONS, MAX_SELECTION_BYTES};
-use crate::options::{self as plugin_options, Value as SettingValue};
+use crate::{
+    options::{self as plugin_options, Value as SettingValue},
+    Error,
+};
 use mlua::chunk::ChunkMode;
 use mlua::{HookTriggers, Lua, LuaOptions, StdLib, Table, Value, VmState};
 use std::cell::Cell;
@@ -22,70 +25,8 @@ const INSTRUCTION_INTERVAL: u32 = 1_000;
 const INSTRUCTION_BUDGET: u32 = 1_000_000;
 pub(super) const DEADLINE: Duration = Duration::from_secs(2);
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-#[repr(u8)]
-pub(super) enum Failure {
-    Sandbox = 1,
-    Request,
-    Initialization,
-    Syntax,
-    EntryPoint,
-    Execution,
-    Instructions,
-    Memory,
-    ReturnType,
-    ReturnEncoding,
-    ReturnSize,
-    Worker,
-    #[cfg(any(unix, windows))]
-    Deadline,
-    #[cfg(any(unix, windows))]
-    Cancelled,
-}
-
-impl Failure {
-    fn message(self) -> &'static str {
-        match self {
-            Self::Sandbox => "The OS could not isolate the Lua worker.",
-            Self::Request => "The Lua plugin input is invalid or exceeds its limits.",
-            Self::Initialization => "The Lua runtime could not start.",
-            Self::Syntax => "The plugin has a Lua syntax error.",
-            Self::EntryPoint => "The Lua script must return a function.",
-            Self::Execution => "The Lua plugin raised an error.",
-            Self::Instructions => "The Lua plugin reached its instruction limit.",
-            Self::Memory => "The Lua plugin reached its memory limit.",
-            Self::ReturnType => "The Lua plugin must return a string.",
-            Self::ReturnEncoding => "The plugin replacement must be UTF-8 text without NUL bytes.",
-            Self::ReturnSize => "The Lua plugin replacement exceeds 256 KiB.",
-            Self::Worker => "The Lua worker stopped or returned an invalid response.",
-            #[cfg(any(unix, windows))]
-            Self::Deadline => "The Lua plugin exceeded its time limit.",
-            #[cfg(any(unix, windows))]
-            Self::Cancelled => "The Lua plugin was cancelled.",
-        }
-    }
-
-    #[cfg(any(unix, windows))]
-    pub(super) fn from_worker_code(code: u8) -> Self {
-        match code {
-            1 => Self::Sandbox,
-            2 => Self::Request,
-            3 => Self::Initialization,
-            4 => Self::Syntax,
-            5 => Self::EntryPoint,
-            6 => Self::Execution,
-            7 => Self::Instructions,
-            8 => Self::Memory,
-            9 => Self::ReturnType,
-            10 => Self::ReturnEncoding,
-            11 => Self::ReturnSize,
-            _ => Self::Worker,
-        }
-    }
-}
-
 impl Input {
-    fn validate(&self) -> Result<(), Failure> {
+    fn validate(&self) -> Result<(), Error> {
         if self.source.len() > MAX_SOURCE_BYTES
             || self.language.len() > MAX_LANGUAGE_BYTES
             || !(1..=MAX_SELECTIONS).contains(&self.selections.len())
@@ -96,17 +37,17 @@ impl Input {
                 .iter()
                 .any(|(key, value)| !plugin_options::valid_id(key) || !value.valid())
         {
-            return Err(Failure::Request);
+            return Err(Error::Request);
         }
         Ok(())
     }
 }
 
-fn encode_request(input: &Input) -> Result<Vec<u8>, Failure> {
+fn encode_request(input: &Input) -> Result<Vec<u8>, Error> {
     input.validate()?;
-    let payload = serde_json::to_vec(input).map_err(|_| Failure::Request)?;
+    let payload = serde_json::to_vec(input).map_err(|_| Error::Request)?;
     if payload.len() > MAX_BATCH_REQUEST_BYTES {
-        return Err(Failure::Request);
+        return Err(Error::Request);
     }
     let mut bytes = Vec::with_capacity(payload.len() + 8);
     bytes.extend(REQUEST_MAGIC.to_le_bytes());
@@ -115,26 +56,22 @@ fn encode_request(input: &Input) -> Result<Vec<u8>, Failure> {
     Ok(bytes)
 }
 
-fn decode_request(mut input: impl Read) -> Result<Input, Failure> {
+fn decode_request(mut input: impl Read) -> Result<Input, Error> {
     let mut header = [0; 8];
-    input
-        .read_exact(&mut header)
-        .map_err(|_| Failure::Request)?;
+    input.read_exact(&mut header).map_err(|_| Error::Request)?;
     if u32::from_le_bytes(header[..4].try_into().unwrap()) != REQUEST_MAGIC {
-        return Err(Failure::Request);
+        return Err(Error::Request);
     }
     let size = u32::from_le_bytes(header[4..].try_into().unwrap()) as usize;
     if size > MAX_BATCH_REQUEST_BYTES {
-        return Err(Failure::Request);
+        return Err(Error::Request);
     }
     let mut payload = vec![0; size];
-    input
-        .read_exact(&mut payload)
-        .map_err(|_| Failure::Request)?;
-    if input.read(&mut [0; 1]).map_err(|_| Failure::Request)? != 0 {
-        return Err(Failure::Request);
+    input.read_exact(&mut payload).map_err(|_| Error::Request)?;
+    if input.read(&mut [0; 1]).map_err(|_| Error::Request)? != 0 {
+        return Err(Error::Request);
     }
-    let request: Input = serde_json::from_slice(&payload).map_err(|_| Failure::Request)?;
+    let request: Input = serde_json::from_slice(&payload).map_err(|_| Error::Request)?;
     request.validate()?;
     Ok(request)
 }
@@ -144,42 +81,39 @@ pub(super) fn run(
     approval: Option<File>,
     cancelled: &AtomicBool,
     save: bool,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<String>, Error> {
     let count = input.selections.len();
-    let response = (|| {
-        let request = encode_request(&input)?;
-        let timeout = if save {
-            Duration::from_millis(400)
-        } else {
-            DEADLINE
-        };
-        let reply = super::supervisor::supervise(
-            &super::supervisor::executable()?,
-            request,
-            cancelled,
-            timeout,
-            approval,
-        )?;
-        let edits: Vec<String> = serde_json::from_slice(&reply).map_err(|_| Failure::Worker)?;
-        if edits.len() != count {
-            return Err(Failure::Worker);
-        }
-        validate_edits(&edits)?;
-        Ok(edits)
-    })();
-    response.map_err(|failure| failure.message().to_owned())
+    let request = encode_request(&input)?;
+    let timeout = if save {
+        Duration::from_millis(400)
+    } else {
+        DEADLINE
+    };
+    let reply = super::supervisor::supervise(
+        &super::supervisor::executable()?,
+        request,
+        cancelled,
+        timeout,
+        approval,
+    )?;
+    let edits: Vec<String> = serde_json::from_slice(&reply).map_err(|_| Error::Worker)?;
+    if edits.len() != count {
+        return Err(Error::Worker);
+    }
+    validate_edits(&edits)?;
+    Ok(edits)
 }
 
 pub(super) fn run_helper(isolated: bool) -> bool {
     // No attacker-influenced request bytes or Lua code are consumed before
-    // the process is isolated. Failure is reported through a fixed status code.
+    // the process is isolated. Error is reported through a fixed status code.
     let result = if isolated {
         decode_request(io::stdin().lock()).and_then(|input| {
             let edits = evaluate(input)?;
-            serde_json::to_vec(&edits).map_err(|_| Failure::Worker)
+            serde_json::to_vec(&edits).map_err(|_| Error::Worker)
         })
     } else {
-        Err(Failure::Sandbox)
+        Err(Error::Sandbox)
     };
     let (status, body) = match &result {
         Ok(body) => (0, body.as_slice()),
@@ -194,35 +128,35 @@ pub(super) fn run_helper(isolated: bool) -> bool {
 }
 
 #[cfg(any(unix, windows))]
-pub(super) fn worker_reply(mut reply: Vec<u8>, delivered: bool) -> Result<Vec<u8>, Failure> {
+pub(super) fn worker_reply(mut reply: Vec<u8>, delivered: bool) -> Result<Vec<u8>, Error> {
     if reply.len() > MAX_BATCH_REPLY_BYTES + 1 {
-        return Err(Failure::Worker);
+        return Err(Error::Worker);
     }
     let Some((&status, body)) = reply.split_first() else {
-        return Err(Failure::Worker);
+        return Err(Error::Worker);
     };
     if status != 0 {
         return Err(if body.is_empty() {
-            Failure::from_worker_code(status)
+            Error::from_worker_code(status)
         } else {
-            Failure::Worker
+            Error::Worker
         });
     }
     if !delivered {
-        return Err(Failure::Worker);
+        return Err(Error::Worker);
     }
     Ok(reply.split_off(1))
 }
 
-fn evaluate(request: Input) -> Result<Vec<String>, Failure> {
+fn evaluate(request: Input) -> Result<Vec<String>, Error> {
     let lua = Lua::new_with(
         StdLib::TABLE | StdLib::STRING | StdLib::UTF8 | StdLib::MATH,
         LuaOptions::default(),
     )
-    .map_err(|_| Failure::Initialization)?;
+    .map_err(|_| Error::Initialization)?;
     lua.set_memory_limit(LUA_MEMORY_BYTES)
-        .map_err(|_| Failure::Initialization)?;
-    let environment = environment(&lua).map_err(|_| Failure::Initialization)?;
+        .map_err(|_| Error::Initialization)?;
+    let environment = environment(&lua).map_err(|_| Error::Initialization)?;
 
     let remaining = Rc::new(Cell::new(INSTRUCTION_BUDGET));
     let hook_remaining = remaining.clone();
@@ -237,16 +171,16 @@ fn evaluate(request: Input) -> Result<Vec<String>, Failure> {
             Ok(VmState::Continue)
         },
     )
-    .map_err(|_| Failure::Initialization)?;
+    .map_err(|_| Error::Initialization)?;
 
     let result = call_transform(&lua, environment, request);
     if remaining.get() == 0 {
-        return Err(Failure::Instructions);
+        return Err(Error::Instructions);
     }
     result
 }
 
-fn call_transform(lua: &Lua, environment: Table, request: Input) -> Result<Vec<String>, Failure> {
+fn call_transform(lua: &Lua, environment: Table, request: Input) -> Result<Vec<String>, Error> {
     let entry = lua
         .load(request.source.as_bytes())
         .set_name("plugin")
@@ -257,7 +191,7 @@ fn call_transform(lua: &Lua, environment: Table, request: Input) -> Result<Vec<S
         .call::<Value>(())
         .map_err(lua_error)?;
     let Value::Function(entry) = entry else {
-        return Err(Failure::EntryPoint);
+        return Err(Error::EntryPoint);
     };
     let mut edits = Vec::with_capacity(request.selections.len());
     for selection in &request.selections {
@@ -274,7 +208,7 @@ fn call_transform(lua: &Lua, environment: Table, request: Input) -> Result<Vec<S
             .call::<Value>((selection.as_str(), request.language.as_str(), settings))
             .map_err(lua_error)?;
         let Value::String(replacement) = result else {
-            return Err(Failure::ReturnType);
+            return Err(Error::ReturnType);
         };
         edits.push(valid_replacement(&replacement.as_bytes())?);
         validate_edits(&edits)?;
@@ -282,12 +216,12 @@ fn call_transform(lua: &Lua, environment: Table, request: Input) -> Result<Vec<S
     Ok(edits)
 }
 
-fn validate_edits(edits: &[String]) -> Result<(), Failure> {
+fn validate_edits(edits: &[String]) -> Result<(), Error> {
     if edits.iter().map(String::len).sum::<usize>() > MAX_REPLACEMENT_BYTES {
-        return Err(Failure::ReturnSize);
+        return Err(Error::ReturnSize);
     }
     if edits.iter().any(|edit| edit.contains('\0')) {
-        return Err(Failure::ReturnEncoding);
+        return Err(Error::ReturnEncoding);
     }
     Ok(())
 }
@@ -308,22 +242,42 @@ fn environment(lua: &Lua) -> mlua::Result<Table> {
     Ok(environment)
 }
 
-fn lua_error(error: mlua::Error) -> Failure {
+fn lua_error(error: mlua::Error) -> Error {
     match error {
-        mlua::Error::SyntaxError { .. } => Failure::Syntax,
-        mlua::Error::MemoryError(_) => Failure::Memory,
-        _ => Failure::Execution,
+        mlua::Error::SyntaxError { .. } => Error::Syntax,
+        mlua::Error::MemoryError(_) => Error::Memory,
+        _ => Error::Execution,
     }
 }
 
-fn valid_replacement(bytes: &[u8]) -> Result<String, Failure> {
+fn valid_replacement(bytes: &[u8]) -> Result<String, Error> {
     if bytes.len() > MAX_REPLACEMENT_BYTES {
-        return Err(Failure::ReturnSize);
+        return Err(Error::ReturnSize);
     }
     if bytes.contains(&0) {
-        return Err(Failure::ReturnEncoding);
+        return Err(Error::ReturnEncoding);
     }
     std::str::from_utf8(bytes)
         .map(str::to_owned)
-        .map_err(|_| Failure::ReturnEncoding)
+        .map_err(|_| Error::ReturnEncoding)
+}
+
+#[cfg(all(test, any(unix, windows)))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn worker_failures_keep_their_type_and_reject_payloads_or_unknown_statuses() {
+        for (status, error) in [
+            (1, Error::Sandbox),
+            (6, Error::Execution),
+            (7, Error::Instructions),
+        ] {
+            assert_eq!(worker_reply(vec![status], true), Err(error));
+        }
+        for reply in [vec![], vec![255], b"\x07private text".to_vec()] {
+            assert_eq!(worker_reply(reply, true), Err(Error::Worker));
+        }
+        assert_eq!(worker_reply(b"\0[]".to_vec(), false), Err(Error::Worker));
+    }
 }

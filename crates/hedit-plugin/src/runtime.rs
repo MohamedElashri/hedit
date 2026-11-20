@@ -1,4 +1,4 @@
-use crate::options::Value;
+use crate::{options::Value, Error};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
@@ -16,7 +16,7 @@ mod supervisor;
 
 #[cfg(not(any(unix, windows)))]
 mod supervisor {
-    use super::engine::Failure;
+    use crate::Error;
     use std::{
         fs::File,
         path::{Path, PathBuf},
@@ -24,8 +24,8 @@ mod supervisor {
         time::Duration,
     };
 
-    pub(super) fn executable() -> Result<PathBuf, Failure> {
-        Err(Failure::Sandbox)
+    pub(super) fn executable() -> Result<PathBuf, Error> {
+        Err(Error::Sandbox)
     }
 
     pub(super) fn supervise(
@@ -34,8 +34,8 @@ mod supervisor {
         _: &AtomicBool,
         _: Duration,
         _: Option<File>,
-    ) -> Result<Vec<u8>, Failure> {
-        Err(Failure::Sandbox)
+    ) -> Result<Vec<u8>, Error> {
+        Err(Error::Sandbox)
     }
 }
 
@@ -55,22 +55,22 @@ pub struct Input {
 pub const HELPER_ARG: &str = "--hedit-plugin-worker";
 
 pub struct RunningPlugin {
-    receiver: mpsc::Receiver<Result<Vec<String>, String>>,
+    receiver: mpsc::Receiver<Result<Vec<String>, Error>>,
     cancelled: Arc<AtomicBool>,
 }
 
 impl RunningPlugin {
-    pub fn try_result(&mut self) -> Option<Result<Vec<String>, String>> {
+    pub fn try_result(&mut self) -> Option<Result<Vec<String>, Error>> {
         match self.receiver.try_recv() {
             Ok(result) => Some(result),
             Err(mpsc::TryRecvError::Empty) => None,
-            Err(mpsc::TryRecvError::Disconnected) => Some(Err("The Lua worker stopped.".into())),
+            Err(mpsc::TryRecvError::Disconnected) => Some(Err(Error::Stopped)),
         }
     }
 
     #[cfg(any(test, feature = "test-support"))]
     #[doc(hidden)]
-    pub fn from_test_result(result: Result<Vec<String>, String>) -> Self {
+    pub fn from_test_result(result: Result<Vec<String>, Error>) -> Self {
         let (sender, receiver) = mpsc::channel();
         sender.send(result).unwrap();
         Self {
@@ -86,7 +86,7 @@ impl Drop for RunningPlugin {
     }
 }
 
-pub fn start(input: Input, approval: File) -> Result<RunningPlugin, String> {
+pub fn start(input: Input, approval: File) -> Result<RunningPlugin, Error> {
     let (sender, receiver) = mpsc::channel();
     let cancelled = Arc::new(AtomicBool::new(false));
     let thread_cancelled = cancelled.clone();
@@ -96,25 +96,25 @@ pub fn start(input: Input, approval: File) -> Result<RunningPlugin, String> {
             let result = run(input, Some(approval), &thread_cancelled, false);
             let _ = sender.send(result);
         })
-        .map_err(|_| "The Lua worker could not start.")?;
+        .map_err(|_| Error::Startup)?;
     Ok(RunningPlugin {
         receiver,
         cancelled,
     })
 }
 
-pub fn run_fixture(input: Input) -> Result<String, String> {
+pub fn run_fixture(input: Input) -> Result<String, Error> {
     run_one(input, None, false)
 }
 
-pub fn run_save(input: Input, approval: File) -> Result<String, String> {
+pub fn run_save(input: Input, approval: File) -> Result<String, Error> {
     run_one(input, Some(approval), true)
 }
 
-fn run_one(input: Input, approval: Option<File>, save: bool) -> Result<String, String> {
+fn run_one(input: Input, approval: Option<File>, save: bool) -> Result<String, Error> {
     let [replacement] = run(input, approval, &AtomicBool::new(false), save)?
         .try_into()
-        .map_err(|_| "The Lua worker returned the wrong number of edits.")?;
+        .map_err(|_| Error::EditCount)?;
     Ok(replacement)
 }
 
@@ -123,9 +123,9 @@ fn run(
     approval: Option<File>,
     cancelled: &AtomicBool,
     save: bool,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<String>, Error> {
     if !SUPPORTED {
-        return Err("Lua plugins are unavailable on this platform.".into());
+        return Err(Error::Unavailable);
     }
     engine::run(input, approval, cancelled, save)
 }

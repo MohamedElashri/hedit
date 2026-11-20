@@ -457,7 +457,8 @@ fn test(path: &Path, fixtures: &Path) -> Result<(), String> {
                 selections: vec![case.input],
                 language: case.language,
                 settings,
-            })?;
+            })
+            .map_err(|error| error.to_string())?;
             if result != case.expected {
                 return Err("Output differs from expected text.".into());
             }

@@ -1,9 +1,9 @@
 //! Windows pipe/process adapter; the protocol and Lua engine are shared.
 use super::{
-    engine::{self, Failure, MAX_BATCH_REPLY_BYTES},
+    engine::{self, MAX_BATCH_REPLY_BYTES},
     HELPER_ARG,
 };
-use crate::sandbox::windows::Worker;
+use crate::{sandbox::windows::Worker, Error};
 use std::{
     fs::File,
     io::{Read, Write},
@@ -16,8 +16,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub(super) fn executable() -> Result<PathBuf, Failure> {
-    crate::sandbox::worker_executable().map_err(|_| Failure::Sandbox)
+pub(super) fn executable() -> Result<PathBuf, Error> {
+    crate::sandbox::worker_executable().map_err(|_| Error::Sandbox)
 }
 
 pub(super) fn supervise(
@@ -26,7 +26,7 @@ pub(super) fn supervise(
     cancelled: &AtomicBool,
     timeout: Duration,
     approval: Option<File>,
-) -> Result<Vec<u8>, Failure> {
+) -> Result<Vec<u8>, Error> {
     supervise_arguments(
         executable,
         &[HELPER_ARG],
@@ -44,14 +44,14 @@ fn supervise_arguments(
     cancelled: &AtomicBool,
     timeout: Duration,
     approval: Option<File>,
-) -> Result<Vec<u8>, Failure> {
+) -> Result<Vec<u8>, Error> {
     if cancelled.load(Ordering::Relaxed) {
-        return Err(Failure::Cancelled);
+        return Err(Error::Cancelled);
     }
     let deadline = Instant::now() + timeout;
-    let mut child = Worker::spawn(executable, arguments).map_err(|_| Failure::Sandbox)?;
-    let mut input = child.input.take().ok_or(Failure::Worker)?;
-    let output = child.output.take().ok_or(Failure::Worker)?;
+    let mut child = Worker::spawn(executable, arguments).map_err(|_| Error::Sandbox)?;
+    let mut input = child.input.take().ok_or(Error::Worker)?;
+    let output = child.output.take().ok_or(Error::Worker)?;
     thread::scope(|scope| {
         // Anonymous Windows pipes block. Dedicated scoped I/O threads keep the
         // supervisor responsive. Killing the single-process job closes the peer
@@ -74,28 +74,28 @@ fn supervise_arguments(
             let mut received = None;
             loop {
                 if cancelled.load(Ordering::Relaxed) {
-                    return Err(Failure::Cancelled);
+                    return Err(Error::Cancelled);
                 }
                 if Instant::now() >= deadline {
-                    return Err(Failure::Deadline);
+                    return Err(Error::Deadline);
                 }
                 if let Ok(reply) = receiver.try_recv() {
-                    let reply = reply.map_err(|_| Failure::Worker)?;
+                    let reply = reply.map_err(|_| Error::Worker)?;
                     if reply.len() > MAX_BATCH_REPLY_BYTES + 1 {
-                        return Err(Failure::Worker);
+                        return Err(Error::Worker);
                     }
                     received = Some(reply);
                 }
-                if child.finished(5).map_err(|_| Failure::Worker)? {
-                    if !child.success().map_err(|_| Failure::Worker)? {
-                        return Err(Failure::Worker);
+                if child.finished(5).map_err(|_| Error::Worker)? {
+                    if !child.success().map_err(|_| Error::Worker)? {
+                        return Err(Error::Worker);
                     }
                     return received.map_or_else(
                         || {
                             receiver
                                 .recv()
-                                .map_err(|_| Failure::Worker)?
-                                .map_err(|_| Failure::Worker)
+                                .map_err(|_| Error::Worker)?
+                                .map_err(|_| Error::Worker)
                         },
                         Ok,
                     );
@@ -103,8 +103,8 @@ fn supervise_arguments(
             }
         })();
         child.terminate();
-        let delivered = writer.join().map_err(|_| Failure::Worker)?;
-        reader.join().map_err(|_| Failure::Worker)?;
+        let delivered = writer.join().map_err(|_| Error::Worker)?;
+        reader.join().map_err(|_| Error::Worker)?;
         engine::worker_reply(result?, delivered)
     })
 }
@@ -124,7 +124,7 @@ mod tests {
             Duration::from_secs(2),
             None,
         );
-        assert_eq!(result, Err(Failure::Deadline));
+        assert_eq!(result, Err(Error::Deadline));
         assert!(start.elapsed() < Duration::from_secs(10));
     }
     #[test]
@@ -143,7 +143,7 @@ mod tests {
             });
             thread::sleep(Duration::from_millis(500));
             cancelled.store(true, Ordering::Relaxed);
-            assert_eq!(run.join().unwrap(), Err(Failure::Cancelled));
+            assert_eq!(run.join().unwrap(), Err(Error::Cancelled));
         });
     }
 }

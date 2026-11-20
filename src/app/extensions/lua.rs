@@ -68,6 +68,30 @@ struct Target {
     extra: Vec<Selection>,
 }
 
+#[derive(Debug)]
+struct TransformFailure {
+    message: String,
+    outcome: InvocationOutcome,
+}
+
+impl TransformFailure {
+    fn failed(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            outcome: InvocationOutcome::Failed,
+        }
+    }
+}
+
+impl From<plugin_runtime::Error> for TransformFailure {
+    fn from(error: plugin_runtime::Error) -> Self {
+        Self {
+            message: error.to_string(),
+            outcome: InvocationOutcome::worker_failure(error),
+        }
+    }
+}
+
 impl HeditApp {
     fn lua_target(&self) -> Option<Target> {
         let editor = self.active();
@@ -175,15 +199,10 @@ impl HeditApp {
                 .extension_manager
                 .record(job.proposal.invocation, outcome),
             Err(error) => {
-                let outcome = if error.contains("approval changed") {
-                    InvocationOutcome::Denied
-                } else {
-                    InvocationOutcome::worker_failure(&error)
-                };
                 self.extension_manager
-                    .record(job.proposal.invocation, outcome);
+                    .record(job.proposal.invocation, error.outcome);
                 self.notice = "Extension command failed.".into();
-                self.error = Some(error);
+                self.error = Some(error.message);
             }
         }
     }
@@ -192,7 +211,7 @@ impl HeditApp {
         &mut self,
         ctx: &egui::Context,
         job: &mut LuaTransform,
-    ) -> Result<Option<InvocationOutcome>, String> {
+    ) -> Result<Option<InvocationOutcome>, TransformFailure> {
         let proposal = &job.proposal;
         match &mut job.phase {
             Phase::Checking(approval) => {
@@ -225,7 +244,9 @@ impl HeditApp {
                     } else {
                         job.phase = Phase::Committing {
                             replacements,
-                            approval: self.request_lua_approval(&proposal.plugin)?,
+                            approval: self
+                                .request_lua_approval(&proposal.plugin)
+                                .map_err(TransformFailure::failed)?,
                         };
                     }
                 }
@@ -234,7 +255,9 @@ impl HeditApp {
                 Some(true) => {
                     job.phase = Phase::Committing {
                         replacements: std::mem::take(replacements),
-                        approval: self.request_lua_approval(&proposal.plugin)?,
+                        approval: self
+                            .request_lua_approval(&proposal.plugin)
+                            .map_err(TransformFailure::failed)?,
                     };
                 }
                 Some(false) => {
@@ -380,12 +403,17 @@ fn show_preview(ctx: &egui::Context, diff: &[DiffLine]) -> Option<bool> {
 }
 
 // The returned lock serializes delivery or application with a revocation.
-fn receive_approval(approval: &Receiver<Option<File>>) -> Result<Option<File>, String> {
+fn receive_approval(approval: &Receiver<Option<File>>) -> Result<Option<File>, TransformFailure> {
     match approval.try_recv() {
         Ok(Some(guard)) => Ok(Some(guard)),
-        Ok(None) => Err("Extension approval changed. Review it in Settings → Extensions.".into()),
+        Ok(None) => Err(TransformFailure {
+            message: "Extension approval changed. Review it in Settings → Extensions.".into(),
+            outcome: InvocationOutcome::Denied,
+        }),
         Err(TryRecvError::Empty) => Ok(None),
-        Err(TryRecvError::Disconnected) => Err("The extension approval check stopped.".into()),
+        Err(TryRecvError::Disconnected) => Err(TransformFailure::failed(
+            "The extension approval check stopped.",
+        )),
     }
 }
 
@@ -492,6 +520,36 @@ mod tests {
             app.poll_lua_transform(ctx);
             thread::sleep(std::time::Duration::from_millis(5));
         }
+    }
+
+    #[test]
+    fn approval_denial_and_worker_limits_preserve_the_document() {
+        let (sender, receiver) = mpsc::channel();
+        sender.send(None).unwrap();
+        assert_eq!(
+            receive_approval(&receiver).unwrap_err().outcome,
+            InvocationOutcome::Denied
+        );
+        drop(sender);
+        assert_eq!(
+            receive_approval(&receiver).unwrap_err().outcome,
+            InvocationOutcome::Failed
+        );
+
+        let config = tempfile::tempdir().unwrap();
+        let (_session, ctx, mut app, _) = approved(config.path(), "private text");
+        app.set_selections(vec![Selection { anchor: 0, head: 7 }]);
+        fake_result(&mut app, "unused");
+        app.lua_transform.as_mut().unwrap().phase = Phase::Running(
+            RunningPlugin::from_test_result(Err(plugin_runtime::Error::Instructions)),
+        );
+        app.poll_lua_transform(&ctx);
+        assert!(app.lua_transform.is_none());
+        assert_eq!(app.active().page.text, "private text");
+        assert_eq!(
+            app.error.as_deref(),
+            Some("The Lua plugin reached its instruction limit.")
+        );
     }
 
     #[test]

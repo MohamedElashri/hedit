@@ -1,8 +1,9 @@
 //! Unix pipe adapter and supervision; Lua and policy live in the shared engine.
 #[cfg(test)]
 use super::engine::DEADLINE;
-use super::engine::{Failure, MAX_BATCH_REPLY_BYTES};
+use super::engine::MAX_BATCH_REPLY_BYTES;
 use super::HELPER_ARG;
+use crate::Error;
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::os::fd::{AsFd, AsRawFd};
@@ -15,8 +16,8 @@ use std::time::{Duration, Instant};
 
 const CHECK_INTERVAL: Duration = Duration::from_millis(10);
 
-pub(super) fn executable() -> Result<PathBuf, Failure> {
-    crate::sandbox::worker_executable().map_err(|_| Failure::Sandbox)
+pub(super) fn executable() -> Result<PathBuf, Error> {
+    crate::sandbox::worker_executable().map_err(|_| Error::Sandbox)
 }
 
 struct ReapChild(Child);
@@ -29,12 +30,12 @@ impl Drop for ReapChild {
     }
 }
 
-fn set_nonblocking(pipe: impl AsFd) -> Result<(), Failure> {
+fn set_nonblocking(pipe: impl AsFd) -> Result<(), Error> {
     let fd = pipe.as_fd().as_raw_fd();
     // The pipe remains open while we change its status flags.
     let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
     if flags == -1 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } == -1 {
-        return Err(Failure::Worker);
+        return Err(Error::Worker);
     }
     Ok(())
 }
@@ -45,7 +46,7 @@ pub(super) fn supervise(
     cancelled: &AtomicBool,
     timeout: Duration,
     approval: Option<File>,
-) -> Result<Vec<u8>, Failure> {
+) -> Result<Vec<u8>, Error> {
     supervise_verified(
         executable,
         request,
@@ -63,9 +64,9 @@ fn supervise_verified(
     timeout: Duration,
     mut approval: Option<File>,
     verify: impl FnOnce(&Child) -> io::Result<()>,
-) -> Result<Vec<u8>, Failure> {
+) -> Result<Vec<u8>, Error> {
     if cancelled.load(Ordering::Relaxed) {
-        return Err(Failure::Cancelled);
+        return Err(Error::Cancelled);
     }
     let deadline = Instant::now() + timeout;
     let mut child = ReapChild(
@@ -77,11 +78,11 @@ fn supervise_verified(
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
-            .map_err(|_| Failure::Worker)?,
+            .map_err(|_| Error::Worker)?,
     );
-    verify(&child.0).map_err(|_| Failure::Sandbox)?;
-    let input = child.0.stdin.take().ok_or(Failure::Worker)?;
-    let output = child.0.stdout.take().ok_or(Failure::Worker)?;
+    verify(&child.0).map_err(|_| Error::Sandbox)?;
+    let input = child.0.stdin.take().ok_or(Error::Worker)?;
+    let output = child.0.stdout.take().ok_or(Error::Worker)?;
     set_nonblocking(&input)?;
     set_nonblocking(&output)?;
     let mut input = Some(input);
@@ -91,10 +92,10 @@ fn supervise_verified(
     let mut reply = Vec::new();
     loop {
         if cancelled.load(Ordering::Relaxed) {
-            return Err(Failure::Cancelled);
+            return Err(Error::Cancelled);
         }
         if Instant::now() >= deadline {
-            return Err(Failure::Deadline);
+            return Err(Error::Deadline);
         }
         if let Some(stdin) = input.as_mut() {
             match stdin.write(&request[sent..]) {
@@ -108,7 +109,7 @@ fn supervise_verified(
                 Err(error) if error.kind() == io::ErrorKind::BrokenPipe => input = None,
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
-                Err(_) => return Err(Failure::Worker),
+                Err(_) => return Err(Error::Worker),
             }
         }
 
@@ -117,17 +118,17 @@ fn supervise_verified(
         if input.is_none() {
             drop(approval.take());
         }
-        let mut status = child.0.try_wait().map_err(|_| Failure::Worker)?;
+        let mut status = child.0.try_wait().map_err(|_| Error::Worker)?;
         if status.is_none() {
             match crate::sandbox::over_memory_limit(&child.0) {
-                Ok(true) => return Err(Failure::Memory),
+                Ok(true) => return Err(Error::Memory),
                 Ok(false) => {}
                 Err(_) => {
                     // A short-lived worker can exit between try_wait and the
                     // OS resource query. Accept that race only after reaping.
-                    status = child.0.try_wait().map_err(|_| Failure::Worker)?;
+                    status = child.0.try_wait().map_err(|_| Error::Worker)?;
                     if status.is_none() {
-                        return Err(Failure::Worker);
+                        return Err(Error::Worker);
                     }
                 }
             }
@@ -135,14 +136,14 @@ fn supervise_verified(
         let output_open = match output.read_to_end(&mut reply) {
             Ok(_) => false,
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => true,
-            Err(_) => return Err(Failure::Worker),
+            Err(_) => return Err(Error::Worker),
         };
         if reply.len() > MAX_BATCH_REPLY_BYTES + 1 {
-            return Err(Failure::Worker);
+            return Err(Error::Worker);
         }
         if let Some(status) = status {
             if !status.success() {
-                return Err(Failure::Worker);
+                return Err(Error::Worker);
             }
             break;
         }
@@ -185,7 +186,7 @@ mod tests {
         cancelled: &AtomicBool,
         timeout: Duration,
         approval: Option<File>,
-    ) -> Result<Vec<u8>, Failure> {
+    ) -> Result<Vec<u8>, Error> {
         super::supervise_verified(
             executable,
             request,
@@ -280,7 +281,7 @@ while :; do :; done"#,
             Duration::from_millis(250),
             None,
         );
-        assert_eq!(result, Err(Failure::Deadline));
+        assert_eq!(result, Err(Error::Deadline));
         let pid = fs::read_to_string(worker.with_extension("pid")).unwrap();
         assert_eq!(unsafe { libc::kill(pid.trim().parse().unwrap(), 0) }, -1);
         assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
@@ -309,7 +310,7 @@ while :; do :; done"#,
                 thread::sleep(CHECK_INTERVAL);
             };
             cancelled.store(true, Ordering::Relaxed);
-            assert_eq!(run.join().unwrap(), Err(Failure::Cancelled));
+            assert_eq!(run.join().unwrap(), Err(Error::Cancelled));
             assert_eq!(unsafe { libc::kill(pid.trim().parse().unwrap(), 0) }, -1);
             assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
         });

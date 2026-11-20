@@ -324,7 +324,7 @@ fn run_hook(
     };
     let replacement =
         plugin_runtime::run_save(input(&options, plugin, language, vec![text]), authority)
-            .map_err(|error| InvocationOutcome::worker_failure(&error))?;
+            .map_err(InvocationOutcome::worker_failure)?;
     let (authority, _) = approved().ok_or(InvocationOutcome::Denied)?;
     Ok((replacement, authority))
 }
