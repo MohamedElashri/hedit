@@ -48,7 +48,8 @@ class WindowsPackage(unittest.TestCase):
             for directory in ['assets', 'themes', 'docs/images', 'examples/cuda']:
                 shutil.copytree(packager.ROOT / directory, project / directory)
             documents = ['vendor/egui_commonmark/PATCH.md', 'vendor/libghostty-vt-sys/PATCH.md',
-                         'docs/extensions.md', 'examples/extensions/markdown-task.json']
+                         'docs/extensions.md', 'examples/extensions/markdown-task.json',
+                         'examples/extensions/markdown-quote.json']
             for relative in documents:
                 (project / relative).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(packager.ROOT / relative, project / relative)
@@ -73,7 +74,8 @@ class WindowsPackage(unittest.TestCase):
                 examples = {name[len(prefix):] for name in bundle.namelist()
                             if name.startswith(prefix + 'examples/')}
                 self.assertEqual(examples, {'examples/cuda/vector_add.cu',
-                                            'examples/extensions/markdown-task.json'})
+                                            'examples/extensions/markdown-task.json',
+                                            'examples/extensions/markdown-quote.json'})
             checksum = archive.with_name(archive.name + '.sha256').read_bytes()
             digest = hashlib.sha256(archive.read_bytes()).hexdigest()
             self.assertEqual(checksum, f'{digest}  {archive.name}\n'.encode())
