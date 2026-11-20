@@ -22,6 +22,9 @@
 
 ### Fixed
 
+- Avoid repeated document scans when Lua commands read multiple selections, and remove per-character offset tables from multicursor replacements.
+- Wake the editor when Lua authorization checks and commands finish so results appear promptly.
+- Preserve cached Markdown figures with different text colors during redraws.
 - Report unreadable positions in malformed paged files without stalling the open worker.
 - Use atomic creation for new Save As destinations so another file created during the save stays intact and pending edits remain available for retry.
 - Preserve competing writes during existing-file saves and detect replacements with matching length and modification time. Validate UTF-8 before advancing a page past a partial character.

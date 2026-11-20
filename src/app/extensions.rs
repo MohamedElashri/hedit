@@ -98,7 +98,7 @@ impl HeditApp {
             ExtensionAction::InsertSnippet { body } => self.run_extension_snippet(&body),
             ExtensionAction::Lua(plugin) => {
                 self.extension_manager.consume_one_time(id);
-                self.start_lua_transform(id, plugin);
+                self.start_lua_transform(ctx, id, plugin);
             }
             ExtensionAction::NewFile { body, language } => {
                 self.run_extension_template(ctx, &body, language)

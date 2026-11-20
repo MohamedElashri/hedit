@@ -152,6 +152,8 @@ deadline; save hooks have 400 ms. Native memory limits also cover allocations
 outside Lua.
 Worker failures carry fixed status codes. Lua error text stays inside the worker;
 only the corresponding typed failure and fixed display message reach the editor.
+Asynchronous command and authorization checks wake the host event loop after
+queueing their results. The UI also retains bounded fallback polling.
 
 | Platform | Native boundary | Worker layout |
 | --- | --- | --- |

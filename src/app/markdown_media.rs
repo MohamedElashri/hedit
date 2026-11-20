@@ -48,13 +48,16 @@ struct Tile {
 pub(super) struct Media {
     entries: Mutex<HashMap<Key, Arc<Mutex<Entry>>>>,
     working: Arc<std::sync::atomic::AtomicUsize>,
-    font_size: std::sync::atomic::AtomicU32,
+    appearance: Mutex<Option<(u32, [u8; 4], bool)>>,
 }
 
 impl Media {
-    pub(super) fn set_font_size(&self, size: f32) {
-        if self.font_size.swap(size.to_bits(), Ordering::Relaxed) != size.to_bits() {
+    pub(super) fn set_appearance(&self, size: f32, color: egui::Color32, dark: bool) {
+        let current = (size.to_bits(), color.to_array(), dark);
+        let mut appearance = self.appearance.lock().unwrap();
+        if *appearance != Some(current) {
             self.entries.lock().unwrap().clear();
+            *appearance = Some(current);
         }
     }
     pub(super) fn inline_height(
@@ -140,9 +143,6 @@ impl Media {
             dark: ui.visuals().dark_mode,
         };
         let mut entries = self.entries.lock().unwrap();
-        entries.retain(|old, _| {
-            old.document != document || (old.color == key.color && old.dark == key.dark)
-        });
         let entry = if let Some(entry) = entries.get(&key) {
             Some(entry.clone())
         } else if self.working.load(Ordering::Relaxed) < 2 {
@@ -519,6 +519,64 @@ fn rasterize(svg: &str) -> Result<Raster, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn warm_figures_with_different_text_colors_keep_their_cached_results() {
+        let ctx = egui::Context::default();
+        let media = Media::default();
+        let size = egui::TextStyle::Body.resolve(&ctx.style()).size;
+        let color = ctx.style().visuals.text_color();
+        let dark = ctx.style().visuals.dark_mode;
+        media.set_appearance(size, color, dark);
+        let originals: Vec<_> = [egui::Color32::RED, egui::Color32::BLUE]
+            .into_iter()
+            .map(|color| {
+                let key = Key {
+                    document: 1,
+                    kind: Kind::InlineMath,
+                    source: "x".into(),
+                    size: size.round().clamp(8.0, 96.0) as u16,
+                    color: color.to_array(),
+                    dark: ctx.style().visuals.dark_mode,
+                };
+                let entry = Arc::new(Mutex::new(Entry {
+                    result: Some(Ok(Arc::new(Raster {
+                        image: egui::ColorImage::new([4, 4], egui::Color32::WHITE),
+                        size: egui::vec2(4.0, 4.0),
+                        baseline: Some(2.0),
+                    }))),
+                    tiles: vec![],
+                }));
+                media
+                    .entries
+                    .lock()
+                    .unwrap()
+                    .insert(key.clone(), entry.clone());
+                (key, entry)
+            })
+            .collect();
+        for _ in 0..3 {
+            let _ = ctx.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    for color in [egui::Color32::RED, egui::Color32::BLUE] {
+                        ui.visuals_mut().override_text_color = Some(color);
+                        media.show(ui, 1, "x", Kind::InlineMath);
+                    }
+                });
+            });
+            let entries = media.entries.lock().unwrap();
+            assert_eq!(entries.len(), 2, "drawing one color evicted the other");
+            for (key, original) in &originals {
+                assert!(Arc::ptr_eq(entries.get(key).unwrap(), original));
+            }
+            assert!(!media.pending(), "warm figures started new rendering work");
+        }
+        media.set_appearance(size, color, dark);
+        assert_eq!(media.entries.lock().unwrap().len(), 2);
+        media.set_appearance(size, color, !dark);
+        assert!(media.entries.lock().unwrap().is_empty());
+    }
+
     fn key(source: &str, kind: Kind) -> Key {
         Key {
             document: 1,

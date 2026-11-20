@@ -87,7 +87,12 @@ impl Drop for RunningPlugin {
     }
 }
 
-pub fn start(input: Input, approval: File) -> Result<RunningPlugin, Error> {
+/// Queue the result before waking the host event loop.
+pub fn start(
+    input: Input,
+    approval: File,
+    wake: impl FnOnce() + Send + 'static,
+) -> Result<RunningPlugin, Error> {
     let (sender, receiver) = mpsc::channel();
     let cancelled = Arc::new(AtomicBool::new(false));
     let thread_cancelled = cancelled.clone();
@@ -96,6 +101,7 @@ pub fn start(input: Input, approval: File) -> Result<RunningPlugin, Error> {
         .spawn(move || {
             let result = run(input, Some(approval), &thread_cancelled, false);
             let _ = sender.send(result);
+            wake();
         })
         .map_err(|_| Error::Startup)?;
     Ok(RunningPlugin {
@@ -141,4 +147,36 @@ pub fn run_if_requested(args: &[OsString]) -> Option<bool> {
     // Install the OS boundary before the worker touches its request pipes.
     let isolated = crate::sandbox::enter().is_ok();
     Some(engine::run_helper(isolated))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn async_failure_wakes_the_host_after_the_result_is_queued() {
+        let (sender, receiver) = mpsc::channel();
+        let mut job = start(
+            Input {
+                source: String::new(),
+                selections: vec![],
+                language: String::new(),
+                settings: BTreeMap::new(),
+            },
+            tempfile::tempfile().unwrap(),
+            move || sender.send(()).unwrap(),
+        )
+        .unwrap();
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        assert_eq!(
+            job.try_result(),
+            Some(Err(if SUPPORTED {
+                Error::Request
+            } else {
+                Error::Unavailable
+            }))
+        );
+    }
 }
