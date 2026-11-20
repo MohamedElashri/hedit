@@ -133,8 +133,7 @@ also checks the document revision, pane, and selection.
 
 Install and update use the reviewed input bytes. Update and uninstall compare
 the current installed snapshot with the reviewed copy and durably clear its Lua
-approvals before replacing or removing it. Older extension-wide grants require
-fresh consent per command. See the [extension guide](docs/extensions.md).
+approvals before replacing or removing it. Unsupported approval files require an explicit reset before fresh consent. See the [extension guide](docs/extensions.md).
 
 `crates/hedit-plugin/src/plugin_runtime/engine.rs` owns the single Lua 5.4 implementation, request
 codec, library allowlist, and instruction/memory budgets. Commands, fixtures,
