@@ -1,4 +1,4 @@
-//! Preferences for local, declarative extensions.
+//! Preferences for local extensions and Lua plugin approvals.
 use super::catalog::{self, Catalog, ImportPreview, View};
 use crate::app::HeditApp;
 use eframe::egui;
@@ -31,6 +31,11 @@ enum Request {
     ChooseFile,
     Install,
     SetEnabled(String, bool),
+    SetLuaApproved {
+        id: String,
+        digest: String,
+        approved: bool,
+    },
 }
 
 impl Manager {
@@ -105,6 +110,10 @@ impl Manager {
                 ui.strong(format!("Import {}", preview.id));
                 ui.weak(preview.source.display().to_string());
                 command_rows(ui, &preview.commands);
+                if preview.lua {
+                    ui.label(LUA_ACCESS);
+                    ui.weak("Approve this plugin after installing it to run its commands.");
+                }
                 ui.horizontal(|ui| {
                     if ui
                         .add_enabled(!pending, egui::Button::new("Install"))
@@ -152,6 +161,34 @@ impl Manager {
                                         Some(Request::SetEnabled(details.id.clone(), enabled));
                                 }
                             });
+                            if let Some(lua) = &details.lua {
+                                ui.label(LUA_ACCESS);
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label(if lua.approved {
+                                        "Approved"
+                                    } else {
+                                        "Approval required"
+                                    })
+                                    .on_hover_text(format!("Manifest SHA-256 {}", lua.digest));
+                                    if ui
+                                        .add_enabled(
+                                            !pending && !view.grants_unreadable,
+                                            egui::Button::new(if lua.approved {
+                                                "Revoke approval"
+                                            } else {
+                                                "Approve"
+                                            }),
+                                        )
+                                        .clicked()
+                                    {
+                                        request = Some(Request::SetLuaApproved {
+                                            id: details.id.clone(),
+                                            digest: lua.digest.clone(),
+                                            approved: !lua.approved,
+                                        });
+                                    }
+                                });
+                            }
                             ui.collapsing(format!("{} commands", details.commands.len()), |ui| {
                                 command_rows(ui, &details.commands)
                             });
@@ -169,6 +206,9 @@ impl Manager {
         request
     }
 }
+
+const LUA_ACCESS: &str =
+    "Lua access is limited to reading and replacing the active selection in a local editor.";
 
 fn command_rows(ui: &mut egui::Ui, commands: &[(String, String)]) {
     for (id, title) in commands {
@@ -258,6 +298,23 @@ impl HeditApp {
                     installed: false,
                 })
             }),
+            Some(Request::SetLuaApproved {
+                id,
+                digest,
+                approved,
+            }) => {
+                manager.work(ui.ctx(), move || {
+                    Ok(Update::View {
+                        catalog: catalog::set_lua_approved(&config, &id, &digest, approved)?,
+                        status: Some(if approved {
+                            "Lua plugin approved for this version of its manifest."
+                        } else {
+                            "Lua plugin approval revoked."
+                        }),
+                        installed: false,
+                    })
+                });
+            }
             None => {}
         }
     }

@@ -1,14 +1,16 @@
 use hedit::{projects, syntax::Language};
 use regex::Regex;
-use serde::Deserialize;
+use serde::{de, Deserialize};
+use sha2::{Digest, Sha256};
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, HashSet},
     fs, io,
     path::{Path, PathBuf},
-    sync::OnceLock,
+    sync::{Arc, OnceLock},
 };
 
-const API_VERSION: u32 = 1;
+const DECLARATIVE_API_VERSION: u32 = 1;
+const LUA_API_VERSION: u32 = 2;
 pub(super) const MAX_DIRECTORY_ENTRIES: usize = 256;
 pub(super) const MAX_MANIFESTS: usize = 32;
 pub(super) const MAX_MANIFEST_BYTES: u64 = 32 * 1024;
@@ -17,6 +19,7 @@ const MAX_ID_BYTES: usize = 48;
 const MAX_TITLE_BYTES: usize = 128;
 const MAX_BODY_BYTES: usize = 2048;
 const MAX_BODY_LINES: usize = 16;
+const MAX_LUA_SOURCE_BYTES: usize = 16 * 1024;
 const MAX_LANGUAGES: usize = 16;
 const MAX_FILENAME_PATTERN_BYTES: usize = 128;
 
@@ -118,10 +121,36 @@ struct Version {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct Manifest {
+struct DeclarativeDefinition {
     api_version: u32,
+    id: String,
+    commands: Vec<Command>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LuaDefinition {
+    api_version: u32,
+    id: String,
+    commands: Vec<Command>,
+    permissions: Vec<Permission>,
+    #[serde(deserialize_with = "unique_scripts")]
+    scripts: BTreeMap<String, Arc<str>>,
+}
+
+#[derive(PartialEq, Deserialize)]
+enum Permission {
+    #[serde(rename = "selection.read")]
+    ReadSelection,
+    #[serde(rename = "selection.replace")]
+    ReplaceSelection,
+}
+
+pub(super) struct Manifest {
     pub(super) id: String,
     commands: Vec<Command>,
+    scripts: BTreeMap<String, Arc<str>>,
+    pub(super) lua_digest: Option<String>,
 }
 
 impl Manifest {
@@ -132,12 +161,30 @@ impl Manifest {
             .collect()
     }
 
-    pub(super) fn into_contributions(self) -> impl Iterator<Item = Contribution> {
-        self.commands.into_iter().map(move |command| Contribution {
-            id: format!("{}.{}", self.id, command.id),
-            title: command.title,
-            action: command.action,
-            when: command.when,
+    pub(super) fn into_contributions(
+        self,
+        installed_path: PathBuf,
+        grant: Option<super::catalog::Grant>,
+    ) -> impl Iterator<Item = Contribution> {
+        let grant = grant.map(Arc::new);
+        self.commands.into_iter().filter_map(move |command| {
+            let action = match command.action {
+                ActionDefinition::InsertSnippet { body } => ExtensionAction::InsertSnippet { body },
+                ActionDefinition::NewFile { body, language } => {
+                    ExtensionAction::NewFile { body, language }
+                }
+                ActionDefinition::Lua { source } => ExtensionAction::Lua(LuaPlugin {
+                    source: self.scripts.get(&source)?.clone(),
+                    installed_path: installed_path.clone(),
+                    grant: grant.clone()?,
+                }),
+            };
+            Some(Contribution {
+                id: format!("{}.{}", self.id, command.id),
+                title: command.title,
+                action,
+                when: command.when,
+            })
         })
     }
 }
@@ -147,14 +194,14 @@ impl Manifest {
 struct Command {
     id: String,
     title: String,
-    action: ExtensionAction,
+    action: ActionDefinition,
     #[serde(default)]
     when: Context,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub(in crate::app) enum ExtensionAction {
+enum ActionDefinition {
     InsertSnippet {
         body: String,
     },
@@ -163,6 +210,70 @@ pub(in crate::app) enum ExtensionAction {
         #[serde(default, deserialize_with = "template_language")]
         language: Option<Language>,
     },
+    Lua {
+        source: String,
+    },
+}
+
+#[derive(Clone)]
+pub(in crate::app) enum ExtensionAction {
+    InsertSnippet {
+        body: String,
+    },
+    NewFile {
+        body: String,
+        language: Option<Language>,
+    },
+    Lua(LuaPlugin),
+}
+
+#[derive(Clone)]
+pub(in crate::app) struct LuaPlugin {
+    pub source: Arc<str>,
+    pub(super) installed_path: PathBuf,
+    pub(super) grant: Arc<super::catalog::Grant>,
+}
+
+fn unique_scripts<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<BTreeMap<String, Arc<str>>, D::Error> {
+    struct Scripts;
+    impl<'de> de::Visitor<'de> for Scripts {
+        type Value = BTreeMap<String, Arc<str>>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("an object mapping Lua script names to source text")
+        }
+
+        fn visit_map<M: de::MapAccess<'de>>(self, mut map: M) -> Result<Self::Value, M::Error> {
+            let mut scripts = BTreeMap::new();
+            while let Some((name, source)) = map.next_entry::<String, String>()? {
+                if scripts.len() == MAX_COMMANDS {
+                    return Err(de::Error::custom(format!(
+                        "Use at most {MAX_COMMANDS} Lua scripts."
+                    )));
+                }
+                if !name.strip_suffix(".lua").is_some_and(valid_id) {
+                    return Err(de::Error::custom(
+                        "Lua script names must be lowercase IDs ending in .lua.",
+                    ));
+                }
+                if source.trim().is_empty()
+                    || source.len() > MAX_LUA_SOURCE_BYTES
+                    || source.contains(['\0', '\u{1b}'])
+                {
+                    return Err(de::Error::custom(format!(
+                        "Lua scripts must contain 1–{MAX_LUA_SOURCE_BYTES} bytes of source text."
+                    )));
+                }
+                if scripts.insert(name, Arc::from(source)).is_some() {
+                    return Err(de::Error::custom("Duplicate Lua script name."));
+                }
+            }
+            Ok(scripts)
+        }
+    }
+    deserializer.deserialize_map(Scripts)
 }
 
 fn template_language<'de, D: serde::Deserializer<'de>>(
@@ -254,24 +365,61 @@ pub(super) fn read_manifest(path: &Path) -> Result<Manifest, String> {
     parse_manifest(&text)
 }
 
+pub(super) fn digest(text: &str) -> String {
+    Sha256::digest(text.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 pub(super) fn parse_manifest(text: &str) -> Result<Manifest, String> {
-    let version: Version = serde_json::from_str(text).map_err(|error| error.to_string())?;
-    if version.api_version != API_VERSION {
+    if text.len() as u64 > MAX_MANIFEST_BYTES {
         return Err(format!(
-            "API version {} is unsupported. This editor supports version {API_VERSION}.",
-            version.api_version
+            "Manifest exceeds the {MAX_MANIFEST_BYTES}-byte limit."
         ));
     }
-    let manifest: Manifest = serde_json::from_str(text).map_err(|error| error.to_string())?;
-    debug_assert_eq!(manifest.api_version, version.api_version);
-    if !valid_id(&manifest.id) {
+    let version: Version = serde_json::from_str(text).map_err(|error| error.to_string())?;
+    let (id, commands, scripts, lua_digest) = match version.api_version {
+        DECLARATIVE_API_VERSION => {
+            let definition: DeclarativeDefinition =
+                serde_json::from_str(text).map_err(|error| error.to_string())?;
+            debug_assert_eq!(definition.api_version, DECLARATIVE_API_VERSION);
+            (definition.id, definition.commands, BTreeMap::new(), None)
+        }
+        LUA_API_VERSION => {
+            let definition: LuaDefinition =
+                serde_json::from_str(text).map_err(|error| error.to_string())?;
+            debug_assert_eq!(definition.api_version, LUA_API_VERSION);
+            if definition.permissions.len() != 2
+                || !definition.permissions.contains(&Permission::ReadSelection)
+                || !definition
+                    .permissions
+                    .contains(&Permission::ReplaceSelection)
+            {
+                return Err("Lua plugins must request selection.read and selection.replace exactly once each.".into());
+            }
+            (
+                definition.id,
+                definition.commands,
+                definition.scripts,
+                Some(digest(text)),
+            )
+        }
+        version => {
+            return Err(format!(
+                "API version {version} is unsupported. This editor supports versions {DECLARATIVE_API_VERSION} and {LUA_API_VERSION}."
+            ));
+        }
+    };
+    if !valid_id(&id) {
         return Err("Invalid extension ID. Use 1–48 lowercase letters, digits, or hyphens, starting with a letter.".into());
     }
-    if !(1..=MAX_COMMANDS).contains(&manifest.commands.len()) {
+    if !(1..=MAX_COMMANDS).contains(&commands.len()) {
         return Err(format!("Declare between 1 and {MAX_COMMANDS} commands."));
     }
     let mut command_ids = HashSet::new();
-    for command in &manifest.commands {
+    let mut used_scripts = HashSet::new();
+    for command in &commands {
         if !valid_id(&command.id) {
             return Err(format!("Invalid command ID {:?}. Use 1–48 lowercase letters, digits, or hyphens, starting with a letter.", command.id));
         }
@@ -285,21 +433,44 @@ pub(super) fn parse_manifest(text: &str) -> Result<Manifest, String> {
         {
             return Err(format!("Command {} needs a title of 1–{MAX_TITLE_BYTES} bytes without surrounding whitespace or control characters.", command.id));
         }
-        let (body, variables) = match &command.action {
-            ExtensionAction::InsertSnippet { body } => (body, true),
-            ExtensionAction::NewFile { body, .. } => (body, false),
-        };
-        if body.contains('\0') {
-            return Err(format!(
-                "Command {} has a snippet containing a NUL character.",
-                command.id
-            ));
-        }
-        if !valid_body(body, variables) {
-            return Err(format!("Command {} has an invalid snippet. Use 1–{MAX_BODY_BYTES} bytes, up to {MAX_BODY_LINES} lines, and flat fields numbered 0–{}.", command.id, u32::MAX));
+        match &command.action {
+            ActionDefinition::InsertSnippet { body } => validate_body(&command.id, body, true)?,
+            ActionDefinition::NewFile { body, .. } => validate_body(&command.id, body, false)?,
+            ActionDefinition::Lua { source } => {
+                if lua_digest.is_none() {
+                    return Err("Lua commands require API version 2.".into());
+                }
+                if !scripts.contains_key(source) {
+                    return Err(format!(
+                        "Command {} references an undeclared Lua script.",
+                        command.id
+                    ));
+                }
+                used_scripts.insert(source.as_str());
+            }
         }
     }
-    Ok(manifest)
+    if lua_digest.is_some() && (used_scripts.is_empty() || used_scripts.len() != scripts.len()) {
+        return Err("An API version 2 manifest needs a Lua command, and every declared Lua script needs a command.".into());
+    }
+    Ok(Manifest {
+        id,
+        commands,
+        scripts,
+        lua_digest,
+    })
+}
+
+fn validate_body(id: &str, body: &str, variables: bool) -> Result<(), String> {
+    if body.contains('\0') {
+        return Err(format!(
+            "Command {id} has a snippet containing a NUL character."
+        ));
+    }
+    if !valid_body(body, variables) {
+        return Err(format!("Command {id} has an invalid snippet. Use 1–{MAX_BODY_BYTES} bytes, up to {MAX_BODY_LINES} lines, and flat fields numbered 0–{}.", u32::MAX));
+    }
+    Ok(())
 }
 
 pub(in crate::app) fn load(config: Option<&Path>) -> (Vec<Contribution>, Vec<String>) {
@@ -320,6 +491,102 @@ mod tests {
         json!({"api_version": 1, "id": id, "commands": commands}).to_string()
     }
 
+    fn lua_definition() -> Value {
+        json!({
+            "api_version": 2,
+            "id": "uppercase",
+            "permissions": ["selection.read", "selection.replace"],
+            "scripts": {"upper.lua": "return function(text) return string.upper(text) end"},
+            "commands": [{
+                "id": "transform",
+                "title": "Uppercase selection",
+                "action": {"kind": "lua", "source": "upper.lua"}
+            }]
+        })
+    }
+
+    #[test]
+    fn lua_manifest_resolves_script_and_keeps_exact_digest() {
+        let definition = lua_definition();
+        let compact = definition.to_string();
+        let pretty = serde_json::to_string_pretty(&definition).unwrap();
+        let manifest = parse_manifest(&compact).unwrap();
+        assert_eq!(manifest.id, "uppercase");
+        assert_eq!(
+            manifest.lua_digest.as_deref(),
+            Some(digest(&compact).as_str())
+        );
+        assert_ne!(
+            manifest.lua_digest,
+            parse_manifest(&pretty).unwrap().lua_digest
+        );
+        assert!(matches!(
+            &manifest.commands[0].action,
+            ActionDefinition::Lua { source }
+                if &*manifest.scripts[source] == definition["scripts"]["upper.lua"].as_str().unwrap()
+        ));
+    }
+
+    #[test]
+    fn lua_manifest_rejects_undeclared_and_duplicate_permissions() {
+        for permissions in [
+            json!([]),
+            json!(["selection.read"]),
+            json!(["selection.replace", "selection.replace"]),
+            json!(["selection.read", "selection.replace", "selection.read"]),
+            json!(["selection.read", "workspace.read"]),
+        ] {
+            let mut definition = lua_definition();
+            definition["permissions"] = permissions;
+            assert!(parse_manifest(&definition.to_string()).is_err());
+        }
+        let mut definition = lua_definition();
+        definition.as_object_mut().unwrap().remove("permissions");
+        assert!(parse_manifest(&definition.to_string()).is_err());
+    }
+
+    #[test]
+    fn lua_manifest_rejects_unbounded_or_ambiguous_scripts() {
+        for scripts in [
+            json!({}),
+            json!({"../upper.lua": "return 1"}),
+            json!({"upper.lua": "   "}),
+            json!({"upper.lua": "\u{1b}Lua"}),
+            json!({"upper.lua": "null\0byte"}),
+            json!({"upper.lua": "x".repeat(MAX_LUA_SOURCE_BYTES + 1)}),
+            json!({"upper.lua": "return 1", "unused.lua": "return 2"}),
+        ] {
+            let mut definition = lua_definition();
+            definition["scripts"] = scripts;
+            assert!(parse_manifest(&definition.to_string()).is_err());
+        }
+        let duplicate = lua_definition().to_string().replace(
+            "{\"upper.lua\":",
+            "{\"upper.lua\":\"return 0\",\"upper.lua\":",
+        );
+        let Err(error) = parse_manifest(&duplicate) else {
+            panic!("duplicate script name was accepted");
+        };
+        assert!(error.contains("Duplicate Lua script name."), "{error}");
+    }
+
+    #[test]
+    fn v1_extensions_cannot_declare_executable_actions() {
+        let mut definition = lua_definition();
+        definition["api_version"] = json!(1);
+        assert!(parse_manifest(&definition.to_string()).is_err());
+        let fields = definition.as_object_mut().unwrap();
+        fields.remove("permissions");
+        fields.remove("scripts");
+        let Err(error) = parse_manifest(&definition.to_string()) else {
+            panic!("Lua was accepted in a v1 manifest");
+        };
+        assert!(
+            error.contains("Lua commands require API version 2."),
+            "{error}"
+        );
+    }
+
     #[test]
     fn extension_loader_isolates_invalid_manifests_and_resolves_duplicates() {
         let config = tempfile::tempdir().unwrap();
@@ -332,7 +599,7 @@ mod tests {
             ("c-broken.json", "{".into()),
             (
                 "d-future.json",
-                r#"{"api_version":2,"future_schema":true}"#.into(),
+                r#"{"api_version":3,"future_schema":true}"#.into(),
             ),
             (
                 "e-oversized.json",
@@ -365,7 +632,7 @@ mod tests {
         for (error, expected) in errors.iter().zip([
             "duplicate extension ID",
             "c-broken.json",
-            "API version 2 is unsupported",
+            "API version 3 is unsupported",
             "exceeds the",
             "Duplicate command ID",
             "unknown variant",
