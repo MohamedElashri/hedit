@@ -1,7 +1,11 @@
 //! Settings for installing local extensions and approving individual Lua commands.
-use super::catalog::{
-    self, Catalog, ImportPreview, InstallChange, InstallReview, InstalledManifest, ManifestStatus,
-    View,
+use super::{
+    activity::{Activity, Invocation, InvocationOutcome},
+    catalog::{
+        self, Catalog, ImportPreview, InstallChange, InstallReview, InstalledManifest,
+        ManifestStatus, View,
+    },
+    manifest::{Contribution, ExtensionAction},
 };
 use crate::app::{preferences::PreferencesPage, settings_scope::Scope, HeditApp};
 use eframe::egui;
@@ -19,6 +23,8 @@ pub(in crate::app) struct Manager {
     pending: Option<Receiver<Result<Update, String>>>,
     feedback: Option<Feedback>,
     discard_file_review: bool,
+    one_time: Option<Contribution>,
+    activity: Activity,
 }
 
 enum Feedback {
@@ -30,8 +36,10 @@ enum Update {
     Catalog {
         catalog: Catalog,
         feedback: Option<Feedback>,
+        keep_one_time: bool,
     },
-    File(Option<InstallReview>),
+    File(Option<Box<InstallReview>>),
+    OneTime(Contribution),
     FolderOpened,
 }
 
@@ -43,10 +51,12 @@ enum Request {
     Confirm,
     SetEnabled(String, bool),
     Revoke(Approval),
+    AllowOnce,
+    CancelOnce,
 }
 
 enum Review {
-    Install(InstallReview),
+    Install(Box<InstallReview>),
     Approve(Approval),
     Uninstall(InstalledManifest),
     ResetApprovals,
@@ -61,6 +71,30 @@ struct Approval {
 }
 
 impl Manager {
+    pub(in crate::app) fn one_time_command(&self) -> Option<&Contribution> {
+        self.one_time.as_ref()
+    }
+
+    pub(in crate::app) fn consume_one_time(&mut self, id: &str) -> bool {
+        if self
+            .one_time
+            .as_ref()
+            .is_none_or(|command| command.id != id)
+        {
+            return false;
+        }
+        self.one_time.take().is_some_and(|command| {
+            let ExtensionAction::Lua(plugin) = command.action else {
+                return false;
+            };
+            plugin.one_time.is_some_and(|approval| approval.claim())
+        })
+    }
+
+    pub(in crate::app) fn record(&mut self, invocation: Invocation, outcome: InvocationOutcome) {
+        self.activity.record(invocation, outcome);
+    }
+
     fn hide(&mut self) {
         self.view = None;
         self.review = None;
@@ -94,10 +128,16 @@ impl Manager {
     }
 
     fn reload(&mut self, ctx: &egui::Context, config: PathBuf, manual: bool) {
+        let one_time = self.one_time.clone();
         self.work(ctx, move || {
+            let catalog = catalog::read(&config);
+            let keep_one_time = one_time
+                .as_ref()
+                .is_some_and(|command| catalog::one_time_current(&config, &catalog, command));
             Ok(Update::Catalog {
-                catalog: catalog::read(&config),
+                catalog,
                 feedback: manual.then_some(Feedback::Success("Extensions reloaded.")),
+                keep_one_time,
             })
         });
     }
@@ -109,6 +149,7 @@ impl Manager {
         success: &'static str,
         action: impl FnOnce(&Path) -> Result<Catalog, String> + Send + 'static,
     ) {
+        self.one_time = None;
         self.work(ctx, move || {
             let (catalog, feedback) = match action(&config) {
                 Ok(catalog) => (catalog, Feedback::Success(success)),
@@ -119,6 +160,7 @@ impl Manager {
             Ok(Update::Catalog {
                 catalog,
                 feedback: Some(feedback),
+                keep_one_time: false,
             })
         });
     }
@@ -187,20 +229,26 @@ impl Manager {
             for entry in &view.files {
                 ui.push_id(&entry.path, |ui| {
                     ui.separator();
-                    if let Some(action) = installed_row(ui, entry, view, can_act) {
+                    let once = self.one_time.as_ref().map(|command| command.id.as_str());
+                    if let Some(action) = installed_row(ui, entry, view, can_act, once) {
                         request = Some(action);
                     }
                 });
             }
         }
 
-        if let Some(review) = &self.review {
+        self.activity.show(ui);
+        if let Some(review) = &mut self.review {
             let shown = egui::Modal::new(egui::Id::new(("review-extension", review.label())))
                 .show(ui.ctx(), |ui| review.show(ui, !pending));
             if shown.should_close() || shown.inner == Some(ReviewChoice::Cancel) {
                 self.review = None;
-            } else if shown.inner == Some(ReviewChoice::Confirm) {
-                return Some(Request::Confirm);
+            } else {
+                match shown.inner {
+                    Some(ReviewChoice::Confirm) => return Some(Request::Confirm),
+                    Some(ReviewChoice::Once) => return Some(Request::AllowOnce),
+                    Some(ReviewChoice::Cancel) | None => {}
+                }
             }
         }
         request
@@ -212,6 +260,7 @@ fn installed_row(
     entry: &ManifestStatus,
     view: &View,
     can_act: bool,
+    once: Option<&str>,
 ) -> Option<Request> {
     let mut request = None;
     ui.horizontal_wrapped(|ui| {
@@ -264,6 +313,13 @@ fn installed_row(
             return request;
         }
     };
+    if let Some(release) = entry
+        .installed
+        .as_ref()
+        .and_then(|copy| copy.release.as_ref())
+    {
+        release_details(ui, release);
+    }
     let supported = crate::plugin_runtime::SUPPORTED;
     if details.lua.is_some() && !supported {
         ui.weak("Lua execution is unavailable on this platform.");
@@ -280,6 +336,16 @@ fn installed_row(
                         else {
                             return;
                         };
+                        if once == Some(id.as_str()) {
+                            ui.weak("Allowed once");
+                            if ui
+                                .add_enabled(can_act, egui::Button::new("Cancel once"))
+                                .clicked()
+                            {
+                                request = Some(Request::CancelOnce);
+                            }
+                            return;
+                        }
                         let enabled = can_act
                             && !view.grants_unreadable
                             && (command.approved
@@ -317,6 +383,7 @@ fn installed_row(
 enum ReviewChoice {
     Confirm,
     Cancel,
+    Once,
 }
 
 impl Review {
@@ -333,7 +400,7 @@ impl Review {
         }
     }
 
-    fn show(&self, ui: &mut egui::Ui, ready: bool) -> Option<ReviewChoice> {
+    fn show(&mut self, ui: &mut egui::Ui, ready: bool) -> Option<ReviewChoice> {
         ui.set_width((ui.ctx().screen_rect().width() - 56.0).clamp(200.0, 520.0));
         ui.heading(self.label());
         let body_height = (ui.ctx().screen_rect().height() - 132.0).clamp(72.0, 390.0);
@@ -341,6 +408,13 @@ impl Review {
             .max_height(body_height)
             .show(ui, |ui| self.details(ui))
             .inner;
+        let ready = ready
+            && match self {
+                Self::Install(review) => {
+                    !review.requires_publisher_confirmation() || review.publisher_confirmed
+                }
+                _ => true,
+            };
         ui.add_space(8.0);
         ui.horizontal_wrapped(|ui| {
             if ui
@@ -348,6 +422,13 @@ impl Review {
                 .clicked()
             {
                 return Some(ReviewChoice::Cancel);
+            }
+            if matches!(self, Self::Approve(_))
+                && ui
+                    .add_enabled(ready, egui::Button::new("Allow once"))
+                    .clicked()
+            {
+                return Some(ReviewChoice::Once);
             }
             if let Some(confirm) = confirm {
                 if ui.add_enabled(ready, egui::Button::new(confirm)).clicked() {
@@ -358,17 +439,34 @@ impl Review {
         })
         .inner
     }
-    fn details(&self, ui: &mut egui::Ui) -> Option<&'static str> {
+    fn details(&mut self, ui: &mut egui::Ui) -> Option<&'static str> {
         match self {
             Self::Install(review) => {
                 ui.strong(&review.preview.id);
                 path_label(ui, "From", &review.preview.source);
+                if let Some(release) = &review.preview.release {
+                    release_details(ui, release);
+                }
+                if review.requires_publisher_confirmation() {
+                    ui.label("Compare this fingerprint with one supplied by the publisher.");
+                    ui.checkbox(
+                        &mut review.publisher_confirmed,
+                        "Trust this publisher key for this extension",
+                    );
+                }
                 if let InstallChange::Update {
                     installed,
                     previous_commands,
+                    changed_scripts,
                 } = &review.change
                 {
                     path_label(ui, "Replacing", &installed.path);
+                    if let Some(release) = &installed.release {
+                        ui.label(format!("Installed version {}", release.version));
+                    }
+                    if !changed_scripts.is_empty() {
+                        ui.label(format!("Changed scripts {}", changed_scripts.join(", ")));
+                    }
                     ui.label("Updating clears existing Lua approvals.");
                     egui::CollapsingHeader::new("Currently installed commands").show(ui, |ui| {
                         command_list(ui, previous_commands);
@@ -416,6 +514,19 @@ impl Review {
             }
         }
     }
+}
+
+fn release_details(ui: &mut egui::Ui, release: &super::distribution::Release) {
+    ui.horizontal_wrapped(|ui| {
+        ui.weak(format!("Version {}", release.version));
+        if let Some(publisher) = &release.publisher {
+            ui.label(format!("Signed by {}", publisher.name));
+            ui.label(&publisher.fingerprint)
+                .on_hover_text("Publisher key SHA-256");
+        } else {
+            ui.weak("Unsigned bundle");
+        }
+    });
 }
 
 fn requested_permissions(ui: &mut egui::Ui) {
@@ -486,7 +597,14 @@ impl HeditApp {
         };
         manager.pending = None;
         match result {
-            Ok(Update::Catalog { catalog, feedback }) => {
+            Ok(Update::Catalog {
+                catalog,
+                feedback,
+                keep_one_time,
+            }) => {
+                if !keep_one_time {
+                    manager.one_time = None;
+                }
                 self.extensions = catalog.contributions;
                 self.chord = None;
                 if showing {
@@ -499,6 +617,15 @@ impl HeditApp {
             Ok(Update::File(review)) => {
                 if showing && !manager.discard_file_review {
                     manager.review = review.map(Review::Install);
+                }
+            }
+            Ok(Update::OneTime(command)) => {
+                manager.one_time = Some(command);
+                self.chord = None;
+                if showing {
+                    manager.feedback = Some(Feedback::Success(
+                        "Allowed for the next run in this window.",
+                    ));
                 }
             }
             Ok(Update::FolderOpened) => {}
@@ -537,7 +664,7 @@ impl HeditApp {
                         } else {
                             "Install extension from file"
                         })
-                        .add_filter("Extension manifest", &["json"])
+                        .add_filter("Extension or bundle", &["json", "hedit-plugin"])
                         .pick_file();
                     let Some(source) = picked else {
                         return Ok(Update::File(None));
@@ -555,7 +682,7 @@ impl HeditApp {
                     if expected.is_some() && matches!(review.change, InstallChange::New) {
                         return Err("The extension is no longer installed. Use Install from file to add it again.".into());
                     }
-                    Ok(Update::File(Some(review)))
+                    Ok(Update::File(Some(Box::new(review))))
                 });
             }
             Some(Request::SetEnabled(id, enabled)) => manager.mutate(
@@ -576,6 +703,24 @@ impl HeditApp {
                 manager.mutate(ctx, config, "Command approval revoked.", move |config| {
                     approval.change(config, false)
                 });
+            }
+            Some(Request::AllowOnce) => {
+                if let Some(Review::Approve(approval)) = manager.review.take() {
+                    manager.work(ctx, move || {
+                        let command = catalog::prepare_one_time(
+                            &config,
+                            &approval.path,
+                            &approval.extension,
+                            &approval.command,
+                            &approval.digest,
+                        )?;
+                        Ok(Update::OneTime(command))
+                    });
+                }
+            }
+            Some(Request::CancelOnce) => {
+                manager.one_time = None;
+                self.chord = None;
             }
             Some(Request::Confirm) => match manager.review.take() {
                 Some(Review::Install(review)) => {

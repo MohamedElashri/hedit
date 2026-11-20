@@ -1,3 +1,4 @@
+use hedit::plugin_options::{Value as SettingValue, MAX_SETTINGS};
 use hedit::syntax::Language;
 use regex::Regex;
 use serde::{de, Deserialize, Serialize};
@@ -136,6 +137,17 @@ struct LuaDefinition {
     permissions: Vec<Permission>,
     #[serde(deserialize_with = "unique_scripts")]
     scripts: BTreeMap<String, Arc<str>>,
+    #[serde(default)]
+    settings: SettingDefinitions,
+}
+
+pub(super) type SettingDefinitions = BTreeMap<String, PluginSetting>;
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct PluginSetting {
+    pub(super) label: String,
+    pub(super) default: SettingValue,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -154,6 +166,7 @@ pub(super) struct Manifest {
     commands: Vec<Command>,
     scripts: BTreeMap<String, Arc<str>>,
     pub(super) lua_digest: Option<String>,
+    settings: Arc<SettingDefinitions>,
 }
 
 impl Manifest {
@@ -161,6 +174,44 @@ impl Manifest {
         self.commands
             .iter()
             .map(|command| (format!("{}.{}", self.id, command.id), command.title.clone()))
+            .collect()
+    }
+
+    pub(super) fn fixture_settings(
+        &self,
+        overrides: &BTreeMap<String, SettingValue>,
+    ) -> Result<BTreeMap<String, SettingValue>, String> {
+        let mut settings = self
+            .settings
+            .iter()
+            .map(|(key, definition)| (key.clone(), definition.default.clone()))
+            .collect::<BTreeMap<_, _>>();
+        for (key, value) in overrides {
+            let setting = settings.get_mut(key).ok_or("Unknown fixture setting.")?;
+            if !setting.same_type(value) || !value.valid() {
+                return Err("Invalid fixture setting value.".into());
+            }
+            *setting = value.clone();
+        }
+        Ok(settings)
+    }
+
+    pub(super) fn lua_source(&self, id: &str) -> Option<&str> {
+        let (extension, name) = id.split_once('.')?;
+        if extension != self.id {
+            return None;
+        }
+        let command = self.commands.iter().find(|command| command.id == name)?;
+        let ActionDefinition::Lua { source } = &command.action else {
+            return None;
+        };
+        self.scripts.get(source).map(AsRef::as_ref)
+    }
+
+    pub(super) fn script_digests(&self) -> BTreeMap<String, String> {
+        self.scripts
+            .iter()
+            .map(|(name, source)| (name.clone(), digest(source.as_bytes())))
             .collect()
     }
 
@@ -190,8 +241,12 @@ impl Manifest {
                 }
                 ActionDefinition::Lua { source } => ExtensionAction::Lua(LuaPlugin {
                     source: self.scripts.get(&source)?.clone(),
+                    plugin_id: self.id.clone(),
+                    settings: self.settings.clone(),
+                    on_save: command.on_save,
                     installed_path: installed_path.clone(),
                     grant: Arc::new(grants.remove(&id)?),
+                    one_time: None,
                 }),
             };
             Some(Contribution {
@@ -212,6 +267,8 @@ struct Command {
     action: ActionDefinition,
     #[serde(default)]
     when: Context,
+    #[serde(default)]
+    on_save: bool,
 }
 
 #[derive(Deserialize)]
@@ -245,8 +302,22 @@ pub(in crate::app) enum ExtensionAction {
 #[derive(Clone)]
 pub(in crate::app) struct LuaPlugin {
     pub source: Arc<str>,
+    pub(super) plugin_id: String,
+    pub(super) settings: Arc<SettingDefinitions>,
+    pub(super) on_save: bool,
     pub(super) installed_path: PathBuf,
     pub(super) grant: Arc<super::catalog::Grant>,
+    pub(super) one_time: Option<Arc<super::catalog::OneTimeApproval>>,
+}
+
+impl LuaPlugin {
+    pub(super) fn is_one_time(&self) -> bool {
+        self.one_time.is_some()
+    }
+
+    pub(super) fn approval_id(&self) -> Option<String> {
+        (!self.is_one_time()).then(|| self.grant.approval_id())
+    }
 }
 
 fn unique_scripts<'de, D: serde::Deserializer<'de>>(
@@ -389,12 +460,18 @@ pub(super) fn parse_manifest(text: &str) -> Result<Manifest, String> {
         ));
     }
     let version: Version = serde_json::from_str(text).map_err(|error| error.to_string())?;
-    let (id, commands, scripts, lua_digest) = match version.api_version {
+    let (id, commands, scripts, lua_digest, settings) = match version.api_version {
         DECLARATIVE_API_VERSION => {
             let definition: DeclarativeDefinition =
                 serde_json::from_str(text).map_err(|error| error.to_string())?;
             debug_assert_eq!(definition.api_version, DECLARATIVE_API_VERSION);
-            (definition.id, definition.commands, BTreeMap::new(), None)
+            (
+                definition.id,
+                definition.commands,
+                BTreeMap::new(),
+                None,
+                BTreeMap::new(),
+            )
         }
         LUA_API_VERSION => {
             let definition: LuaDefinition =
@@ -412,6 +489,7 @@ pub(super) fn parse_manifest(text: &str) -> Result<Manifest, String> {
                 definition.commands,
                 definition.scripts,
                 Some(digest(text)),
+                definition.settings,
             )
         }
         version => {
@@ -425,6 +503,18 @@ pub(super) fn parse_manifest(text: &str) -> Result<Manifest, String> {
     }
     if !(1..=MAX_COMMANDS).contains(&commands.len()) {
         return Err(format!("Declare between 1 and {MAX_COMMANDS} commands."));
+    }
+    if settings.len() > MAX_SETTINGS
+        || settings.iter().any(|(key, setting)| {
+            !valid_id(key)
+                || setting.label.is_empty()
+                || setting.label.len() > MAX_TITLE_BYTES
+                || setting.label.trim() != setting.label
+                || setting.label.chars().any(char::is_control)
+                || !setting.default.valid()
+        })
+    {
+        return Err("Invalid Lua settings. Declare up to 16 labeled scalar defaults.".into());
     }
     let mut command_ids = HashSet::new();
     let mut used_scripts = HashSet::new();
@@ -441,6 +531,9 @@ pub(super) fn parse_manifest(text: &str) -> Result<Manifest, String> {
             || command.title.chars().any(char::is_control)
         {
             return Err(format!("Command {} needs a title of 1–{MAX_TITLE_BYTES} bytes without surrounding whitespace or control characters.", command.id));
+        }
+        if command.on_save && !matches!(command.action, ActionDefinition::Lua { .. }) {
+            return Err("Only Lua commands can support save hooks.".into());
         }
         match &command.action {
             ActionDefinition::InsertSnippet { body } => validate_body(&command.id, body, true)?,
@@ -467,6 +560,7 @@ pub(super) fn parse_manifest(text: &str) -> Result<Manifest, String> {
         commands,
         scripts,
         lua_digest,
+        settings: Arc::new(settings),
     })
 }
 

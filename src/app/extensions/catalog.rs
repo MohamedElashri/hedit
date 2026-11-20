@@ -2,21 +2,23 @@
 mod lifecycle;
 mod permissions;
 
-use super::manifest::{self, Contribution, LuaPlugin, MAX_MANIFESTS};
+use super::manifest::{self, Contribution, ExtensionAction, LuaPlugin, MAX_MANIFESTS};
 use hedit::projects;
 use lifecycle::{extensions_dir, inspect_manifest, FileIdentity};
 pub(super) use lifecycle::{
     reset_unreadable_approvals, uninstall, ImportPreview, InstallChange, InstallReview,
     InstalledManifest,
 };
-pub(super) use permissions::Grant;
 use permissions::{
-    change_lock, disabled, invalidate_lua_grants, Grants, DISABLED_FILE, GRANTS_FILE,
+    advance_one_time_epoch, change_lock, disabled, invalidate_lua_grants, Grants, DISABLED_FILE,
+    GRANTS_FILE,
 };
+pub(super) use permissions::{Grant, OneTimeApproval};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::File,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 #[derive(Default)]
@@ -242,8 +244,8 @@ pub(super) fn set_lua_approved(
     digest: &str,
     approved: bool,
 ) -> Result<Catalog, String> {
-    let _lock = change_lock(config)?;
-    let installed = current_lua_command(config, path, id, command)?;
+    let lock = change_lock(config)?;
+    let (installed, _) = current_lua_command(config, path, id, command)?;
     if installed.digest != digest {
         return Err("The Lua manifest changed. Reload extensions and review it again.".into());
     }
@@ -279,6 +281,7 @@ pub(super) fn set_lua_approved(
             true
         }
     } else {
+        advance_one_time_epoch(&lock)?;
         grants.commands.remove(command).is_some()
     };
     if changed {
@@ -287,12 +290,51 @@ pub(super) fn set_lua_approved(
     Ok(read(config))
 }
 
+pub(super) fn prepare_one_time(
+    config: &Path,
+    path: &Path,
+    id: &str,
+    command: &str,
+    digest: &str,
+) -> Result<Contribution, String> {
+    let lock = change_lock(config)?;
+    let (installed, manifest) = current_lua_command(config, path, id, command)?;
+    if installed.digest != digest {
+        return Err("The Lua manifest changed. Reload extensions and review it again.".into());
+    }
+    if disabled(config)?.contains(id) {
+        return Err("Enable this extension before allowing its command to run.".into());
+    }
+    let grants = Grants::read(config)?;
+    if grants
+        .commands
+        .get(command)
+        .is_some_and(|grant| grant.matches(&installed))
+    {
+        return Err("This command already has approval. Reload extensions to use it.".into());
+    }
+
+    let permit = Grant::new(command.to_owned(), &installed)?;
+    let mut contribution = manifest
+        .into_contributions(
+            path.to_owned(),
+            BTreeMap::from([(command.to_owned(), permit)]),
+        )
+        .find(|candidate| candidate.id == command)
+        .ok_or("The Lua command changed. Review it again.")?;
+    let ExtensionAction::Lua(plugin) = &mut contribution.action else {
+        return Err("This command does not use Lua.".into());
+    };
+    plugin.one_time = Some(Arc::new(OneTimeApproval::new(config, &lock)?));
+    Ok(contribution)
+}
+
 fn current_lua_command(
     config: &Path,
     path: &Path,
     id: &str,
     command: &str,
-) -> Result<InstalledManifest, String> {
+) -> Result<(InstalledManifest, manifest::Manifest), String> {
     let (over_limit, entries) = scan(config)?;
     if over_limit {
         return Err(format!(
@@ -316,7 +358,32 @@ fn current_lua_command(
     {
         return Err("The Lua command changed. Reload extensions and review it again.".into());
     }
-    Ok(installed)
+    Ok((installed, manifest))
+}
+
+/// Let focus refresh drop obsolete queued approvals before showing the palette.
+pub(super) fn one_time_current(config: &Path, catalog: &Catalog, command: &Contribution) -> bool {
+    let ExtensionAction::Lua(plugin) = &command.action else {
+        return false;
+    };
+    let Some(approval) = &plugin.one_time else {
+        return false;
+    };
+    !catalog.view.grants_unreadable
+        && !catalog.view.state_unreadable
+        && !catalog
+            .contributions
+            .iter()
+            .any(|existing| existing.id == command.id)
+        && approval.policy_unchanged(config)
+        && catalog.view.files.iter().any(|entry| {
+            entry.path == plugin.installed_path
+                && entry.details.as_ref().is_ok_and(|details| details.enabled)
+                && entry
+                    .installed
+                    .as_ref()
+                    .is_some_and(|installed| plugin.grant.matches(installed))
+        })
 }
 
 /// Keep the lock through launch or edit application so a revoke cannot interleave.
@@ -324,12 +391,19 @@ pub(super) fn lua_authorization(config: &Path, plugin: &LuaPlugin) -> Option<Fil
     let lock = change_lock(config).ok()?;
     let grant = &plugin.grant;
     let id = grant.command.split_once('.')?.0;
-    if disabled(config).ok()?.contains(id)
-        || Grants::read(config).ok()?.commands.get(&grant.command) != Some(grant.as_ref())
-    {
+    if disabled(config).ok()?.contains(id) {
         return None;
     }
-    let installed = current_lua_command(config, &plugin.installed_path, id, &grant.command).ok()?;
+    let grants = Grants::read(config).ok()?;
+    let permitted = match &plugin.one_time {
+        Some(approval) => approval.authorizes(config, &lock),
+        None => grants.commands.get(&grant.command) == Some(grant.as_ref()),
+    };
+    if !permitted {
+        return None;
+    }
+    let (installed, _) =
+        current_lua_command(config, &plugin.installed_path, id, &grant.command).ok()?;
     grant.matches(&installed).then_some(lock)
 }
 
@@ -394,6 +468,77 @@ mod tests {
             panic!("approved Lua command was not loaded");
         };
         plugin.clone()
+    }
+
+    fn once(config: &Path, path: &Path, digest: &str) -> LuaPlugin {
+        let candidate = prepare_one_time(config, path, "lua", COMMAND, digest).unwrap();
+        let ExtensionAction::Lua(plugin) = candidate.action else {
+            panic!("expected Lua command");
+        };
+        plugin
+    }
+
+    #[test]
+    fn one_time_approval_is_exact_ephemeral_and_claimed_once() {
+        let config = tempfile::tempdir().unwrap();
+        let (path, digest) = lua_install(config.path());
+        assert!(prepare_one_time(config.path(), &path, "lua", COMMAND, "wrong").is_err());
+        let plugin = once(config.path(), &path, &digest);
+        assert!(!config.path().join(GRANTS_FILE).exists());
+        assert!(read(config.path()).contributions.is_empty());
+        assert!(plugin.is_one_time());
+        assert!(plugin.approval_id().is_none());
+        assert!(lua_authorization(config.path(), &plugin).is_none());
+
+        let claim = plugin.one_time.as_ref().unwrap();
+        assert!(claim.claim());
+        let clone = plugin.clone();
+        assert!(!clone.one_time.as_ref().unwrap().claim());
+        assert!(lua_authorization(config.path(), &plugin).is_some());
+        assert!(lua_authorization(config.path(), &plugin).is_some());
+
+        // A revoke invalidates the in-flight invocation even if there was
+        // no persistent approval record for this command.
+        set_approval(config.path(), &digest, false).unwrap();
+        assert!(lua_authorization(config.path(), &plugin).is_none());
+        assert!(!config.path().join(GRANTS_FILE).exists());
+    }
+
+    #[test]
+    fn one_time_approval_does_not_survive_disable_or_manifest_rollback() {
+        let config = tempfile::tempdir().unwrap();
+        let (path, digest) = lua_install(config.path());
+        let plugin = once(config.path(), &path, &digest);
+        set_enabled(config.path(), "lua", false).unwrap();
+        set_enabled(config.path(), "lua", true).unwrap();
+        assert!(plugin.one_time.as_ref().unwrap().claim());
+        assert!(lua_authorization(config.path(), &plugin).is_none());
+
+        let plugin = once(config.path(), &path, &digest);
+        let original = fs::read(&path).unwrap();
+        fs::write(&path, b"changed manifest").unwrap();
+        fs::remove_file(&path).unwrap();
+        fs::write(&path, original).unwrap();
+        assert!(plugin.one_time.as_ref().unwrap().claim());
+        assert!(lua_authorization(config.path(), &plugin).is_none());
+    }
+
+    #[test]
+    fn a_reset_revokes_one_time_approval_when_grant_storage_returns_to_absent() {
+        let config = tempfile::tempdir().unwrap();
+        let (path, digest) = lua_install(config.path());
+        let original = once(config.path(), &path, &digest);
+        let state = config.path().join(GRANTS_FILE);
+
+        fs::write(&state, b"unreadable").unwrap();
+        reset_unreadable_approvals(config.path()).unwrap();
+        assert!(!state.exists());
+        assert!(original.one_time.as_ref().unwrap().claim());
+        assert!(lua_authorization(config.path(), &original).is_none());
+
+        let after_reset = once(config.path(), &path, &digest);
+        assert!(after_reset.one_time.as_ref().unwrap().claim());
+        assert!(lua_authorization(config.path(), &after_reset).is_some());
     }
 
     #[test]

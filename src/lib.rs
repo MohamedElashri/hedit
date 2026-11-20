@@ -12,6 +12,7 @@ pub mod icons;
 pub mod intelligence;
 pub mod ipc;
 pub mod markup;
+pub mod plugin_options;
 pub mod projects;
 pub mod session;
 pub mod settings;

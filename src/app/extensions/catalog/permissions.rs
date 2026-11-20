@@ -5,11 +5,13 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     ffi::OsStr,
     fs::{self, File, OpenOptions},
-    io,
+    io::{self, Read, Seek, Write},
     path::Path,
+    sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
 
+const LOCK_FILE: &str = "extensions.lock";
 pub(super) const DISABLED_FILE: &str = "extensions-disabled.json";
 pub(super) const MAX_DISABLED: usize = 256;
 const MAX_DISABLED_BYTES: u64 = 16 * 1024;
@@ -49,12 +51,103 @@ impl Grant {
         })
     }
 
+    pub(in crate::app::extensions) fn approval_id(&self) -> String {
+        self.token
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+
     pub(super) fn matches(&self, installed: &InstalledManifest) -> bool {
         installed.path.file_name() == Some(OsStr::new(&self.manifest))
             && self.digest == installed.digest
             && self.identity == installed.identity
             && self.capabilities == manifest::LUA_CAPABILITIES
     }
+}
+
+/// Captures policy revisions without writing an approval to disk. Any managed
+/// policy mutation invalidates the queued or running invocation.
+pub(in crate::app::extensions) struct OneTimeApproval {
+    policy: PermissionState,
+    started: AtomicBool,
+}
+
+impl OneTimeApproval {
+    pub(super) fn new(config: &Path, lock: &File) -> Result<Self, String> {
+        Ok(Self {
+            policy: PermissionState::read(config, Some(lock))?,
+            started: AtomicBool::new(false),
+        })
+    }
+
+    pub(in crate::app::extensions) fn claim(&self) -> bool {
+        !self.started.swap(true, Ordering::AcqRel)
+    }
+
+    pub(super) fn authorizes(&self, config: &Path, lock: &File) -> bool {
+        self.started.load(Ordering::Acquire)
+            && PermissionState::read(config, Some(lock)).is_ok_and(|state| state == self.policy)
+    }
+
+    pub(super) fn policy_unchanged(&self, config: &Path) -> bool {
+        PermissionState::read(config, None).is_ok_and(|state| state == self.policy)
+    }
+}
+
+#[derive(PartialEq, Eq)]
+struct PermissionState {
+    approvals: Option<FileIdentity>,
+    disabled: Option<FileIdentity>,
+    epoch: Vec<u8>,
+}
+
+impl PermissionState {
+    fn read(config: &Path, held: Option<&File>) -> Result<Self, String> {
+        fn revision(path: &Path) -> Result<Option<FileIdentity>, String> {
+            match open_leaf(path, OpenOptions::new().read(true)) {
+                Ok(file) => {
+                    if path.file_name() == Some(OsStr::new(GRANTS_FILE)) {
+                        verify_grant_owner(&file)?;
+                    }
+                    file.metadata()
+                        .map(FileIdentity::from)
+                        .map(Some)
+                        .map_err(|error| error.to_string())
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+                Err(error) => Err(error.to_string()),
+            }
+        }
+        // Windows locks prohibit reads through a second open handle, even in
+        // this process. Reuse the held authorization/change handle. Unlocked
+        // refreshes continue to fail closed on concurrent policy changes.
+        let opened;
+        let lock = match held {
+            Some(lock) => lock,
+            None => {
+                opened = open_leaf(&config.join(LOCK_FILE), OpenOptions::new().read(true))
+                    .map_err(|error| error.to_string())?;
+                &opened
+            }
+        };
+        Ok(Self {
+            approvals: revision(&config.join(GRANTS_FILE))?,
+            disabled: revision(&config.join(DISABLED_FILE))?,
+            epoch: read_epoch(lock)?,
+        })
+    }
+}
+
+fn read_epoch(mut lock: &File) -> Result<Vec<u8>, String> {
+    let mut epoch = Vec::new();
+    lock.rewind()
+        .and_then(|()| lock.take(17).read_to_end(&mut epoch))
+        .map_err(|error| error.to_string())?;
+    if epoch.len() > 16 {
+        return Err("Invalid extension policy epoch.".into());
+    }
+    Ok(epoch)
 }
 
 #[derive(Deserialize, Serialize)]
@@ -193,10 +286,22 @@ fn verify_grant_owner(file: &File) -> Result<(), String> {
     Ok(())
 }
 
+/// Change the epoch when an operation can otherwise leave the policy file
+/// absent both before and after, such as resetting a corrupt approvals file.
+pub(super) fn advance_one_time_epoch(mut lock: &File) -> Result<(), String> {
+    let mut epoch = [0; 16];
+    getrandom::fill(&mut epoch).map_err(|_| "Could not revoke one-time approvals.")?;
+    lock.seek(io::SeekFrom::Start(0))
+        .and_then(|_| lock.write_all(&epoch))
+        .and_then(|()| lock.set_len(epoch.len() as u64))
+        .and_then(|()| lock.sync_data())
+        .map_err(|error| error.to_string())
+}
+
 pub(super) fn change_lock(config: &Path) -> Result<File, String> {
     fs::create_dir_all(config).map_err(|error| error.to_string())?;
     let file = open_leaf(
-        &config.join("extensions.lock"),
+        &config.join(LOCK_FILE),
         OpenOptions::new()
             .create(true)
             .truncate(false)
@@ -248,4 +353,37 @@ fn open_leaf(path: &Path, options: &mut OpenOptions) -> io::Result<File> {
         return Err(io::Error::other("Choose a regular file."));
     }
     Ok(file)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Instant;
+
+    #[test]
+    fn transient_lock_contention_waits_for_release() {
+        let config = tempfile::tempdir().unwrap();
+        let held = change_lock(config.path()).unwrap();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(25));
+            drop(held);
+        });
+        let acquired = change_lock(config.path()).unwrap();
+        release.join().unwrap();
+        drop(acquired);
+    }
+
+    #[test]
+    fn persistent_lock_contention_fails_without_changing_policy() {
+        let config = tempfile::tempdir().unwrap();
+        let held = change_lock(config.path()).unwrap();
+        advance_one_time_epoch(&held).unwrap();
+        let before = read_epoch(&held).unwrap();
+        let started = Instant::now();
+        assert!(change_lock(config.path()).is_err());
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert_eq!(read_epoch(&held).unwrap(), before);
+        drop(held);
+        assert!(change_lock(config.path()).is_ok());
+    }
 }

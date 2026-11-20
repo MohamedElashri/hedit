@@ -257,7 +257,8 @@ impl HeditApp {
                                         PreferencesPage::Keys => self.key_preferences(ui, ctx),
                                         PreferencesPage::Snippets => self.snippet_preferences(ui),
                                         PreferencesPage::Extensions => {
-                                            self.extension_preferences(ui)
+                                            self.extension_preferences(ui);
+                                            self.extension_options(ui);
                                         }
                                         PreferencesPage::Appearance => {
                                             self.theme_preferences(ui, ctx)
