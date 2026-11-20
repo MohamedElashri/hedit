@@ -17,7 +17,10 @@ pub(crate) const PROBE_ARGS: &[&str] = &[
 #[test]
 #[ignore = "only run inside a parent-created AppContainer and job"]
 fn native_probe() {
-    enter().unwrap();
+    if let Err(error) = enter() {
+        println!("native confinement initialization failed: {error:?}");
+        unsafe { ExitProcess(17) }
+    }
     assert!(std::env::var_os("PATH").is_none());
     assert!(std::env::var_os("HEDIT_LUA_TEST_EDITOR").is_none());
     assert!(std::env::var_os("SystemRoot").is_some());
@@ -29,9 +32,12 @@ fn native_probe() {
         "wait" => loop {
             std::thread::sleep(Duration::from_millis(50));
         },
-        "spin" => loop {
-            std::hint::spin_loop();
-        },
+        "spin" => {
+            io::stdout().write_all(b"native spin ready\n").unwrap();
+            loop {
+                std::hint::spin_loop();
+            }
+        }
         "confinement" => {
             let path = Path::new(request["path"].as_str().unwrap());
             assert_eq!(
@@ -125,11 +131,13 @@ fn native_file_network_handles_memory_code_and_children_are_confined() {
     while !child.finished(10).unwrap() && Instant::now() < deadline {}
     let completed = child.finished(0).unwrap();
     let success = child.success().unwrap();
+    let mut exit_code = 0;
+    check(unsafe { GetExitCodeProcess(child.process.as_raw_handle(), &mut exit_code) }).unwrap();
     child.terminate();
     let bytes = reader.join().unwrap();
     assert!(
         completed && success,
-        "probe output: {}",
+        "probe exited {exit_code:#010x}; output: {}",
         String::from_utf8_lossy(&bytes)
     );
     assert!(bytes.ends_with(b"native probe passed\n"));
@@ -144,6 +152,8 @@ fn native_file_network_handles_memory_code_and_children_are_confined() {
 #[test]
 fn dropping_the_owner_kills_and_reaps_the_job() {
     let mut child = Worker::spawn(&std::env::current_exe().unwrap(), PROBE_ARGS).unwrap();
+    let image = child._image.path().to_path_buf();
+    let profile = child._profile.name.clone();
     let mut observed = ptr::null_mut();
     check(unsafe {
         DuplicateHandle(
@@ -169,6 +179,22 @@ fn dropping_the_owner_kills_and_reaps_the_job() {
         unsafe { WaitForSingleObject(observed.as_raw_handle(), 1000) },
         WAIT_OBJECT_0
     );
+    assert!(!image.exists(), "worker image must be removed after exit");
+    let mut sid = ptr::null_mut();
+    let status = unsafe {
+        CreateAppContainerProfile(
+            profile.as_ptr(),
+            profile.as_ptr(),
+            profile.as_ptr(),
+            ptr::null(),
+            0,
+            &mut sid,
+        )
+    };
+    if status >= 0 {
+        drop(Profile { name: profile, sid });
+    }
+    assert_eq!(status, 0, "the exited worker's profile must be reusable");
 }
 
 #[test]
@@ -185,6 +211,17 @@ fn job_cpu_limit_terminates_a_native_busy_loop() {
         "job CPU limit did not terminate the worker"
     );
     assert!(!child.success().unwrap());
+    let mut output = String::new();
+    child
+        .output
+        .take()
+        .unwrap()
+        .read_to_string(&mut output)
+        .unwrap();
+    assert!(
+        output.contains("native spin ready"),
+        "the probe must enter the native busy loop: {output}"
+    );
 }
 
 #[test]
