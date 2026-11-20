@@ -18,6 +18,10 @@ pub(crate) const PROBE_ARGS: &[&str] = &[
 #[ignore = "only run inside a parent-created AppContainer and job"]
 fn native_probe() {
     enter().unwrap();
+    assert!(std::env::var_os("PATH").is_none());
+    assert!(std::env::var_os("HEDIT_LUA_TEST_EDITOR").is_none());
+    assert!(std::env::var_os("SystemRoot").is_some());
+    assert!(std::env::var_os("LOCALAPPDATA").is_some());
     let mut request = Vec::new();
     io::stdin().read_to_end(&mut request).unwrap();
     let request: serde_json::Value = serde_json::from_slice(&request).unwrap();

@@ -14,7 +14,7 @@ use windows_sys::Win32::{
     Foundation::*,
     Security::{Authorization::*, Isolation::*, *},
     Storage::FileSystem::*,
-    System::{Console::*, JobObjects::*, Pipes::*, Threading::*},
+    System::{Console::*, JobObjects::*, Pipes::*, SystemInformation::*, Threading::*},
 };
 
 const PROCESS_BYTES: usize = 256 * 1024 * 1024;
@@ -28,6 +28,27 @@ const MITIGATIONS: u64 = (1u64 << 36) | (1u64 << 32);
 
 fn wide(value: impl AsRef<OsStr>) -> Vec<u16> {
     value.as_ref().encode_wide().chain(Some(0)).collect()
+}
+
+fn environment() -> io::Result<Vec<u16>> {
+    // AppContainer creation resolves the per-user profile through LOCALAPPDATA;
+    // Windows side-by-side loading requires SystemRoot. Supply only OS-derived
+    // paths, never the editor's PATH, credentials, or other environment values.
+    let base = directories::BaseDirs::new().ok_or_else(denied)?;
+    let mut directory = vec![0u16; 32768];
+    let length =
+        unsafe { GetSystemWindowsDirectoryW(directory.as_mut_ptr(), directory.len() as u32) }
+            as usize;
+    if length == 0 || length >= directory.len() {
+        return Err(io::Error::last_os_error());
+    }
+    let mut environment: Vec<u16> = "LOCALAPPDATA=".encode_utf16().collect();
+    environment.extend(base.data_local_dir().as_os_str().encode_wide());
+    environment.push(0);
+    environment.extend("SystemRoot=".encode_utf16());
+    environment.extend_from_slice(&directory[..length]);
+    environment.extend([0, 0]);
+    Ok(environment)
 }
 fn check(value: i32) -> io::Result<()> {
     if value == 0 {
@@ -318,6 +339,8 @@ impl Worker {
         image_permissions(image.path(), profile.sid)?;
         let copied = image.path().join("hedit-worker.exe");
         std::fs::copy(executable, &copied)?;
+        // Do not rely on the source file's permissions or copy semantics.
+        image_permissions(&copied, profile.sid)?;
         let job = job()?;
         let (input, input_writer) = pipe()?;
         let (output_reader, output) = pipe()?;
@@ -373,7 +396,7 @@ impl Worker {
         // The executable path is explicit; fixed internal arguments never contain
         // quotes. Windows filenames cannot contain a double quote.
         let mut command = wide(format!("\"{}\" {}", copied.display(), arguments.join(" ")));
-        let environment = [0u16; 2];
+        let environment = environment()?;
         let mut information = PROCESS_INFORMATION::default();
         check(unsafe {
             CreateProcessW(
