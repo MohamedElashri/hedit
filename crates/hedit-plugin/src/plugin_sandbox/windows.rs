@@ -57,6 +57,20 @@ fn environment() -> io::Result<Vec<u16>> {
     environment.extend([0, 0]);
     Ok(environment)
 }
+
+fn working_directory() -> io::Result<Vec<u16>> {
+    // An AppContainer cannot traverse the user's private temporary-directory
+    // parents during loader initialization. Use the read-only OS directory;
+    // the worker has no filesystem API and receives all input through pipes.
+    let mut directory = vec![0u16; 32768];
+    let length =
+        unsafe { GetSystemDirectoryW(directory.as_mut_ptr(), directory.len() as u32) } as usize;
+    if length == 0 || length >= directory.len() {
+        return Err(io::Error::last_os_error());
+    }
+    directory.truncate(length + 1);
+    Ok(directory)
+}
 fn check(value: i32) -> io::Result<()> {
     if value == 0 {
         Err(io::Error::last_os_error())
@@ -465,6 +479,7 @@ impl Worker {
         // quotes. Windows filenames cannot contain a double quote.
         let mut command = wide(format!("\"{}\" {}", copied.display(), arguments.join(" ")));
         let environment = environment()?;
+        let current_directory = working_directory()?;
         let mut information = PROCESS_INFORMATION::default();
         check(unsafe {
             CreateProcessW(
@@ -478,7 +493,7 @@ impl Worker {
                     | CREATE_UNICODE_ENVIRONMENT
                     | EXTENDED_STARTUPINFO_PRESENT,
                 environment.as_ptr().cast(),
-                wide(image.path()).as_ptr(),
+                current_directory.as_ptr(),
                 &startup.StartupInfo,
                 &mut information,
             )
