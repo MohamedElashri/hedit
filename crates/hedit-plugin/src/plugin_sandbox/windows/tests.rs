@@ -38,6 +38,18 @@ fn native_probe() {
                 std::hint::spin_loop();
             }
         }
+        "inherited-handle" => {
+            let inherited = request["inherited"].as_u64().unwrap() as usize as HANDLE;
+            // AppContainer strict-handle validation can terminate the process
+            // instead of returning ERROR_INVALID_HANDLE. The parent accepts
+            // that precise exception only after this marker, in its own probe.
+            io::stdout()
+                .write_all(b"checking inherited handle\n")
+                .unwrap();
+            io::stdout().flush().unwrap();
+            let mut flags = 0;
+            assert_eq!(unsafe { GetHandleInformation(inherited, &mut flags) }, 0);
+        }
         "confinement" => {
             let path = Path::new(request["path"].as_str().unwrap());
             assert_eq!(
@@ -52,9 +64,6 @@ fn native_probe() {
                     .kind(),
                 io::ErrorKind::PermissionDenied
             );
-            let inherited = request["inherited"].as_u64().unwrap() as usize as HANDLE;
-            let mut flags = 0;
-            assert_eq!(unsafe { GetHandleInformation(inherited, &mut flags) }, 0);
             let address = request["address"].as_str().unwrap().parse().unwrap();
             let error = TcpStream::connect_timeout(&address, Duration::from_secs(2)).unwrap_err();
             assert!(
@@ -102,6 +111,51 @@ fn native_file_network_handles_memory_code_and_children_are_confined() {
     let directory = tempfile::tempdir().unwrap();
     let secret = directory.path().join("private.txt");
     std::fs::write(&secret, "private fixture").unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let request = serde_json::to_vec(&serde_json::json!({"action":"confinement", "path":secret, "address":listener.local_addr().unwrap().to_string()})).unwrap();
+    let (exit_code, bytes) = run_probe(&request);
+    assert_eq!(
+        exit_code,
+        0,
+        "probe output: {}",
+        String::from_utf8_lossy(&bytes)
+    );
+    assert!(bytes.ends_with(b"native probe passed\n"));
+    assert_eq!(
+        listener.accept().unwrap_err().kind(),
+        io::ErrorKind::WouldBlock
+    );
+    assert_eq!(std::fs::read_to_string(secret).unwrap(), "private fixture");
+}
+
+fn run_probe(request: &[u8]) -> (u32, Vec<u8>) {
+    let mut child = Worker::spawn(&std::env::current_exe().unwrap(), PROBE_ARGS).unwrap();
+    let mut output = child.output.take().unwrap();
+    let reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        output.read_to_end(&mut bytes).unwrap();
+        bytes
+    });
+    child.input.take().unwrap().write_all(request).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !child.finished(10).unwrap() && Instant::now() < deadline {}
+    assert!(
+        child.finished(0).unwrap(),
+        "native probe exceeded its deadline"
+    );
+    let mut exit_code = 0;
+    check(unsafe { GetExitCodeProcess(child.process.as_raw_handle(), &mut exit_code) }).unwrap();
+    child.terminate();
+    let bytes = reader.join().unwrap();
+    (exit_code, bytes)
+}
+
+#[test]
+fn inherited_private_handle_is_unavailable() {
+    let directory = tempfile::tempdir().unwrap();
+    let secret = directory.path().join("private.txt");
+    std::fs::write(&secret, "private fixture").unwrap();
     // Put the sensitive handle above the ordinary child startup handles so a
     // subsequently opened handle cannot accidentally reuse its numeric value.
     let events: Vec<_> = (0..512)
@@ -116,36 +170,22 @@ fn native_file_network_handles_memory_code_and_children_are_confined() {
         )
     })
     .unwrap();
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    listener.set_nonblocking(true).unwrap();
-    let request = serde_json::to_vec(&serde_json::json!({"action":"confinement", "path":secret, "inherited":file.as_raw_handle() as usize, "address":listener.local_addr().unwrap().to_string()})).unwrap();
-    let mut child = Worker::spawn(&std::env::current_exe().unwrap(), PROBE_ARGS).unwrap();
-    let mut output = child.output.take().unwrap();
-    let reader = std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        output.read_to_end(&mut bytes).unwrap();
-        bytes
-    });
-    child.input.take().unwrap().write_all(&request).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !child.finished(10).unwrap() && Instant::now() < deadline {}
-    let completed = child.finished(0).unwrap();
-    let success = child.success().unwrap();
-    let mut exit_code = 0;
-    check(unsafe { GetExitCodeProcess(child.process.as_raw_handle(), &mut exit_code) }).unwrap();
-    child.terminate();
-    let bytes = reader.join().unwrap();
+    let request = serde_json::to_vec(&serde_json::json!({
+        "action": "inherited-handle", "inherited": file.as_raw_handle() as usize
+    }))
+    .unwrap();
+    let (exit_code, bytes) = run_probe(&request);
+    assert!(bytes
+        .windows(b"checking inherited handle\n".len())
+        .any(|part| part == b"checking inherited handle\n"));
     assert!(
-        completed && success,
-        "probe exited {exit_code:#010x}; output: {}",
+        exit_code == 0 || exit_code == 0xc0000008,
+        "unexpected exit {exit_code:#010x}: {}",
         String::from_utf8_lossy(&bytes)
     );
-    assert!(bytes.ends_with(b"native probe passed\n"));
-    assert_eq!(
-        listener.accept().unwrap_err().kind(),
-        io::ErrorKind::WouldBlock
-    );
-    assert_eq!(std::fs::read_to_string(secret).unwrap(), "private fixture");
+    if exit_code == 0 {
+        assert!(bytes.ends_with(b"native probe passed\n"));
+    }
     drop(events);
 }
 
@@ -235,158 +275,20 @@ fn ordinary_editor_process_cannot_enter_the_worker() {
 }
 
 #[test]
-#[ignore = "manual startup diagnosis with a trusted --version-only executable"]
-fn bootstrap_loader_diagnostics() {
+fn confined_headless_worker_starts_without_a_console() {
     let executable = std::path::PathBuf::from(
         std::env::var_os("HEDIT_LUA_TEST_WORKER").expect("set the built worker path"),
     );
-    let mut strict_succeeded = false;
-    // These variants never receive source or selections. The sole command is
-    // the trusted worker's --version path, before any Lua or request handling.
-    for (label, container, mitigation, child_policy, inherit_env) in [
-        ("strict", true, MITIGATIONS, true, false),
-        ("without-mitigations", true, 0, true, false),
-        ("dynamic-code-only", true, 1u64 << 36, true, false),
-        ("extension-points-only", true, 1u64 << 32, true, false),
-        ("without-child-policy", true, MITIGATIONS, false, false),
-        ("inherited-environment", true, MITIGATIONS, true, true),
-        ("without-container", false, MITIGATIONS, true, false),
-    ] {
-        let profile = Profile::new().unwrap();
-        let image = tempfile::tempdir().unwrap();
-        image_permissions(image.path(), profile.sid).unwrap();
-        let copied = image.path().join("hedit-worker.exe");
-        std::fs::copy(&executable, &copied).unwrap();
-        image_permissions(&copied, profile.sid).unwrap();
-        let job = job().unwrap();
-        let (input, input_writer) = pipe().unwrap();
-        let (output_reader, output) = pipe().unwrap();
-        drop(input_writer);
-        check(unsafe {
-            SetHandleInformation(output_reader.as_raw_handle(), HANDLE_FLAG_INHERIT, 0)
-        })
+    let mut child = Worker::spawn(&executable, &["--version"]).unwrap();
+    drop(child.input.take());
+    assert!(child.finished(5000).unwrap());
+    assert!(child.success().unwrap());
+    let mut output = String::new();
+    child
+        .output
+        .take()
+        .unwrap()
+        .read_to_string(&mut output)
         .unwrap();
-        let security = SECURITY_ATTRIBUTES {
-            nLength: mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
-            lpSecurityDescriptor: ptr::null_mut(),
-            bInheritHandle: 1,
-        };
-        let stderr = unsafe {
-            owned(CreateFileW(
-                wide("NUL").as_ptr(),
-                GENERIC_WRITE,
-                FILE_SHARE_READ | FILE_SHARE_WRITE,
-                &security,
-                OPEN_EXISTING,
-                FILE_ATTRIBUTE_NORMAL,
-                ptr::null_mut(),
-            ))
-            .unwrap()
-        };
-        let handles = [
-            input.as_raw_handle(),
-            output.as_raw_handle(),
-            stderr.as_raw_handle(),
-        ];
-        let capabilities = SECURITY_CAPABILITIES {
-            AppContainerSid: profile.sid,
-            Capabilities: ptr::null_mut(),
-            CapabilityCount: 0,
-            Reserved: 0,
-        };
-        let jobs = [job.as_raw_handle()];
-        let policy = 1u32;
-        let mut attributes = Attributes::new(5).unwrap();
-        attributes
-            .set(PROC_THREAD_ATTRIBUTE_HANDLE_LIST, &handles)
-            .unwrap();
-        attributes
-            .set(PROC_THREAD_ATTRIBUTE_JOB_LIST, &jobs)
-            .unwrap();
-        if container {
-            attributes
-                .set(PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, &capabilities)
-                .unwrap();
-        }
-        if mitigation != 0 {
-            attributes
-                .set(PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY, &mitigation)
-                .unwrap();
-        }
-        if child_policy {
-            attributes
-                .set(PROC_THREAD_ATTRIBUTE_CHILD_PROCESS_POLICY, &policy)
-                .unwrap();
-        }
-        let startup = STARTUPINFOEXW {
-            StartupInfo: STARTUPINFOW {
-                cb: mem::size_of::<STARTUPINFOEXW>() as u32,
-                dwFlags: STARTF_USESTDHANDLES,
-                hStdInput: input.as_raw_handle(),
-                hStdOutput: output.as_raw_handle(),
-                hStdError: stderr.as_raw_handle(),
-                ..Default::default()
-            },
-            lpAttributeList: attributes.pointer(),
-        };
-        let mut command = wide(format!("\"{}\" --version", copied.display()));
-        let environment = environment().unwrap();
-        let current_directory = working_directory().unwrap();
-        let mut information = PROCESS_INFORMATION::default();
-        let created = unsafe {
-            CreateProcessW(
-                wide(&copied).as_ptr(),
-                command.as_mut_ptr(),
-                ptr::null(),
-                ptr::null(),
-                1,
-                CREATE_SUSPENDED
-                    | DETACHED_PROCESS
-                    | CREATE_UNICODE_ENVIRONMENT
-                    | EXTENDED_STARTUPINFO_PRESENT,
-                if inherit_env {
-                    ptr::null()
-                } else {
-                    environment.as_ptr().cast()
-                },
-                current_directory.as_ptr(),
-                &startup.StartupInfo,
-                &mut information,
-            )
-        };
-        if created == 0 {
-            println!(
-                "BOOTSTRAP {label}: CreateProcessW {:?}",
-                io::Error::last_os_error()
-            );
-            continue;
-        }
-        let process = unsafe { owned(information.hProcess).unwrap() };
-        let thread = unsafe { owned(information.hThread).unwrap() };
-        assert_ne!(unsafe { ResumeThread(thread.as_raw_handle()) }, u32::MAX);
-        drop(input);
-        drop(output);
-        drop(stderr);
-        let wait = unsafe { WaitForSingleObject(process.as_raw_handle(), 5000) };
-        let mut code = 0;
-        check(unsafe { GetExitCodeProcess(process.as_raw_handle(), &mut code) }).unwrap();
-        unsafe {
-            TerminateJobObject(job.as_raw_handle(), 1);
-            WaitForSingleObject(process.as_raw_handle(), 1000);
-        }
-        let mut text = String::new();
-        File::from(output_reader)
-            .take(4096)
-            .read_to_string(&mut text)
-            .unwrap();
-        println!("BOOTSTRAP {label}: wait={wait:#x} exit={code:#010x} output={text:?}");
-        if label == "strict" {
-            strict_succeeded =
-                wait == WAIT_OBJECT_0 && code == 0 && text.starts_with("hedit-plugin-worker ");
-        }
-    }
-    assert!(
-        strict_succeeded,
-        "strict startup must succeed before enabling Lua"
-    );
+    assert!(output.starts_with("hedit-plugin-worker "));
 }
