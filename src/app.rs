@@ -3876,6 +3876,7 @@ impl eframe::App for HeditApp {
         }
         if quality::refocused(ctx) {
             self.reload_settings(ctx);
+            self.refresh_extensions_on_focus(ctx);
         }
         self.shortcuts(ctx);
         let title = format!(

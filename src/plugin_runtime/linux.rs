@@ -2,6 +2,7 @@ use super::{RunningPlugin, HELPER_ARG, MAX_SELECTION_BYTES};
 use mlua::chunk::ChunkMode;
 use mlua::{HookTriggers, Lua, LuaOptions, StdLib, Table, Value, VmState};
 use std::cell::Cell;
+use std::fs::File;
 use std::io::{self, Read, Write};
 use std::os::fd::{AsFd, AsRawFd};
 use std::path::Path;
@@ -130,6 +131,7 @@ pub(super) fn start(
     source: String,
     selection: String,
     language: String,
+    approval: File,
 ) -> Result<RunningPlugin, String> {
     let request = Request {
         source,
@@ -150,6 +152,7 @@ pub(super) fn start(
                 request,
                 &thread_cancelled,
                 DEADLINE,
+                Some(approval),
             )
             .map_err(|failure| failure.message().to_owned());
             let _ = sender.send(result);
@@ -186,6 +189,7 @@ fn supervise(
     request: Vec<u8>,
     cancelled: &AtomicBool,
     timeout: Duration,
+    mut approval: Option<File>,
 ) -> Result<String, Failure> {
     if cancelled.load(Ordering::Relaxed) {
         return Err(Failure::Cancelled);
@@ -234,6 +238,11 @@ fn supervise(
             }
         }
 
+        // Serialize revocation with delivery of the selection to the worker.
+        // Once delivery ends, a revoke can proceed while computation runs.
+        if input.is_none() {
+            drop(approval.take());
+        }
         let status = child.0.try_wait().map_err(|_| Failure::Worker)?;
         let output_open = match output.read_to_end(&mut reply) {
             Ok(_) => false,
@@ -419,9 +428,59 @@ mod tests {
         let text = "café".repeat(18_000);
         let reply = [b"\0".as_slice(), text.as_bytes()].concat();
         assert_eq!(
-            supervise(&worker, reply, &AtomicBool::new(false), DEADLINE),
+            supervise(&worker, reply, &AtomicBool::new(false), DEADLINE, None),
             Ok(text),
         );
+    }
+
+    #[test]
+    fn supervisor_holds_approval_only_through_selection_delivery() {
+        let dir = tempfile::tempdir().unwrap();
+        let worker = fixture(
+            dir.path(),
+            r#"
+: > "$0.started"
+while [ ! -e "$0.read" ]; do /bin/sleep 0.01; done
+/bin/cat >/dev/null
+: > "$0.received"
+while [ ! -e "$0.finish" ]; do /bin/sleep 0.01; done
+printf '\000'
+"#,
+        );
+        let approval = tempfile::NamedTempFile::new_in(dir.path()).unwrap();
+        let competing = approval.reopen().unwrap();
+        approval.as_file().try_lock().unwrap();
+        let cancelled = AtomicBool::new(false);
+        let marker = |name| worker.with_extension(name);
+        fn wait(mut condition: impl FnMut() -> bool) {
+            let until = Instant::now() + DEADLINE;
+            while !condition() {
+                assert!(
+                    Instant::now() < until,
+                    "helper did not reach expected phase"
+                );
+                thread::sleep(CHECK_INTERVAL);
+            }
+        }
+        thread::scope(|scope| {
+            let run = scope.spawn(|| {
+                // Large enough that the entire request cannot fit in the pipe.
+                supervise(
+                    &worker,
+                    vec![b'x'; 2 * 1024 * 1024],
+                    &cancelled,
+                    DEADLINE,
+                    Some(approval.into_file()),
+                )
+            });
+            wait(|| marker("started").is_file());
+            assert!(competing.try_lock().is_err());
+            fs::write(marker("read"), []).unwrap();
+            wait(|| marker("received").is_file() && competing.try_lock().is_ok());
+            assert!(!run.is_finished());
+            fs::write(marker("finish"), []).unwrap();
+            assert_eq!(run.join().unwrap(), Ok(String::new()));
+        });
     }
 
     #[test]
@@ -437,6 +496,7 @@ while :; do :; done"#,
             Vec::new(),
             &AtomicBool::new(false),
             Duration::from_millis(250),
+            None,
         );
         assert_eq!(result, Err(Failure::Deadline));
         let pid = fs::read_to_string(worker.with_extension("pid")).unwrap();
@@ -454,7 +514,7 @@ while :; do :; done"#,
         let cancelled = AtomicBool::new(false);
         let pid_file = worker.with_extension("pid");
         thread::scope(|scope| {
-            let run = scope.spawn(|| supervise(&worker, Vec::new(), &cancelled, DEADLINE));
+            let run = scope.spawn(|| supervise(&worker, Vec::new(), &cancelled, DEADLINE, None));
             let start = Instant::now();
             let pid = loop {
                 if let Ok(pid) = fs::read_to_string(&pid_file) {

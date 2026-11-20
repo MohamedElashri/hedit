@@ -143,12 +143,13 @@ impl HeditApp {
         } = job;
         match &mut phase {
             Phase::Checking(approval) => {
-                if let Some(_approval) = receive_approval(approval)? {
+                if let Some(approval) = receive_approval(approval)? {
                     let selection = self.active().page.text[proposal.bytes.clone()].to_owned();
                     phase = Phase::Running(plugin_runtime::start(
                         proposal.plugin.source.to_string(),
                         selection,
                         proposal.target.language.into(),
+                        approval,
                     )?);
                 }
             }
@@ -233,6 +234,18 @@ mod tests {
     const COMMAND: &str = "markdown-quote.quote";
     const MANIFEST: &str = include_str!("../../../examples/extensions/markdown-quote.json");
 
+    fn set_approval(config: &Path, digest: &str, approved: bool) {
+        catalog::set_lua_approved(
+            config,
+            &config.join("extensions/markdown-quote.json"),
+            ID,
+            COMMAND,
+            digest,
+            approved,
+        )
+        .unwrap();
+    }
+
     fn approved(config: &Path, text: &str) -> (tempfile::TempDir, egui::Context, HeditApp, String) {
         let directory = config.join("extensions");
         std::fs::create_dir(&directory).unwrap();
@@ -248,7 +261,7 @@ mod tests {
             .unwrap()
             .digest
             .clone();
-        catalog::set_lua_approved(config, ID, &digest, true).unwrap();
+        set_approval(config, &digest, true);
         let (session, ctx, app) = app_with(text, Some(config));
         assert_eq!(app.extensions.len(), 1);
         (session, ctx, app, digest)
@@ -337,8 +350,8 @@ mod tests {
         let (_session, _ctx, mut app, digest) = approved(config.path(), "selected");
         app.set_selections(vec![Selection { anchor: 0, head: 8 }]);
         fake_result(&mut app, "replacement");
-        catalog::set_lua_approved(config.path(), ID, &digest, false).unwrap();
-        catalog::set_lua_approved(config.path(), ID, &digest, true).unwrap();
+        set_approval(config.path(), &digest, false);
+        set_approval(config.path(), &digest, true);
         finish_transform(&mut app);
         assert_eq!(app.active().page.text, "selected");
         assert!(app.error.as_deref().unwrap().contains("approval changed"));

@@ -7,11 +7,11 @@ extensions work on all hedit platforms.
 
 ## Example
 
-In **Settings → Extensions → Import manifest…**, open
-[markdown-quote.json](../examples/extensions/markdown-quote.json), select
-**Install**, then **Approve** after reviewing the permissions. Select some text
-and run **Quote selection as Markdown** from the Command Palette. Undo restores
-the selection and its original text in one step.
+In **Settings → Extensions → Install from file…**, open
+[markdown-quote.json](../examples/extensions/markdown-quote.json) and select
+**Install**. Under the command, choose **Review permissions…**, then **Approve
+command**. Select some text and run **Quote selection as Markdown** from the
+Command Palette. Undo restores the original text and selection in one step.
 
 Each Lua source returns a function `function(selection, language)` that takes
 the selected UTF-8 text and the editor language ID. Return a UTF-8 replacement
@@ -42,9 +42,13 @@ limit. hedit loads up to 32 manifests.
 
 ## Permissions
 
-Lua commands start unapproved. Approval covers the exact manifest and its
-embedded source. After editing an installed manifest, select **Reload
-extensions**, review the changes, and approve it again. Use **Revoke approval**
-in **Settings → Extensions** to withdraw access.
-Lua has string, table, math, and UTF-8 helpers in a limited runtime. File
-access, networking, shell commands, and SSH buffers are outside this API.
+Lua commands start unapproved. Each approval covers one command and the exact
+installed copy’s manifest and source. Use **Revoke approval** to withdraw that
+command’s access. Disabling an extension clears its Lua approvals. Lua provides
+string, table, math, and UTF-8 helpers for local text processing.
+
+Use **Update…** to review and replace an installed manifest from a file.
+Updated commands require fresh approval. Use **Uninstall…** to remove the
+installed copy and its approvals. hedit keeps your original download.
+If the approval file is unreadable, **Reset Lua approvals…** preserves a backup
+and clears access so you can review commands again.

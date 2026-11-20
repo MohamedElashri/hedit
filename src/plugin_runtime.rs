@@ -1,4 +1,5 @@
 use std::ffi::{OsStr, OsString};
+use std::fs::File;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 
@@ -49,13 +50,14 @@ pub(crate) fn start(
     source: String,
     selection: String,
     language: String,
+    approval: File,
 ) -> Result<RunningPlugin, String> {
     #[cfg(all(
         target_os = "linux",
         target_arch = "x86_64",
         target_pointer_width = "64"
     ))]
-    return linux::start(source, selection, language);
+    return linux::start(source, selection, language, approval);
 
     #[cfg(not(all(
         target_os = "linux",
@@ -63,7 +65,7 @@ pub(crate) fn start(
         target_pointer_width = "64"
     )))]
     {
-        let _ = (source, selection, language);
+        let _ = (source, selection, language, approval);
         Err("Lua plugins are unavailable on this platform.".into())
     }
 }

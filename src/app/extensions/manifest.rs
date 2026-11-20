@@ -1,6 +1,6 @@
-use hedit::{projects, syntax::Language};
+use hedit::syntax::Language;
 use regex::Regex;
-use serde::{de, Deserialize};
+use serde::{de, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, HashSet},
@@ -14,7 +14,7 @@ const LUA_API_VERSION: u32 = 2;
 pub(super) const MAX_DIRECTORY_ENTRIES: usize = 256;
 pub(super) const MAX_MANIFESTS: usize = 32;
 pub(super) const MAX_MANIFEST_BYTES: u64 = 32 * 1024;
-const MAX_COMMANDS: usize = 16;
+pub(super) const MAX_COMMANDS: usize = 16;
 const MAX_ID_BYTES: usize = 48;
 const MAX_TITLE_BYTES: usize = 128;
 const MAX_BODY_BYTES: usize = 2048;
@@ -138,13 +138,16 @@ struct LuaDefinition {
     scripts: BTreeMap<String, Arc<str>>,
 }
 
-#[derive(PartialEq, Deserialize)]
-enum Permission {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub(super) enum Permission {
     #[serde(rename = "selection.read")]
     ReadSelection,
     #[serde(rename = "selection.replace")]
     ReplaceSelection,
 }
+
+pub(super) const LUA_CAPABILITIES: [Permission; 2] =
+    [Permission::ReadSelection, Permission::ReplaceSelection];
 
 pub(super) struct Manifest {
     pub(super) id: String,
@@ -161,13 +164,25 @@ impl Manifest {
             .collect()
     }
 
+    pub(super) fn lua_command_labels(&self) -> impl Iterator<Item = (String, &str)> {
+        self.commands
+            .iter()
+            .filter(|command| matches!(command.action, ActionDefinition::Lua { .. }))
+            .map(|command| {
+                (
+                    format!("{}.{}", self.id, command.id),
+                    command.title.as_str(),
+                )
+            })
+    }
+
     pub(super) fn into_contributions(
         self,
         installed_path: PathBuf,
-        grant: Option<super::catalog::Grant>,
+        mut grants: BTreeMap<String, super::catalog::Grant>,
     ) -> impl Iterator<Item = Contribution> {
-        let grant = grant.map(Arc::new);
         self.commands.into_iter().filter_map(move |command| {
+            let id = format!("{}.{}", self.id, command.id);
             let action = match command.action {
                 ActionDefinition::InsertSnippet { body } => ExtensionAction::InsertSnippet { body },
                 ActionDefinition::NewFile { body, language } => {
@@ -176,11 +191,11 @@ impl Manifest {
                 ActionDefinition::Lua { source } => ExtensionAction::Lua(LuaPlugin {
                     source: self.scripts.get(&source)?.clone(),
                     installed_path: installed_path.clone(),
-                    grant: grant.clone()?,
+                    grant: Arc::new(grants.remove(&id)?),
                 }),
             };
             Some(Contribution {
-                id: format!("{}.{}", self.id, command.id),
+                id,
                 title: command.title,
                 action,
                 when: command.when,
@@ -360,13 +375,8 @@ fn valid_body(body: &str, variables: bool) -> bool {
     end == body.len()
 }
 
-pub(super) fn read_manifest(path: &Path) -> Result<Manifest, String> {
-    let text = projects::read_text(path, MAX_MANIFEST_BYTES)?;
-    parse_manifest(&text)
-}
-
-pub(super) fn digest(text: &str) -> String {
-    Sha256::digest(text.as_bytes())
+pub(super) fn digest(text: impl AsRef<[u8]>) -> String {
+    Sha256::digest(text.as_ref())
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
@@ -390,11 +400,10 @@ pub(super) fn parse_manifest(text: &str) -> Result<Manifest, String> {
             let definition: LuaDefinition =
                 serde_json::from_str(text).map_err(|error| error.to_string())?;
             debug_assert_eq!(definition.api_version, LUA_API_VERSION);
-            if definition.permissions.len() != 2
-                || !definition.permissions.contains(&Permission::ReadSelection)
-                || !definition
-                    .permissions
-                    .contains(&Permission::ReplaceSelection)
+            if definition.permissions.len() != LUA_CAPABILITIES.len()
+                || !LUA_CAPABILITIES
+                    .iter()
+                    .all(|capability| definition.permissions.contains(capability))
             {
                 return Err("Lua plugins must request selection.read and selection.replace exactly once each.".into());
             }
@@ -633,7 +642,7 @@ mod tests {
             "duplicate extension ID",
             "c-broken.json",
             "API version 3 is unsupported",
-            "exceeds the",
+            "exceeds",
             "Duplicate command ID",
             "unknown variant",
         ]) {

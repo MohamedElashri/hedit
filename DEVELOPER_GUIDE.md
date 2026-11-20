@@ -123,11 +123,16 @@ for consistent focus/Escape. Help resolves only explicitly bundled documents.
 ## Lua extension architecture and testing
 
 Version 2 manifests bundle text source and declare the selection capabilities.
-The user configuration records each approval against the exact manifest digest
-and an approval token. hedit checks the installed bytes before launching a
-worker and again before applying an edit. The second check holds the same lock
-used by approval changes. The editor also checks the document revision, pane,
-and selection. See the [extension guide](docs/extensions.md).
+Each approval binds one Lua command and its capabilities to the exact installed
+manifest, file identity, and a fresh token. hedit validates the grant before
+sending the selection to a worker and again before applying an edit. Both steps
+hold the same lock used by approval changes and extension management. The editor
+also checks the document revision, pane, and selection.
+
+Install and update use the reviewed input bytes. Update and uninstall compare
+the current installed snapshot with the reviewed copy and durably clear its Lua
+approvals before replacing or removing it. Older extension-wide grants require
+fresh consent per command. See the [extension guide](docs/extensions.md).
 
 The Linux x86-64 editor launches a fresh worker with clean environment and
 bounded anonymous pipes. The worker drops inherited descriptors and installs
