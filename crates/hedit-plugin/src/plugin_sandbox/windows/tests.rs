@@ -233,3 +233,160 @@ fn job_cpu_limit_terminates_a_native_busy_loop() {
 fn ordinary_editor_process_cannot_enter_the_worker() {
     assert!(enter().is_err());
 }
+
+#[test]
+#[ignore = "manual startup diagnosis with a trusted --version-only executable"]
+fn bootstrap_loader_diagnostics() {
+    let executable = std::path::PathBuf::from(
+        std::env::var_os("HEDIT_LUA_TEST_WORKER").expect("set the built worker path"),
+    );
+    let mut strict_succeeded = false;
+    // These variants never receive source or selections. The sole command is
+    // the trusted worker's --version path, before any Lua or request handling.
+    for (label, container, mitigation, child_policy, inherit_env) in [
+        ("strict", true, MITIGATIONS, true, false),
+        ("without-mitigations", true, 0, true, false),
+        ("dynamic-code-only", true, 1u64 << 36, true, false),
+        ("extension-points-only", true, 1u64 << 32, true, false),
+        ("without-child-policy", true, MITIGATIONS, false, false),
+        ("inherited-environment", true, MITIGATIONS, true, true),
+        ("without-container", false, MITIGATIONS, true, false),
+    ] {
+        let profile = Profile::new().unwrap();
+        let image = tempfile::tempdir().unwrap();
+        image_permissions(image.path(), profile.sid).unwrap();
+        let copied = image.path().join("hedit-worker.exe");
+        std::fs::copy(&executable, &copied).unwrap();
+        image_permissions(&copied, profile.sid).unwrap();
+        let job = job().unwrap();
+        let (input, input_writer) = pipe().unwrap();
+        let (output_reader, output) = pipe().unwrap();
+        drop(input_writer);
+        check(unsafe {
+            SetHandleInformation(output_reader.as_raw_handle(), HANDLE_FLAG_INHERIT, 0)
+        })
+        .unwrap();
+        let security = SECURITY_ATTRIBUTES {
+            nLength: mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: ptr::null_mut(),
+            bInheritHandle: 1,
+        };
+        let stderr = unsafe {
+            owned(CreateFileW(
+                wide("NUL").as_ptr(),
+                GENERIC_WRITE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                &security,
+                OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL,
+                ptr::null_mut(),
+            ))
+            .unwrap()
+        };
+        let handles = [
+            input.as_raw_handle(),
+            output.as_raw_handle(),
+            stderr.as_raw_handle(),
+        ];
+        let capabilities = SECURITY_CAPABILITIES {
+            AppContainerSid: profile.sid,
+            Capabilities: ptr::null_mut(),
+            CapabilityCount: 0,
+            Reserved: 0,
+        };
+        let jobs = [job.as_raw_handle()];
+        let policy = 1u32;
+        let mut attributes = Attributes::new(5).unwrap();
+        attributes
+            .set(PROC_THREAD_ATTRIBUTE_HANDLE_LIST, &handles)
+            .unwrap();
+        attributes
+            .set(PROC_THREAD_ATTRIBUTE_JOB_LIST, &jobs)
+            .unwrap();
+        if container {
+            attributes
+                .set(PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, &capabilities)
+                .unwrap();
+        }
+        if mitigation != 0 {
+            attributes
+                .set(PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY, &mitigation)
+                .unwrap();
+        }
+        if child_policy {
+            attributes
+                .set(PROC_THREAD_ATTRIBUTE_CHILD_PROCESS_POLICY, &policy)
+                .unwrap();
+        }
+        let startup = STARTUPINFOEXW {
+            StartupInfo: STARTUPINFOW {
+                cb: mem::size_of::<STARTUPINFOEXW>() as u32,
+                dwFlags: STARTF_USESTDHANDLES,
+                hStdInput: input.as_raw_handle(),
+                hStdOutput: output.as_raw_handle(),
+                hStdError: stderr.as_raw_handle(),
+                ..Default::default()
+            },
+            lpAttributeList: attributes.pointer(),
+        };
+        let mut command = wide(format!("\"{}\" --version", copied.display()));
+        let environment = environment().unwrap();
+        let current_directory = working_directory().unwrap();
+        let mut information = PROCESS_INFORMATION::default();
+        let created = unsafe {
+            CreateProcessW(
+                wide(&copied).as_ptr(),
+                command.as_mut_ptr(),
+                ptr::null(),
+                ptr::null(),
+                1,
+                CREATE_SUSPENDED
+                    | CREATE_NO_WINDOW
+                    | CREATE_UNICODE_ENVIRONMENT
+                    | EXTENDED_STARTUPINFO_PRESENT,
+                if inherit_env {
+                    ptr::null()
+                } else {
+                    environment.as_ptr().cast()
+                },
+                current_directory.as_ptr(),
+                &startup.StartupInfo,
+                &mut information,
+            )
+        };
+        if created == 0 {
+            println!(
+                "BOOTSTRAP {label}: CreateProcessW {:?}",
+                io::Error::last_os_error()
+            );
+            continue;
+        }
+        let process = unsafe { owned(information.hProcess).unwrap() };
+        let thread = unsafe { owned(information.hThread).unwrap() };
+        assert_ne!(unsafe { ResumeThread(thread.as_raw_handle()) }, u32::MAX);
+        drop(input);
+        drop(output);
+        drop(stderr);
+        let wait = unsafe { WaitForSingleObject(process.as_raw_handle(), 5000) };
+        let mut code = 0;
+        check(unsafe { GetExitCodeProcess(process.as_raw_handle(), &mut code) }).unwrap();
+        unsafe {
+            TerminateJobObject(job.as_raw_handle(), 1);
+            WaitForSingleObject(process.as_raw_handle(), 1000);
+        }
+        let mut text = String::new();
+        File::from(output_reader)
+            .take(4096)
+            .read_to_string(&mut text)
+            .unwrap();
+        println!("BOOTSTRAP {label}: wait={wait:#x} exit={code:#010x} output={text:?}");
+        if label == "strict" {
+            strict_succeeded =
+                wait == WAIT_OBJECT_0 && code == 0 && text.starts_with("hedit-plugin-worker ");
+        }
+    }
+    assert!(
+        strict_succeeded,
+        "strict startup must succeed before enabling Lua"
+    );
+}

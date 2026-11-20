@@ -51,6 +51,8 @@ jobs:
         shell: pwsh
         run: |
           $env:HEDIT_LUA_TEST_WORKER = (Resolve-Path target/debug/hedit-plugin-worker.exe).Path
+          cargo test --locked -p hedit-plugin --features windows-lua bootstrap_loader_diagnostics -- --ignored --nocapture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p hedit-plugin --features windows-lua -- --nocapture
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Lint the editor integration
