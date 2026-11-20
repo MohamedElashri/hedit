@@ -11,12 +11,14 @@ mod linux {
     const WORKER: &str = "--hedit-plugin-worker";
 
     fn request(source: &str, selection: &str, language: &str) -> Vec<u8> {
-        let mut payload = Vec::new();
-        for field in [source, selection, language] {
-            payload.extend_from_slice(&(field.len() as u32).to_le_bytes());
-            payload.extend_from_slice(field.as_bytes());
-        }
-        payload
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "source": source, "selections": [selection], "language": language, "settings": {}
+        }))
+        .unwrap();
+        let mut packet = (u32::MAX - 1).to_le_bytes().to_vec();
+        packet.extend((payload.len() as u32).to_le_bytes());
+        packet.extend(payload);
+        packet
     }
 
     fn exchange(payload: Vec<u8>) -> Vec<u8> {
@@ -41,7 +43,15 @@ mod linux {
     }
 
     fn call(source: &str, selection: &str) -> Vec<u8> {
-        exchange(request(source, selection, "markdown"))
+        let reply = exchange(request(source, selection, "markdown"));
+        if reply.first() != Some(&0) {
+            return reply;
+        }
+        let edits: Vec<String> = serde_json::from_slice(&reply[1..]).unwrap();
+        assert_eq!(edits.len(), 1);
+        let mut result = vec![0];
+        result.extend_from_slice(edits[0].as_bytes());
+        result
     }
 
     #[test]
