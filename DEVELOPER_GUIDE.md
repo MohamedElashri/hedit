@@ -34,6 +34,9 @@ Run `make static`, `make clippy`, and the test target for your platform before
 submitting changes. On Linux, `make ci` also verifies release packaging and
 installation. Use `make test-macos` on macOS; the Windows workflow runs native
 MSVC tests and portable-package checks.
+CI runs for pull requests and pushes to `main`; use workflow dispatch to
+validate another branch before opening a PR. Release workflows retain their
+required platform checks.
 
 | Command | Scope |
 | --- | --- |
