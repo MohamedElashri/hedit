@@ -375,8 +375,10 @@ mod tests {
             ));
             let id = app.active().page.info.id;
             let revision = app.active().page.info.revision;
-            let result =
-                response.map(|replacement| (replacement.to_string(), File::open(&file).unwrap()));
+            // The authority handle belongs to policy storage, never the
+            // document that Save atomically replaces.
+            let result = response
+                .map(|replacement| (replacement.to_string(), tempfile::tempfile().unwrap()));
             app.complete_extension_save(
                 &ctx,
                 SaveResult {

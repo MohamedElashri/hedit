@@ -5,7 +5,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     ffi::OsStr,
     fs::{self, File, OpenOptions},
-    io::{self, Seek, Write},
+    io::{self, Read, Seek, Write},
     path::Path,
     sync::atomic::{AtomicBool, Ordering},
     time::{Duration, Instant},
@@ -74,9 +74,9 @@ pub(in crate::app::extensions) struct OneTimeApproval {
 }
 
 impl OneTimeApproval {
-    pub(super) fn new(config: &Path) -> Result<Self, String> {
+    pub(super) fn new(config: &Path, lock: &File) -> Result<Self, String> {
         Ok(Self {
-            policy: PermissionState::read(config)?,
+            policy: PermissionState::read(config, Some(lock))?,
             started: AtomicBool::new(false),
         })
     }
@@ -85,12 +85,13 @@ impl OneTimeApproval {
         !self.started.swap(true, Ordering::AcqRel)
     }
 
-    pub(super) fn authorizes(&self, config: &Path) -> bool {
-        self.started.load(Ordering::Acquire) && self.policy_unchanged(config)
+    pub(super) fn authorizes(&self, config: &Path, lock: &File) -> bool {
+        self.started.load(Ordering::Acquire)
+            && PermissionState::read(config, Some(lock)).is_ok_and(|state| state == self.policy)
     }
 
     pub(super) fn policy_unchanged(&self, config: &Path) -> bool {
-        PermissionState::read(config).is_ok_and(|state| state == self.policy)
+        PermissionState::read(config, None).is_ok_and(|state| state == self.policy)
     }
 }
 
@@ -102,7 +103,7 @@ struct PermissionState {
 }
 
 impl PermissionState {
-    fn read(config: &Path) -> Result<Self, String> {
+    fn read(config: &Path, held: Option<&File>) -> Result<Self, String> {
         fn revision(path: &Path) -> Result<Option<FileIdentity>, String> {
             match open_leaf(path, OpenOptions::new().read(true)) {
                 Ok(file) => {
@@ -118,15 +119,35 @@ impl PermissionState {
                 Err(error) => Err(error.to_string()),
             }
         }
-        let lock = open_leaf(&config.join(LOCK_FILE), OpenOptions::new().read(true))
-            .map_err(|error| error.to_string())?;
+        // Windows locks prohibit reads through a second open handle, even in
+        // this process. Reuse the held authorization/change handle. Unlocked
+        // refreshes continue to fail closed on concurrent policy changes.
+        let opened;
+        let lock = match held {
+            Some(lock) => lock,
+            None => {
+                opened = open_leaf(&config.join(LOCK_FILE), OpenOptions::new().read(true))
+                    .map_err(|error| error.to_string())?;
+                &opened
+            }
+        };
         Ok(Self {
             approvals: revision(&config.join(GRANTS_FILE))?,
             disabled: revision(&config.join(DISABLED_FILE))?,
-            epoch: hedit_core::file_io::read_bounded(lock, 16)
-                .map_err(|error| error.to_string())?,
+            epoch: read_epoch(lock)?,
         })
     }
+}
+
+fn read_epoch(mut lock: &File) -> Result<Vec<u8>, String> {
+    let mut epoch = Vec::new();
+    lock.rewind()
+        .and_then(|()| lock.take(17).read_to_end(&mut epoch))
+        .map_err(|error| error.to_string())?;
+    if epoch.len() > 16 {
+        return Err("Invalid extension policy epoch.".into());
+    }
+    Ok(epoch)
 }
 
 #[derive(Deserialize, Serialize)]
@@ -412,11 +433,11 @@ mod tests {
         let config = tempfile::tempdir().unwrap();
         let held = change_lock(config.path()).unwrap();
         advance_one_time_epoch(&held).unwrap();
-        let before = fs::read(config.path().join(LOCK_FILE)).unwrap();
+        let before = read_epoch(&held).unwrap();
         let started = Instant::now();
         assert!(change_lock(config.path()).is_err());
         assert!(started.elapsed() < Duration::from_secs(2));
-        assert_eq!(fs::read(config.path().join(LOCK_FILE)).unwrap(), before);
+        assert_eq!(read_epoch(&held).unwrap(), before);
         drop(held);
         assert!(change_lock(config.path()).is_ok());
     }
