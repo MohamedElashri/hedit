@@ -194,9 +194,10 @@ impl Catalog {
             .write(true)
             .open(path.with_extension("lock"))
             .map_err(|e| e.to_string())?;
-        lock.try_lock().map_err(|_| {
-            "SSH workspaces are being updated in another window. Refresh and retry.".to_owned()
-        })?;
+        hedit_core::file_io::lock_with_timeout(&lock, std::time::Duration::from_millis(250))
+            .map_err(|_| {
+                "SSH workspaces are being updated in another window. Refresh and retry.".to_owned()
+            })?;
         if Self::load(path)? != *expected {
             return Err("SSH workspaces changed in another window. Refresh before saving.".into());
         }
