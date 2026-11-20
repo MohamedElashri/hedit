@@ -84,6 +84,10 @@ def smoke(archive):
         output = subprocess.run([str(binary), '--version'], check=True, capture_output=True, timeout=30)
         if output.stdout.decode('utf-8').strip() != f'hedit {version()}':
             raise ValueError('Packaged executable version does not match Cargo.toml.')
+        worker = root / 'hedit-plugin-worker.exe'
+        output = subprocess.run([str(worker), '--version'], check=True, capture_output=True, timeout=30)
+        if output.stdout.decode('utf-8').strip() != f'hedit-plugin-worker {version()}':
+            raise ValueError('Packaged Lua worker version does not match Cargo.toml.')
         output = subprocess.run([str(binary), '--help'], check=True, capture_output=True, timeout=30)
         if b'Usage: hedit' not in output.stdout:
             raise ValueError('Packaged executable did not print its help.')

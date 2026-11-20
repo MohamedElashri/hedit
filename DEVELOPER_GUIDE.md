@@ -526,7 +526,9 @@ dark/light names describe their intended background.
 and executable. Ship guides, notices, assets, themes, and CUDA examples; exclude
 test drivers/development scripts. Keep packagers, installers, and tests aligned.
 
-1. Update workspace versions/lockfile and a concise dated `CHANGELOG.md` entry.
+1. Keep the editor and workspace crate versions aligned, update the lockfile, and
+   add a concise dated `CHANGELOG.md` entry. Release checks reject a mismatched
+   core, SSH helper, or plugin worker version.
    Match README feature availability to the release downloads.
 2. Run `make ci`, no-default-features/live SSH tests, native platform validation,
    and `make release-check RELEASE_TAG=vX.Y.Z`.

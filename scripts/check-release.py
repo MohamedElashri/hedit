@@ -25,12 +25,36 @@ def release_notes(changelog, version):
     return body + '\n'
 
 
+def release_version():
+    metadata = tomllib.loads((ROOT / 'Cargo.toml').read_text(encoding='utf-8'))
+    workspace = metadata.get('workspace', {})
+
+    def version(package):
+        value = package['version']
+        if isinstance(value, dict) and value.get('workspace') is True:
+            return workspace['package']['version']
+        return value
+
+    expected = version(metadata['package'])
+    for member in workspace.get('members', []):
+        manifest = ROOT / member / 'Cargo.toml'
+        package = tomllib.loads(manifest.read_text(encoding='utf-8'))['package']
+        actual = version(package)
+        if actual != expected:
+            raise ValueError(f'{manifest.relative_to(ROOT).as_posix()} version {actual!r} '
+                             f'must match the editor version {expected!r}.')
+    return expected
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--notes-file', type=Path,
                         help='Write this release\'s changelog entry to a UTF-8 file.')
     args = parser.parse_args(argv)
-    version = tomllib.loads((ROOT / 'Cargo.toml').read_text(encoding='utf-8'))['package']['version']
+    try:
+        version = release_version()
+    except ValueError as error:
+        sys.exit(str(error))
     expected = f'v{version}'
     tag = os.environ.get('RELEASE_TAG', '')
     if not tag:

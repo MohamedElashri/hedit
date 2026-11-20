@@ -95,13 +95,16 @@ class WindowsPackage(unittest.TestCase):
             def run(arguments, **kwargs):
                 executable = Path(arguments[0])
                 self.assertTrue(executable.is_file())
-                self.assertEqual(executable.name, 'hedit.exe')
+                self.assertIn(executable.name, {'hedit.exe', 'hedit-plugin-worker.exe'})
                 self.assertIn('hedit portable test ', str(executable))
                 self.assertNotEqual(executable.parent, binary.parent)
                 self.assertTrue(kwargs['check'])
                 self.assertEqual(kwargs['timeout'], 30)
-                calls.append(arguments[1])
-                if arguments[1] == 'plugin':
+                calls.append((executable.name, arguments[1]))
+                if executable.name == 'hedit-plugin-worker.exe':
+                    self.assertEqual(arguments[1:], ['--version'])
+                    output = f'hedit-plugin-worker {packager.version()}\r\n'.encode()
+                elif arguments[1] == 'plugin':
                     self.assertEqual(arguments[2], 'test')
                     self.assertEqual(Path(arguments[3]), executable.parent / 'examples/extensions/markdown-quote.json')
                     self.assertEqual(json.loads(Path(arguments[4]).read_text(encoding='utf-8')), [{
@@ -115,10 +118,23 @@ class WindowsPackage(unittest.TestCase):
 
             with patch.object(packager.subprocess, 'run', side_effect=run):
                 packager.smoke(archive)
-            self.assertEqual(calls, ['--version', '--help', 'plugin'])
+            self.assertEqual(calls, [
+                ('hedit.exe', '--version'), ('hedit-plugin-worker.exe', '--version'),
+                ('hedit.exe', '--help'), ('hedit.exe', 'plugin'),
+            ])
             with patch.object(packager.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, stdout=b'hedit 0.0.0\n')):
                 with self.assertRaisesRegex(ValueError, 'version does not match'):
                     packager.smoke(archive)
+
+            def stale_worker(arguments, **kwargs):
+                if Path(arguments[0]).name == 'hedit-plugin-worker.exe':
+                    return subprocess.CompletedProcess(arguments, 0, stdout=b'hedit-plugin-worker 0.0.0\n')
+                return run(arguments, **kwargs)
+
+            with patch.object(packager.subprocess, 'run', side_effect=stale_worker) as probe:
+                with self.assertRaisesRegex(ValueError, 'Lua worker version does not match'):
+                    packager.smoke(archive)
+                self.assertEqual(probe.call_count, 2)
 
     def test_smoke_refuses_a_corrupted_archive_before_execution(self):
         with tempfile.TemporaryDirectory() as work:

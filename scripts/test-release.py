@@ -77,6 +77,35 @@ class ReleaseNotes(unittest.TestCase):
                         release.main(['--notes-file', str(notes)])
                     self.assertEqual(notes.read_text(encoding='utf-8'), '- A fix.\n')
 
+    def test_workspace_version_mismatch_keeps_existing_notes(self):
+        with tempfile.TemporaryDirectory() as work:
+            root = Path(work)
+            members = ['hedit-core', 'hedit-remote', 'hedit-plugin']
+            manifests = {name: root / 'crates' / name / 'Cargo.toml' for name in members}
+            workspace_members = ', '.join(f'"crates/{name}"' for name in members)
+            (root / 'Cargo.toml').write_text(
+                '[package]\nversion = "0.1.11"\n[workspace]\nmembers = [' + workspace_members + ']\n',
+                encoding='utf-8')
+            (root / 'CHANGELOG.md').write_text('## [0.1.11] - 2026-10-30\n\n- A fix.\n', encoding='utf-8')
+            for manifest in manifests.values():
+                manifest.parent.mkdir(parents=True)
+                manifest.write_text('[package]\nversion = "0.1.11"\n', encoding='utf-8')
+            notes = root / 'notes.md'
+            notes.write_text('previous notes\n', encoding='utf-8')
+            with patch.object(release, 'ROOT', root), \
+                    patch.dict(release.os.environ, {'RELEASE_TAG': 'v0.1.11'}), \
+                    redirect_stdout(io.StringIO()):
+                for name, manifest in manifests.items():
+                    with self.subTest(member=name):
+                        manifest.write_text('[package]\nversion = "0.1.10"\n', encoding='utf-8')
+                        with self.assertRaises(SystemExit) as error:
+                            release.main(['--notes-file', str(notes)])
+                        self.assertIn(f'crates/{name}/Cargo.toml', str(error.exception))
+                        self.assertEqual(notes.read_text(encoding='utf-8'), 'previous notes\n')
+                        manifest.write_text('[package]\nversion = "0.1.11"\n', encoding='utf-8')
+                release.main(['--notes-file', str(notes)])
+                self.assertEqual(notes.read_text(encoding='utf-8'), '- A fix.\n')
+
     def test_markdown_is_documented_under_its_original_release(self):
         changelog = (release.ROOT / 'CHANGELOG.md').read_text(encoding='utf-8')
         notes = release.release_notes(changelog, '0.1.10')
