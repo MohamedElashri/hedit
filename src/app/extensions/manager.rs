@@ -149,7 +149,8 @@ impl Manager {
                         Ok(details) => {
                             let mut enabled = details.enabled;
                             ui.horizontal_wrapped(|ui| {
-                                ui.strong(&details.id);
+                                ui.strong(&details.id)
+                                    .on_hover_text(entry.path.display().to_string());
                                 if ui
                                     .add_enabled(
                                         !pending && !view.state_unreadable,
@@ -163,6 +164,9 @@ impl Manager {
                             });
                             if let Some(lua) = &details.lua {
                                 ui.label(LUA_ACCESS);
+                                if !crate::plugin_runtime::SUPPORTED {
+                                    ui.weak("Lua execution is unavailable on this platform.");
+                                }
                                 ui.horizontal_wrapped(|ui| {
                                     ui.label(if lua.approved {
                                         "Approved"
@@ -172,7 +176,10 @@ impl Manager {
                                     .on_hover_text(format!("Manifest SHA-256 {}", lua.digest));
                                     if ui
                                         .add_enabled(
-                                            !pending && !view.grants_unreadable,
+                                            !pending
+                                                && !view.grants_unreadable
+                                                && (lua.approved
+                                                    || crate::plugin_runtime::SUPPORTED),
                                             egui::Button::new(if lua.approved {
                                                 "Revoke approval"
                                             } else {

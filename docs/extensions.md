@@ -2,7 +2,8 @@
 
 Write commands in Lua 5.4 and declare them in a JSON manifest. JSON can also
 define snippets and new-file templates. Lua runs in local buffers on Linux
-x86-64. Declarative extensions work on all hedit platforms.
+x86-64 with kernel process isolation (Linux 5.9 or a backport). Declarative
+extensions work on all hedit platforms.
 
 ## Example
 
@@ -14,7 +15,7 @@ the selection and its original text in one step.
 
 Each Lua source returns a function `function(selection, language)` that takes
 the selected UTF-8 text and the editor language ID. Return a UTF-8 replacement
-string. hedit preserves the buffer’s line endings. Commands run only when
+string of up to 256 KiB. hedit preserves the buffer’s line endings. Commands run only when
 invoked, with a single selection of up to 64 KiB.
 
 ## Manifest fields
@@ -35,7 +36,8 @@ Use `extension-id.command-id` in the Command Palette or assign a shortcut in
 
 IDs start with a lowercase letter and use up to 48 ASCII lowercase letters,
 digits, or hyphens. Use the same format before `.lua` in script names.
-Each JSON manifest is limited to 32 KiB. Declarative bodies are limited to
+Each JSON manifest is limited to 32 KiB and each Lua script to 16 KiB.
+Declarative bodies are limited to
 2 KiB and 16 lines, with a 128 KiB expansion limit. hedit loads up to 32 manifests.
 
 ## Permissions

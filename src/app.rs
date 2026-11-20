@@ -285,6 +285,7 @@ pub struct HeditApp {
     pick_list: Option<commands::PickList>,
     extensions: Vec<extensions::Contribution>,
     extension_manager: extensions::Manager,
+    lua_transform: Option<extensions::LuaTransform>,
     /// Tab moves through the fields of the snippet inserted last.
     snippet: Option<snippet_fields::SnippetSession>,
     auto: auto_complete::AutoComplete,
@@ -514,6 +515,7 @@ impl HeditApp {
             pick_list: None,
             extensions,
             extension_manager: extensions::Manager::default(),
+            lua_transform: None,
             snippet: None,
             auto: Default::default(),
             languages: Default::default(),
@@ -1612,6 +1614,7 @@ impl HeditApp {
             || (self.closing && self.close_flow.is_none())
             || self.checkpoint_pending
             || self.updates.active()
+            || self.lua_transform.is_some()
             || self.quality.incoming.is_some()
             || !self.pending_paths.is_empty()
             || self
@@ -3934,6 +3937,7 @@ impl eframe::App for HeditApp {
         self.quality_windows(ctx);
         self.record_copies(ctx);
         self.close_dialog(ctx);
+        self.poll_lua_transform();
         self.terminal_onboarding(ctx);
         self.notification_center(ctx);
         let paths: Vec<_> = ctx.input(|i| {
@@ -4015,6 +4019,7 @@ impl eframe::App for HeditApp {
 }
 impl Drop for HeditApp {
     fn drop(&mut self) {
+        self.lua_transform.take();
         self.languages.service.take();
         if let Some(worker) = self.checkpoint_worker.take() {
             let _ = worker.join();
