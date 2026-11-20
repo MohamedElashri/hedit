@@ -1,5 +1,35 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Open a keyboard-first SSH connection picker from the Command Palette. Connect by alias or hostname, or reopen a specific saved workspace with its recovery settings. Setup errors identify the failed phase and suggest what to check.
+- Browse folders by keyboard within the connected SSH workspace. Add a folder to Files while keeping the active connection and recovery root.
+- Import selected SSH aliases into Remote Explorer or sync all hosts. The sidebar follows changes to SSH config and included files.
+- Opt into verified SSH config jump hosts and session-scoped localhost port forwarding on Linux and macOS clients.
+- Reopen recent workspaces by SSH host or preview a remote folder before opening it. SSH Output records connection stages and offers diagnostic and recovery actions.
+- Enable masked interactive SSH authentication per connection profile on Linux and macOS.
+- Install experimental local extensions from versioned JSON manifests. Extensions can add snippet commands to the Command Palette. See the [Extensions guide](USER_GUIDE.md#extensions).
+- Import, enable, disable, and reload extensions in Settings. Review commands before installing and see per-file validation errors.
+- Assign extension commands personal shortcuts and scope their availability by editor language, filename, or selection.
+- Insert literal selection and file-name variables in extension snippets. Open extension templates as unsaved files with syntax and tab stops.
+
+### Changed
+
+- Stop local Git marker scheduling in remote windows and when change markers are off. Release derived editor and Git caches for closed tabs and splits.
+- Reuse the validated SSH handshake reply and wake disconnected sessions only for a scheduled retry or user action.
+
+### Fixed
+
+- Report unreadable positions in malformed paged files without stalling the open worker.
+- Use atomic creation for new Save As destinations so another file created during the save stays intact and pending edits remain available for retry.
+- Preserve competing writes during existing-file saves and detect replacements with matching length and modification time. Validate UTF-8 before advancing a page past a partial character.
+- Read only regular, bounded files for Mini Diff comparisons against disk.
+- Prefer a typed SSH address over partial alias matches. Restore added folders and their expansion state with saved workspaces, replace edited connection profiles after successful setup, and let users retry after a background worker exits.
+- Keep SSH change checks on schedule under continuous activity, age only unacknowledged edits, and serialize execution-trust updates with reconnects. Stop pending-edit repaint timers while offline.
+- Reject NUL characters and overflowing snippet field numbers in extension manifests. Match exact command IDs before titles and preserve the final caret marker during expansion.
+
 ## [0.6.2] - 2026-11-19
 
 - Connect to SSH-config hosts with one sidebar click; move connection settings and configuration controls into right-click menus.

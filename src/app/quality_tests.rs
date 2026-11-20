@@ -267,7 +267,7 @@ fn keybindings_override_defaults_and_snippet_triggers_use_normal_undo() {
     let ctx = egui::Context::default();
     let mut app = HeditApp::from_context(&ctx, None, ws, vec![], vec![]);
     app.quality.config.keybindings.push(quality::Binding {
-        command: Command::New,
+        command: Command::New.into(),
         shortcut: "Primary+Shift+N".into(),
         editor_only: false,
     });

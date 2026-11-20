@@ -23,8 +23,11 @@ fn run() -> Result<(), String> {
     if ![5, 6].contains(&args.len()) {
         return Err("Expected SSH config, helper, state, root".into());
     }
-    let remote = Connection::connect(Config {
+    let managed_timings = args.get(5).is_some_and(|mode| mode == "managed_timings");
+    let started = Instant::now();
+    let settings = Config {
         target: hedit_remote::client::SshTarget {
+            routing: Default::default(),
             host: "lab".into(),
             user: None,
             port: args[4].parse().map_err(|_| "Invalid port")?,
@@ -33,9 +36,15 @@ fn run() -> Result<(), String> {
             state: args[2].clone(),
         },
         root: args[3].clone(),
-        managed: false,
+        managed: managed_timings,
+        interactive_auth: false,
         takeover: false,
-    })?;
+    };
+    if args.get(5).is_some_and(|mode| mode == "reopen_workspace") {
+        return reopen_workspace(settings);
+    }
+    let remote = Connection::connect(settings)?;
+    let connected = started.elapsed();
     let wakes = Arc::new(AtomicUsize::new(0));
     let counter = wakes.clone();
     remote.set_wake(Arc::new(move || {
@@ -46,6 +55,41 @@ fn run() -> Result<(), String> {
     assert!(doc.is_ephemeral());
     assert!(doc.info().name == "file");
     let original = doc.text(10 * 1024 * 1024)?;
+    if managed_timings {
+        let first_document = started.elapsed();
+        remote.disconnect()?;
+        assert!(!remote.status().0);
+        let reconnecting = Instant::now();
+        remote.reconnect()?;
+        assert!(remote.writable());
+        assert_eq!(remote.open(2, &path)?.text(10 * 1024 * 1024)?, original);
+        println!(
+            "Managed SSH ms: setup_and_connect={:.2} first_document={:.2} reconnect_and_open={:.2}",
+            connected.as_secs_f64() * 1000.0,
+            first_document.as_secs_f64() * 1000.0,
+            reconnecting.elapsed().as_secs_f64() * 1000.0,
+        );
+        remote.disconnect()?;
+        return Ok(());
+    }
+    if args.get(5).is_some_and(|mode| mode == "continuous_work") {
+        use std::io::Read;
+        println!("CHANGE_POLL_READY");
+        std::io::stdin()
+            .read_exact(&mut [0u8])
+            .map_err(|e| e.to_string())?;
+        let end = Instant::now() + Duration::from_secs(6);
+        while !remote.changed(&path).0 {
+            if Instant::now() >= end {
+                return Err("External change was not detected while work stayed active.".into());
+            }
+            remote.flush()?;
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        println!("CHANGE_POLL_OK");
+        remote.disconnect()?;
+        return Ok(());
+    }
     if args.get(5).is_some_and(|mode| mode == "language_servers") {
         use hedit::language_server::{
             manager::{Launch, Registration},
@@ -401,6 +445,7 @@ fn run() -> Result<(), String> {
         }
         assert_eq!(remote.status().2, 1);
         if automatic {
+            let disconnected = Instant::now();
             let deadline = Instant::now() + Duration::from_secs(30);
             while !remote.status().0 {
                 if Instant::now() > deadline {
@@ -409,6 +454,10 @@ fn run() -> Result<(), String> {
                 std::thread::sleep(Duration::from_millis(10));
             }
             assert!(!remote.status().1, "reconnect must reset execution trust");
+            println!(
+                "SSH ms from detected loss to automatic reconciliation: {:.2}",
+                disconnected.elapsed().as_secs_f64() * 1000.0,
+            );
         } else {
             remote.reconnect()?;
         }
@@ -661,5 +710,75 @@ fn run() -> Result<(), String> {
     let reloaded = remote.reload(&big, false, Some(&expected), 0)?;
     assert_eq!(reloaded.text, expected);
     println!("EDITOR_REMOTE_OK: edit/save/undo/redo/privacy/files/search/Git/build/PTY/scratch/reconnect");
+    Ok(())
+}
+
+fn reopen_workspace(config: Config) -> Result<(), String> {
+    use hedit::remote::{bootstrap::browse_directories, explorer::Catalog};
+    use hedit::workspace::Workspace;
+
+    let client = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let preview = browse_directories(&config, Some(&config.root), &AtomicBool::new(false))?;
+    assert_eq!(preview.path, config.root);
+    assert_eq!(preview.directories, ["subfolder"]);
+    assert!(!Path::new(&config.target.state).exists());
+    assert!(!client.path().join("first-window").exists());
+
+    let first = client.path().join("first-window");
+    let first_workspace = Workspace::connect_remote(first.clone(), config.clone())?;
+    let mut workspace = first_workspace.0;
+    let remote = workspace.remote.as_ref().unwrap().clone();
+    for name in ["first.txt", "second.txt"] {
+        let path = remote.path(name)?;
+        let mut document = remote.open(workspace.editor.id(), &path)?;
+        let page = document.page(0)?;
+        workspace.add(document, page)?;
+    }
+    let first_file = workspace.open.len() - 2;
+    let old = std::mem::replace(
+        &mut workspace.open[first_file].page.text,
+        "HOST_ONLY_REOPEN_DRAFT".into(),
+    );
+    workspace.edit(first_file, &old)?;
+    workspace.active = first_file;
+    workspace.open[first_file].view.anchor = 3;
+    workspace.open[first_file].view.head = 3;
+    remote.flush()?;
+    workspace.checkpoint()?;
+    remote.disconnect()?;
+    drop(workspace);
+    drop(remote);
+
+    let mut catalog = Catalog::default();
+    catalog.remember_opened(config.clone(), false)?;
+    let path = client.path().join("ssh-workspaces.json");
+    catalog.save(&path, &Catalog::default())?;
+    let catalog_text = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
+    assert!(!catalog_text.contains("HOST_ONLY_REOPEN_DRAFT"));
+    let catalog = Catalog::load(&path)?;
+    assert_eq!(catalog.open_order(&config), Some(0));
+    let reopened = catalog.workspaces.into_iter().next().unwrap();
+    assert_eq!(reopened, config);
+    let second = client.path().join("second-window");
+    let (workspace, _) = Workspace::connect_remote(second.clone(), reopened)?;
+    let remote = workspace.remote.as_ref().unwrap();
+    assert_eq!(remote.config.root, preview.path);
+    assert_eq!(
+        workspace
+            .open
+            .iter()
+            .filter(|buffer| buffer.page.info.path.is_some())
+            .map(|buffer| buffer.page.info.name.as_str())
+            .collect::<Vec<_>>(),
+        ["first.txt", "second.txt"]
+    );
+    let active = &workspace.open[workspace.active];
+    assert_eq!(active.page.info.name, "first.txt");
+    assert_eq!(active.page.text, "HOST_ONLY_REOPEN_DRAFT");
+    assert_eq!(active.view.head, 3);
+    assert!(!first.exists());
+    assert!(!second.exists());
+    remote.disconnect()?;
+    println!("WORKSPACE_REOPEN_OK");
     Ok(())
 }

@@ -5,9 +5,13 @@ mod launcher;
 mod macos_privacy;
 #[cfg(test)]
 mod preview;
+mod ssh_askpass;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args: Vec<_> = std::env::args_os().skip(1).collect();
+    if let Some(answered) = ssh_askpass::run_if_requested(&args) {
+        std::process::exit(i32::from(!answered));
+    }
     let mut startup = launcher::Startup::take_from_args(&mut args)?;
     let result = run(args, &mut startup);
     if let Err(error) = &result {
@@ -22,7 +26,7 @@ fn run(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let options = hedit::cli::Options::parse(args.clone())?;
     if options.help {
-        println!("hedit — keep your train of thought\n\nUsage: hedit [--session-dir DIR] [--new] [FILE[:LINE[:COLUMN]] | FOLDER ...] [-]\n\n  -                 Read UTF-8 stdin into an unsaved file\n  --new             Add a new file\n  -w, --wait        Wait until the files are closed (for git and other tools)\n  --session-dir DIR Use an isolated session (one process per session)\n  --lsp list        List registered language servers (JSON)\n  --lsp install ID  Install or update a managed language server\n  --lsp remove ID   Remove a managed server or external registration\n  --lsp-dir DIR     Override the local server store for --lsp\n  --ssh HOST        Connect; install the helper for the remote user\n  --ssh-root DIR    Remote workspace (default: remote home)\n  --ssh-helper FILE Advanced: manually installed remote helper\n  --ssh-state DIR   Advanced: private host recovery directory\n  --ssh-user USER   SSH user (optional)\n  --ssh-port PORT   SSH port (default from SSH config)\n  --ssh-config FILE Trusted absolute local SSH config\n  --ssh-takeover    Explicitly fence another workspace writer\n  --                Treat remaining arguments as paths\n  -h, --help        Show help\n  -V, --version     Show version\n\nhedit opens in the running session and releases the terminal after startup.\nBuild and run with Cargo. CUDA tools are optional.");
+        println!("hedit — keep your train of thought\n\nUsage: hedit [--session-dir DIR] [--new] [FILE[:LINE[:COLUMN]] | FOLDER ...] [-]\n\n  -                 Read UTF-8 stdin into an unsaved file\n  --new             Add a new file\n  -w, --wait        Wait until the files are closed (for git and other tools)\n  --session-dir DIR Use an isolated session (one process per session)\n  --lsp list        List registered language servers (JSON)\n  --lsp install ID  Install or update a managed language server\n  --lsp remove ID   Remove a managed server or external registration\n  --lsp-dir DIR     Override the local server store for --lsp\n  --ssh HOST        Connect; install the helper for the remote user\n  --ssh-root DIR    Remote workspace (default: remote home)\n  --ssh-helper FILE Advanced: manually installed remote helper\n  --ssh-state DIR   Advanced: private host recovery directory\n  --ssh-user USER   SSH user (optional)\n  --ssh-port PORT   SSH port (default from SSH config)\n  --ssh-config FILE Trusted absolute local SSH config\n  --ssh-use-config-jump    Use ProxyJump from local SSH config\n  --ssh-forward-config-ports  Enable loopback LocalForward rules\n  --ssh-interactive Prompt locally for SSH credentials (Linux/macOS)\n  --ssh-takeover    Explicitly fence another workspace writer\n  --                Treat remaining arguments as paths\n  -h, --help        Show help\n  -V, --version     Show version\n\nhedit opens in the running session and releases the terminal after startup.\nBuild and run with Cargo. CUDA tools are optional.");
         return Ok(());
     }
     if options.version {

@@ -92,7 +92,8 @@ class ReleaseInstaller(unittest.TestCase):
                 shutil.copy2(ROOT / filename, stage / filename)
             for directory in ['assets', 'themes', 'docs/images']:
                 shutil.copytree(ROOT / directory, stage / directory)
-            for relative in ['vendor/egui_commonmark/PATCH.md', 'vendor/libghostty-vt-sys/PATCH.md']:
+            for relative in ['vendor/egui_commonmark/PATCH.md', 'vendor/libghostty-vt-sys/PATCH.md',
+                             'docs/extensions.md', 'examples/extensions/markdown-task.json']:
                 (stage / relative).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(ROOT / relative, stage / relative)
             archive = self.fixtures / f'{name}.tar.gz'
@@ -134,6 +135,9 @@ class ReleaseInstaller(unittest.TestCase):
         if succeeds:
             self.assertTrue((self.prefix / 'bin/hedit').is_file())
             self.assertTrue((self.prefix / 'share/doc/hedit/USER_GUIDE.md').is_file())
+            for relative in ['docs/extensions.md', 'examples/extensions/markdown-task.json']:
+                self.assertEqual((self.prefix / 'share/doc/hedit' / relative).read_bytes(),
+                                 (ROOT / relative).read_bytes())
         return result
 
     def requests(self):

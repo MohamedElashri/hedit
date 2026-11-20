@@ -10,12 +10,13 @@ pub(super) enum PreferencesPage {
     Appearance,
     Keys,
     Snippets,
+    Extensions,
     Tools,
     LanguageServers,
     Recovery,
 }
 impl PreferencesPage {
-    pub(super) const ALL: [Self; 11] = [
+    pub(super) const ALL: [Self; 12] = [
         Self::General,
         Self::Terminal,
         Self::Editor,
@@ -24,6 +25,7 @@ impl PreferencesPage {
         Self::Appearance,
         Self::Keys,
         Self::Snippets,
+        Self::Extensions,
         Self::Tools,
         Self::LanguageServers,
         Self::Recovery,
@@ -38,6 +40,7 @@ impl PreferencesPage {
             Self::Appearance => "Appearance",
             Self::Keys => "Key Bindings",
             Self::Snippets => "Snippets",
+            Self::Extensions => "Extensions",
             Self::Tools => "CUDA Tools",
             Self::LanguageServers => "Language Servers",
             Self::Recovery => "Recovery",
@@ -98,6 +101,7 @@ impl HeditApp {
         self.focus_editor = false;
     }
     pub(super) fn preferences(&mut self, ctx: &egui::Context) {
+        self.poll_extension_manager();
         if self.preferences_open {
             let before = self.theme.clone();
             let mut open = true;
@@ -198,7 +202,7 @@ impl HeditApp {
                     let counts = if searching {
                         self.settings_category_counts()
                     } else {
-                        [0; 11]
+                        [0; PreferencesPage::ALL.len()]
                     };
                     let footer_height = 2.0 * m.control + 3.0 * m.gap + 4.0;
                     let body_height = (ui.available_height() - footer_height).max(64.0);
@@ -252,6 +256,9 @@ impl HeditApp {
                                         PreferencesPage::Folders => self.folder_preferences(ui),
                                         PreferencesPage::Keys => self.key_preferences(ui, ctx),
                                         PreferencesPage::Snippets => self.snippet_preferences(ui),
+                                        PreferencesPage::Extensions => {
+                                            self.extension_preferences(ui)
+                                        }
                                         PreferencesPage::Appearance => {
                                             self.theme_preferences(ui, ctx)
                                         }

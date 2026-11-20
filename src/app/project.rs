@@ -157,8 +157,7 @@ impl ProjectBrowser {
 impl HeditApp {
     pub(super) fn open_folder(&mut self, ctx: &egui::Context) {
         if self.workspace.remote.is_some() {
-            self.remote_ui.picker = Some(remote::Picker::Folder);
-            self.remote_ui.path.clear();
+            self.open_remote_folder(ctx);
             return;
         }
         self.job(ctx, || {

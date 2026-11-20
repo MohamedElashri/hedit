@@ -1,11 +1,50 @@
 use super::*;
 use hedit::{intelligence, projects, search};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::path::{Path, PathBuf};
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(untagged)]
+pub(super) enum BindingCommand {
+    Builtin(Command),
+    Extension(#[serde(deserialize_with = "deserialize_extension_id")] String),
+}
+
+fn deserialize_extension_id<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<String, D::Error> {
+    let id = String::deserialize(deserializer)?;
+    if extensions::valid_command_id(&id) {
+        Ok(id)
+    } else {
+        Err(serde::de::Error::custom("Invalid extension command ID"))
+    }
+}
+
+impl From<Command> for BindingCommand {
+    fn from(command: Command) -> Self {
+        Self::Builtin(command)
+    }
+}
+
+impl BindingCommand {
+    pub(super) fn builtin(&self) -> Option<Command> {
+        match self {
+            Self::Builtin(command) => Some(*command),
+            Self::Extension(_) => None,
+        }
+    }
+}
+
+impl PartialEq<Command> for BindingCommand {
+    fn eq(&self, other: &Command) -> bool {
+        self.builtin() == Some(*other)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct Binding {
-    pub command: Command,
+    pub command: BindingCommand,
     pub shortcut: String,
     #[serde(default)]
     pub editor_only: bool,
@@ -83,7 +122,6 @@ pub(super) struct Quality {
     pub git_at: Option<Instant>,
     pub git_cache: std::collections::BTreeMap<u64, String>,
     pub git_pending: bool,
-    /// The buffer and revision the current markers were computed for.
     /// The view, revision, saved state, and comparison the markers are for.
     pub git_key: Option<(u64, u64, bool, String)>,
     /// The text each view's change markers compare against.
@@ -155,8 +193,8 @@ pub(super) enum FileOperation {
     Trash,
 }
 pub(super) enum Event {
-    /// Change markers: view, revision, diff, and the text compared against.
-    GitMarkers(u64, u64, String, Option<String>),
+    /// Change markers: view, revision, mode, diff, and the text compared against.
+    GitMarkers(u64, u64, String, String, Option<String>),
     Found(u64, Page, usize, usize, usize, String, search::Options),
     Results(search::Results),
     Applied(Vec<(u64, Page)>, usize, Vec<String>, Vec<search::Restore>),
@@ -217,13 +255,14 @@ impl HeditApp {
                     }
                 }
             }
-            Event::GitMarkers(id, revision, diff, base) => {
+            Event::GitMarkers(id, revision, mode, diff, base) => {
                 self.quality.git_pending = false;
-                if self
-                    .workspace
-                    .open
-                    .iter()
-                    .any(|b| b.view.id == id && b.page.info.revision == revision)
+                if mode == self.settings.mini_diff
+                    && self
+                        .workspace
+                        .open
+                        .iter()
+                        .any(|b| b.view.id == id && b.page.info.revision == revision)
                 {
                     self.quality
                         .git_lines
@@ -314,7 +353,7 @@ impl HeditApp {
                 self.quality.diff_target = Some((id, revision, disk));
                 self.quality.diff_open = true;
                 self.quality.git_diff = git;
-                if git {
+                if git && self.settings.mini_diff != "off" {
                     self.quality
                         .git_lines
                         .insert(id, intelligence::changed_lines(&self.quality.diff));
@@ -702,12 +741,8 @@ impl HeditApp {
                     "The match extends beyond the editable page; narrow the pattern.".into(),
                 );
             }
-            let a = page.text[..selected.start - page.start as usize]
-                .chars()
-                .count();
-            let z = page.text[..selected.end - page.start as usize]
-                .chars()
-                .count();
+            let a = opening::page_cursor(&page, selected.start as u64)?;
+            let z = opening::page_cursor(&page, selected.end as u64)?;
             Ok(Action::Quality(Box::new(Event::Found(
                 id, page, a, z, count, query, options,
             ))))
@@ -1291,6 +1326,17 @@ impl HeditApp {
     /// Insert a snippet over the selection and the `before` bytes ahead of it,
     /// such as its typed trigger.
     pub(super) fn insert_snippet(&mut self, snippet: intelligence::Snippet, before: usize) {
+        self.insert_snippet_with(&snippet.body, before, |body, selection| {
+            Some(intelligence::expand_fields(body, selection))
+        });
+    }
+
+    pub(super) fn insert_snippet_with(
+        &mut self,
+        body: &str,
+        before: usize,
+        expand: impl FnOnce(&str, &str) -> Option<intelligence::Expansion>,
+    ) {
         if self.active().follow || self.active().page.info.paged {
             return;
         }
@@ -1312,7 +1358,7 @@ impl HeditApp {
         } else {
             " ".repeat(b.view.tab_size.unwrap_or(4) as usize)
         };
-        let body = snippet_fields::indent_body(&snippet.body.replace("\r\n", "\n"), &indent, &unit);
+        let body = snippet_fields::indent_body(&body.replace("\r\n", "\n"), &indent, &unit);
         // Convert before expanding fields so their character positions include
         // every carriage return in the inserted text.
         let body = if b.page.info.eol == "CRLF" {
@@ -1320,7 +1366,10 @@ impl HeditApp {
         } else {
             body
         };
-        let expansion = intelligence::expand_fields(&body, &old[start..end]);
+        let Some(expansion) = expand(&body, &old[start..end]) else {
+            self.error = Some("The expanded extension snippet is too large.".into());
+            return;
+        };
         let base = old[..start].chars().count();
         let cursor = base + expansion.fields.last().map_or(0, |f| f[0].0);
         let mut text = old.clone();
@@ -1555,39 +1604,47 @@ impl HeditApp {
 }
 
 impl HeditApp {
-    /// Whether git markers are out of date: the text changed, the window came
-    /// back into focus (a commit may have happened), or they are 30 s old.
-    pub(super) fn git_stale(&self, ctx: &egui::Context) -> bool {
-        let b = self.active();
-        b.page.info.path.is_some()
-            && !b.page.info.paged
-            && (self.quality.git_key.as_ref()
-                != Some(&(
-                    b.view.id,
-                    b.page.info.revision,
-                    b.page.info.dirty,
-                    self.settings.mini_diff.clone(),
-                ))
-                || refocused(ctx)
-                || self
-                    .quality
-                    .git_at
-                    .is_none_or(|t| t.elapsed() >= Duration::from_secs(30)))
-    }
-    pub(super) fn poll_git(&mut self, ctx: &egui::Context) {
-        if self.workspace.remote.is_some() {
-            return;
-        }
-        if self.quality.git_pending
+    /// Share eligibility and timing between the worker and the frame scheduler.
+    pub(super) fn git_refresh_delay(&self, ctx: &egui::Context) -> Option<Duration> {
+        if self.workspace.remote.is_some()
+            || self.settings.mini_diff == "off"
+            || self.quality.git_pending
             || self.busy
             || self.closing
-            || !self.git_stale(ctx)
-            || (!refocused(ctx)
-                && self
-                    .quality
-                    .git_at
-                    .is_some_and(|t| t.elapsed() < Duration::from_secs(2)))
         {
+            return None;
+        }
+        let b = self.active();
+        if b.page.info.path.is_none() || b.page.info.paged {
+            return None;
+        }
+        if refocused(ctx) {
+            return Some(Duration::ZERO);
+        }
+        let same = self.quality.git_key.as_ref().is_some_and(|key| {
+            key.0 == b.view.id
+                && key.1 == b.page.info.revision
+                && key.2 == b.page.info.dirty
+                && key.3 == self.settings.mini_diff
+        });
+        let age = self.quality.git_at.map_or(Duration::MAX, |at| at.elapsed());
+        if same && age < Duration::from_secs(30) {
+            // Recheck the baseline on the next input or watcher update.
+            // A fresh marker cache should neither force an idle frame nor run Git.
+            return None;
+        }
+        Some(Duration::from_secs(2).saturating_sub(age))
+    }
+    pub(super) fn poll_git(&mut self, ctx: &egui::Context) {
+        if self.settings.mini_diff == "off" {
+            self.quality.git_key = None;
+            self.quality.git_at = None;
+            self.quality.git_lines.clear();
+            self.quality.git_cache.clear();
+            self.quality.git_base.clear();
+            return;
+        }
+        if self.git_refresh_delay(ctx) != Some(Duration::ZERO) {
             return;
         }
         let b = self.active();
@@ -1610,7 +1667,13 @@ impl HeditApp {
             // "auto" compares with Git's HEAD, or the saved file outside Git.
             // The saved file in the encoding the editor reads it with.
             let saved = || {
-                let bytes = std::fs::read(path).ok()?;
+                // Mini Diff only runs for a non-paged view. Allow its full
+                // disk representation, including twice the UTF-8 length for
+                // ASCII stored as UTF-16 and a byte order mark.
+                let file = hedit_core::file_io::open_regular(path).ok()?;
+                let bytes =
+                    hedit_core::file_io::read_bounded(file, 2 * hedit::document::SMALL_LIMIT + 3)
+                        .ok()?;
                 hedit::text_encoding::decode(&bytes, &encoding)
                     .or_else(|_| {
                         hedit::text_encoding::decode(&bytes, hedit::text_encoding::detect(&bytes))
@@ -1619,7 +1682,6 @@ impl HeditApp {
                     .map(|(text, _)| text)
             };
             let base = match mode.as_str() {
-                "off" => None,
                 "saved" => saved(),
                 _ => intelligence::git_base(path).ok().or_else(saved),
             };
@@ -1634,10 +1696,11 @@ impl HeditApp {
             });
             let diff = base
                 .as_deref()
+                .filter(|base| *base != text)
                 .map(|base| hedit::search::diff(base, &text, path))
                 .unwrap_or_default();
             let _ = tx.send(Ok(Action::Quality(Box::new(Event::GitMarkers(
-                id, revision, diff, base,
+                id, revision, mode, diff, base,
             )))));
             ctx.request_repaint();
         });

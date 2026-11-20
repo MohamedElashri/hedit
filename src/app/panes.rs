@@ -318,6 +318,13 @@ impl HeditApp {
         }
         let live: std::collections::HashSet<_> =
             self.workspace.open.iter().map(|b| b.view.id).collect();
+        self.editor_layout.retain_documents(&live);
+        for layout in &mut self.extra_layouts {
+            layout.retain_documents(&live);
+        }
+        self.quality.git_base.retain(|id, _| live.contains(id));
+        self.quality.git_cache.retain(|id, _| live.contains(id));
+        self.quality.git_lines.retain(|id, _| live.contains(id));
         for pane in &mut self.panes.views {
             pane.tabs.retain(|tab| live.contains(&tab.id));
         }
@@ -538,6 +545,7 @@ impl HeditApp {
             return;
         }
         self.panes.views.remove(group);
+        self.release_unused_pane_caches();
         self.panes.focused = self
             .panes
             .focused
@@ -551,6 +559,14 @@ impl HeditApp {
             3 => 3,
             _ => 4,
         };
+    }
+
+    fn release_unused_pane_caches(&mut self) {
+        let count = self.panes.views.len();
+        self.extra_layouts[count - 1..].fill_with(Default::default);
+        self.projections[count..].fill_with(Default::default);
+        self.row_indexes[count..].fill_with(Default::default);
+        self.minimaps[count..].fill_with(Default::default);
     }
 
     fn restore_focused_group(&mut self) {
@@ -581,6 +597,7 @@ impl HeditApp {
         let current = TabView::get(self.active());
         if count < self.panes.views.len() {
             let removed = self.panes.views.split_off(count);
+            self.release_unused_pane_caches();
             for pane in removed {
                 for tab in pane.tabs {
                     if !self.panes.views[0].tabs.iter().any(|t| t.id == tab.id) {

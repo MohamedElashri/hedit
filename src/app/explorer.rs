@@ -383,7 +383,9 @@ impl HeditApp {
                         .iter()
                         .filter(|b| {
                             !b.editor_only
-                                && (b.command != Command::LanguageRename || personal_rename)
+                                && b.command.builtin().is_some_and(|command| {
+                                    command != Command::LanguageRename || personal_rename
+                                })
                         })
                         .any(|b| {
                             chords::parse(&b.shortcut)

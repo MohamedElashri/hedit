@@ -78,7 +78,7 @@ impl HeditApp {
     }
     pub(super) fn overlay_open(&self, overlay: Overlay) -> bool {
         match overlay {
-            Overlay::Remote => self.remote_ui.dialog || self.remote_ui.picker.is_some(),
+            Overlay::Remote => self.remote_ui.overlay_open(),
             Overlay::GitPrompt => self.source_control.prompt.is_some(),
             Overlay::UserGuide => self.guide.open,
             Overlay::Palette => self.palette,
@@ -110,10 +110,7 @@ impl HeditApp {
     }
     pub(super) fn close_overlay(&mut self, ctx: &egui::Context, overlay: Overlay) {
         match overlay {
-            Overlay::Remote => {
-                self.remote_ui.dialog = false;
-                self.remote_ui.picker = None;
-            }
+            Overlay::Remote => self.remote_ui.close_overlay(),
             Overlay::GitPrompt => self.source_control.prompt = None,
             Overlay::UserGuide => self.guide.open = false,
             Overlay::Palette => {

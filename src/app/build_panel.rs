@@ -134,7 +134,7 @@ impl HeditApp {
                     status: format!("Building with {}…", system.name),
                     ..Default::default()
                 };
-                self.set_panel(super::workbench_panel::Panel::Output);
+                self.show_build_output();
             }
             Err(error) => self.error = Some(error),
         }
@@ -248,7 +248,7 @@ impl HeditApp {
     }
     pub(super) fn go_to_location(&mut self, index: usize) {
         self.build.current = Some(index);
-        self.set_panel(super::workbench_panel::Panel::Output);
+        self.show_build_output();
         let location = &self.build.locations[index];
         let column = location.column.map_or(String::new(), |c| format!(":{c}"));
         self.pending_paths.push_back(PathBuf::from(format!(

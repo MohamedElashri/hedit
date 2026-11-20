@@ -1,6 +1,6 @@
 //! Settings pages for formatting, folders and search, key bindings, and snippets.
 use super::preferences::{row, section};
-use super::quality::Binding;
+use super::quality::{Binding, BindingCommand};
 use super::*;
 use hedit::settings::{FormatSettings, Settings};
 
@@ -200,25 +200,61 @@ impl HeditApp {
                 .desired_width(240.0),
         );
         let filter = self.key_filter.to_lowercase();
-        let shortcuts: Vec<(Command, String)> = Command::ALL
+        let mut shortcuts: Vec<(BindingCommand, String, String)> = Command::ALL
             .iter()
-            .map(|&c| (c, self.shortcut_text(c)))
+            .map(|&command| {
+                (
+                    command.into(),
+                    command.label().to_owned(),
+                    self.shortcut_text(command),
+                )
+            })
             .collect();
-        let mut change: Option<(Command, Option<String>)> = None;
+        let mut extension_ids = std::collections::BTreeSet::new();
+        extension_ids.extend(self.extensions.iter().map(|command| command.id.as_str()));
+        extension_ids.extend(
+            self.quality
+                .config
+                .keybindings
+                .iter()
+                .filter_map(|binding| match &binding.command {
+                    BindingCommand::Extension(id) => Some(id.as_str()),
+                    BindingCommand::Builtin(_) => None,
+                }),
+        );
+        for id in extension_ids {
+            let command = BindingCommand::Extension(id.to_owned());
+            let label = self.keybinding_label(&command);
+            let shortcut = self
+                .quality
+                .config
+                .keybindings
+                .iter()
+                .find(|binding| binding.command == command && !binding.shortcut.is_empty())
+                .map_or_else(String::new, |binding| {
+                    shortcut_preset::display(&binding.shortcut)
+                });
+            shortcuts.push((command, label, shortcut));
+        }
+        let mut change = None;
         egui::Grid::new("key-bindings")
             .num_columns(3)
             .striped(true)
             .spacing([12.0, 4.0])
             .show(ui, |ui| {
-                for (command, shortcut) in &shortcuts {
+                for (command, label, shortcut) in &shortcuts {
                     if !filter.is_empty()
-                        && !command.label().to_lowercase().contains(&filter)
+                        && !label.to_lowercase().contains(&filter)
                         && !shortcut.to_lowercase().contains(&filter)
+                        && !matches!(command, BindingCommand::Extension(id) if id.contains(&filter))
                     {
                         continue;
                     }
-                    ui.label(command.label());
-                    let capturing = self.key_capture == Some(*command);
+                    let name = ui.label(label);
+                    if let BindingCommand::Extension(id) = command {
+                        name.on_hover_text(id);
+                    }
+                    let capturing = self.key_capture.as_ref() == Some(command);
                     let text = if capturing {
                         match &self.capture_first {
                             Some((first, _)) => format!(
@@ -242,7 +278,7 @@ impl HeditApp {
                     let clash = !shortcut.is_empty()
                         && shortcuts
                             .iter()
-                            .any(|(other, s)| other != command && s == shortcut);
+                            .any(|(other, _, s)| other != command && s == shortcut);
                     let response = ui
                         .add(
                             egui::Button::new(RichText::new(text).monospace())
@@ -255,17 +291,30 @@ impl HeditApp {
                             "Click, then press the new keys"
                         });
                     if response.clicked() {
-                        self.key_capture = (!capturing).then_some(*command);
+                        self.key_capture = (!capturing).then(|| command.clone());
+                        self.capture_first = None;
                     }
                     ui.horizontal(|ui| {
                         if clash {
                             ui.colored_label(self.theme.warning.color(), "⚠");
                         }
-                        if self.personally_bound(*command) && ui.small_button("Reset").clicked() {
-                            change = Some((*command, None));
-                        }
-                        if !shortcut.is_empty() && ui.small_button("Unbind").clicked() {
-                            change = Some((*command, Some(String::new())));
+                        if let Some(builtin) = command.builtin() {
+                            if self.personally_bound(builtin) && ui.small_button("Reset").clicked()
+                            {
+                                change = Some((command.clone(), None));
+                            }
+                            if !shortcut.is_empty() && ui.small_button("Unbind").clicked() {
+                                change = Some((command.clone(), Some(String::new())));
+                            }
+                        } else if self
+                            .quality
+                            .config
+                            .keybindings
+                            .iter()
+                            .any(|binding| binding.command == *command)
+                            && ui.small_button("Unbind").clicked()
+                        {
+                            change = Some((command.clone(), None));
                         }
                     });
                     ui.end_row();
@@ -278,6 +327,8 @@ impl HeditApp {
         ui.horizontal(|ui| {
             if ui.button("Reset all").clicked() {
                 self.quality.config.keybindings.clear();
+                self.chord = None;
+                self.reset_terminal_binding();
             }
             if let Some(dir) = self.settings_files.dir.clone() {
                 if ui.button("Open keybindings.json").clicked() {
@@ -287,81 +338,104 @@ impl HeditApp {
             }
         });
     }
-    /// Set a command's shortcut (`None` restores its default), unbinding any
-    /// other command that used the same keys.
-    pub(super) fn set_binding(&mut self, command: Command, shortcut: Option<String>) {
-        let others: Vec<Command> =
-            shortcut
-                .as_ref()
-                .filter(|s| !s.is_empty())
-                .map_or_else(Vec::new, |shortcut| {
-                    let keys = chords::parse(shortcut).unwrap_or_default();
-                    Command::ALL
-                        .iter()
-                        .copied()
-                        .filter(|&other| {
-                            other != command
-                                && (shortcut_preset::bindings_collide(
-                                    &keys,
-                                    &self.shortcut_text(other),
-                                ) || self.configured_bindings().iter().any(|binding| {
-                                    binding.command == other
-                                        && shortcut_preset::bindings_collide(
-                                            &keys,
-                                            &binding.shortcut,
-                                        )
-                                }))
-                        })
-                        .collect()
-                });
-        let bindings = &mut self.quality.config.keybindings;
-        let editor_only = bindings
-            .iter()
-            .find(|b| b.command == command)
-            .is_some_and(|b| b.editor_only);
-        bindings.retain(|b| b.command != command);
-        let Some(shortcut) = shortcut else {
-            return;
-        };
-        if !shortcut.is_empty() {
-            let label = Binding {
-                command,
-                shortcut: shortcut.clone(),
-                editor_only,
-            };
-            self.quality.config.keybindings.push(label);
-            let taken = shortcut_preset::display(&shortcut);
-            for other in others {
+    fn keybinding_label(&self, command: &BindingCommand) -> String {
+        match command {
+            BindingCommand::Builtin(command) => command.label().to_owned(),
+            BindingCommand::Extension(id) => self
+                .extensions
+                .iter()
+                .find(|command| command.id == *id)
+                .map_or_else(|| id.clone(), |command| command.title.clone()),
+        }
+    }
+
+    /// Apply a personal binding and clear commands previously using its keys.
+    pub(super) fn set_binding(
+        &mut self,
+        command: impl Into<BindingCommand>,
+        shortcut: Option<String>,
+    ) {
+        let command = command.into();
+        let mut conflicts = Vec::new();
+        if let Some(shortcut) = shortcut.as_deref().filter(|text| !text.is_empty()) {
+            let keys = chords::parse(shortcut).unwrap_or_default();
+            let mut seen = std::collections::HashSet::new();
+            let effective = self.configured_bindings();
+            // Include saved extension bindings even while their target is unavailable.
+            for binding in effective.iter().chain(
                 self.quality
                     .config
                     .keybindings
-                    .retain(|b| b.command != other);
-                self.quality.config.keybindings.push(Binding {
-                    command: other,
-                    shortcut: String::new(),
-                    editor_only: false,
-                });
-                self.notice = format!(
-                    "{taken} was used by “{}”, which is now unbound.",
-                    other.label()
-                );
+                    .iter()
+                    .filter(|binding| binding.command.builtin().is_none()),
+            ) {
+                if binding.command != command
+                    && shortcut_preset::bindings_collide(&keys, &binding.shortcut)
+                    && seen.insert(binding.command.clone())
+                {
+                    conflicts.push(binding.command.clone());
+                }
             }
-        } else {
-            self.quality.config.keybindings.push(Binding {
+            for &builtin in Command::ALL {
+                let target = BindingCommand::Builtin(builtin);
+                if target != command
+                    && !seen.contains(&target)
+                    && shortcut_preset::bindings_collide(&keys, &self.shortcut_text(builtin))
+                {
+                    conflicts.push(target);
+                }
+            }
+        }
+        let notice = conflicts
+            .last()
+            .zip(shortcut.as_deref())
+            .map(|(other, shortcut)| {
+                format!(
+                    "{} was used by “{}”, which is now unbound.",
+                    shortcut_preset::display(shortcut),
+                    self.keybinding_label(other),
+                )
+            });
+        let bindings = &mut self.quality.config.keybindings;
+        let editor_only = command.builtin().is_none()
+            || bindings
+                .iter()
+                .find(|b| b.command == command)
+                .is_some_and(|b| b.editor_only);
+        bindings
+            .retain(|binding| binding.command != command && !conflicts.contains(&binding.command));
+        if let Some(shortcut) = shortcut {
+            bindings.push(Binding {
                 command,
                 shortcut,
                 editor_only,
             });
         }
+        for command in conflicts
+            .into_iter()
+            .filter(|command| command.builtin().is_some())
+        {
+            bindings.push(Binding {
+                command,
+                shortcut: String::new(),
+                editor_only: false,
+            });
+        }
+        if let Some(notice) = notice {
+            self.notice = notice;
+        }
+        self.chord = None;
+        self.reset_terminal_binding();
     }
     /// While a key binding is being recorded, the next key press becomes the
     /// shortcut and no other shortcut fires. Returns true while recording.
     pub(super) fn capture_binding(&mut self, ctx: &egui::Context) -> bool {
-        let Some(command) = self.key_capture else {
+        let Some(command) = self.key_capture.clone() else {
             return false;
         };
         if !self.preferences_open {
             self.key_capture = None;
+            self.capture_first = None;
             return false;
         }
         let pressed = ctx.input(|i| {

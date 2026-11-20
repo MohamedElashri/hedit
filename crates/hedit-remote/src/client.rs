@@ -1,5 +1,7 @@
 //! Explicit OpenSSH arguments and a memory-only client with an RPC deadline.
 use crate::protocol::{self, Envelope, Error, Reply, Request, Response, Result, VERSION};
+mod routing;
+pub use routing::Routing;
 use std::{
     path::PathBuf,
     process::{Child, Command, Stdio},
@@ -16,6 +18,9 @@ pub struct SshTarget {
     pub port: u16,
     /// Explicitly trusted local configuration, never read from a workspace.
     pub config: Option<PathBuf>,
+    /// Opt in to approved routing options from the selected local SSH config.
+    #[serde(default, skip_serializing_if = "Routing::is_default")]
+    pub routing: Routing,
     /// Trusted executable and private state on the host.
     pub helper: String,
     pub state: String,
@@ -32,6 +37,8 @@ pub struct SetupInfo {
     pub state: String,
 }
 pub const SETUP_VERSION: u32 = 1;
+pub const AUTH_TIMEOUT: Duration = Duration::from_secs(120);
+const RPC_TIMEOUT: Duration = Duration::from_secs(15);
 
 fn quote(s: &str) -> Result<String> {
     if s.contains(['\0', '\n', '\r']) || !s.starts_with('/') {
@@ -41,8 +48,24 @@ fn quote(s: &str) -> Result<String> {
 }
 
 impl SshTarget {
+    pub fn validate_settings(&self, managed: bool) -> Result<()> {
+        self.base_command(false)?;
+        if !managed {
+            self.bridge_command()?;
+        }
+        Ok(())
+    }
+
     pub fn command(&self) -> Result<Command> {
-        self.command_for(&format!(
+        self.command_with_auth(false)
+    }
+
+    pub fn command_with_auth(&self, interactive: bool) -> Result<Command> {
+        self.command_for_with_auth(&self.bridge_command()?, interactive)
+    }
+
+    fn bridge_command(&self) -> Result<String> {
+        Ok(format!(
             "exec {} bridge --state {}",
             quote(&self.helper)?,
             quote(&self.state)?
@@ -52,6 +75,60 @@ impl SshTarget {
     /// Run application-owned bootstrap code using exactly the RPC SSH policy.
     /// Callers must quote any data interpolated into the remote command.
     pub fn command_for(&self, remote_command: &str) -> Result<Command> {
+        self.command_for_with_auth(remote_command, false)
+    }
+
+    /// Allow keyboard-interactive SSH only when the caller supplies a local
+    /// askpass program. The remaining transport policy is identical.
+    pub fn command_for_with_auth(
+        &self,
+        remote_command: &str,
+        interactive: bool,
+    ) -> Result<Command> {
+        self.command_for_detailed(remote_command, interactive)
+            .map_err(|_| Error::Permission)
+    }
+
+    pub fn command_for_detailed(
+        &self,
+        remote_command: &str,
+        interactive: bool,
+    ) -> std::result::Result<Command, String> {
+        let plan = routing::Plan::resolve(self, interactive, false)?;
+        let mut command = self.routed_command(interactive, &plan)?;
+        Self::disable_control(&mut command);
+        self.destination(&mut command);
+        command.arg(remote_command);
+        Ok(command)
+    }
+
+    fn routed_command(
+        &self,
+        interactive: bool,
+        plan: &routing::Plan,
+    ) -> std::result::Result<Command, String> {
+        let mut command = self
+            .base_command(interactive)
+            .map_err(|error| error.to_string())?;
+        self.set_proxy(&mut command, plan.proxy.as_deref());
+        command.args(["-o", "ClearAllForwardings=yes", "-T"]);
+        Ok(command)
+    }
+
+    fn disable_control(command: &mut Command) {
+        command.args(["-o", "ControlMaster=no", "-o", "ControlPath=none"]);
+    }
+
+    fn set_proxy(&self, command: &mut Command, proxy: Option<&str>) {
+        // An application-generated ssh -W command keeps the same verification
+        // policy on every hop. The configured ProxyCommand is never inherited.
+        command
+            .arg("-o")
+            .arg(format!("ProxyCommand={}", proxy.unwrap_or("none")));
+        command.args(["-o", "ProxyJump=none", "-o", "ProxyUseFdpass=no"]);
+    }
+
+    fn base_command(&self, interactive: bool) -> Result<Command> {
         if self.host.is_empty()
             || self.host.starts_with('-')
             || self.host.len() > 253
@@ -82,19 +159,24 @@ impl SshTarget {
         command.current_dir("/");
         #[cfg(windows)]
         command.current_dir(std::env::temp_dir());
-        // Use keys or an existing agent; there is no password-prompt UI.
+        command.arg("-o").arg(if interactive {
+            "BatchMode=no"
+        } else {
+            "BatchMode=yes"
+        });
+        if interactive {
+            command.arg("-o").arg("NumberOfPasswordPrompts=1");
+        }
         for option in [
-            "BatchMode=yes",
             "StrictHostKeyChecking=yes",
             "ForwardAgent=no",
             "ForwardX11=no",
             "ForwardX11Trusted=no",
             "GSSAPIDelegateCredentials=no",
-            "ClearAllForwardings=yes",
             "PermitLocalCommand=no",
-            "ControlMaster=no",
-            "ControlPath=none",
             "ControlPersist=no",
+            "ForkAfterAuthentication=no",
+            "StdinNull=no",
             "RemoteCommand=none",
             "RequestTTY=no",
             "Tunnel=no",
@@ -104,9 +186,7 @@ impl SshTarget {
             "ConnectTimeout=10",
             "ConnectionAttempts=1",
             "UpdateHostKeys=no",
-            // Direct SSH only; proxy hops need their own trust policy.
-            "ProxyJump=none",
-            "ProxyCommand=none",
+            "GatewayPorts=no",
             "LogLevel=ERROR",
         ] {
             command.arg("-o").arg(option);
@@ -117,14 +197,6 @@ impl SshTarget {
             }
             command.arg("-F").arg(config);
         }
-        command.arg("-T");
-        if self.port != 0 {
-            command.arg("-p").arg(self.port.to_string());
-        }
-        if let Some(user) = &self.user {
-            command.arg("-l").arg(user);
-        }
-        command.arg("--").arg(&self.host).arg(remote_command);
         // Do not transmit editor/tool environment secrets through inherited SendEnv.
         let allowed = [
             "HOME",
@@ -142,6 +214,16 @@ impl SshTarget {
         command.env_clear().envs(environment).env("LC_ALL", "C");
         Ok(command)
     }
+
+    fn destination(&self, command: &mut Command) {
+        if self.port != 0 {
+            command.arg("-p").arg(self.port.to_string());
+        }
+        if let Some(user) = &self.user {
+            command.arg("-l").arg(user);
+        }
+        command.arg("--").arg(&self.host);
+    }
 }
 
 struct Job {
@@ -149,6 +231,7 @@ struct Job {
     reply: SyncSender<Result<Vec<Response>>>,
 }
 pub struct Client {
+    forwards: Option<routing::Forwards>,
     child: Child,
     tx: Option<SyncSender<Job>>,
     worker: Option<thread::JoinHandle<()>>,
@@ -163,12 +246,55 @@ impl Client {
     }
 
     pub fn connect_detailed(target: &SshTarget) -> std::result::Result<Self, String> {
-        let mut client = Self::spawn_transport(target.command().map_err(|e| e.to_string())?)
-            .map_err(|e| e.to_string())?;
-        client
+        Self::connect_with_session(target).map(|(client, _)| client)
+    }
+
+    /// Connect and return the recovery session from the validated handshake.
+    pub fn connect_with_session(target: &SshTarget) -> std::result::Result<(Self, String), String> {
+        Self::connect_with_session_using(target, false, |_| Ok(()))
+    }
+
+    pub fn connect_with_session_using(
+        target: &SshTarget,
+        interactive: bool,
+        configure: impl FnOnce(&mut Command) -> std::result::Result<(), String>,
+    ) -> std::result::Result<(Self, String), String> {
+        let bridge = target.bridge_command().map_err(|error| error.to_string())?;
+        let plan = routing::Plan::resolve(target, interactive, true)?;
+        let mut command = target.routed_command(interactive, &plan)?;
+        let mut forwards = plan.prepare_forwards(&mut command)?;
+        if forwards.is_none() {
+            SshTarget::disable_control(&mut command);
+        }
+        target.destination(&mut command);
+        command.arg(bridge);
+        configure(&mut command)?;
+        let timeout = if interactive {
+            AUTH_TIMEOUT
+        } else {
+            RPC_TIMEOUT
+        };
+        let (mut client, session) = Self::spawn_with_session(command, timeout)?;
+        if let Some(forwards) = &mut forwards {
+            forwards.activate(&target.host)?;
+        }
+        client.forwards = forwards;
+        Ok((client, session))
+    }
+
+    /// Connect an already configured SSH process. Only authentication and
+    /// Hello use the supplied deadline.
+    pub fn spawn_with_session(
+        command: Command,
+        authentication_timeout: Duration,
+    ) -> std::result::Result<(Self, String), String> {
+        let mut client = Self::spawn_transport(command).map_err(|e| e.to_string())?;
+        client.deadline = authentication_timeout;
+        let session = client
             .handshake()
             .map_err(|e| format!("{e}: {}", client.diagnostics().trim()))?;
-        Ok(client)
+        client.deadline = RPC_TIMEOUT;
+        Ok((client, session))
     }
     pub fn spawn(command: Command) -> Result<Self> {
         let mut client = Self::spawn_transport(command)?;
@@ -237,36 +363,43 @@ impl Client {
             }
         });
         Ok(Self {
+            forwards: None,
             child,
             tx: Some(tx),
             worker: Some(worker),
             next: 0,
-            deadline: Duration::from_secs(15),
+            deadline: RPC_TIMEOUT,
             failed: false,
             diagnostics,
         })
     }
-    fn handshake(&mut self) -> Result<()> {
-        if !matches!(
-            self.call(Request::Hello {})?,
-            Response::Hello {
-                version: VERSION,
-                max_frame: protocol::MAX_FRAME,
-                ..
-            }
-        ) {
+    fn handshake(&mut self) -> Result<String> {
+        let Response::Hello {
+            session,
+            version: VERSION,
+            max_frame: protocol::MAX_FRAME,
+            ..
+        } = self.call(Request::Hello {})?
+        else {
             return Err(Error::Protocol);
-        }
-        Ok(())
+        };
+        Ok(session)
     }
 
     pub fn disconnect(&mut self) {
         self.failed = true;
         let _ = self.child.kill();
         let _ = self.child.wait();
+        self.forwards.take();
     }
     pub fn is_failed(&self) -> bool {
         self.failed
+    }
+    pub fn forwarded_ports(&self) -> Vec<u16> {
+        self.forwards
+            .iter()
+            .flat_map(routing::Forwards::ports)
+            .collect()
     }
     /// Memory only; never write SSH diagnostics into document recovery.
     pub fn diagnostics(&self) -> String {
@@ -408,7 +541,7 @@ impl Drop for Client {
 mod tests {
     use super::*;
 
-    fn fake(mode: &str) -> Client {
+    fn fake_command(mode: &str) -> Command {
         let program = r#"
 import sys,json,struct,time
 def request():
@@ -418,16 +551,40 @@ def request():
 def reply(i,body):
     b=json.dumps(dict(version=wire_version,id=i,result=dict(Ok=body))).encode()
     sys.stdout.buffer.write(struct.pack('>I',len(b))+b);sys.stdout.buffer.flush()
-r=request();wire_version=r['version'];reply(r['id'],dict(kind='hello',version=wire_version,max_frame=65536,session='a'*64,worker_pid=1))
+r=request();wire_version=r['version'];mode=sys.argv[1]
+assert r['request']['op']=='hello'
+reply(r['id'],dict(kind='hello',version=wire_version,max_frame=42 if mode=='wrong_frame' else 65536,session='a'*64,worker_pid=1))
+if mode=='wrong_frame':sys.exit(0)
 r=request()
-if sys.argv[1]=='wrong_id':reply(r['id']+1,dict(kind='pong'))
+if mode=='hello_once':
+    assert r['id']==1 and r['request']['op']=='ping'
+    reply(r['id'],dict(kind='pong'))
+    sys.exit(0)
+if mode=='wrong_id':reply(r['id']+1,dict(kind='pong'))
 time.sleep(10)
 "#;
         let mut command = Command::new("python3");
         command.arg("-c").arg(program).arg(mode);
-        let mut client = Client::spawn(command).unwrap();
+        command
+    }
+
+    fn fake(mode: &str) -> Client {
+        let mut client = Client::spawn(fake_command(mode)).unwrap();
         client.deadline = Duration::from_millis(100);
         client
+    }
+
+    #[test]
+    fn validated_handshake_returns_the_session_without_a_second_hello() {
+        let (mut client, session) =
+            Client::spawn_with_session(fake_command("hello_once"), AUTH_TIMEOUT).unwrap();
+        assert_eq!(session, "a".repeat(64));
+        assert_eq!(client.deadline, RPC_TIMEOUT);
+        assert!(matches!(
+            client.call(Request::Ping {}),
+            Ok(Response::Pong {})
+        ));
+        assert!(Client::spawn_with_session(fake_command("wrong_frame"), RPC_TIMEOUT).is_err());
     }
 
     #[test]

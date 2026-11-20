@@ -2,6 +2,22 @@ use hedit::{document::Document, intelligence, projects, search, workspace::Works
 use std::{path::Path, sync::atomic::AtomicBool};
 
 #[test]
+fn bounded_extension_variables_are_literal_and_preserve_character_offsets() {
+    let body = "${SELECTION}:${FILE_BASENAME}:${1:é}$0";
+    let result = intelligence::expand_fields_bounded(body, "$1", Some("λ$2"), 128).unwrap();
+    assert_eq!(result.text, "$1:λ$2:é");
+    assert_eq!(result.fields, [vec![(7, 8)], vec![(8, 8)]]);
+    assert!(
+        intelligence::expand_fields_bounded("${SELECTION}${SELECTION}", "éé", Some(""), 7)
+            .is_none()
+    );
+    assert_eq!(
+        intelligence::expand_fields("${FILE_BASENAME}", "").text,
+        "${FILE_BASENAME}"
+    );
+}
+
+#[test]
 fn clean_files_restore_their_selected_encoding_without_a_recovery_buffer() {
     for (encoding, text) in [
         ("windows-1252", "café €\n"),

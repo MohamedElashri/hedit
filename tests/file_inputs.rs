@@ -202,3 +202,19 @@ fn configuration_limit_applies_even_when_metadata_reports_zero_bytes() {
     assert_eq!(fs::metadata(path).unwrap().len(), 0);
     assert!(projects::read_text(path, 0).is_err());
 }
+#[test]
+fn paged_reads_skip_only_complete_utf8_characters() {
+    use hedit::document::{Document, SMALL_LIMIT};
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("large.txt");
+    let mut bytes = "🚀ok".as_bytes().to_vec();
+    bytes.resize(SMALL_LIMIT as usize + 1, b'x');
+    std::fs::write(&path, &bytes).unwrap();
+    let mut document = Document::open(1, &path).unwrap();
+    assert_eq!(document.page(1).unwrap().start, 4);
+    bytes[0] = 0x80;
+    std::fs::write(&path, bytes).unwrap();
+    let mut document = Document::open(2, &path).unwrap();
+    assert!(document.page(0).is_err());
+    assert!(document.page(1).is_err());
+}

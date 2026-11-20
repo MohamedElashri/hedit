@@ -81,7 +81,12 @@ pub(super) struct LayoutCache {
     inactive: Vec<((u64, u64), Entry)>,
     grammar: syntax::grammar::Grammar,
     /// A grammar highlight running on a background thread.
-    job: Option<mpsc::Receiver<syntax::grammar::Moved>>,
+    job: Option<HighlightJob>,
+}
+
+struct HighlightJob {
+    document: Option<(u64, u64)>,
+    receiver: mpsc::Receiver<syntax::grammar::Moved>,
 }
 
 struct Entry {
@@ -129,6 +134,15 @@ impl Entry {
 }
 
 impl LayoutCache {
+    pub(super) fn retain_documents(&mut self, live: &std::collections::HashSet<u64>) {
+        self.inactive.retain(|((id, _), _)| live.contains(id));
+        if self.document.is_some_and(|(id, _)| !live.contains(&id)) {
+            self.document = None;
+            self.entry = None;
+            self.grammar = Default::default();
+        }
+    }
+
     /// Retain a few recently used tabs within a strict inactive-layout budget.
     /// Large pages are released rather than multiplying glyph and mesh memory.
     pub(super) fn activate(&mut self, document: (u64, u64)) {
@@ -259,18 +273,20 @@ impl LayoutCache {
         language: Language,
         theme: &Theme,
     ) -> Option<Runs> {
-        if !syntax::grammar::has_grammar(language) {
-            return None;
-        }
         if let Some(job) = &self.job {
-            match job.try_recv() {
+            match job.receiver.try_recv() {
                 Ok(syntax::grammar::Moved(grammar)) => {
-                    self.grammar = grammar;
+                    if job.document == self.document {
+                        self.grammar = grammar;
+                    }
                     self.job = None;
                 }
                 Err(mpsc::TryRecvError::Empty) => return None,
                 Err(mpsc::TryRecvError::Disconnected) => self.job = None,
             }
+        }
+        if !syntax::grammar::has_grammar(language) {
+            return None;
         }
         if let Some(runs) = self.grammar.cached(text, language, theme) {
             return Some(runs);
@@ -286,18 +302,24 @@ impl LayoutCache {
         std::thread::spawn(move || {
             let mut moved = moved;
             moved.0.highlight(&text, language, &theme);
-            let _ = tx.send(moved);
-            ctx.request_repaint();
+            if tx.send(moved).is_ok() {
+                ctx.request_repaint();
+            }
         });
-        self.job = Some(rx);
+        self.job = Some(HighlightJob {
+            document: self.document,
+            receiver: rx,
+        });
         None
     }
     /// Wait for a background highlight, for tests.
     #[cfg(test)]
     pub(super) fn finish_highlight(&mut self) {
         if let Some(job) = self.job.take() {
-            if let Ok(syntax::grammar::Moved(grammar)) = job.recv() {
-                self.grammar = grammar;
+            if let Ok(syntax::grammar::Moved(grammar)) = job.receiver.recv() {
+                if job.document == self.document {
+                    self.grammar = grammar;
+                }
             }
         }
     }
@@ -595,8 +617,12 @@ impl ProjectionCache {
         if let Some(index) = &mut self.index {
             if self.source != text {
                 Arc::make_mut(index).update(&self.source, text);
-                self.source.clear();
-                self.source.push_str(text);
+                if self.source.capacity() > text.len().saturating_mul(2).max(64 * 1024) {
+                    self.source = text.to_owned();
+                } else {
+                    self.source.clear();
+                    self.source.push_str(text);
+                }
                 self.generation = self.generation.wrapping_add(1);
             }
         } else {
@@ -605,13 +631,12 @@ impl ProjectionCache {
         }
         Arc::clone(self.index.as_ref().unwrap())
     }
-    pub(super) fn get(
+    /// Project the text most recently passed to `source_index`.
+    pub(super) fn projection(
         &mut self,
-        text: &str,
         width: u8,
         folds: &[hedit::advanced::Fold],
     ) -> Arc<hedit::advanced::Projection> {
-        self.source_index(text);
         if let Some((generation, previous_width, previous_folds, projection)) = &self.entry {
             if *generation == self.generation && *previous_width == width && previous_folds == folds
             {
@@ -619,7 +644,7 @@ impl ProjectionCache {
             }
         }
         let projection = Arc::new(hedit::advanced::Projection::new(
-            text,
+            &self.source,
             width as usize,
             folds,
         ));

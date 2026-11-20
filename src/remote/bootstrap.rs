@@ -1,5 +1,8 @@
 //! Bounded SSH setup; helper bytes come from this installation or its exact release.
-use super::Config;
+mod preview;
+pub use preview::{browse_directories, DirectoryPreview};
+
+use super::{diagnostics::SetupPhase, Config};
 use hedit_remote::client::{SetupInfo, SETUP_VERSION};
 use sha2::{Digest, Sha256};
 use std::{
@@ -121,7 +124,7 @@ fn quote(value: &str) -> String {
 pub fn prepare(
     config: Config,
     cancel: &AtomicBool,
-    progress: impl Fn(&str),
+    progress: impl Fn(SetupPhase),
 ) -> Result<Config, String> {
     config.validate()?;
     if !config.managed {
@@ -133,20 +136,13 @@ pub fn prepare(
     if !config.target.state.is_empty() {
         absolute(&config.target.state)?;
     }
-    progress("Connecting to SSH host…");
-    let (status, output) = run(
-        config
-            .target
-            .command_for(PROBE)
-            .map_err(|e| e.to_string())?,
-        None,
-        cancel,
-    )?;
+    progress(SetupPhase::Connect);
+    let (status, output) = run(config.setup_command(PROBE)?, None, cancel)?;
     if !status.success() {
         return Err(output);
     }
     let account = Account::parse(output.trim_end_matches(['\r', '\n']))?;
-    progress("Checking remote helper…");
+    progress(SetupPhase::CheckHelper);
     let helper = account.helper();
     // Only execute a cached helper below non-symlink, user-owned directories.
     // The Rust installer repeats descriptor-relative validation before writing.
@@ -179,15 +175,9 @@ exec {helper} setup --workspace {workspace} --state {state}
         state = quote(&config.target.state),
         setup_version = SETUP_VERSION,
     );
-    let (status, output) = run(
-        config
-            .target
-            .command_for(&cached)
-            .map_err(|e| e.to_string())?,
-        None,
-        cancel,
-    )?;
+    let (status, output) = run(config.setup_command(&cached)?, None, cancel)?;
     if status.success() {
+        progress(SetupPhase::OpenWorkspace);
         return account.resolve(config, &output);
     }
     if status.code() != Some(78) {
@@ -205,7 +195,7 @@ exec {helper} setup --workspace {workspace} --state {state}
     let source = match bundled(&account, cancel)? {
         Some(path) => path,
         None => {
-            progress("Downloading matching SSH helper…");
+            progress(SetupPhase::DownloadHelper);
             let path = download.path().join(account.asset());
             crate::update::Client::default().download_helper(
                 VERSION,
@@ -216,7 +206,7 @@ exec {helper} setup --workspace {workspace} --state {state}
             path
         }
     };
-    progress("Installing helper for your remote user…");
+    progress(SetupPhase::InstallHelper);
     let command = format!(
         r#"set -eu
 umask 077
@@ -244,20 +234,13 @@ test "$("$stage/hedit-remote" --version)" = {expected}
     if size == 0 || size > 64 * 1024 * 1024 {
         return Err("Invalid SSH helper size.".into());
     }
-    let (status, output) = run(
-        config
-            .target
-            .command_for(&command)
-            .map_err(|e| e.to_string())?,
-        Some(input),
-        cancel,
-    )?;
+    let (status, output) = run(config.setup_command(&command)?, Some(input), cancel)?;
     if !status.success() {
         return Err(format!(
             "Could not install the SSH helper for this user. {output}"
         ));
     }
-    progress("Opening remote workspace…");
+    progress(SetupPhase::OpenWorkspace);
     account.resolve(config, &output)
 }
 
@@ -322,13 +305,14 @@ fn run(
         .stdin(input.map(Stdio::from).unwrap_or_else(Stdio::null))
         .stdout(output.try_clone().map_err(|e| e.to_string())?)
         .stderr(stderr.try_clone().map_err(|e| e.to_string())?);
+    let timeout = super::askpass::setup_timeout(&command);
     let mut child = command.spawn().map_err(|e| e.to_string())?;
     let started = Instant::now();
     loop {
         let cancelled = cancel.load(Ordering::Relaxed);
         let oversized = output.metadata().map_err(|e| e.to_string())?.len() > LIMIT
             || stderr.metadata().map_err(|e| e.to_string())?.len() > LIMIT;
-        if cancelled || oversized || started.elapsed() > Duration::from_secs(60) {
+        if cancelled || oversized || started.elapsed() > timeout {
             let _ = child.kill();
             let _ = child.wait();
             return Err(if cancelled {
@@ -391,6 +375,7 @@ mod tests {
         let account = Account::parse("HEDIT_SETUP_V1\n1000\nLinux\nx86_64\n/home/me").unwrap();
         let config = Config {
             target: hedit_remote::client::SshTarget {
+                routing: Default::default(),
                 host: "devbox".into(),
                 user: None,
                 port: 0,
@@ -400,6 +385,7 @@ mod tests {
             },
             root: String::new(),
             managed: true,
+            interactive_auth: false,
             takeover: false,
         };
         let key = Sha256::digest(b"/home/me")

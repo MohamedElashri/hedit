@@ -1,6 +1,7 @@
 //! Two-key shortcuts such as Ctrl+K, Ctrl+D, as in Sublime Text.
 use super::*;
 use egui::KeyboardShortcut;
+use quality::BindingCommand;
 
 /// Sublime's default chords. `Primary` is Ctrl on Linux and Cmd on macOS.
 pub(super) const DEFAULT_CHORDS: [(Command, &str); 15] = [
@@ -67,16 +68,18 @@ fn consume_keys(ctx: &egui::Context) {
 
 impl HeditApp {
     /// Every active chord: user bindings, then defaults not overridden.
-    fn chords(&self, ctx: &egui::Context) -> Vec<(Command, KeyboardShortcut, KeyboardShortcut)> {
+    fn chords(
+        &self,
+        ctx: &egui::Context,
+    ) -> Vec<(BindingCommand, KeyboardShortcut, KeyboardShortcut)> {
         let editor_focused =
             !self.preferences_open && ctx.memory(|m| m.has_focus(self.editor_id()));
         let bindings = self.configured_bindings();
         let user = bindings
             .iter()
-            .filter(|b| !b.editor_only || editor_focused)
-            .filter(|b| !self.preferences_open || Self::settings_key_command(b.command))
+            .filter(|binding| self.configured_shortcut_enabled(binding, editor_focused))
             .filter_map(|b| match parse(&b.shortcut).ok()?.as_slice() {
-                [first, second] => Some((b.command, *first, *second)),
+                [first, second] => Some((b.command.clone(), *first, *second)),
                 _ => None,
             });
         let defaults = DEFAULT_CHORDS
@@ -86,7 +89,7 @@ impl HeditApp {
                     && (!self.preferences_open || Self::settings_key_command(*command))
             })
             .filter_map(|(command, text)| match parse(text).ok()?.as_slice() {
-                [first, second] => Some((*command, *first, *second)),
+                [first, second] => Some(((*command).into(), *first, *second)),
                 _ => None,
             });
         user.chain(defaults).collect()
@@ -112,7 +115,7 @@ impl HeditApp {
             match found {
                 Some((command, _, _)) => {
                     self.notice.clear();
-                    self.execute(ctx, command);
+                    self.execute_binding(ctx, command);
                 }
                 None => {
                     self.notice = format!(

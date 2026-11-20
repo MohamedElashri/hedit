@@ -670,10 +670,11 @@ impl HeditApp {
         let bindings: Vec<_> = self
             .configured_bindings()
             .iter()
-            .filter(|b| {
+            .filter_map(|binding| Some((binding.command.builtin()?, binding)))
+            .filter(|(command, b)| {
                 !b.editor_only
                     && matches!(
-                        b.command,
+                        command,
                         Command::FocusExplorer
                             | Command::FocusGroup1
                             | Command::FocusGroup2
@@ -695,11 +696,7 @@ impl HeditApp {
                             | Command::Palette
                     )
             })
-            .filter_map(|b| {
-                chords::parse(&b.shortcut)
-                    .ok()
-                    .map(|keys| (b.command, keys))
-            })
+            .filter_map(|(command, b)| chords::parse(&b.shortcut).ok().map(|keys| (command, keys)))
             .collect();
         let Some((key, modifiers)) = ctx.input(|i| {
             i.events.iter().find_map(|e| match e {

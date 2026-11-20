@@ -11,6 +11,7 @@ use std::{
 use tempfile::NamedTempFile;
 
 mod save_permissions;
+mod save_target;
 #[cfg(unix)]
 pub fn copy_permissions(source: &File, destination: &File) -> io::Result<()> {
     save_permissions::copy_fd(source, destination)
@@ -35,16 +36,36 @@ struct Piece {
 struct Stamp {
     size: u64,
     modified: SystemTime,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    identity: Option<(u64, u64)>,
 }
 impl Stamp {
     fn read(path: &Path) -> Result<Self, String> {
         Self::from_metadata(&fs::metadata(path).map_err(err)?)
     }
     fn from_metadata(meta: &Metadata) -> Result<Self, String> {
+        #[cfg(unix)]
+        let identity = {
+            use std::os::unix::fs::MetadataExt;
+            Some((meta.dev(), meta.ino()))
+        };
+        #[cfg(windows)]
+        let identity = {
+            use std::os::windows::fs::MetadataExt;
+            Some((0, meta.creation_time()))
+        };
+        #[cfg(not(any(unix, windows)))]
+        let identity = None;
         Ok(Self {
             size: meta.len(),
             modified: meta.modified().map_err(err)?,
+            identity,
         })
+    }
+    fn matches(&self, current: &Self) -> bool {
+        self.size == current.size
+            && self.modified == current.modified
+            && self.identity.is_none_or(|id| current.identity == Some(id))
     }
 }
 
@@ -1072,7 +1093,7 @@ impl Document {
     fn check_original(&self) -> Result<(), String> {
         if let Some(path) = &self.path {
             if let Some(stamp) = &self.stamp {
-                if &Stamp::read(path)? != stamp {
+                if !stamp.matches(&Stamp::read(path)?) {
                     return Err("This file changed on disk. Keep your buffer and use Save As, or reload from disk. Disk-backed content cannot be read safely after an external change; copy visible pending edits before reloading.".into());
                 }
             } else {
@@ -1104,7 +1125,7 @@ impl Document {
         };
         match Stamp::read(path) {
             Ok(current) => (
-                current != *stamp,
+                !stamp.matches(&current),
                 format!("{}:{:?}", current.size, current.modified),
             ),
             Err(error) => (true, error),
@@ -1254,12 +1275,32 @@ impl Document {
         self.check_source()?;
         let mut start = if self.paged { offset.min(self.size) } else { 0 };
         // A requested byte can be in the middle of a UTF-8 scalar or CRLF.
-        let prefix = self.read_range(start, (self.size - start).min(4))?;
-        for b in &prefix {
-            if b & 0xc0 != 0x80 {
-                break;
+        if start > 0 && start < self.size {
+            let prefix_start = start.saturating_sub(3);
+            let around = self.read_range(prefix_start, (self.size - prefix_start).min(7))?;
+            let requested = (start - prefix_start) as usize;
+            if around[requested] & 0xc0 == 0x80 {
+                let lead = around[..requested]
+                    .iter()
+                    .rposition(|byte| byte & 0xc0 != 0x80)
+                    .ok_or("This section is not valid UTF-8 text.")?;
+                let width = match around[lead] {
+                    0xc2..=0xdf => 2,
+                    0xe0..=0xef => 3,
+                    0xf0..=0xf4 => 4,
+                    _ => 0,
+                };
+                let end = lead + width;
+                if requested >= end
+                    || around
+                        .get(lead..end)
+                        .and_then(|b| std::str::from_utf8(b).ok())
+                        .is_none()
+                {
+                    return Err("This section is not valid UTF-8 text.".into());
+                }
+                start = prefix_start + end as u64;
             }
-            start += 1;
         }
         if start > 0 && start < self.size && self.read_range(start - 1, 2)? == b"\r\n" {
             start += 1;
@@ -1746,11 +1787,18 @@ impl Document {
             .map(Stamp::from_metadata)
             .transpose()?;
         let parent = target.parent().ok_or("Invalid save directory.")?;
-        let mut temp = NamedTempFile::new_in(parent).map_err(err)?;
+        let staging = target_stamp
+            .as_ref()
+            .map(|_| save_target::staging_directory(parent))
+            .transpose()
+            .map_err(err)?;
+        let mut temp = NamedTempFile::new_in(staging.as_ref().map_or(parent, |dir| dir.path()))
+            .map_err(err)?;
         // Preserve access restrictions before any content reaches the temporary
         // file, as well as when it replaces the destination.
         if target_metadata.is_some() {
-            save_permissions::copy(&target, &temp).map_err(err)?;
+            save_permissions::copy(&target, &temp)
+                .map_err(|error| format!("Could not preserve save permissions: {error}"))?;
         }
         self.write_encoded_content(temp.as_file_mut())?;
         self.check_source()?;
@@ -1762,7 +1810,8 @@ impl Document {
             if meta.permissions().readonly() {
                 return Err("The file is read-only. Use Save As to choose another path.".into());
             }
-            save_permissions::copy(&target, &temp).map_err(err)?;
+            save_permissions::copy(&target, &temp)
+                .map_err(|error| format!("Could not preserve save permissions: {error}"))?;
             temp.as_file().sync_all().map_err(err)?;
             Some(Stamp::from_metadata(&meta)?)
         } else {
@@ -1771,13 +1820,18 @@ impl Document {
         if now != target_stamp {
             return Err("The destination changed while saving. Your edits are still available; retry or choose another path.".into());
         }
-        // A named new buffer must not overwrite a file created after it opened,
-        // including between the final destination check and the actual write.
-        let file = if self.path.as_ref() == Some(&target) && self.stamp.is_none() {
-            temp.persist_noclobber(&target).map_err(err)?
+        // A destination checked as absent must still be absent at publication.
+        let file = if let (Some(expected), Some(staging)) = (target_stamp, staging) {
+            save_target::replace(temp, staging, &target, &expected)
+                .map_err(|error| format!("Could not publish the saved file: {error}"))?
         } else {
-            // persist uses an atomic replacement on the same filesystem.
-            temp.persist(&target).map_err(err)?
+            temp.persist_noclobber(&target).map_err(|failure| {
+                if failure.error.kind() == io::ErrorKind::AlreadyExists {
+                    "A file now exists at the destination. Your edits are still available; choose another path.".into()
+                } else {
+                    err(failure)
+                }
+            })?
         };
         self.stamp = Some(Stamp::from_metadata(&file.metadata().map_err(err)?)?);
         self.path = Some(target);

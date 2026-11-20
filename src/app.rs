@@ -26,6 +26,7 @@ mod editing_tests;
 mod editor_interaction;
 mod editor_layout;
 mod explorer;
+mod extensions;
 mod file_reference;
 #[cfg(test)]
 mod file_reference_tests;
@@ -157,6 +158,7 @@ use std::{
 enum Action {
     Quality(Box<quality::Event>),
     Add(Box<Document>, Page, usize),
+    AddTemplate(Box<Document>, Page, extensions::Template),
     Activate(u64),
     ReopenRead(u64, Page, Option<usize>),
     Folder(hedit::folder::FolderListing),
@@ -262,7 +264,7 @@ pub struct HeditApp {
     settings: hedit::settings::Settings,
     settings_files: settings_store::SettingsFiles,
     /// The command whose shortcut is being recorded on the Key Bindings page.
-    key_capture: Option<Command>,
+    key_capture: Option<quality::BindingCommand>,
     /// `hedit -w` requests waiting for their files to close.
     waits: Vec<wait::Wait>,
     build: build_panel::BuildState,
@@ -281,6 +283,8 @@ pub struct HeditApp {
     paste_history: Vec<String>,
     /// A list shown in the palette instead of files or commands.
     pick_list: Option<commands::PickList>,
+    extensions: Vec<extensions::Contribution>,
+    extension_manager: extensions::Manager,
     /// Tab moves through the fields of the snippet inserted last.
     snippet: Option<snippet_fields::SnippetSession>,
     auto: auto_complete::AutoComplete,
@@ -444,6 +448,8 @@ impl HeditApp {
         let (mut settings, config, settings_files, setting_errors) =
             settings_store::load(storage, workspace.store.directory());
         errors.extend(setting_errors);
+        let (extensions, extension_errors) = extensions::load(settings_files.dir.as_deref());
+        errors.extend(extension_errors);
         // The session remembers whether this workspace's folders were shown.
         if let Some(folder) = workspace.folders.first() {
             settings.show_folders = folder.visible;
@@ -506,6 +512,8 @@ impl HeditApp {
             tab_strip: Default::default(),
             paste_history: Vec::new(),
             pick_list: None,
+            extensions,
+            extension_manager: extensions::Manager::default(),
             snippet: None,
             auto: Default::default(),
             languages: Default::default(),
@@ -634,6 +642,36 @@ impl HeditApp {
         } else {
             self.changed();
             self.focus_editor = true;
+        }
+    }
+    fn finish_opened_document(
+        &mut self,
+        doc: Document,
+        page: Page,
+        cursor: usize,
+        group: Option<u64>,
+        background: bool,
+        template: Option<extensions::Template>,
+    ) {
+        let result = self.workspace.add(doc, page);
+        if result.is_ok() {
+            if !background {
+                self.leave_review();
+            }
+            let buffer = &mut self.workspace.open[self.workspace.active];
+            buffer.view.anchor = cursor;
+            buffer.view.head = cursor;
+            buffer.reveal_cursor = cursor > 0;
+            self.attach_open_tab(group, self.active().view.id);
+            if let Some(template) = template {
+                self.fill_extension_template(template);
+            }
+        }
+        self.report(result);
+        self.apply_format_preferences();
+        if !background {
+            self.finish_preview();
+            self.navigation_mark();
         }
     }
     fn active(&self) -> &Buffer {
@@ -789,17 +827,11 @@ impl HeditApp {
                 let label = view.name.clone();
                 self.read_open(ctx, label, move || {
                     let mut doc = editor.get(id)?.lock().map_err(|e| e.to_string())?.clone();
-                    let offset = if let Some((line, column)) = location {
-                        doc.location_offset(line, column)?.saturating_sub(4096)
+                    let (page, cursor) = if let Some((line, column)) = location {
+                        let (page, cursor) = opening::page_at_location(&mut doc, line, column)?;
+                        (page, Some(cursor))
                     } else {
-                        start
-                    };
-                    let page = doc.page(offset)?;
-                    let cursor = if let Some((line, column)) = location {
-                        let at = doc.location_offset(line, column)?;
-                        Some(page.text[..(at - page.start) as usize].chars().count())
-                    } else {
-                        None
+                        (doc.page(start)?, None)
                     };
                     Ok(Action::ReopenRead(id, page, cursor))
                 });
@@ -814,9 +846,7 @@ impl HeditApp {
             self.read_open(ctx, label, move || {
                 let mut doc = remote.open(editor.id(), &path)?;
                 let (line, column) = location.unwrap_or((1, 1));
-                let offset = doc.location_offset(line, column)?;
-                let page = doc.page(offset.saturating_sub(4096))?;
-                let cursor = page.text[..(offset - page.start) as usize].chars().count();
+                let (page, cursor) = opening::page_at_location(&mut doc, line, column)?;
                 Ok(Action::Add(Box::new(doc), page, cursor))
             });
             return;
@@ -883,28 +913,17 @@ impl HeditApp {
                 }
                 let shared = editor.get(*id)?;
                 let mut doc = shared.lock().map_err(|e| e.to_string())?.clone();
-                let offset = doc.location_offset(line, col)?;
-                let page = doc.page(offset.saturating_sub(4096))?;
-                let cursor = page.text
-                    [..(offset - page.start).min(page.text.len() as u64) as usize]
-                    .chars()
-                    .count();
+                let (page, cursor) = opening::page_at_location(&mut doc, line, col)?;
                 return Ok(Action::Page(*id, page, Some((cursor, cursor))));
             }
             if let Some((_, id, start)) = closed_paths.iter().find(|(p, _, _)| p == &canonical) {
                 let shared = editor.get(*id)?;
                 let mut doc = shared.lock().map_err(|e| e.to_string())?.clone();
-                let offset = if plain_path {
-                    *start
+                let (page, cursor) = if plain_path {
+                    (doc.page(*start)?, None)
                 } else {
-                    doc.location_offset(line, col)?.saturating_sub(4096)
-                };
-                let page = doc.page(offset)?;
-                let cursor = if plain_path {
-                    None
-                } else {
-                    let offset = doc.location_offset(line, col)?;
-                    Some(page.text[..(offset - page.start) as usize].chars().count())
+                    let (page, cursor) = opening::page_at_location(&mut doc, line, col)?;
+                    (page, Some(cursor))
                 };
                 return Ok(Action::ReopenRead(*id, page, cursor));
             }
@@ -913,9 +932,7 @@ impl HeditApp {
             } else {
                 Document::open(editor.id(), &path)?
             };
-            let offset = doc.location_offset(line, col)?;
-            let page = doc.page(offset.saturating_sub(4096))?;
-            let cursor = page.text[..(offset - page.start) as usize].chars().count();
+            let (page, cursor) = opening::page_at_location(&mut doc, line, col)?;
             Ok(Action::Add(Box::new(doc), page, cursor))
         };
         self.read_open(ctx, label, move || {
@@ -1094,8 +1111,7 @@ impl HeditApp {
                 start = scan.scanned_through;
             };
             let page = doc.page(found.saturating_sub(4096))?;
-            let local = (found - page.start) as usize;
-            let cursor = page.text[..local].chars().count();
+            let cursor = opening::page_cursor(&page, found)?;
             Ok(Action::Page(
                 id,
                 page,
@@ -1123,9 +1139,7 @@ impl HeditApp {
         self.job(ctx, move || {
             let shared = editor.get(id)?;
             let mut doc = shared.lock().map_err(|e| e.to_string())?;
-            let offset = doc.location_offset(line, column)?;
-            let page = doc.page(offset.saturating_sub(4096))?;
-            let cursor = page.text[..(offset - page.start) as usize].chars().count();
+            let (page, cursor) = opening::page_at_location(&mut doc, line, column)?;
             Ok(Action::Page(id, page, Some((cursor, cursor))))
         });
     }
@@ -1192,6 +1206,7 @@ impl HeditApp {
             let opened = matches!(
                 &event,
                 Ok(Action::Add(..)
+                    | Action::AddTemplate(..)
                     | Action::Activate(..)
                     | Action::ReopenRead(..)
                     | Action::Page(..))
@@ -1262,28 +1277,17 @@ impl HeditApp {
                     }
                 }
                 Ok(Action::Add(doc, page, cursor)) => {
-                    let result = self.workspace.add(*doc, page);
-                    if result.is_ok() {
-                        if !background {
-                            self.leave_review();
-                        }
-                        let buffer = &mut self.workspace.open[self.workspace.active];
-                        buffer.view.anchor = cursor;
-                        buffer.view.head = cursor;
-                        buffer.reveal_cursor = cursor > 0;
-                    }
-                    if result.is_ok() {
-                        self.attach_open_tab(
-                            request.as_ref().map(opening::Request::group),
-                            self.active().view.id,
-                        );
-                    }
-                    self.report(result);
-                    self.apply_format_preferences();
-                    if !background {
-                        self.finish_preview();
-                        self.navigation_mark();
-                    }
+                    self.finish_opened_document(
+                        *doc,
+                        page,
+                        cursor,
+                        request.as_ref().map(opening::Request::group),
+                        background,
+                        None,
+                    );
+                }
+                Ok(Action::AddTemplate(doc, page, template)) => {
+                    self.finish_opened_document(*doc, page, 0, None, false, Some(template));
                 }
                 Ok(Action::History(id, page, redo, current)) => {
                     if let Some(index) = self
@@ -1631,11 +1635,7 @@ impl HeditApp {
                 .then(|| due(self.poll_at, Duration::from_secs(1))),
             self.settings_due(),
             self.wait_due(),
-            (!self.quality.git_pending && self.git_stale(ctx)).then(|| {
-                self.quality
-                    .git_at
-                    .map_or(Duration::ZERO, |at| due(at, Duration::from_secs(2)))
-            }),
+            self.git_refresh_delay(ctx),
         ]
         .into_iter()
         .flatten()
@@ -2282,11 +2282,8 @@ impl HeditApp {
         buffer.view.folds.retain(|f| {
             f.end <= count && !(f.start < buffer.view.head && buffer.view.head < f.end)
         });
-        let projection = self.projections[pane_id].get(
-            &buffer.page.text,
-            buffer.view.tab_size.unwrap_or(4),
-            &buffer.view.folds,
-        );
+        let projection = self.projections[pane_id]
+            .projection(buffer.view.tab_size.unwrap_or(4), &buffer.view.folds);
         let mut display = projection.text.clone();
         let original_selection = hedit::advanced::Selection {
             anchor: buffer.view.anchor,

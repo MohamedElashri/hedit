@@ -143,6 +143,30 @@ UTF-8 and BOM-marked UTF-16 open directly. **File → File encoding…** reopens
 saves legacy encodings; unrepresentable characters are refused. **Edit → Line
 endings** converts LF/CRLF. Binary files are unsupported.
 
+### Explorer interaction
+
+**View → Side bar → Focus Explorer** gives the folder tree keyboard focus. The
+optional VS Code preset uses Ctrl+Shift+E (Cmd+Shift+E on macOS). Arrows expand,
+collapse and navigate; Home/End and Page Up/Down move the selection. Type a name
+to jump to a matching row, Enter opens it, F2 renames it inline, Delete opens the
+existing trash confirmation, and Escape returns to the editor. Tab leaves the
+roving tree selection. Personal global bindings retain priority.
+
+Right-click a folder for inline **New file…** or **New folder…**; rename is inline
+too. Enter or the action button submits the name, and Escape cancels before the
+operation starts. Invalid names and filesystem conflicts keep the draft available
+to correct. Renaming an open dirty file retargets it without saving its text.
+
+Settings → Folders & Search controls automatic active-file reveal, compact
+single-child folder chains, Git badges and diagnostic counts. Automatic reveal
+runs when Files is visible and leaves Search/Source Control inputs intact. In a
+compact chain, F2 renames the final segment. Badges are cached and computed in
+background/on-demand work; showing diagnostic badges never starts a language
+server. Git refresh follows filesystem and Git-metadata events, explicit refresh,
+and refocusing; SSH Git badges require execution trust and refresh on focus or
+explicit refresh. Decoration budgets bound large repositories; hover Refresh
+folders for status. Unsaved editor text is independent of disk Git status.
+
 ## SSH remote workspaces
 
 Experimental SSH workspaces use a separate native window. Files, search, Git,
@@ -150,11 +174,31 @@ builds, terminals, and recovery run on the host; the interface runs locally.
 
 ### Connect
 
-Click a host in **Remote Explorer** to connect. The first connection opens the
-remote account's home directory; saved workspaces reopen their saved folder.
-The sidebar discovers aliases from `~/.ssh/config`, the system config, and
-included files. User and port come from OpenSSH unless explicitly overridden.
-Wildcard and negated selectors do not appear as destinations.
+Choose **Connect via SSH…** from the Command Palette or **+ Connect…** in
+**Remote Explorer**. Type a hostname, SSH alias, `user@host`, or part of a saved
+workspace path. Use the arrow keys to select a result, **Enter** to connect, and
+**Escape** to dismiss the picker. A host opens the remote account's home
+directory. A saved workspace reopens its saved folder. You can also select either
+directly in Remote Explorer.
+
+hedit discovers aliases from `~/.ssh/config`, the system config, and included
+files. User and port come from OpenSSH unless explicitly overridden. Wildcard and
+negated selectors do not appear as destinations.
+
+Choose **Import SSH hosts…** in Remote Explorer to select which aliases appear
+in the sidebar. **Import selected** saves that list across restarts. **Sync all
+hosts** also shows aliases added to SSH config later and is the default. Changes
+to SSH config and included files update the list automatically. A selected
+alias disappears when removed from SSH config and returns if you add it back.
+Connections use the current OpenSSH settings for the alias. The connection
+picker can still find any discovered alias.
+
+Remote Explorer groups saved workspaces under their SSH host. **Reopen last
+workspace** uses the last successful connection and restores its open tabs and
+active file from host recovery. **Choose remote folder…** previews directories
+before opening a workspace or acquiring a writer. A new workspace uses its own
+recovery directory. If you use a manually installed helper, enter that new
+directory in connection settings before opening it.
 
 hedit checks the host platform, installs the matching helper for the non-root SSH
 account, and opens a separate remote window. It uses a bundled helper when the
@@ -164,10 +208,10 @@ compiler, internet access, or elevated privileges. Later connections reuse the
 versioned user-local installation. Setup progress and cancellation appear in the
 sidebar. Automatic setup refuses root accounts and unsafe directory permissions.
 
-Right-click a host for **Connection settings…** or **SSH configuration…**. Connection
-settings let you select a workspace and override user, port, trusted config, or
-private recovery directory. Existing recovery paths are retained when enabling
-automatic helper management.
+Open **Connection settings…** from the picker or a host's context menu to choose
+a workspace and override the user, port, trusted config, or private recovery
+directory. Existing recovery paths are retained when enabling automatic helper
+management. The host context menu also has **SSH configuration…**.
 For an existing custom installation, enable **Use a manually installed helper**
 and supply absolute helper and private recovery paths. Saved workspaces also
 have right-click actions to edit or remove them. Filter by host or workspace path.
@@ -175,10 +219,23 @@ SSH configuration settings provide **Open SSH config…** and **Refresh hosts**.
 Discovery reads files without executing `Match exec`; OpenSSH resolves options
 when connecting, so configuration files must be trusted.
 
-Host keys must already be verified with OpenSSH. Authentication uses keys or an
-existing agent; passwords and interactive MFA remain unsupported. Unlock the
-agent before connecting. Saved metadata contains host names and paths, without
-keys, passwords, or document content. Corrupt metadata is reported and preserved.
+On Linux and macOS clients, **Use SSH config jump hosts** applies the alias's
+`ProxyJump` route. Pin the keys of every hop and of the destination first.
+**Forward SSH config ports to localhost** enables the alias's TCP `LocalForward`
+rules for the life of the connection. Use a numeric port or a loopback bind
+such as `localhost:8080`. Remote Explorer shows the active local ports. An
+occupied port or a host that refuses forwarding is reported during connection.
+Both options are saved with the workspace and are available on the command
+line as `--ssh-use-config-jump` and `--ssh-forward-config-ports`.
+
+Verify the host key with OpenSSH before connecting. Keys or an existing SSH
+agent are the default. On Linux and macOS, enable **Allow interactive SSH
+authentication** in **Connection settings…** for hosts that prompt for a
+password, key passphrase, or keyboard-interactive verification code. Setup and
+remote tools may prompt when they open separate SSH connections. Use **Reconnect**
+to authenticate again after a disconnect. Scheduled retries use key or agent
+authentication. Saved metadata contains host names, paths, and connection
+preferences. Credentials and document content stay out of that metadata.
 
 The command line uses the same automatic setup:
 
@@ -188,7 +245,7 @@ hedit --ssh devbox --ssh-root /home/me/project src/main.rs
 ```
 
 Advanced flags: `--ssh-user USER`, `--ssh-port PORT`,
-`--ssh-config /absolute/config`, and `--ssh-takeover`. `--ssh-state` can retain an existing private recovery directory while managing
+`--ssh-config /absolute/config`, `--ssh-interactive`, and `--ssh-takeover`. `--ssh-state` can retain an existing private recovery directory while managing
 the helper automatically. Supplying `--ssh-helper` also requires `--ssh-state` and
 `--ssh-root` and selects a manually managed helper. Takeover fences the previous writer and does not merge edits.
 
@@ -200,6 +257,20 @@ host scratchpads, and Save As refuses existing targets. Keep at least one remote
 tab open. **Trust for Git, builds and terminal…** permits host scripts, hooks and
 shells to execute as the SSH account. Reconnect clears trust; revoking it stops
 tracked jobs. Terminals also need their regular opt-in setting.
+
+Choose **Show SSH Output** in Remote Explorer, the SSH menu, or the Command
+Palette to see recent connection, helper setup, workspace opening, and reconnect
+events. **Copy SSH summary** copies the last 64 events as fixed descriptions
+without raw SSH messages, host names, paths, or credentials. From that view you
+can retry a failed launch, reconnect a remote window, or open your SSH config
+from a local window.
+
+In a remote window, choose **File → Open folder…** to browse within the active
+SSH workspace. Use the arrow keys and **Enter** to browse subfolders, or type a
+path relative to the workspace and press **Enter**. **Up** returns to the parent
+inside the workspace. **Add Folder** shows the current folder in the Files
+sidebar and keeps the same SSH connection and recovery directory. Use **Tab**
+to reach the buttons and **Escape** to dismiss the browser.
 
 ### Privacy and recovery
 
@@ -223,17 +294,18 @@ Closing ends tracked tools; idle workers exit after five minutes, leaving recove
 
 ### Limits
 
-- Direct SSH to Linux/macOS hosts; Windows clients work. No jump hosts, Windows
-  helpers, forwarding, local commands, or reuse of
-  multiplexed connections.
+- Linux/macOS hosts and Windows clients are supported. Jump hosts and localhost
+  TCP forwarding require a Linux or macOS client and explicit opt-in. Arbitrary
+  `ProxyCommand`, reverse and dynamic forwarding, and Windows helpers are unavailable.
 - Private host-local ext-family, XFS, btrfs, ZFS (Linux) or APFS (macOS) recovery
   storage; ancestor permissions are checked. Network filesystems and tmpfs are
   unsupported. Recovery and undo capacity are bounded.
 - Up to 128 retained documents, each with at most 8 MiB decoded text.
 - Remote browsing skips symlinks and non-UTF-8 names; directory duplication and
   cross-filesystem trash moves are unavailable.
-- No remote project persistence, Markdown preview, CUDA/debugging, definition or
-  reference lookup, compare-disk, or mini-diff tools.
+- No remote project persistence, Markdown preview, CUDA/debugging, compare-disk,
+  or mini-diff tools. Trusted language servers on the host can provide code
+  navigation within the workspace.
 
 Helper details and tests: [developer guide](DEVELOPER_GUIDE.md#ssh-architecture-and-testing).
 
@@ -285,6 +357,17 @@ caches beyond watch coverage; SSH workspaces continue to use explicit refresh.
 Clean active files reload after external changes; unsaved text is kept with a
 conflict banner and the existing save guard. Notices report
 indexing progress, unreadable folders, and incomplete results.
+
+### Breadcrumbs and Outline
+
+**View → Editor → Show breadcrumbs** displays the file location above each
+group. Click a segment to reveal it in an open folder’s Files tree; hover for
+the full path. SSH breadcrumbs include the host and relative file path.
+**Show Outline** opens a filterable list of functions and types for the active
+file. Click a symbol to navigate; Escape in its filter returns typing to the
+editor. Outline is off by default, scans only while visible, and shows up to
+500 symbols for files up to 2 MiB. Use Go to symbol for larger files. Both
+visibility preferences are also available in Settings → General.
 
 ## Writing code
 
@@ -399,6 +482,27 @@ package files and reports the uncertainty; refresh the manager to inspect the
 active version. The previous managed
 installation is retained until the next successful update or removal.
 
+#### Rename Symbol and Quick Fixes
+
+Tools → Language server includes Rename symbol and Quick fixes. The optional
+VS Code shortcut preset uses F2 and Primary+Period. In Explorer, F2 still renames
+the selected file. Each server's Configure page can enable or disable these
+features independently.
+
+Rename requests a new name and opens a preview. Quick fixes lists available
+text edits; choose one to review it. Inspect each file's Before and After text,
+then choose Apply all text changes. The preview shows the first 500 characters
+of long lines. Changes stay unsaved, and each changed file has its own normal
+Undo history and session recovery. Opening a preview never changes file text.
+
+The editor rejects stale previews, stale versions, overlapping edits and paths
+outside the project root. File resource operations and server commands are
+unavailable. A batch supports up to 64 complete files, 2 MiB per file and 8 MiB of
+combined source and proposed text. Local batches preflight every source and
+commit no edits if preparation fails. SSH batches preflight every source too;
+if a later host edit fails, the editor reports the completed files and keeps
+their text and Undo history visible. Files are never saved automatically.
+
 ### Syntax highlighting
 
 Click the status-bar language to override detection or return to
@@ -414,6 +518,52 @@ or a shell. Problems combines build locations and language-server diagnostics;
 click a row to navigate. Output retains the latest build and its Cancel action.
 The close button hides the panel without stopping a build or shell. Escape hides
 Problems or Output; while focused in Terminal, Escape goes to the shell.
+
+### Filtering Problems
+
+The Problems panel combines build results and language-server diagnostics in one
+list. Filter by message, filename or source, select a severity or source, and use
+Current file to follow the active editor. Group by file adds location headers.
+Counts show the filtered total and overall severity totals. Build messages with
+no explicit error or warning prefix appear as information.
+
+Next diagnostic and Previous diagnostic follow the current filters and wrap at
+the ends. The optional VS Code shortcut preset binds them to F8 and Shift+F8.
+These commands preserve the Problems panel and reject stale language positions.
+Explorer diagnostic badges include build results as well as language diagnostics.
+The combined catalogue is limited to 10,000 entries and 8 MiB.
+
+### Panel and focus controls
+
+View → Panel includes Toggle last used panel and Maximize or restore panel.
+Closing or toggling the panel preserves its selected tab, output and shell.
+Maximize expands the panel while remembering its normal height; Restore returns
+to that height. These layout choices are remembered for the current window.
+The VS Code shortcut preset uses Primary+J to toggle the panel.
+
+Focus editor, Focus Explorer, Focus Search and Focus terminal are available in
+the command palette and custom keybindings. Primary+1 through Primary+4 in the
+VS Code preset move from the terminal to an editor group. Sidebar focus leaves
+the panel and active document intact. Focusing a terminal shows its existing
+session, or starts one when explicitly requested and enabled. A disabled terminal
+never starts when restoring the last panel; Problems is shown instead.
+
+### Notifications and progress
+
+Use Notifications in the status bar, View → Panel, or the command palette to
+review recent messages. Messages do not take keyboard focus. The window keeps
+up to 128 entries and 256 KiB of history, combines consecutive repeated messages,
+and shows unread counts. Dismiss individual entries or clear the history; this
+does not dismiss recovery errors or cancel running work. History lasts for the
+current window and is not written to disk.
+
+Failed saves provide Retry save when the original document is still open at the
+same path. Save As retries ask for a destination again. Build completions link to
+Output; language and Git failures link to their existing management/log views.
+Progress controls can cancel builds, folder searches and language-server work
+cooperatively. Cancelling server work clears stale diagnostics and stops owned
+servers; Refresh in Language servers resumes them. Generic file-writing jobs
+are not cancelled by notification controls.
 
 ## Integrated terminal
 
@@ -542,6 +692,19 @@ Click the active Files or Source Control icon to hide its sidebar. Turn off
 The status bar shows position, indentation, line endings, encoding, syntax, and
 recovery; hover for details. Click its recovery dot for settings.
 
+### Tabs in editor groups
+
+Each editor group has its own tab strip. Opening a file adds it to the focused
+group; the same file can appear in several groups with independent cursor and
+scroll positions. Edits and undo belong to the shared document. Tab position,
+next/previous tab, Close others, Close to the right and Close all apply to the
+focused group. Drag a tab to another group’s strip or editor, or use Move file
+to other group. Closing a shared tab removes that view; the final dirty tab
+asks before discarding. Empty groups close automatically. Reducing the layout
+merges remaining tabs, and recovery retains their documents and view metadata.
+Git reviews use a reusable tab in one group while other groups remain editable.
+Paged files share the currently loaded page across their groups.
+
 ## Large files and logs
 
 Files over 2 MiB use roughly 256 KiB pages, with Start/Previous/Next/End controls.
@@ -612,6 +775,13 @@ Override with `HEDIT_CONFIG_DIR`. The folder also holds `keybindings.json`,
 `snippets.json`, `macros.json`, and `themes/`. Use the settings pages to discover
 options/defaults; JSON also supports `syntax_specific` formatting overrides,
 such as `{"python": {"tab_size": 4}}`, and custom `build_systems`.
+
+### Extensions
+
+Extensions use JSON manifests to add snippet commands and file templates.
+In **Settings → Extensions**, you can preview and import a manifest, enable
+or disable it, and reload edits. See the
+[manifest reference](docs/extensions.md) for the supported fields and an installable example.
 
 ## Appearance
 
@@ -790,118 +960,3 @@ are UTF-8 files under `buffers-*`, indexed by `session.json`. Recovery is not en
 | Terminal RTL reordered twice | Disable terminal bidirectional shaping |
 | SSH fails | Check pinned host key, unlocked agent, helper version, explicit port, and private durable state storage |
 | CUDA tool unavailable | Install the tool, check PATH, and read its output |
-
-### Tabs in editor groups
-
-Each editor group has its own tab strip. Opening a file adds it to the focused
-group; the same file can appear in several groups with independent cursor and
-scroll positions. Edits and undo belong to the shared document. Tab position,
-next/previous tab, Close others, Close to the right and Close all apply to the
-focused group. Drag a tab to another group’s strip or editor, or use Move file
-to other group. Closing a shared tab removes that view; the final dirty tab
-asks before discarding. Empty groups close automatically. Reducing the layout
-merges remaining tabs, and recovery retains their documents and view metadata.
-Git reviews use a reusable tab in one group while other groups remain editable.
-Paged files share the currently loaded page across their groups.
-
-### Breadcrumbs and Outline
-
-**View → Editor → Show breadcrumbs** displays the file location above each
-group. Click a segment to reveal it in an open folder’s Files tree; hover for
-the full path. SSH breadcrumbs include the host and relative file path.
-**Show Outline** opens a filterable list of functions and types for the active
-file. Click a symbol to navigate; Escape in its filter returns typing to the
-editor. Outline is off by default, scans only while visible, and shows up to
-500 symbols for files up to 2 MiB. Use Go to symbol for larger files. Both
-visibility preferences are also available in Settings → General.
-
-### Explorer interaction
-
-**View → Side bar → Focus Explorer** gives the folder tree keyboard focus. The
-optional VS Code preset uses Ctrl+Shift+E (Cmd+Shift+E on macOS). Arrows expand,
-collapse and navigate; Home/End and Page Up/Down move the selection. Type a name
-to jump to a matching row, Enter opens it, F2 renames it inline, Delete opens the
-existing trash confirmation, and Escape returns to the editor. Tab leaves the
-roving tree selection. Personal global bindings retain priority.
-
-Right-click a folder for inline **New file…** or **New folder…**; rename is inline
-too. Enter or the action button submits the name, and Escape cancels before the
-operation starts. Invalid names and filesystem conflicts keep the draft available
-to correct. Renaming an open dirty file retargets it without saving its text.
-
-Settings → Folders & Search controls automatic active-file reveal, compact
-single-child folder chains, Git badges and diagnostic counts. Automatic reveal
-runs when Files is visible and leaves Search/Source Control inputs intact. In a
-compact chain, F2 renames the final segment. Badges are cached and computed in
-background/on-demand work; showing diagnostic badges never starts a language
-server. Git refresh follows filesystem and Git-metadata events, explicit refresh,
-and refocusing; SSH Git badges require execution trust and refresh on focus or
-explicit refresh. Decoration budgets bound large repositories; hover Refresh
-folders for status. Unsaved editor text is independent of disk Git status.
-
-### Filtering Problems
-
-The Problems panel combines build results and language-server diagnostics in one
-list. Filter by message, filename or source, select a severity or source, and use
-Current file to follow the active editor. Group by file adds location headers.
-Counts show the filtered total and overall severity totals. Build messages with
-no explicit error or warning prefix appear as information.
-
-Next diagnostic and Previous diagnostic follow the current filters and wrap at
-the ends. The optional VS Code shortcut preset binds them to F8 and Shift+F8.
-These commands preserve the Problems panel and reject stale language positions.
-Explorer diagnostic badges include build results as well as language diagnostics.
-The combined catalogue is limited to 10,000 entries and 8 MiB.
-
-### Rename Symbol and Quick Fixes
-
-Tools → Language server includes Rename symbol and Quick fixes. The optional
-VS Code shortcut preset uses F2 and Primary+Period. In Explorer, F2 still renames
-the selected file. Each server's Configure page can enable or disable these
-features independently.
-
-Rename requests a new name and opens a preview. Quick fixes lists available
-text edits; choose one to review it. Inspect each file's Before and After text,
-then choose Apply all text changes. The preview shows the first 500 characters
-of long lines. Changes stay unsaved, and each changed file has its own normal
-Undo history and session recovery. Opening a preview never changes file text.
-
-The editor rejects stale previews, stale versions, overlapping edits and paths
-outside the project root. File resource operations and server commands are
-unavailable. A batch supports up to 64 complete files, 2 MiB per file and 8 MiB of
-combined source and proposed text. Local batches preflight every source and
-commit no edits if preparation fails. SSH batches preflight every source too;
-if a later host edit fails, the editor reports the completed files and keeps
-their text and Undo history visible. Files are never saved automatically.
-
-### Panel and focus controls
-
-View → Panel includes Toggle last used panel and Maximize or restore panel.
-Closing or toggling the panel preserves its selected tab, output and shell.
-Maximize expands the panel while remembering its normal height; Restore returns
-to that height. These layout choices are remembered for the current window.
-The VS Code shortcut preset uses Primary+J to toggle the panel.
-
-Focus editor, Focus Explorer, Focus Search and Focus terminal are available in
-the command palette and custom keybindings. Primary+1 through Primary+4 in the
-VS Code preset move from the terminal to an editor group. Sidebar focus leaves
-the panel and active document intact. Focusing a terminal shows its existing
-session, or starts one when explicitly requested and enabled. A disabled terminal
-never starts when restoring the last panel; Problems is shown instead.
-
-### Notifications and progress
-
-Use Notifications in the status bar, View → Panel, or the command palette to
-review recent messages. Messages do not take keyboard focus. The window keeps
-up to 128 entries and 256 KiB of history, combines consecutive repeated messages,
-and shows unread counts. Dismiss individual entries or clear the history; this
-does not dismiss recovery errors or cancel running work. History lasts for the
-current window and is not written to disk.
-
-Failed saves provide Retry save when the original document is still open at the
-same path. Save As retries ask for a destination again. Build completions link to
-Output; language and Git failures link to their existing management/log views.
-Progress controls can cancel builds, folder searches and language-server work
-cooperatively. Cancelling server work clears stale diagnostics and stops owned
-servers; Refresh in Language servers resumes them. Generic file-writing jobs
-are not cancelled by notification controls.

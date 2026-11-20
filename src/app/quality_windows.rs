@@ -168,12 +168,12 @@ impl HeditApp {
         let focused = ctx.memory(|m| m.has_focus(id));
         let bindings = self.configured_bindings().to_vec();
         for binding in bindings {
-            if binding.editor_only && !focused {
+            if !self.configured_shortcut_enabled(&binding, focused) {
                 continue;
             }
             if let Ok(Some(shortcut)) = shortcut(&binding.shortcut) {
-                if tab_switch::take_exact(ctx, shortcut.modifiers, shortcut.logical_key) {
-                    self.execute(ctx, binding.command);
+                if tab_switch::take_configured(ctx, shortcut.modifiers, shortcut.logical_key) {
+                    self.execute_binding(ctx, binding.command);
                 }
             }
         }
@@ -410,17 +410,19 @@ impl HeditApp {
                 let config: Config =
                     serde_json::from_str(&self.quality.settings_json).map_err(|e| e.to_string())?;
                 let mut commands = std::collections::HashSet::new();
-                let mut shortcuts = Vec::new();
+                let mut shortcuts: Vec<&str> = Vec::new();
                 for binding in &config.keybindings {
-                    if !commands.insert(serde_json::to_string(&binding.command).unwrap()) {
+                    if !commands.insert(&binding.command) {
                         return Err("A command has more than one keyboard override.".into());
                     }
-                    if let Some(key) = shortcut(&binding.shortcut)? {
-                        if shortcuts.contains(&key) {
-                            return Err("Two commands use the same shortcut.".into());
-                        }
-                        shortcuts.push(key);
+                    let keys = chords::parse(&binding.shortcut)?;
+                    if shortcuts
+                        .iter()
+                        .any(|text| shortcut_preset::bindings_collide(&keys, text))
+                    {
+                        return Err("Two commands use the same shortcut.".into());
                     }
+                    shortcuts.push(&binding.shortcut);
                 }
                 if config.snippets.len() > 1000
                     || config

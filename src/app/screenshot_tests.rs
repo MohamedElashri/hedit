@@ -489,6 +489,7 @@ fn export_readme_ssh_screenshot() {
     .unwrap();
     let config = hedit::remote::Config {
         target: hedit_remote::client::SshTarget {
+            routing: Default::default(),
             host: "lab".into(),
             user: None,
             port: fixture["port"].as_u64().unwrap() as u16,
@@ -498,6 +499,7 @@ fn export_readme_ssh_screenshot() {
         },
         root: fixture["root"].as_str().unwrap().into(),
         managed: false,
+        interactive_auth: false,
         takeover: false,
     };
     write_project(std::path::Path::new(&config.root));
