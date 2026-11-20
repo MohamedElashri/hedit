@@ -70,10 +70,10 @@ and put that file beside the manifest. Commands still reference the Lua filename
 ```sh
 hedit plugin check extension.json
 hedit plugin test extension.json fixtures.json
-hedit plugin pack extension.json extension.hedit-plugin --version 1.0.0
+hedit plugin pack extension.json extension.hedit-plugin --version X.Y.Z
 ```
 
-Fixtures are a JSON array of objects with `command` (the namespaced ID), `input`,
+Replace `X.Y.Z` with a version for the bundle. Fixtures are a JSON array of objects with `command` (the namespaced ID), `input`,
 `expected`, and optional `language` and `settings` overrides. Tests run inside
 hedit’s Lua sandbox with the declared defaults and validated overrides.
 Install the resulting bundle through **Install from file…**.
