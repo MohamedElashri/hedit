@@ -778,10 +778,11 @@ such as `{"python": {"tab_size": 4}}`, and custom `build_systems`.
 
 ### Extensions
 
-Extensions use JSON manifests to add snippet commands and file templates.
-In **Settings → Extensions**, you can preview and import a manifest, enable
-or disable it, and reload edits. See the
-[manifest reference](docs/extensions.md) for the supported fields and an installable example.
+Extensions add snippet commands, file templates, or Lua commands that transform
+selected text. In **Settings → Extensions**, install, update, or uninstall
+manifests and review Lua permissions for individual commands. Lua commands run
+in local buffers on Linux x86-64. See the [extension guide](docs/extensions.md)
+for an installable example and the manifest fields.
 
 ## Appearance
 

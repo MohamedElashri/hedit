@@ -3,12 +3,17 @@ mod app;
 mod launcher;
 #[cfg(target_os = "macos")]
 mod macos_privacy;
+mod plugin_runtime;
+mod plugin_sandbox;
 #[cfg(test)]
 mod preview;
 mod ssh_askpass;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args: Vec<_> = std::env::args_os().skip(1).collect();
+    if let Some(completed) = plugin_runtime::run_if_requested(&args) {
+        std::process::exit(i32::from(!completed));
+    }
     if let Some(answered) = ssh_askpass::run_if_requested(&args) {
         std::process::exit(i32::from(!answered));
     }

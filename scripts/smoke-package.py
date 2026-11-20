@@ -26,7 +26,8 @@ with tempfile.TemporaryDirectory(prefix='hedit-package-smoke-') as work:
     for directory in ['assets', 'themes', 'docs/images', 'examples/cuda', 'packaging/linux']:
         shutil.copytree(ROOT / directory, source / directory)
     for relative in ['vendor/egui_commonmark/PATCH.md', 'vendor/libghostty-vt-sys/PATCH.md',
-                     'docs/extensions.md', 'examples/extensions/markdown-task.json']:
+                     'docs/extensions.md', 'examples/extensions/markdown-task.json',
+                     'examples/extensions/markdown-quote.json']:
         (source / relative).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / relative, source / relative)
     (source / 'examples/development_probe.rs').write_text('not a release resource')
@@ -59,9 +60,13 @@ with tempfile.TemporaryDirectory(prefix='hedit-package-smoke-') as work:
         assert (prefix / relative).is_file(), relative
     assert (package / 'examples/cuda/vector_add.cu').is_file()
     assert {path.relative_to(package).as_posix() for path in (package / 'examples').rglob('*')
-            if path.is_file()} == {'examples/cuda/vector_add.cu', 'examples/extensions/markdown-task.json'}
+            if path.is_file()} == {
+                'examples/cuda/vector_add.cu', 'examples/extensions/markdown-task.json',
+                'examples/extensions/markdown-quote.json',
+            }
     documents = ['CHANGELOG.md', 'vendor/egui_commonmark/PATCH.md', 'vendor/libghostty-vt-sys/PATCH.md',
-                 'docs/extensions.md', 'examples/extensions/markdown-task.json']
+                 'docs/extensions.md', 'examples/extensions/markdown-task.json',
+                 'examples/extensions/markdown-quote.json']
     images = [path.relative_to(ROOT).as_posix() for path in (ROOT / 'docs/images').glob('*') if path.is_file()]
     for relative in documents + images:
         assert (package / relative).read_bytes() == (ROOT / relative).read_bytes(), relative
