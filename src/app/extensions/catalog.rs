@@ -297,7 +297,7 @@ pub(super) fn prepare_one_time(
     command: &str,
     digest: &str,
 ) -> Result<Contribution, String> {
-    let _lock = change_lock(config)?;
+    let lock = change_lock(config)?;
     let (installed, manifest) = current_lua_command(config, path, id, command)?;
     if installed.digest != digest {
         return Err("The Lua manifest changed. Reload extensions and review it again.".into());
@@ -325,7 +325,7 @@ pub(super) fn prepare_one_time(
     let ExtensionAction::Lua(plugin) = &mut contribution.action else {
         return Err("This command does not use Lua.".into());
     };
-    plugin.one_time = Some(Arc::new(OneTimeApproval::new(config)?));
+    plugin.one_time = Some(Arc::new(OneTimeApproval::new(config, &lock)?));
     Ok(contribution)
 }
 
@@ -396,7 +396,7 @@ pub(super) fn lua_authorization(config: &Path, plugin: &LuaPlugin) -> Option<Fil
     }
     let grants = Grants::read(config).ok()?;
     let permitted = match &plugin.one_time {
-        Some(approval) => approval.authorizes(config),
+        Some(approval) => approval.authorizes(config, &lock),
         None => grants.commands.get(&grant.command) == Some(grant.as_ref()),
     };
     if !permitted {
