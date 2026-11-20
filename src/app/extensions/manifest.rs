@@ -1,3 +1,4 @@
+pub(super) use hedit::plugin_options::valid_id;
 use hedit::plugin_options::{Value as SettingValue, MAX_SETTINGS};
 use hedit::syntax::Language;
 use regex::Regex;
@@ -16,7 +17,6 @@ pub(super) const MAX_DIRECTORY_ENTRIES: usize = 256;
 pub(super) const MAX_MANIFESTS: usize = 32;
 pub(super) const MAX_MANIFEST_BYTES: u64 = 32 * 1024;
 pub(super) const MAX_COMMANDS: usize = 16;
-const MAX_ID_BYTES: usize = 48;
 const MAX_TITLE_BYTES: usize = 128;
 const MAX_BODY_BYTES: usize = 2048;
 const MAX_BODY_LINES: usize = 16;
@@ -401,14 +401,6 @@ pub(super) fn paths(directory: &Path) -> io::Result<(Vec<PathBuf>, usize)> {
     }
     paths.sort_unstable();
     Ok((paths, count))
-}
-
-pub(super) fn valid_id(id: &str) -> bool {
-    id.len() <= MAX_ID_BYTES
-        && id.as_bytes().first().is_some_and(u8::is_ascii_lowercase)
-        && id
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
 }
 
 fn valid_body(body: &str, variables: bool) -> bool {

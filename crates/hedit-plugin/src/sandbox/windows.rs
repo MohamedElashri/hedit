@@ -7,7 +7,7 @@ use std::{
         ffi::OsStrExt,
         io::{AsRawHandle, FromRawHandle, OwnedHandle},
     },
-    path::Path,
+    path::{Path, PathBuf},
     ptr,
 };
 use windows_sys::Win32::{
@@ -30,6 +30,22 @@ const MITIGATIONS: u64 = (1u64 << 36) | (1u64 << 32);
 
 fn wide(value: impl AsRef<OsStr>) -> Vec<u16> {
     value.as_ref().encode_wide().chain(Some(0)).collect()
+}
+
+pub(crate) fn worker_executable() -> io::Result<PathBuf> {
+    #[cfg(test)]
+    if let Some(path) = std::env::var_os("HEDIT_LUA_TEST_WORKER") {
+        return Ok(PathBuf::from(path));
+    }
+    let executable = std::env::current_exe()?;
+    let directory = executable.parent().ok_or_else(denied)?;
+    #[cfg(test)]
+    let directory = if directory.file_name().is_some_and(|name| name == "deps") {
+        directory.parent().ok_or_else(denied)?
+    } else {
+        directory
+    };
+    Ok(directory.join("hedit-plugin-worker.exe"))
 }
 
 fn environment() -> io::Result<Vec<u16>> {

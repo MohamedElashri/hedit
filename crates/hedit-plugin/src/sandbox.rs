@@ -63,4 +63,4 @@ mod linux;
 #[cfg(windows)]
 pub(crate) mod windows;
 #[cfg(windows)]
-pub(crate) use windows::enter;
+pub(crate) use windows::{enter, worker_executable};

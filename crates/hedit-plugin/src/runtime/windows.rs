@@ -17,19 +17,7 @@ use std::{
 };
 
 pub(super) fn executable() -> Result<PathBuf, Failure> {
-    #[cfg(test)]
-    if let Some(path) = std::env::var_os("HEDIT_LUA_TEST_WORKER") {
-        return Ok(PathBuf::from(path));
-    }
-    let executable = std::env::current_exe().map_err(|_| Failure::Sandbox)?;
-    let directory = executable.parent().ok_or(Failure::Sandbox)?;
-    #[cfg(test)]
-    let directory = if directory.file_name().is_some_and(|name| name == "deps") {
-        directory.parent().ok_or(Failure::Sandbox)?
-    } else {
-        directory
-    };
-    Ok(directory.join("hedit-plugin-worker.exe"))
+    crate::sandbox::worker_executable().map_err(|_| Failure::Sandbox)
 }
 
 pub(super) fn supervise(
