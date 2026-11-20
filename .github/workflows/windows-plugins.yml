@@ -3,9 +3,9 @@ on:
   workflow_dispatch:
   push:
     branches: ['v0.7.0/**']
-    paths: ['src/plugin_runtime*', 'src/plugin_runtime/**', 'src/plugin_sandbox*', 'src/plugin_sandbox/**', 'tests/*plugin*', 'src/plugin*.rs', 'src/app/extensions.rs', 'src/app/extensions/**', 'scripts/*windows*.py', 'crates/hedit-plugin/**', 'Cargo.toml', 'Cargo.lock', '.github/workflows/actions.lock', '.github/workflows/windows-plugins.yml']
+    paths: ['src/plugin_runtime*', 'src/plugin_runtime/**', 'src/plugin_sandbox*', 'src/plugin_sandbox/**', 'tests/*plugin*', 'src/plugin*.rs', 'src/app/extensions.rs', 'src/app/extensions/**', 'scripts/*windows*.py', 'crates/hedit-plugin/**', 'crates/hedit-core/src/document*', 'crates/hedit-core/src/document/**', 'Cargo.toml', 'Cargo.lock', '.github/workflows/actions.lock', '.github/workflows/windows-plugins.yml']
   pull_request:
-    paths: ['src/plugin_runtime*', 'src/plugin_runtime/**', 'src/plugin_sandbox*', 'src/plugin_sandbox/**', 'tests/*plugin*', 'src/plugin*.rs', 'src/app/extensions.rs', 'src/app/extensions/**', 'scripts/*windows*.py', 'crates/hedit-plugin/**', 'Cargo.toml', 'Cargo.lock', '.github/workflows/actions.lock', '.github/workflows/windows-plugins.yml']
+    paths: ['src/plugin_runtime*', 'src/plugin_runtime/**', 'src/plugin_sandbox*', 'src/plugin_sandbox/**', 'tests/*plugin*', 'src/plugin*.rs', 'src/app/extensions.rs', 'src/app/extensions/**', 'scripts/*windows*.py', 'crates/hedit-plugin/**', 'crates/hedit-core/src/document*', 'crates/hedit-core/src/document/**', 'Cargo.toml', 'Cargo.lock', '.github/workflows/actions.lock', '.github/workflows/windows-plugins.yml']
 permissions:
   contents: read
 concurrency:
@@ -55,6 +55,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Lint the editor integration
         run: cargo clippy --locked --no-default-features --all-targets -- -D warnings
+      - name: Atomic save and permission regressions
+        run: cargo test --locked -p hedit-core document -- --nocapture
       - name: Editor approval, preview, settings, and save-hook regressions
         run: cargo test --locked --no-default-features --bin hedit app::extensions -- --nocapture
       - name: Build the editor
