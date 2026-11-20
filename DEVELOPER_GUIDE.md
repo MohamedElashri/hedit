@@ -42,6 +42,7 @@ required platform checks.
 | --- | --- |
 | `make static` / `make lint` | Formatting, docs, policy, script syntax; lint adds workspace Clippy |
 | `make test` | Workspace, patched renderer, installer/package tests |
+| `make test-scripts` | Offline toolchain and package tests on Linux/macOS |
 | `make test-renderer` | Patched egui/epaint tests |
 | `make test-remote` | Headless helper and recovery tests |
 | `make test-remote-live` | Disposable SSH, crashes, reconnects; requires `sshd` |
@@ -524,7 +525,9 @@ dark/light names describe their intended background.
 
 `make package smoke` checks the Linux archive, checksum, extraction, installation,
 and executable. Ship guides, notices, assets, themes, and CUDA examples; exclude
-test drivers/development scripts. Keep packagers, installers, and tests aligned.
+test drivers/development scripts. `scripts/package_resources.py` defines the
+offline documentation and extension examples shared by all three packagers.
+Keep installers and package tests aligned with that list.
 
 1. Keep the editor and workspace crate versions aligned, update the lockfile, and
    add a concise dated `CHANGELOG.md` entry. Release checks reject a mismatched

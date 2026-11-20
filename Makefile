@@ -7,7 +7,7 @@ PREFIX ?= $(HOME)/.local
 REMOTE_HELPER ?= target/release/hedit-remote
 export RELEASE_TAG
 
-.PHONY: help dev build run fmt fmt-check policy docs scripts-check static clippy lint test test-renderer test-macos test-remote test-remote-live check ci smoke package install release-check workflow-lint linux-packages smoke-linux-packages macos clean
+.PHONY: help dev build run fmt fmt-check policy docs scripts-check static clippy lint test test-scripts test-renderer test-macos test-remote test-remote-live check ci smoke package install release-check workflow-lint linux-packages smoke-linux-packages macos clean
 
 help: ## Show available commands and configuration
 	@printf 'hedit development commands\n\n'
@@ -51,24 +51,20 @@ clippy: ## Run clippy with warnings denied
 
 lint: static clippy ## Run all static checks: quick checks first, then clippy
 
-test: ## Run Rust tests and offline release-installer tests
+test: ## Run workspace, renderer, and offline script tests
 	$(CARGO) test --locked --workspace
 	$(MAKE) test-renderer
-	$(PYTHON) scripts/test-native-trace.py
-	$(PYTHON) scripts/test-remote-live-setup.py
-	$(PYTHON) scripts/test-zig-setup.py
-	$(PYTHON) scripts/test-run-zig.py
-	$(PYTHON) scripts/test-release.py
-	$(PYTHON) scripts/test-linux-package.py
+	$(MAKE) test-scripts
 	$(PYTHON) scripts/test-install.py
-	$(PYTHON) scripts/test-macos-package.py
-	$(PYTHON) scripts/test-windows-package.py
 
 test-macos: ## Run the tests that apply on macOS (Rust tests and the app bundle checks)
 	$(CARGO) build --locked --bin hedit
 	$(PYTHON) scripts/macos_plugin_helper.py --editor target/debug/hedit
 	$(CARGO) test --locked --workspace --no-fail-fast
 	$(MAKE) test-renderer
+	$(MAKE) test-scripts
+
+test-scripts: ## Run offline Python toolchain and package tests (Linux/macOS)
 	$(PYTHON) scripts/test-native-trace.py
 	$(PYTHON) scripts/test-remote-live-setup.py
 	$(PYTHON) scripts/test-zig-setup.py
@@ -76,6 +72,7 @@ test-macos: ## Run the tests that apply on macOS (Rust tests and the app bundle 
 	$(PYTHON) scripts/test-release.py
 	$(PYTHON) scripts/test-linux-package.py
 	$(PYTHON) scripts/test-macos-package.py
+	$(PYTHON) scripts/test-windows-package.py
 
 test-renderer: ## Test the patched native text renderer and widget library
 	$(CARGO) test --locked -p egui -p epaint --lib

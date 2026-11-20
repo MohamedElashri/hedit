@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import tomllib
 import zipfile
+from package_resources import copy_documentation
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -42,15 +43,8 @@ def package(binary, out_dir, worker=None):
         stage.mkdir()
         shutil.copy2(binary, stage / 'hedit.exe')
         shutil.copy2(worker, stage / 'hedit-plugin-worker.exe')
-        for filename in ['README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md', 'CHANGELOG.md', 'LICENSE']:
-            shutil.copy2(ROOT / filename, stage / filename)
-        for directory in ['assets', 'themes', 'docs/images']:
-            shutil.copytree(ROOT / directory, stage / directory)
-        for relative in ['vendor/egui_commonmark/PATCH.md', 'vendor/libghostty-vt-sys/PATCH.md',
-                         'docs/extensions.md', 'examples/extensions/markdown-task.json',
-                         'examples/extensions/markdown-quote.json']:
-            (stage / relative).parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(ROOT / relative, stage / relative)
+        copy_documentation(ROOT, stage)
+        shutil.copytree(ROOT / 'themes', stage / 'themes')
         shutil.copytree(ROOT / 'examples/cuda', stage / 'examples/cuda')
         temporary = Path(work) / archive.name
         with zipfile.ZipFile(temporary, 'w', compression=zipfile.ZIP_DEFLATED) as output:

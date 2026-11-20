@@ -17,6 +17,7 @@ on:
       - 'tests/*plugin*'
       - 'tests/save_security.rs'
       - 'scripts/*windows*.py'
+      - 'scripts/package_resources.py'
 permissions:
   contents: read
 concurrency:
