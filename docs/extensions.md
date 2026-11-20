@@ -15,8 +15,8 @@ the selection and its original text in one step.
 
 Each Lua source returns a function `function(selection, language)` that takes
 the selected UTF-8 text and the editor language ID. Return a UTF-8 replacement
-string of up to 256 KiB. hedit preserves the buffer’s line endings. Commands run only when
-invoked, with a single selection of up to 64 KiB.
+string of up to 256 KiB. hedit preserves the buffer’s line endings. Commands
+run only when invoked, with a single selection of up to 64 KiB.
 
 ## Manifest fields
 
@@ -37,14 +37,14 @@ Use `extension-id.command-id` in the Command Palette or assign a shortcut in
 IDs start with a lowercase letter and use up to 48 ASCII lowercase letters,
 digits, or hyphens. Use the same format before `.lua` in script names.
 Each JSON manifest is limited to 32 KiB and each Lua script to 16 KiB.
-Declarative bodies are limited to
-2 KiB and 16 lines, with a 128 KiB expansion limit. hedit loads up to 32 manifests.
+Declarative bodies are limited to 2 KiB and 16 lines, with a 128 KiB expansion
+limit. hedit loads up to 32 manifests.
 
 ## Permissions
 
 Lua commands start unapproved. Approval covers the exact manifest and its
-embedded source. After editing an installed manifest, select **Reload extensions**, review the
-changes, and approve it again. Use
-**Revoke approval** in **Settings → Extensions** to withdraw access.
+embedded source. After editing an installed manifest, select **Reload
+extensions**, review the changes, and approve it again. Use **Revoke approval**
+in **Settings → Extensions** to withdraw access.
 Lua has string, table, math, and UTF-8 helpers in a limited runtime. File
 access, networking, shell commands, and SSH buffers are outside this API.
