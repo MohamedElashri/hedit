@@ -570,14 +570,14 @@ mod tests {
     }
 
     #[test]
-    fn legacy_grants_require_fresh_command_approval() {
+    fn unversioned_grants_require_explicit_reset_before_command_approval() {
         let config = tempfile::tempdir().unwrap();
         let (_, digest) = lua_install(config.path());
         let file = config.path().join(GRANTS_FILE);
         let token = [1u8; 16];
-        let legacy =
+        let unversioned =
             serde_json::json!([{"id": "lua", "digest": digest, "token": token}]).to_string();
-        fs::write(&file, &legacy).unwrap();
+        fs::write(&file, &unversioned).unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt as _;
@@ -585,8 +585,10 @@ mod tests {
         }
         let unapproved = read(config.path());
         assert!(unapproved.contributions.is_empty());
-        assert!(!unapproved.view.grants_unreadable);
-        assert_eq!(fs::read_to_string(&file).unwrap(), legacy);
+        assert!(unapproved.view.grants_unreadable);
+        assert_eq!(fs::read_to_string(&file).unwrap(), unversioned);
+        assert!(set_approval(config.path(), &digest, true).is_err());
+        reset_unreadable_approvals(config.path()).unwrap();
         let approved = set_approval(config.path(), &digest, true).unwrap();
         let new: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&file).unwrap()).unwrap();
