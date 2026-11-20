@@ -17,6 +17,11 @@ pub(crate) const PROBE_ARGS: &[&str] = &[
 #[test]
 #[ignore = "only run inside a parent-created AppContainer and job"]
 fn native_probe() {
+    // Production stderr is deliberately NUL; surface test assertions through
+    // the bounded output pipe without changing the worker's handle policy.
+    std::panic::set_hook(Box::new(|panic| {
+        println!("native probe assertion: {panic}")
+    }));
     if let Err(error) = enter() {
         println!("native confinement initialization failed: {error:?}");
         unsafe { ExitProcess(17) }
@@ -67,8 +72,10 @@ fn native_probe() {
             let address = request["address"].as_str().unwrap().parse().unwrap();
             let error = TcpStream::connect_timeout(&address, Duration::from_secs(2)).unwrap_err();
             assert!(
-                error.kind() == io::ErrorKind::PermissionDenied
-                    || error.raw_os_error() == Some(10013),
+                matches!(
+                    error.kind(),
+                    io::ErrorKind::PermissionDenied | io::ErrorKind::TimedOut
+                ) || error.raw_os_error() == Some(10013),
                 "{error:?}"
             );
             let page = unsafe {
@@ -107,11 +114,16 @@ fn native_probe() {
 }
 
 #[test]
-fn native_file_network_handles_memory_code_and_children_are_confined() {
+fn native_file_network_memory_code_and_children_are_confined() {
     let directory = tempfile::tempdir().unwrap();
     let secret = directory.path().join("private.txt");
     std::fs::write(&secret, "private fixture").unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    // Establish that the listener is reachable before checking that the
+    // capability-free worker cannot connect (Windows may drop or reject it).
+    let baseline = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    drop(listener.accept().unwrap());
+    drop(baseline);
     listener.set_nonblocking(true).unwrap();
     let request = serde_json::to_vec(&serde_json::json!({"action":"confinement", "path":secret, "address":listener.local_addr().unwrap().to_string()})).unwrap();
     let (exit_code, bytes) = run_probe(&request);
