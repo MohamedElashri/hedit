@@ -157,27 +157,9 @@ struct GrantDocument {
     grants: Vec<Grant>,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct LegacyGrant {
-    id: String,
-    digest: String,
-    // Decode the exact retired format without ever retaining its authority.
-    #[serde(rename = "token")]
-    _token: [u8; 16],
-}
-
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum StoredGrants {
-    Versioned(GrantDocument),
-    Legacy(Vec<LegacyGrant>),
-}
-
 #[derive(Default)]
 pub(super) struct Grants {
     pub(super) commands: BTreeMap<String, Grant>,
-    legacy: bool,
 }
 
 fn valid_digest(digest: &str) -> bool {
@@ -198,50 +180,29 @@ fn valid_filename(name: &str) -> bool {
 
 impl Grants {
     pub(super) fn read(config: &Path) -> Result<Self, String> {
-        let Some(stored) = read_optional(&config.join(GRANTS_FILE), MAX_GRANTS_BYTES)? else {
+        let Some(document) =
+            read_optional::<GrantDocument>(&config.join(GRANTS_FILE), MAX_GRANTS_BYTES)?
+        else {
             return Ok(Self::default());
         };
-        match stored {
-            StoredGrants::Versioned(document) => {
-                if document.version != GRANTS_VERSION {
-                    return Err("Unsupported Lua approval file version.".into());
-                }
-                if document.grants.len() > MAX_GRANTS {
-                    return Err("Too many Lua command approvals.".into());
-                }
-                let mut commands = BTreeMap::new();
-                for grant in document.grants {
-                    if !super::super::valid_command_id(&grant.command)
-                        || !valid_digest(&grant.digest)
-                        || !valid_filename(&grant.manifest)
-                        || grant.capabilities != manifest::LUA_CAPABILITIES
-                        || commands.insert(grant.command.clone(), grant).is_some()
-                    {
-                        return Err("Invalid Lua command approvals.".into());
-                    }
-                }
-                Ok(Self {
-                    commands,
-                    legacy: false,
-                })
-            }
-            StoredGrants::Legacy(records) => {
-                let mut ids = BTreeSet::new();
-                if records.len() > manifest::MAX_MANIFESTS * 2
-                    || records.into_iter().any(|record| {
-                        !manifest::valid_id(&record.id)
-                            || !valid_digest(&record.digest)
-                            || !ids.insert(record.id)
-                    })
-                {
-                    return Err("Invalid retired Lua approvals.".into());
-                }
-                Ok(Self {
-                    commands: BTreeMap::new(),
-                    legacy: true,
-                })
+        if document.version != GRANTS_VERSION {
+            return Err("Unsupported Lua approval file version.".into());
+        }
+        if document.grants.len() > MAX_GRANTS {
+            return Err("Too many Lua command approvals.".into());
+        }
+        let mut commands = BTreeMap::new();
+        for grant in document.grants {
+            if !super::super::valid_command_id(&grant.command)
+                || !valid_digest(&grant.digest)
+                || !valid_filename(&grant.manifest)
+                || grant.capabilities != manifest::LUA_CAPABILITIES
+                || commands.insert(grant.command.clone(), grant).is_some()
+            {
+                return Err("Invalid Lua command approvals.".into());
             }
         }
+        Ok(Self { commands })
     }
 
     pub(super) fn write(self, config: &Path) -> Result<(), String> {
@@ -270,7 +231,7 @@ pub(in crate::app::extensions) fn invalidate_lua_grants(
         let owner = command.split_once('.').map(|(plugin, _)| plugin);
         (id.is_none() || id != owner) && path.file_name() != Some(OsStr::new(&grant.manifest))
     });
-    if grants.legacy || before != grants.commands.len() {
+    if before != grants.commands.len() {
         grants.write(config)?;
     }
     Ok(())
