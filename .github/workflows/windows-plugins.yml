@@ -3,9 +3,9 @@ on:
   workflow_dispatch:
   push:
     branches: ['v0.7.0/**']
-    paths: ['src/plugin_runtime*', 'src/plugin_runtime/**', 'src/plugin_sandbox*', 'src/plugin_sandbox/**', 'tests/*plugin*', 'Cargo.toml', 'Cargo.lock', '.github/workflows/windows-plugins.yml']
+    paths: ['src/plugin_runtime*', 'src/plugin_runtime/**', 'src/plugin_sandbox*', 'src/plugin_sandbox/**', 'tests/*plugin*', 'Cargo.toml', 'Cargo.lock', '.github/workflows/actions.lock', '.github/workflows/windows-plugins.yml']
   pull_request:
-    paths: ['src/plugin_runtime*', 'src/plugin_runtime/**', 'src/plugin_sandbox*', 'src/plugin_sandbox/**', 'tests/*plugin*', 'Cargo.toml', 'Cargo.lock', '.github/workflows/windows-plugins.yml']
+    paths: ['src/plugin_runtime*', 'src/plugin_runtime/**', 'src/plugin_sandbox*', 'src/plugin_sandbox/**', 'tests/*plugin*', 'Cargo.toml', 'Cargo.lock', '.github/workflows/actions.lock', '.github/workflows/windows-plugins.yml']
 permissions:
   contents: read
 concurrency:
@@ -39,7 +39,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2.9.3
         with:
           key: windows-lua-${{ runner.arch }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.event_name == 'push' }}
+          cache-on-failure: true
       - name: Lint the adapter and shared engine
         run: cargo clippy --locked --no-default-features --features windows-lua --all-targets -- -D warnings
       - name: Build the real worker executable
