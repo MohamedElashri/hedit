@@ -1,4 +1,4 @@
-//! Bounded scalar values shared by the editor and the Lua worker.
+//! Shared extension identifiers and bounded scalar settings.
 use serde::{Deserialize, Serialize};
 
 pub const MAX_SETTINGS: usize = 16;
@@ -31,4 +31,10 @@ pub fn valid_id(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+}
+
+pub fn valid_command_id(value: &str) -> bool {
+    value
+        .split_once('.')
+        .is_some_and(|(extension, command)| valid_id(extension) && valid_id(command))
 }

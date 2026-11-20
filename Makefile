@@ -14,7 +14,7 @@ help: ## Show available commands and configuration
 	@awk 'BEGIN { FS = ":.*## " } /^[a-zA-Z0-9_-]+:.*## / { printf "  %-18s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 	@printf '\nOptions: PREFIX (default ~/.local), DESTDIR (installation staging), ARGS (run arguments)\n'
 	@printf 'Overrides: CARGO, PYTHON, ACTIONLINT; RELEASE_TAG for release-check\n'
-	@printf '\nBefore committing: make ci\n'
+	@printf '\nBefore committing: make static clippy, then make test (Linux) or make test-macos (macOS)\n'
 
 dev: ## Build a debug executable
 	$(CARGO) build --locked --workspace
@@ -51,7 +51,7 @@ clippy: ## Run clippy with warnings denied
 
 lint: static clippy ## Run all static checks: quick checks first, then clippy
 
-test: ## Run workspace, renderer, and offline script tests
+test: ## Run Linux workspace, renderer, installer, and script tests
 	$(CARGO) test --locked --workspace
 	$(MAKE) test-renderer
 	$(MAKE) test-scripts
@@ -88,14 +88,14 @@ test-remote-live: ## Test real loopback SSH and deterministic process crashes (r
 	$(CARGO) build --locked -p hedit-remote --features test-faults --target-dir target/remote-fault-tests
 	$(PYTHON) scripts/test-remote-live.py --fault-binary target/remote-fault-tests/debug/hedit-remote
 
-check: lint test ## Run static checks and tests without a release build
+check: lint test ## Run Linux static checks and tests without a release build
 
-ci: check package smoke ## Run the same full validation as GitHub CI; use before committing
+ci: check package smoke ## Run Linux checks, tests, packaging, and installation smoke tests
 
 package: build ## Create the Linux release archive and SHA-256 file in dist/
 	$(PYTHON) scripts/package-linux.py --helper "$(REMOTE_HELPER)"
 
-smoke: build ## Verify package extraction, installation, checksums, and the executable
+smoke: build ## Verify Linux package extraction, installation, checksums, and the executable
 	$(PYTHON) scripts/smoke-package.py --helper "$(REMOTE_HELPER)"
 
 linux-packages: build ## Build Linux tarball, DEB, RPM, and AppImage (requires packaging tools)
@@ -104,19 +104,14 @@ linux-packages: build ## Build Linux tarball, DEB, RPM, and AppImage (requires p
 smoke-linux-packages: ## Verify Linux formats and distro installation (requires Docker)
 	$(PYTHON) scripts/smoke-linux-packages.py --helper "$(REMOTE_HELPER)" --containers
 
-install: build ## Install under PREFIX; supports a DESTDIR staging directory
+install: build ## Install the Linux build under PREFIX; supports DESTDIR staging
 	install -Dm755 target/release/hedit "$(DESTDIR)$(PREFIX)/bin/hedit"
 	install -Dm755 target/release/hedit-remote "$(DESTDIR)$(PREFIX)/bin/hedit-remote"
 	install -Dm644 assets/hedit.svg "$(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/hedit.svg"
 	install -Dm644 packaging/linux/hedit.desktop "$(DESTDIR)$(PREFIX)/share/applications/hedit.desktop"
 	install -d "$(DESTDIR)$(PREFIX)/share/hedit/themes"
 	install -m644 themes/*.json "$(DESTDIR)$(PREFIX)/share/hedit/themes/"
-	install -d "$(DESTDIR)$(PREFIX)/share/doc/hedit"
-	install -m644 README.md USER_GUIDE.md DEVELOPER_GUIDE.md CHANGELOG.md LICENSE "$(DESTDIR)$(PREFIX)/share/doc/hedit/"
-	cp -R assets docs "$(DESTDIR)$(PREFIX)/share/doc/hedit/"
-	install -d "$(DESTDIR)$(PREFIX)/share/doc/hedit/examples/extensions"
-	install -m644 examples/extensions/*.json "$(DESTDIR)$(PREFIX)/share/doc/hedit/examples/extensions/"
-	for path in vendor/egui_commonmark/PATCH.md vendor/libghostty-vt-sys/PATCH.md; do install -Dm644 "$$path" "$(DESTDIR)$(PREFIX)/share/doc/hedit/$$path"; done
+	$(PYTHON) scripts/package_resources.py --out-dir "$(DESTDIR)$(PREFIX)/share/doc/hedit"
 
 release-check: ## Check RELEASE_TAG=vX.Y.Z against the version in Cargo.toml
 	$(PYTHON) scripts/check-release.py

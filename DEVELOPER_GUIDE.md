@@ -13,7 +13,7 @@ without their development headers. The UI is native Rust; no webview or Node.js.
 make dev
 make run ARGS='--session-dir /tmp/hedit-dev'
 make build
-make install                         # ~/.local; override PREFIX or DESTDIR
+make install                         # Linux: ~/.local; override PREFIX or DESTDIR
 cargo build --locked --workspace --no-default-features  # omit terminal and Zig
 cargo build --release --locked -p hedit-remote
 ```
@@ -41,7 +41,7 @@ required platform checks.
 | Command | Scope |
 | --- | --- |
 | `make static` / `make lint` | Formatting, docs, policy, script syntax; lint adds workspace Clippy |
-| `make test` | Workspace, patched renderer, installer/package tests |
+| `make test` | Linux workspace, patched renderer, installer/package tests |
 | `make test-scripts` | Offline toolchain and package tests on Linux/macOS |
 | `make test-renderer` | Patched egui/epaint tests |
 | `make test-remote` | Headless helper and recovery tests |
@@ -136,6 +136,7 @@ the [manifest and Lua reference](docs/extensions.md); host integration lives in
 
 | Component | Responsibility |
 | --- | --- |
+| `runtime.rs`, `options.rs` | Shared invocation limits, command identifiers, and scalar settings |
 | `runtime/engine.rs` | Bounded request/reply codec, Lua library allowlist, input validation, and instruction/memory limits |
 | `runtime/unix.rs`, `runtime/windows.rs` | Pipe delivery, cancellation, deadlines, and worker reaping |
 | `error.rs` | Typed runtime failures and fixed display messages; command/save activity classifies failures by type |
@@ -529,8 +530,8 @@ dark/light names describe their intended background.
 `make package smoke` checks the Linux archive, checksum, extraction, installation,
 and executable. Ship guides, notices, assets, themes, and CUDA examples; exclude
 test drivers/development scripts. `scripts/package_resources.py` defines the
-offline documentation and extension examples shared by all three packagers.
-Keep installers and package tests aligned with that list.
+offline documentation and extension examples shared by all three packagers and
+`make install`. Keep package installers and tests aligned with that list.
 
 1. Keep the editor and workspace crate versions aligned, update the lockfile, and
    add a concise dated `CHANGELOG.md` entry. Release checks reject a mismatched

@@ -42,6 +42,7 @@ mod supervisor {
 pub const SUPPORTED: bool = crate::sandbox::SUPPORTED;
 pub const MAX_SELECTION_BYTES: usize = 64 * 1024;
 pub const MAX_SELECTIONS: usize = 16;
+pub const MAX_SOURCE_BYTES: usize = 16 * 1024;
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

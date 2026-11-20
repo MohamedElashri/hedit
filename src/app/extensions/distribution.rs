@@ -1,5 +1,6 @@
 //! Bounded, portable bundles for locally distributed extensions.
 use super::manifest::{self, Manifest, MAX_COMMANDS, MAX_MANIFEST_BYTES};
+use crate::plugin_runtime::MAX_SOURCE_BYTES;
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use serde::{de, Deserialize, Serialize};
 use serde_json::value::{self, RawValue};
@@ -244,7 +245,7 @@ fn authoring_manifest(path: &Path, original: &str) -> Result<String, String> {
                 "Use a simple sibling Lua filename for {filename:?}."
             ));
         }
-        let bytes = read_sibling(directory, &filename, 16 * 1024)?;
+        let bytes = read_sibling(directory, &filename, MAX_SOURCE_BYTES as u64)?;
         let source = String::from_utf8(bytes)
             .map_err(|_| format!("{filename} must contain UTF-8 Lua source."))?;
         if scripts.insert(filename, source).is_some() {
@@ -549,6 +550,30 @@ mod tests {
         "script_files": ["quote.lua"],
         "commands": [{"id":"transform", "title":"Quote", "action":{"kind":"lua", "source":"quote.lua"}}]
     }"#;
+
+    #[test]
+    fn inline_and_sibling_lua_sources_share_the_runtime_byte_limit() {
+        let directory = tempfile::tempdir().unwrap();
+        let manifest = directory.path().join("manifest.json");
+        for extra in [0, 1] {
+            let mut source = "return function(text) return text end".to_owned();
+            source.push_str(&" ".repeat(MAX_SOURCE_BYTES + extra - source.len()));
+            fs::write(directory.path().join("quote.lua"), &source).unwrap();
+            let mut inline: serde_json::Value = serde_json::from_str(AUTHOR).unwrap();
+            inline.as_object_mut().unwrap().remove("script_files");
+            inline["scripts"] = serde_json::json!({"quote.lua": source});
+            assert_eq!(
+                manifest::parse_manifest(&inline.to_string()).is_ok(),
+                extra == 0,
+                "inline source with {extra} excess bytes"
+            );
+            assert_eq!(
+                authoring_manifest(&manifest, AUTHOR).is_ok(),
+                extra == 0,
+                "sibling source with {extra} excess bytes"
+            );
+        }
+    }
 
     #[test]
     fn pack_binds_release_publisher_and_every_script_to_the_signature() {

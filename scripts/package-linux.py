@@ -36,9 +36,10 @@ def main():
     if not arch:
         parser.error(f'Unsupported package architecture: {machine}')
     version = tomllib.loads((ROOT / 'Cargo.toml').read_text())['package']['version']
-    reported = subprocess.check_output([str(args.helper), '--version'], text=True).strip()
-    if reported != f'hedit-remote {version}':
-        parser.error('The helper version must match the editor version.')
+    for binary, name in [(args.binary, 'hedit'), (args.helper, 'hedit-remote')]:
+        reported = subprocess.check_output([str(binary), '--version'], text=True).strip()
+        if reported != f'{name} {version}':
+            parser.error(f'{name} version must match Cargo.toml.')
     name = f'hedit-{version}-linux-{arch}'
     args.out_dir.mkdir(parents=True, exist_ok=True)
     archive = args.out_dir / f'{name}.tar.gz'

@@ -1,4 +1,6 @@
-"""Offline documentation shared by the Linux, macOS, and Windows packages."""
+"""Install the offline documentation shared by source and release packages."""
+import argparse
+from pathlib import Path
 import shutil
 
 
@@ -12,4 +14,15 @@ def copy_documentation(root, destination):
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(root / filename, target)
     for directory in ['assets', 'docs/images']:
-        shutil.copytree(root / directory, destination / directory)
+        shutil.copytree(root / directory, destination / directory, dirs_exist_ok=True)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--out-dir', type=Path, required=True)
+    args = parser.parse_args()
+    copy_documentation(Path(__file__).resolve().parents[1], args.out_dir)
+
+
+if __name__ == '__main__':
+    main()

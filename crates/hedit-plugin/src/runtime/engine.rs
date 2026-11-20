@@ -1,5 +1,5 @@
 //! Shared Lua 5.4 engine, bounded protocol, and invocation limits.
-use super::{Input, MAX_SELECTIONS, MAX_SELECTION_BYTES};
+use super::{Input, MAX_SELECTIONS, MAX_SELECTION_BYTES, MAX_SOURCE_BYTES};
 use crate::{
     options::{self as plugin_options, Value as SettingValue},
     Error,
@@ -13,7 +13,6 @@ use std::rc::Rc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
-const MAX_SOURCE_BYTES: usize = 64 * 1024;
 const MAX_LANGUAGE_BYTES: usize = 256;
 const MAX_REPLACEMENT_BYTES: usize = 256 * 1024;
 const MAX_BATCH_REQUEST_BYTES: usize = 1024 * 1024;
@@ -265,6 +264,35 @@ fn valid_replacement(bytes: &[u8]) -> Result<String, Error> {
 #[cfg(all(test, any(unix, windows)))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parent_and_worker_enforce_the_same_source_byte_limit() {
+        let mut source = "-- café / 東京\nreturn function(text) return text end".to_owned();
+        source.push_str(&" ".repeat(MAX_SOURCE_BYTES - source.len()));
+        let mut input = Input {
+            source,
+            selections: vec!["private text".into()],
+            language: "markdown".into(),
+            settings: Default::default(),
+        };
+        let packet = encode_request(&input).unwrap();
+        assert_eq!(
+            decode_request(packet.as_slice()).unwrap().source,
+            input.source
+        );
+
+        input.source.push(' ');
+        assert_eq!(encode_request(&input), Err(Error::Request));
+        // Bypass the parent encoder to verify the worker's independent check.
+        let payload = serde_json::to_vec(&input).unwrap();
+        let mut packet = REQUEST_MAGIC.to_le_bytes().to_vec();
+        packet.extend((payload.len() as u32).to_le_bytes());
+        packet.extend(payload);
+        assert!(matches!(
+            decode_request(packet.as_slice()),
+            Err(Error::Request)
+        ));
+    }
 
     #[test]
     fn worker_failures_keep_their_type_and_reject_payloads_or_unknown_statuses() {

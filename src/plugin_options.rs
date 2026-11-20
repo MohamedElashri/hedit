@@ -1,5 +1,5 @@
 //! User-owned extension preferences; runtime scalar types live in the shared core.
-pub use hedit_plugin::options::{valid_id, Value, MAX_SETTINGS, MAX_VALUE_BYTES};
+pub use hedit_plugin::options::{valid_command_id, valid_id, Value, MAX_SETTINGS, MAX_VALUE_BYTES};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -44,10 +44,7 @@ impl Options {
         if self.save_hooks.len() > crate::syntax::Language::ALL.len()
             || self.save_hooks.iter().any(|(language, hook)| {
                 crate::syntax::Language::from_id(language).is_none()
-                    || !hook
-                        .command
-                        .split_once('.')
-                        .is_some_and(|(id, command)| valid_id(id) && valid_id(command))
+                    || !valid_command_id(&hook.command)
                     || hook.approval.len() != 32
                     || !hook.approval.bytes().all(|byte| byte.is_ascii_hexdigit())
             })
