@@ -91,6 +91,11 @@ Improvements awaiting a release can be tried by [building from source](DEVELOPER
   equations, and Mermaid diagrams. [Git](USER_GUIDE.md#source-control) ·
   [Markdown](USER_GUIDE.md#markdown-preview).
 
+- **Extend local editing.** Install snippet commands and file templates, or
+  approve Lua text transforms with previews, settings, and optional save hooks.
+  Author and test signed bundles with the built-in CLI.
+  [Extensions](USER_GUIDE.md#extensions) · [Authoring reference](docs/extensions.md).
+
 Multiple cursors, snippets, word completion, folding, split panes, background
 project search, and paged log viewing support everyday editing. Customize themes,
 fonts, and keys; edit Arabic/Hebrew and legacy encodings. CUDA highlighting works

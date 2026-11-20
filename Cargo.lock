@@ -1917,6 +1917,7 @@ dependencies = [
  "encoding_rs",
  "getrandom 0.4.3",
  "hedit-core",
+ "hedit-plugin",
  "hedit-remote",
  "hex",
  "image",
@@ -1925,7 +1926,6 @@ dependencies = [
  "libghostty-vt",
  "memchr",
  "mermaid-rs-renderer",
- "mlua",
  "notify",
  "objc2 0.6.5",
  "objc2-foundation 0.3.2",
@@ -1979,6 +1979,20 @@ dependencies = [
  "url",
  "windows-sys 0.61.2",
  "zip",
+]
+
+[[package]]
+name = "hedit-plugin"
+version = "0.6.2"
+dependencies = [
+ "getrandom 0.4.3",
+ "hex",
+ "libc",
+ "mlua",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

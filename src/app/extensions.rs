@@ -11,6 +11,7 @@ mod templates;
 use super::{snippet_fields, HeditApp};
 use eframe::egui;
 use hedit::intelligence;
+pub(super) use hedit::plugin_options::valid_command_id;
 use std::path::Path;
 
 pub(crate) use distribution::run_cli as run_plugin_cli;
@@ -23,12 +24,6 @@ pub(super) use templates::Template;
 
 const MAX_INDENT_BYTES: usize = 4096;
 const MAX_EXPANSION_BYTES: usize = 128 * 1024;
-
-pub(super) fn valid_command_id(id: &str) -> bool {
-    id.split_once('.').is_some_and(|(extension, command)| {
-        manifest::valid_id(extension) && manifest::valid_id(command)
-    })
-}
 
 impl HeditApp {
     pub(super) fn extension_commands(&self) -> impl Iterator<Item = &Contribution> {
@@ -103,7 +98,7 @@ impl HeditApp {
             ExtensionAction::InsertSnippet { body } => self.run_extension_snippet(&body),
             ExtensionAction::Lua(plugin) => {
                 self.extension_manager.consume_one_time(id);
-                self.start_lua_transform(id, plugin);
+                self.start_lua_transform(ctx, id, plugin);
             }
             ExtensionAction::NewFile { body, language } => {
                 self.run_extension_template(ctx, &body, language)

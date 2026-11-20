@@ -8,7 +8,7 @@ from urllib.parse import unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 files = [ROOT / name for name in ['README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md', 'CHANGELOG.md',
-                                   'docs/extensions.md', 'vendor/egui_commonmark/PATCH.md']]
+                                   'docs/extensions.md', 'docs/extension-security.md', 'vendor/egui_commonmark/PATCH.md']]
 files += sorted((ROOT / 'assets/licenses').glob('*.md'))
 
 

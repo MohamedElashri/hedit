@@ -1,6 +1,40 @@
 use hedit::settings::{strip_comments, FormatSettings, Settings};
 
 #[test]
+fn save_hook_command_ids_round_trip_and_reject_ambiguous_namespaces() {
+    let command = format!("{}.{}", "a".repeat(48), "b".repeat(48));
+    let mut document = serde_json::json!({
+        "extensions": {"save_hooks": {"plain-text": {
+            "command": command,
+            "approval": "0".repeat(32)
+        }}}
+    });
+    let (settings, warnings) = Settings::parse(&document.to_string()).unwrap();
+    assert!(warnings.is_empty());
+    assert_eq!(Settings::parse(&settings.to_json()).unwrap().0, settings);
+
+    for command in [
+        "formatter".into(),
+        ".format".into(),
+        "formatter.".into(),
+        "formatter.extra.format".into(),
+        "Formatter.format".into(),
+        "formatter.förmat".into(),
+        "formatter.format\n".into(),
+        format!("{}.format", "a".repeat(49)),
+        format!("formatter.{}", "a".repeat(49)),
+    ] {
+        document["extensions"]["save_hooks"]["plain-text"]["command"] =
+            serde_json::Value::String(command);
+        let error = Settings::parse(&document.to_string()).unwrap_err();
+        assert!(
+            error.contains("Invalid extension save hook settings"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
 fn settings_accept_comments_trailing_commas_and_report_unknown_keys() {
     let text = r#"
         // Sublime-style comments

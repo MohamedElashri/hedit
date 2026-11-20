@@ -7,7 +7,7 @@ description = "A native text editor with durable recovery, Git, and private SSH 
 license = "MIT"
 
 [workspace]
-members = ["crates/hedit-remote", "crates/hedit-core"]
+members = ["crates/hedit-remote", "crates/hedit-core", "crates/hedit-plugin"]
 default-members = ["."]
 exclude = ["vendor/egui", "vendor/epaint"]
 resolver = "2"
@@ -23,6 +23,7 @@ terminal = ["dep:libghostty-vt", "dep:portable-pty", "dep:rustybuzz"]
 [dependencies]
 getrandom = "0.4"
 hedit-core = { path = "crates/hedit-core" }
+hedit-plugin = { path = "crates/hedit-plugin" }
 hedit-remote = { path = "crates/hedit-remote" }
 libghostty-vt = { version = "=0.2.2", default-features = false, optional = true }
 portable-pty = { version = "0.9", optional = true }
@@ -61,6 +62,7 @@ notify = "8.2.0"
 
 [target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
 rustix = { version = "1", features = ["fs", "process"] }
+libc = "0.2"
 
 # GNOME on Wayland leaves window decorations to the app; draw Adwaita-style
 # title bar buttons instead of winit's bare fallback frame.
@@ -70,17 +72,13 @@ raw-window-handle = "0.6"
 wayland-client = { version = "0.31", features = ["system", "dlopen"] }
 wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 
-[target.'cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little", target_pointer_width = "64"))'.dependencies]
-libc = "0.2"
-mlua = { version = "=0.12.2", default-features = false, features = ["lua54", "vendored"] }
-
 [target.'cfg(target_os = "macos")'.dependencies.eframe]
 version = "0.31.1"
 default-features = false
 features = ["accesskit"]
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = ["Win32_Security", "Win32_Security_Authorization", "Win32_Security_Isolation", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_JobObjects", "Win32_System_Memory", "Win32_System_Pipes", "Win32_System_SystemInformation", "Win32_System_Threading"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.5"
@@ -105,3 +103,6 @@ libghostty-vt-sys = { path = "vendor/libghostty-vt-sys" }
 lto = "thin"
 codegen-units = 1
 strip = true
+
+[dev-dependencies]
+hedit-plugin = { path = "crates/hedit-plugin", features = ["test-support"] }

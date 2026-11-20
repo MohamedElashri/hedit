@@ -673,7 +673,11 @@ impl HeditApp {
             .rect_filled(viewport, 0.0, self.theme.surface.color());
         let b = self.active();
         let (id, revision, path) = (b.view.id, b.page.info.revision, b.page.info.path.clone());
-        self.markdown.media.set_font_size(self.settings.font_size);
+        self.markdown.media.set_appearance(
+            self.settings.font_size,
+            ui.visuals().text_color(),
+            ui.visuals().dark_mode,
+        );
         let root = document_root(path.as_deref());
         let previous_root = self
             .markdown

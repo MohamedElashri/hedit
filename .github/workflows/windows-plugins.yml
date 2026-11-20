@@ -1,0 +1,85 @@
+name: Windows plugin validation
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/windows-plugins.yml'
+      - '.github/workflows/actions.lock'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/hedit-plugin/**'
+      - 'crates/hedit-core/src/document*'
+      - 'crates/hedit-core/src/document/**'
+      - 'src/main.rs'
+      - 'src/plugin_options.rs'
+      - 'src/advanced.rs'
+      - 'src/settings.rs'
+      - 'src/settings/**'
+      - 'src/app/extensions.rs'
+      - 'src/app/extensions/**'
+      - 'tests/*plugin*'
+      - 'tests/save_security.rs'
+      - 'tests/settings.rs'
+      - 'tests/advanced.rs'
+      - 'scripts/*windows*.py'
+      - 'scripts/package_resources.py'
+permissions:
+  contents: read
+concurrency:
+  group: windows-lua-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  sandbox:
+    name: Lua sandbox (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2025, windows-11-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      RUST_TEST_THREADS: 2
+      RUSTFLAGS: -C target-feature=+crt-static
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.1
+          components: clippy
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.12'
+      - uses: Swatinem/rust-cache@v2.9.3
+        with:
+          key: windows-lua-${{ runner.arch }}
+          save-if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository }}
+          cache-on-failure: true
+      - name: Lint the headless runtime and adapter
+        run: cargo clippy --locked -p hedit-plugin --all-targets -- -D warnings
+      - name: Build the headless worker
+        run: cargo build --locked -p hedit-plugin --bin hedit-plugin-worker
+      - name: Verify headless startup imports
+        run: python scripts/check-windows-worker.py target/debug/hedit-plugin-worker.exe
+      - name: Confinement, resource limits, cancellation, and shared engine tests
+        shell: pwsh
+        run: |
+          $env:HEDIT_LUA_TEST_WORKER = (Resolve-Path target/debug/hedit-plugin-worker.exe).Path
+          cargo test --locked -p hedit-plugin -- --nocapture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Lint the editor integration
+        run: cargo clippy --locked --no-default-features --all-targets -- -D warnings
+      - name: Atomic save and permission regressions
+        run: cargo test --locked -p hedit-core document -- --nocapture
+      - name: Editor approval, preview, settings, and save-hook regressions
+        run: cargo test --locked --no-default-features --bin hedit app::extensions -- --nocapture
+      - name: Build the editor
+        run: cargo build --locked --no-default-features --bin hedit
+      - name: Shared editing, CLI, settings, distribution, and save security
+        run: cargo test --locked --no-default-features --test advanced --test lua_plugin_runtime --test plugin_distribution --test save_security --test settings -- --nocapture
+      - name: Test the extracted portable package
+        if: runner.arch == 'X64'
+        run: python scripts/package-windows.py --binary target/debug/hedit.exe --out-dir target/windows-package --smoke
