@@ -18,10 +18,18 @@ use std::{
 
 pub(super) fn executable() -> Result<PathBuf, Failure> {
     #[cfg(test)]
-    if let Some(path) = std::env::var_os("HEDIT_LUA_TEST_EDITOR") {
+    if let Some(path) = std::env::var_os("HEDIT_LUA_TEST_WORKER") {
         return Ok(PathBuf::from(path));
     }
-    std::env::current_exe().map_err(|_| Failure::Sandbox)
+    let executable = std::env::current_exe().map_err(|_| Failure::Sandbox)?;
+    let directory = executable.parent().ok_or(Failure::Sandbox)?;
+    #[cfg(test)]
+    let directory = if directory.file_name().is_some_and(|name| name == "deps") {
+        directory.parent().ok_or(Failure::Sandbox)?
+    } else {
+        directory
+    };
+    Ok(directory.join("hedit-plugin-worker.exe"))
 }
 
 pub(super) fn supervise(
@@ -161,11 +169,7 @@ mod engine_tests {
             source: source.into(),
             selections,
             language: "markdown".into(),
-            settings: [(
-                "prefix".into(),
-                hedit::plugin_options::Value::Text("→ ".into()),
-            )]
-            .into(),
+            settings: [("prefix".into(), crate::options::Value::Text("→ ".into()))].into(),
         }
     }
     #[test]

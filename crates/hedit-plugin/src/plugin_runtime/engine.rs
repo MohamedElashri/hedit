@@ -1,6 +1,6 @@
 //! Shared Lua 5.4 engine, bounded protocol, and invocation limits.
 use super::{Input, MAX_SELECTIONS, MAX_SELECTION_BYTES};
-use hedit::plugin_options::{self, Value as SettingValue};
+use crate::options::{self as plugin_options, Value as SettingValue};
 use mlua::chunk::ChunkMode;
 use mlua::{HookTriggers, Lua, LuaOptions, StdLib, Table, Value, VmState};
 use std::cell::Cell;

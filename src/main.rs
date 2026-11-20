@@ -4,7 +4,6 @@ mod launcher;
 #[cfg(target_os = "macos")]
 mod macos_privacy;
 mod plugin_runtime;
-mod plugin_sandbox;
 #[cfg(test)]
 mod preview;
 mod ssh_askpass;

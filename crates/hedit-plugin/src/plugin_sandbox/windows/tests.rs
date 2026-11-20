@@ -22,7 +22,7 @@ fn native_probe() {
         unsafe { ExitProcess(17) }
     }
     assert!(std::env::var_os("PATH").is_none());
-    assert!(std::env::var_os("HEDIT_LUA_TEST_EDITOR").is_none());
+    assert!(std::env::var_os("HEDIT_LUA_TEST_WORKER").is_none());
     assert!(std::env::var_os("SystemRoot").is_some());
     assert!(std::env::var_os("LOCALAPPDATA").is_some());
     let mut request = Vec::new();

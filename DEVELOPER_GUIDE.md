@@ -134,12 +134,12 @@ the current installed snapshot with the reviewed copy and durably clear its Lua
 approvals before replacing or removing it. Older extension-wide grants require
 fresh consent per command. See the [extension guide](docs/extensions.md).
 
-`src/plugin_runtime/engine.rs` owns the single Lua 5.4 implementation, request
+`crates/hedit-plugin/src/plugin_runtime/engine.rs` owns the single Lua 5.4 implementation, request
 codec, library allowlist, and instruction/memory budgets. Commands, fixtures,
 batch edits, and save hooks use this engine on every supported platform.
 `supervisor.rs` shares Unix pipe delivery, cancellation, deadlines, and reaping.
 Only process confinement and native resource queries belong in OS adapters under
-`src/plugin_sandbox/`.
+`crates/hedit-plugin/src/plugin_sandbox/`.
 
 Linux x86-64 and ARM64 use the existing seccomp allowlist, descriptor restrictions,
 and address-space limit. macOS uses a nested App Sandbox application with only
@@ -163,7 +163,7 @@ target/debug/hedit` afterward. Packaging embeds a universal helper beneath
 `Contents/Helpers/hedit-plugin.app` and signs it before the containing app.
 
 Run `cargo test --locked --test lua_plugin_runtime` for executable and sample
-coverage and `cargo test --locked --bin hedit plugin_` for isolation and
+coverage and `cargo test --locked -p hedit-plugin` for isolation and
 supervisor regressions. Run `cargo test --locked --bin hedit app::extensions`
 for manifest, consent, preview, multi-selection, and save regressions.
 Use `cargo test --locked --test plugin_distribution` to verify packaging, signing,
@@ -179,14 +179,16 @@ memory at 256 MiB, CPU time at two seconds, and active processes at one. The
 parent verifies the suspended process token and job before resuming it; the
 worker independently checks confinement before reading input. Scoped blocking
 pipe threads let the parent cancel or time out a worker without leaving I/O
-threads behind. The codec, Lua engine, permissions, edits, and save hooks remain
-shared.
+threads behind. The codec and Lua engine live in the GUI-independent `hedit-plugin` crate.
+The Windows package includes its `hedit-plugin-worker.exe` executable beside the
+editor. Linux and macOS keep their existing launch layouts while using the same
+crate. Permissions, editor edits, and save hooks keep their shared host paths.
 
 `.github/workflows/windows-plugins.yml` runs the native confinement and engine
 suites on x86-64 Windows and Windows 11 ARM. It also records diagnostic fixture
 launch timings; hosted-runner timings do not establish desktop performance.
-The Windows unit engine tests use `HEDIT_LUA_TEST_EDITOR` to locate the real
-feature-enabled editor executable; production builds ignore this variable.
+The Windows unit engine tests use `HEDIT_LUA_TEST_WORKER` to locate the real
+feature-enabled headless worker executable; production builds ignore this variable.
 
 ## SSH architecture and testing
 

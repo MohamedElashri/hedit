@@ -29,8 +29,10 @@ def check_binary(binary):
             raise ValueError('Expected an x86-64 Windows PE executable.')
 
 
-def package(binary, out_dir):
+def package(binary, out_dir, worker=None):
     check_binary(binary)
+    worker = worker or binary.with_name('hedit-plugin-worker.exe')
+    check_binary(worker)
     name = f'hedit-{version()}-windows-x86_64'
     out_dir.mkdir(parents=True, exist_ok=True)
     archive = out_dir / f'{name}.zip'
@@ -38,6 +40,7 @@ def package(binary, out_dir):
         stage = Path(work) / name
         stage.mkdir()
         shutil.copy2(binary, stage / 'hedit.exe')
+        shutil.copy2(worker, stage / 'hedit-plugin-worker.exe')
         for filename in ['README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md', 'CHANGELOG.md', 'LICENSE']:
             shutil.copy2(ROOT / filename, stage / filename)
         for directory in ['assets', 'themes', 'docs/images']:
@@ -69,7 +72,7 @@ def smoke(archive):
         with zipfile.ZipFile(archive) as bundle:
             bundle.extractall(work)
         root = Path(work) / archive.stem
-        for relative in ['hedit.exe', 'LICENSE', 'USER_GUIDE.md',
+        for relative in ['hedit.exe', 'hedit-plugin-worker.exe', 'LICENSE', 'USER_GUIDE.md',
                          'themes/hedit-ink.json', 'assets/dictionaries/en_US-LICENSE.txt',
                          'examples/cuda/vector_add.cu', 'docs/extensions.md',
                          'examples/extensions/markdown-task.json',
@@ -88,11 +91,12 @@ def smoke(archive):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=ROOT / 'target/release/hedit.exe')
+    parser.add_argument('--worker', type=Path, help='Headless Lua worker (defaults beside the editor).')
     parser.add_argument('--out-dir', type=Path, default=ROOT / 'dist')
     parser.add_argument('--smoke', action='store_true', help='Extract and run the package (requires Windows).')
     args = parser.parse_args()
     try:
-        archive = package(args.binary, args.out_dir)
+        archive = package(args.binary, args.out_dir, args.worker)
         if args.smoke:
             smoke(archive)
     except (OSError, ValueError, subprocess.SubprocessError) as error:

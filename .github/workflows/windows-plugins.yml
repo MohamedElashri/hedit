@@ -3,9 +3,9 @@ on:
   workflow_dispatch:
   push:
     branches: ['v0.7.0/**']
-    paths: ['src/plugin_runtime*', 'src/plugin_runtime/**', 'src/plugin_sandbox*', 'src/plugin_sandbox/**', 'tests/*plugin*', 'Cargo.toml', 'Cargo.lock', '.github/workflows/actions.lock', '.github/workflows/windows-plugins.yml']
+    paths: ['src/plugin_runtime*', 'src/plugin_runtime/**', 'src/plugin_sandbox*', 'src/plugin_sandbox/**', 'tests/*plugin*', 'crates/hedit-plugin/**', 'Cargo.toml', 'Cargo.lock', '.github/workflows/actions.lock', '.github/workflows/windows-plugins.yml']
   pull_request:
-    paths: ['src/plugin_runtime*', 'src/plugin_runtime/**', 'src/plugin_sandbox*', 'src/plugin_sandbox/**', 'tests/*plugin*', 'Cargo.toml', 'Cargo.lock', '.github/workflows/actions.lock', '.github/workflows/windows-plugins.yml']
+    paths: ['src/plugin_runtime*', 'src/plugin_runtime/**', 'src/plugin_sandbox*', 'src/plugin_sandbox/**', 'tests/*plugin*', 'crates/hedit-plugin/**', 'Cargo.toml', 'Cargo.lock', '.github/workflows/actions.lock', '.github/workflows/windows-plugins.yml']
 permissions:
   contents: read
 concurrency:
@@ -41,16 +41,20 @@ jobs:
           key: windows-lua-${{ runner.arch }}
           save-if: ${{ github.event_name == 'push' }}
           cache-on-failure: true
-      - name: Lint the adapter and shared engine
-        run: cargo clippy --locked --no-default-features --features windows-lua --all-targets -- -D warnings
-      - name: Build the real worker executable
-        run: cargo build --locked --no-default-features --features windows-lua --bin hedit
+      - name: Lint the headless runtime and adapter
+        run: cargo clippy --locked -p hedit-plugin --features windows-lua --all-targets -- -D warnings
+      - name: Build the headless worker
+        run: cargo build --locked -p hedit-plugin --features windows-lua --bin hedit-plugin-worker
       - name: Confinement, resource limits, cancellation, and shared engine tests
         shell: pwsh
         run: |
-          $env:HEDIT_LUA_TEST_EDITOR = (Resolve-Path target/debug/hedit.exe).Path
-          cargo test --locked --no-default-features --features windows-lua --bin hedit plugin_ -- --nocapture
+          $env:HEDIT_LUA_TEST_WORKER = (Resolve-Path target/debug/hedit-plugin-worker.exe).Path
+          cargo test --locked -p hedit-plugin --features windows-lua -- --nocapture
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Lint the editor integration
+        run: cargo clippy --locked --no-default-features --features windows-lua --all-targets -- -D warnings
+      - name: Build the editor
+        run: cargo build --locked --no-default-features --features windows-lua --bin hedit
       - name: CLI fixtures and signed distribution tests
         run: cargo test --locked --no-default-features --features windows-lua --test lua_plugin_runtime --test plugin_distribution -- --nocapture
       - name: Benchmark real confined fixture launches

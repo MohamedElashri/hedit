@@ -14,7 +14,7 @@ fn prepare(directory: &std::path::Path) -> PathBuf {
     let result = Command::new("python3")
         .arg(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/scripts/macos_plugin_helper.py"
+            "/../../scripts/macos_plugin_helper.py"
         ))
         .arg("--editor")
         .arg(std::env::current_exe().unwrap())

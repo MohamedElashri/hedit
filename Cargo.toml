@@ -7,7 +7,7 @@ description = "A native text editor with durable recovery, Git, and private SSH 
 license = "MIT"
 
 [workspace]
-members = ["crates/hedit-remote", "crates/hedit-core"]
+members = ["crates/hedit-remote", "crates/hedit-core", "crates/hedit-plugin"]
 default-members = ["."]
 exclude = ["vendor/egui", "vendor/epaint"]
 resolver = "2"
@@ -20,11 +20,12 @@ path = "tests/support/remote_workspace_probe.rs"
 default = ["terminal"]
 terminal = ["dep:libghostty-vt", "dep:portable-pty", "dep:rustybuzz"]
 # Stays opt-in until the native Windows confinement suite passes.
-windows-lua = []
+windows-lua = ["hedit-plugin/windows-lua"]
 
 [dependencies]
 getrandom = "0.4"
 hedit-core = { path = "crates/hedit-core" }
+hedit-plugin = { path = "crates/hedit-plugin" }
 hedit-remote = { path = "crates/hedit-remote" }
 libghostty-vt = { version = "=0.2.2", default-features = false, optional = true }
 portable-pty = { version = "0.9", optional = true }
@@ -41,7 +42,6 @@ sha2 = "0.11"
 hex = "0.4"
 ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std", "zeroize"] }
 zeroize = "1"
-mlua = { version = "=0.12.2", default-features = false, features = ["lua54", "vendored"] }
 regex = "1.13.1"
 encoding_rs = "0.8.42"
 trash = "5.2.9"
@@ -105,3 +105,6 @@ libghostty-vt-sys = { path = "vendor/libghostty-vt-sys" }
 lto = "thin"
 codegen-units = 1
 strip = true
+
+[dev-dependencies]
+hedit-plugin = { path = "crates/hedit-plugin", features = ["test-support"] }

@@ -41,6 +41,7 @@ class WindowsPackage(unittest.TestCase):
             root = Path(work)
             binary = root / 'hedit.exe'
             binary.write_bytes(self.pe())
+            binary.with_name('hedit-plugin-worker.exe').write_bytes(self.pe())
             project = root / 'source'
             project.mkdir()
             for filename in ['Cargo.toml', 'README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md', 'CHANGELOG.md', 'LICENSE']:
@@ -60,6 +61,7 @@ class WindowsPackage(unittest.TestCase):
             prefix = archive.stem + '/'
             with zipfile.ZipFile(archive) as bundle:
                 self.assertEqual(bundle.read(prefix + 'hedit.exe'), binary.read_bytes())
+                self.assertEqual(bundle.read(prefix + 'hedit-plugin-worker.exe'), binary.with_name('hedit-plugin-worker.exe').read_bytes())
                 for relative in ['README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md', 'CHANGELOG.md', 'LICENSE',
                                  'themes/hedit-ink.json', 'assets/hedit.svg',
                                  'assets/dictionaries/en_US-LICENSE.txt', 'assets/licenses/egui_commonmark-MIT.txt',
@@ -85,6 +87,7 @@ class WindowsPackage(unittest.TestCase):
             root = Path(work)
             binary = root / 'hedit.exe'
             binary.write_bytes(self.pe())
+            binary.with_name('hedit-plugin-worker.exe').write_bytes(self.pe())
             archive = packager.package(binary, root / 'out')
             calls = []
 
@@ -112,6 +115,7 @@ class WindowsPackage(unittest.TestCase):
             root = Path(work)
             binary = root / 'hedit.exe'
             binary.write_bytes(self.pe())
+            binary.with_name('hedit-plugin-worker.exe').write_bytes(self.pe())
             archive = packager.package(binary, root / 'out')
             archive.write_bytes(archive.read_bytes() + b'corruption')
             with patch.object(packager.subprocess, 'run') as run:
