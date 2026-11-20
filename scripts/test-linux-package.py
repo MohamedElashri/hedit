@@ -76,6 +76,8 @@ class LinuxRelease(unittest.TestCase):
                 self.assertEqual(package.extractfile(name + '/hedit').read(), binaries[0].read_bytes())
                 self.assertEqual(package.extractfile(name + '/docs/extensions.md').read(),
                                  (source / 'docs/extensions.md').read_bytes())
+                self.assertEqual(package.extractfile(name + '/docs/extension-security.md').read(),
+                                 (source / 'docs/extension-security.md').read_bytes())
                 self.assertNotIn(name + '/examples/development_probe.rs', package.getnames())
             digest = hashlib.sha256(archive.read_bytes()).hexdigest()
             self.assertEqual(archive.with_name(archive.name + '.sha256').read_text(),
@@ -90,7 +92,7 @@ class LinuxRelease(unittest.TestCase):
             subprocess.run(command, check=True)
             (destination / 'docs/extensions.md').write_text('previous guide')
             subprocess.run(command, check=True)
-            for relative in ['USER_GUIDE.md', 'docs/extensions.md',
+            for relative in ['USER_GUIDE.md', 'docs/extensions.md', 'docs/extension-security.md',
                              'assets/licenses/lua-MIT.txt',
                              'vendor/libghostty-vt-sys/PATCH.md',
                              'examples/extensions/markdown-quote.json']:

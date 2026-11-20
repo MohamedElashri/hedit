@@ -22,6 +22,8 @@
 
 ### Fixed
 
+- Reject excess Lua worker edits before deserializing them, and enforce decoded replacement limits while parsing replies.
+- Require worker output EOF before accepting Unix replies, and prevent native child-process creation in the macOS Lua helper.
 - Avoid repeated document scans when Lua commands read multiple selections, and remove per-character offset tables from multicursor replacements.
 - Wake the editor when Lua authorization checks and commands finish so results appear promptly.
 - Preserve cached Markdown figures with different text colors during redraws.

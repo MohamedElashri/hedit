@@ -396,6 +396,147 @@ mod tests {
     }
 
     #[test]
+    fn save_hook_denies_removed_mismatched_or_corrupt_bindings_before_execution() {
+        for policy in [
+            "absent",
+            "token",
+            "language",
+            "corrupt",
+            "revoked",
+            "reapproved",
+        ] {
+            let config = tempfile::tempdir().unwrap();
+            let path = config.path().join("extensions/formatter.json");
+            std::fs::create_dir(path.parent().unwrap()).unwrap();
+            // If the broker accidentally executes this source, it returns an
+            // instruction-limit failure rather than the expected denial.
+            let manifest = json!({
+                "api_version": 2, "id": "formatter",
+                "permissions": ["selection.read", "selection.replace"],
+                "scripts": {"run.lua": "while true do end"},
+                "commands": [{"id": "trim", "title": "Trim", "on_save": true,
+                    "action": {"kind": "lua", "source": "run.lua"}}]
+            })
+            .to_string();
+            std::fs::write(&path, &manifest).unwrap();
+            let digest = super::super::manifest::digest(&manifest);
+            let approve = |allowed| {
+                catalog::set_lua_approved(
+                    config.path(),
+                    &path,
+                    "formatter",
+                    "formatter.trim",
+                    &digest,
+                    allowed,
+                )
+                .unwrap()
+            };
+            let catalog = approve(true);
+            let ExtensionAction::Lua(plugin) = &catalog.contributions[0].action else {
+                unreachable!()
+            };
+            let binding = SaveHook {
+                command: "formatter.trim".into(),
+                approval: plugin.approval_id().unwrap(),
+            };
+            let mut settings = Settings::default();
+            settings
+                .extensions
+                .save_hooks
+                .insert("plain-text".into(), binding.clone());
+            match policy {
+                "absent" => {
+                    settings.extensions.save_hooks.clear();
+                }
+                "token" => {
+                    settings
+                        .extensions
+                        .save_hooks
+                        .get_mut("plain-text")
+                        .unwrap()
+                        .approval = "0".repeat(32);
+                }
+                "language" => {
+                    settings.extensions.save_hooks.clear();
+                    settings
+                        .extensions
+                        .save_hooks
+                        .insert("markdown".into(), binding.clone());
+                }
+                "revoked" => {
+                    approve(false);
+                }
+                "reapproved" => {
+                    approve(false);
+                    approve(true);
+                }
+                "corrupt" => {}
+                _ => unreachable!(),
+            }
+            let settings_path = config.path().join(settings_store::SETTINGS_FILE);
+            settings.save(&settings_path).unwrap();
+            if policy == "corrupt" {
+                std::fs::write(&settings_path, "{invalid").unwrap();
+            }
+            assert!(
+                matches!(
+                    run_hook(
+                        config.path(),
+                        &binding,
+                        "plain-text",
+                        plugin,
+                        "private text".into()
+                    ),
+                    Err(InvocationOutcome::Denied)
+                ),
+                "{policy}"
+            );
+        }
+    }
+
+    #[test]
+    fn late_save_result_cannot_replace_text_after_the_binding_is_removed() {
+        let config = tempfile::tempdir().unwrap();
+        let path = config.path().join("sample.txt");
+        std::fs::write(&path, "original").unwrap();
+        let (_session, ctx, mut app) = app_with("", Some(config.path()));
+        app.open(&ctx, Some(path.clone()));
+        finish_app_job(&mut app, &ctx);
+        assert!(app.apply_edit(
+            editing::Edit {
+                text: "user edit".into(),
+                anchor: 0,
+                head: 0
+            },
+            None
+        ));
+        let binding = SaveHook {
+            command: "formatter.trim".into(),
+            approval: "0".repeat(32),
+        };
+        app.settings
+            .extensions
+            .save_hooks
+            .insert("plain-text".into(), binding.clone());
+        let result = SaveResult {
+            id: app.active().page.info.id,
+            revision: app.active().page.info.revision,
+            language: "plain-text",
+            invocation: Invocation::on_save(&binding.command),
+            binding,
+            result: Ok((
+                "untrusted replacement".into(),
+                tempfile::tempfile().unwrap(),
+            )),
+        };
+        app.settings.extensions.save_hooks.clear();
+        app.complete_extension_save(&ctx, result);
+        finish_app_job(&mut app, &ctx);
+        assert_eq!(app.active().page.text, "user edit");
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "user edit");
+    }
+
+    #[test]
     fn invocation_settings_are_filtered_by_plugin_and_declared_type() {
         let config = tempfile::tempdir().unwrap();
         let path = config.path().join("extensions/formatter.json");

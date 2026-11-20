@@ -1,7 +1,7 @@
 //! Unix pipe adapter and supervision; Lua and policy live in the shared engine.
 #[cfg(test)]
 use super::engine::DEADLINE;
-use super::engine::MAX_BATCH_REPLY_BYTES;
+use super::protocol::MAX_BATCH_REPLY_BYTES;
 use super::HELPER_ARG;
 use crate::Error;
 use std::fs::File;
@@ -145,7 +145,9 @@ fn supervise_verified(
             if !status.success() {
                 return Err(Error::Worker);
             }
-            break;
+            if !output_open {
+                break;
+            }
         }
 
         let mut pipes = [
@@ -171,7 +173,7 @@ fn supervise_verified(
         };
     }
 
-    super::engine::worker_reply(reply, sent == request.len())
+    super::protocol::worker_reply(reply, sent == request.len())
 }
 
 #[cfg(test)]
@@ -213,6 +215,105 @@ mod tests {
         assert_eq!(
             supervise(&worker, reply, &AtomicBool::new(false), DEADLINE, None),
             Ok(text.into_bytes()),
+        );
+    }
+
+    #[test]
+    fn verification_failure_delivers_no_text_and_reaps_the_worker() {
+        let dir = tempfile::tempdir().unwrap();
+        let worker = fixture(dir.path(), "exec /bin/cat > \"$0.received\"");
+        let pid = std::cell::Cell::new(0);
+        let result = super::supervise_verified(
+            &worker,
+            b"private fixture must not cross the boundary".to_vec(),
+            &AtomicBool::new(false),
+            DEADLINE,
+            None,
+            |child| {
+                pid.set(child.id());
+                Err(io::Error::other("rejected worker identity"))
+            },
+        );
+        assert_eq!(result, Err(Error::Sandbox));
+        assert!(fs::read(worker.with_extension("received"))
+            .unwrap_or_default()
+            .is_empty());
+        assert_ne!(pid.get(), 0);
+        assert_eq!(unsafe { libc::kill(pid.get() as i32, 0) }, -1);
+        assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
+    }
+
+    #[test]
+    fn malformed_oversized_and_premature_replies_are_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        for (script, request) in [
+            ("exec /bin/cat >/dev/null", b"request".to_vec()),
+            ("/bin/cat >/dev/null; printf '\\377'", b"request".to_vec()),
+            (
+                "/bin/cat >/dev/null; printf '\\007private fixture'",
+                b"request".to_vec(),
+            ),
+            (
+                "/bin/cat >/dev/null; printf '\\000[]'; exit 1",
+                b"request".to_vec(),
+            ),
+            // Success cannot be accepted if the child exits before consuming
+            // a request too large to fit in the pipe.
+            ("printf '\\000[]'", vec![b'x'; 2 * 1024 * 1024]),
+            (
+                "/bin/cat >/dev/null; printf '\\000'; exec /usr/bin/yes x",
+                b"request".to_vec(),
+            ),
+        ] {
+            let worker = fixture(dir.path(), script);
+            assert_eq!(
+                supervise(&worker, request, &AtomicBool::new(false), DEADLINE, None),
+                Err(Error::Worker),
+                "{script}"
+            );
+        }
+    }
+
+    #[test]
+    fn blocked_request_and_unterminated_success_remain_subject_to_deadlines() {
+        let dir = tempfile::tempdir().unwrap();
+        for script in [
+            "while :; do :; done",
+            "printf '\\000[]'; while :; do :; done",
+        ] {
+            let worker = fixture(dir.path(), script);
+            assert_eq!(
+                supervise(
+                    &worker,
+                    vec![b'x'; 2 * 1024 * 1024],
+                    &AtomicBool::new(false),
+                    Duration::from_millis(250),
+                    None
+                ),
+                Err(Error::Deadline)
+            );
+        }
+    }
+
+    #[test]
+    fn successful_exit_does_not_accept_a_reply_without_output_eof() {
+        let dir = tempfile::tempdir().unwrap();
+        // Model a compromised worker passing stdout to another process before
+        // exiting. The bounded-lived fixture keeps the pipe open past the
+        // deadline; process exit alone must not complete the response frame.
+        let worker = fixture(
+            dir.path(),
+            "/bin/cat >/dev/null; /bin/sleep 1 &\nprintf '\\000[]'; exit 0",
+        );
+        assert_eq!(
+            supervise(
+                &worker,
+                b"request".to_vec(),
+                &AtomicBool::new(false),
+                Duration::from_millis(250),
+                None
+            ),
+            Err(Error::Deadline)
         );
     }
 

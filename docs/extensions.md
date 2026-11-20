@@ -86,6 +86,9 @@ limit. hedit loads up to 32 manifests.
 
 ## Permissions
 
+The [extension threat model](extension-security.md) describes isolation, consent,
+worker validation, and the limits of these protections.
+
 Lua commands start unapproved. Each approval covers one command and the exact
 installed copy’s manifest and source. **Allow once** covers the next attempt in
 that window. **Recent Lua activity** shows the latest 64 command outcomes and

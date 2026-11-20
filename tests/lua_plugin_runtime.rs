@@ -134,6 +134,43 @@ mod supported {
     }
 
     #[test]
+    fn malformed_frames_are_rejected_before_source_is_evaluated() {
+        let valid = request(
+            "error('must not evaluate malformed input')",
+            "private fixture",
+            "markdown",
+        );
+        // A valid frame would evaluate this source and return Execution (6).
+        assert_eq!(exchange(valid.clone()), [6]);
+        let mut oversized = (u32::MAX - 1).to_le_bytes().to_vec();
+        oversized.extend(u32::MAX.to_le_bytes());
+        let mut trailing = valid.clone();
+        trailing.push(0);
+        let mut repeated = valid.clone();
+        repeated.extend(&valid);
+        for malformed in [
+            valid[..valid.len() - 1].to_vec(),
+            oversized,
+            trailing,
+            repeated,
+        ] {
+            assert_eq!(exchange(malformed), [2]);
+        }
+    }
+
+    #[test]
+    fn worker_invocations_do_not_reuse_mutated_libraries() {
+        assert_eq!(call("string.upper = nil; math.secret = 'private fixture'; return function() return '' end", ""), [0]);
+        assert_eq!(
+            call(
+                "assert(math.secret == nil); return function(text) return text:upper() end",
+                "hello"
+            ),
+            b"\0HELLO"
+        );
+    }
+
+    #[test]
     fn enforces_instruction_and_memory_limits() {
         assert_eq!(call("while true do end", ""), [7]);
         assert_eq!(call("return function() while true do end end", ""), [7]);

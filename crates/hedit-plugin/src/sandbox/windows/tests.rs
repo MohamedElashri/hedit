@@ -14,6 +14,23 @@ pub(crate) const PROBE_ARGS: &[&str] = &[
     "--nocapture",
 ];
 
+pub(crate) const UNREAD_PROBE_ARGS: &[&str] = &[
+    "--exact",
+    "sandbox::windows::tests::native_unresponsive_probe",
+    "--ignored",
+    "--nocapture",
+];
+
+#[test]
+#[ignore = "only run inside a parent-created AppContainer and job"]
+fn native_unresponsive_probe() {
+    assert!(enter().is_ok());
+    io::stdout().write_all(b"\0[]").unwrap();
+    loop {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 #[test]
 #[ignore = "only run inside a parent-created AppContainer and job"]
 fn native_probe() {
@@ -34,6 +51,19 @@ fn native_probe() {
     io::stdin().read_to_end(&mut request).unwrap();
     let request: serde_json::Value = serde_json::from_slice(&request).unwrap();
     match request["action"].as_str().unwrap() {
+        "reply" => {
+            io::stdout()
+                .write_all(&[request["status"].as_u64().unwrap() as u8])
+                .unwrap();
+            io::stdout()
+                .write_all(request["body"].as_str().unwrap().as_bytes())
+                .unwrap();
+            unsafe { ExitProcess(request["exit"].as_u64().unwrap() as u32) }
+        }
+        "flood" => {
+            while io::stdout().write_all(&[0; 4096]).is_ok() {}
+            unsafe { ExitProcess(0) }
+        }
         "wait" => loop {
             std::thread::sleep(Duration::from_millis(50));
         },

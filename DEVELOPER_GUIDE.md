@@ -132,12 +132,14 @@ for consistent focus/Escape. Help resolves only explicitly bundled documents.
 The GUI-independent `crates/hedit-plugin` crate owns one Lua 5.4 engine for
 commands, fixtures, multi-selection edits, and save hooks. Extension authors use
 the [manifest and Lua reference](docs/extensions.md); host integration lives in
-`src/app/extensions/`.
+`src/app/extensions/`. The [extension threat model](docs/extension-security.md)
+defines trust boundaries, residual risks, and security test requirements.
 
 | Component | Responsibility |
 | --- | --- |
 | `runtime.rs`, `options.rs` | Shared invocation limits, command identifiers, and scalar settings |
-| `runtime/engine.rs` | Bounded request/reply codec, Lua library allowlist, input validation, and instruction/memory limits |
+| `runtime/protocol.rs` | Bounded request/reply codec, independent parent/worker validation, and exact edit-count parsing |
+| `runtime/engine.rs` | Lua library allowlist and instruction/memory limits |
 | `runtime/unix.rs`, `runtime/windows.rs` | Pipe delivery, cancellation, deadlines, and worker reaping |
 | `error.rs` | Typed runtime failures and fixed display messages; command/save activity classifies failures by type |
 | `sandbox/` | Native process confinement and resource checks; no Lua API or language policy |
@@ -158,7 +160,7 @@ queueing their results. The UI also retains bounded fallback polling.
 | Platform | Native boundary | Worker layout |
 | --- | --- | --- |
 | Linux x86-64 / ARM64 | seccomp syscall allowlist, descriptor restrictions, and a 256 MiB address-space limit; requires Linux 5.9 or the isolation syscalls backported | Editor executable through `/proc/self/exe` |
-| macOS universal | Signed App Sandbox helper with hardened runtime, a CPU cap, and a parent-enforced 256 MiB physical-footprint limit | Nested `Contents/Helpers/hedit-plugin.app` |
+| macOS universal | Signed App Sandbox helper with hardened runtime, CPU/child-process caps, and a parent-enforced 256 MiB physical-footprint limit | Nested `Contents/Helpers/hedit-plugin.app` |
 | Windows x86-64 / ARM64 | Capability-free AppContainer, private image ACL, explicit inherited handles, dynamic-code/child-process restrictions, and a job limiting memory to 256 MiB, CPU to two seconds, and active processes to one | Adjacent `hedit-plugin-worker.exe` |
 
 The macOS parent validates the running helper's identifier, signing team, and

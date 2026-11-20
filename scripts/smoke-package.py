@@ -69,7 +69,7 @@ def main():
                     'examples/extensions/markdown-quote.json',
                 }
         documents = ['CHANGELOG.md', 'vendor/egui_commonmark/PATCH.md', 'vendor/libghostty-vt-sys/PATCH.md',
-                     'docs/extensions.md', 'examples/extensions/markdown-task.json',
+                     'docs/extensions.md', 'docs/extension-security.md', 'examples/extensions/markdown-task.json',
                      'examples/extensions/markdown-quote.json']
         images = [path.relative_to(ROOT).as_posix() for path in (ROOT / 'docs/images').glob('*') if path.is_file()]
         for relative in documents + images:

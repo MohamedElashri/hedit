@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 
 mod engine;
+mod protocol;
 #[cfg(unix)]
 #[path = "runtime/unix.rs"]
 mod supervisor;

@@ -1,6 +1,6 @@
 //! Windows pipe/process adapter; the protocol and Lua engine are shared.
 use super::{
-    engine::{self, MAX_BATCH_REPLY_BYTES},
+    protocol::{self, MAX_BATCH_REPLY_BYTES},
     HELPER_ARG,
 };
 use crate::{sandbox::windows::Worker, Error};
@@ -105,14 +105,37 @@ fn supervise_arguments(
         child.terminate();
         let delivered = writer.join().map_err(|_| Error::Worker)?;
         reader.join().map_err(|_| Error::Worker)?;
-        engine::worker_reply(result?, delivered)
+        protocol::worker_reply(result?, delivered)
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sandbox::windows::tests::PROBE_ARGS;
+    use crate::sandbox::windows::tests::{PROBE_ARGS, UNREAD_PROBE_ARGS};
+
+    #[test]
+    fn supervisor_rejects_unsolicited_output_failed_exits_and_output_floods() {
+        for request in [
+            // The native probe runs under libtest, which writes a preamble.
+            // Even an otherwise valid reply must reject unsolicited output.
+            br#"{"action":"reply","status":0,"body":"[]","exit":0}"#.as_slice(),
+            br#"{"action":"reply","status":0,"body":"[]","exit":1}"#,
+            br#"{"action":"flood"}"#,
+        ] {
+            assert_eq!(
+                supervise_arguments(
+                    &std::env::current_exe().unwrap(),
+                    PROBE_ARGS,
+                    request.to_vec(),
+                    &AtomicBool::new(false),
+                    Duration::from_secs(5),
+                    None
+                ),
+                Err(Error::Worker)
+            );
+        }
+    }
     #[test]
     fn supervisor_deadline_reaps_a_worker_that_never_exits() {
         let start = Instant::now();
@@ -134,8 +157,8 @@ mod tests {
             let run = scope.spawn(|| {
                 supervise_arguments(
                     &std::env::current_exe().unwrap(),
-                    PROBE_ARGS,
-                    br#"{"action":"wait"}"#.to_vec(),
+                    UNREAD_PROBE_ARGS,
+                    vec![b'x'; 2 * 1024 * 1024],
                     &cancelled,
                     Duration::from_secs(10),
                     None,
@@ -146,12 +169,27 @@ mod tests {
             assert_eq!(run.join().unwrap(), Err(Error::Cancelled));
         });
     }
+
+    #[test]
+    fn premature_success_cannot_bypass_a_deadline_with_a_blocked_request_pipe() {
+        assert_eq!(
+            supervise_arguments(
+                &std::env::current_exe().unwrap(),
+                UNREAD_PROBE_ARGS,
+                vec![b'x'; 2 * 1024 * 1024],
+                &AtomicBool::new(false),
+                Duration::from_secs(2),
+                None
+            ),
+            Err(Error::Deadline)
+        );
+    }
 }
 
 #[cfg(test)]
 mod engine_tests {
     use super::*;
-    use crate::runtime::{self, Input};
+    use crate::runtime::{self, engine, Input};
     fn input(source: &str, selections: Vec<String>) -> Input {
         Input {
             source: source.into(),

@@ -208,7 +208,11 @@ pub(crate) fn enter() -> io::Result<()> {
             return Err(denied());
         }
     }
-    for (resource, maximum) in [(libc::RLIMIT_CORE, 0), (libc::RLIMIT_CPU, 2)] {
+    for (resource, maximum) in [
+        (libc::RLIMIT_CORE, 0),
+        (libc::RLIMIT_CPU, 2),
+        (libc::RLIMIT_NPROC, 0),
+    ] {
         let mut limits = MaybeUninit::<libc::rlimit>::uninit();
         // SAFETY: getrlimit initializes limits on success; setrlimit gets a valid structure.
         unsafe {

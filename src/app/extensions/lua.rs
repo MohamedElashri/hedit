@@ -713,6 +713,97 @@ mod tests {
     }
 
     #[test]
+    fn pending_denied_or_disconnected_authorization_never_starts_a_worker() {
+        let config = tempfile::tempdir().unwrap();
+        let (_session, ctx, mut app, _) = approved(config.path(), "private text");
+        app.set_selections(vec![Selection { anchor: 0, head: 7 }]);
+        for disconnected in [false, true] {
+            fake_result(&mut app, "must not be applied");
+            let (sender, receiver) = mpsc::channel();
+            app.lua_transform.as_mut().unwrap().phase = Phase::Checking(receiver);
+            app.poll_lua_transform(&ctx);
+            assert!(matches!(
+                app.lua_transform.as_ref().unwrap().phase,
+                Phase::Checking(_)
+            ));
+            if !disconnected {
+                sender.send(None).unwrap();
+            }
+            drop(sender);
+            app.poll_lua_transform(&ctx);
+            assert!(app.lua_transform.is_none());
+            assert_eq!(app.active().page.text, "private text");
+            assert!(app.error.is_some());
+        }
+    }
+
+    #[test]
+    fn preview_cannot_apply_after_revocation_disable_removal_or_source_change() {
+        use crate::app::tests::{click_label, frame};
+
+        for change in ["revoke", "reapprove", "disable", "remove", "source"] {
+            let config = tempfile::tempdir().unwrap();
+            let (_session, ctx, mut app, digest) = approved(config.path(), "selected");
+            app.settings.extensions.preview_edits = true;
+            let selection = Selection { anchor: 0, head: 8 };
+            app.set_selections(vec![selection]);
+            fake_result(&mut app, "untrusted replacement");
+            frame(&ctx, &mut app, vec![]);
+            frame(&ctx, &mut app, vec![]);
+            assert!(matches!(
+                app.lua_transform.as_ref().unwrap().phase,
+                Phase::Preview { .. }
+            ));
+            match change {
+                "revoke" => set_approval(config.path(), &digest, false),
+                "reapprove" => {
+                    set_approval(config.path(), &digest, false);
+                    set_approval(config.path(), &digest, true);
+                }
+                "disable" => {
+                    catalog::set_enabled(config.path(), ID, false).unwrap();
+                }
+                "remove" => {
+                    std::fs::remove_file(config.path().join("extensions/markdown-quote.json"))
+                        .unwrap()
+                }
+                "source" => std::fs::write(
+                    config.path().join("extensions/markdown-quote.json"),
+                    MANIFEST.replace("quote.lua", "changed.lua"),
+                )
+                .unwrap(),
+                _ => unreachable!(),
+            }
+            click_label(&ctx, &mut app, "Apply changes");
+            finish_transform(&mut app, &ctx);
+            assert_eq!(app.active().page.text, "selected", "{change}");
+            assert_eq!(app.selections(), [selection], "{change}");
+            assert!(
+                app.error.as_deref().unwrap().contains("approval changed"),
+                "{change}"
+            );
+        }
+    }
+
+    #[test]
+    fn moving_to_another_pane_cancels_a_result_even_for_the_same_document() {
+        let config = tempfile::tempdir().unwrap();
+        let (_session, ctx, mut app, _) = approved(config.path(), "selected");
+        app.set_selections(vec![Selection { anchor: 0, head: 8 }]);
+        let document = app.active().page.info.id;
+        fake_result(&mut app, "untrusted replacement");
+        let group = app.panes.focused_id();
+        app.split(1);
+        app.execute(&ctx, Command::FocusGroup2);
+        assert_ne!(app.panes.focused_id(), group);
+        assert_eq!(app.active().page.info.id, document);
+        app.poll_lua_transform(&ctx);
+        assert!(app.lua_transform.is_none());
+        assert_eq!(app.active().page.text, "selected");
+        assert!(app.notice.contains("context changed"));
+    }
+
+    #[test]
     fn selection_mapping_orders_unicode_ranges_and_rejects_overlaps() {
         let text = "aλ🦀\r\n東京";
         assert_eq!(

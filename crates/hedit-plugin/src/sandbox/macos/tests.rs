@@ -166,6 +166,26 @@ fn native_probe() -> ! {
             && unsafe { limits.assume_init() }.rlim_max <= 2,
         20,
     );
+    let forked = unsafe { libc::fork() };
+    if forked == 0 {
+        unsafe { libc::_exit(99) }
+    }
+    let denied = forked == -1
+        && matches!(
+            io::Error::last_os_error().raw_os_error(),
+            Some(libc::EAGAIN | libc::EPERM | libc::EACCES)
+        );
+    if forked > 0 {
+        unsafe { libc::waitpid(forked, ptr::null_mut(), 0) };
+        let _ = io::stdout().write_all(b"native fork unexpectedly succeeded\n");
+    }
+    check(denied, 22);
+    let mut limits = MaybeUninit::<libc::rlimit>::uninit();
+    check(
+        unsafe { libc::getrlimit(libc::RLIMIT_NPROC, limits.as_mut_ptr()) } == 0
+            && unsafe { limits.assume_init() }.rlim_max == 0,
+        23,
+    );
     check(io::stdout().write_all(b"native probe passed\n").is_ok(), 21);
     unsafe { libc::_exit(0) }
 }
