@@ -481,6 +481,8 @@ impl Worker {
         let environment = environment()?;
         let current_directory = working_directory()?;
         let mut information = PROCESS_INFORMATION::default();
+        // Console initialization can require a helper process and conflicts
+        // with the child-process restriction. All worker I/O uses these pipes.
         check(unsafe {
             CreateProcessW(
                 wide(&copied).as_ptr(),
@@ -489,7 +491,7 @@ impl Worker {
                 ptr::null(),
                 1,
                 CREATE_SUSPENDED
-                    | CREATE_NO_WINDOW
+                    | DETACHED_PROCESS
                     | CREATE_UNICODE_ENVIRONMENT
                     | EXTENDED_STARTUPINFO_PRESENT,
                 environment.as_ptr().cast(),

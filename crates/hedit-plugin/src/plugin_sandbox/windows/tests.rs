@@ -341,7 +341,7 @@ fn bootstrap_loader_diagnostics() {
                 ptr::null(),
                 1,
                 CREATE_SUSPENDED
-                    | CREATE_NO_WINDOW
+                    | DETACHED_PROCESS
                     | CREATE_UNICODE_ENVIRONMENT
                     | EXTENDED_STARTUPINFO_PRESENT,
                 if inherit_env {
