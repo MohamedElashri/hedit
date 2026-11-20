@@ -134,7 +134,7 @@ the current installed snapshot with the reviewed copy and durably clear its Lua
 approvals before replacing or removing it. Older extension-wide grants require
 fresh consent per command. See the [extension guide](docs/extensions.md).
 
-The Linux x86-64 editor launches a fresh worker with clean environment and
+The Linux x86-64 and ARM64 editor builds launch a fresh worker with clean environment and
 bounded anonymous pipes. The worker drops inherited descriptors and installs
 kernel process restrictions before reading the request. Lua runs with a text
 loader, a small standard library, and memory, instruction, and wall-clock
@@ -144,7 +144,14 @@ See the [Lua and mlua licenses](assets/licenses/lua-MIT.txt).
 Run `cargo test --locked --test lua_plugin_runtime` for executable and sample
 coverage and `cargo test --locked --bin hedit plugin_` for isolation and
 supervisor regressions. Run `cargo test --locked --bin hedit app::extensions`
-for manifest, consent, and editor regressions.
+for manifest, consent, preview, multi-selection, and save regressions.
+Use `cargo test --locked --test plugin_distribution` to verify packaging, signing,
+and fixture commands. Save hooks require a separate user binding to a persistent
+approval nonce. A worker has 400 ms for an on-save invocation.
+
+macOS and Windows currently decline executable Lua. A future macOS helper needs
+native sandbox and signing verification. A Windows helper needs a restricted
+AppContainer, explicit inherited handles, and native job-limit tests.
 
 ## SSH architecture and testing
 

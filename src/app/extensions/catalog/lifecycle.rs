@@ -1,13 +1,16 @@
 //! Review a snapshot before changing files in the user's extension directory.
 use super::{
-    change_lock, disabled, invalidate_lua_grants, read, Catalog, Grants, DISABLED_FILE, GRANTS_FILE,
+    advance_one_time_epoch, change_lock, disabled, invalidate_lua_grants, read, Catalog, Grants,
+    DISABLED_FILE, GRANTS_FILE,
 };
-use crate::app::extensions::manifest::{
-    self, Manifest, MAX_DIRECTORY_ENTRIES, MAX_MANIFESTS, MAX_MANIFEST_BYTES,
+use crate::app::extensions::{
+    distribution::{parse_installable, Release, MAX_INSTALL_BYTES},
+    manifest::{self, Manifest, MAX_DIRECTORY_ENTRIES, MAX_MANIFESTS},
 };
 use hedit::projects;
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::{BTreeMap, BTreeSet},
     fs::{self, Metadata, OpenOptions},
     io::{self, Read, Write},
     path::{Path, PathBuf},
@@ -17,6 +20,7 @@ use std::{
 pub(in crate::app::extensions) struct InstalledManifest {
     pub(in crate::app::extensions) path: PathBuf,
     pub(in crate::app::extensions) id: Option<String>,
+    pub(in crate::app::extensions) release: Option<Release>,
     pub(super) digest: String,
     pub(super) identity: FileIdentity,
 }
@@ -109,17 +113,17 @@ fn read_installed(path: &Path) -> Result<(Vec<u8>, FileIdentity), String> {
         let identity = FileIdentity::from(metadata);
         let size_error = || {
             io::Error::other(format!(
-                "Manifest exceeds the {MAX_MANIFEST_BYTES}-byte limit."
+                "Manifest exceeds the {MAX_INSTALL_BYTES}-byte limit."
             ))
         };
-        if identity.bytes > MAX_MANIFEST_BYTES {
+        if identity.bytes > MAX_INSTALL_BYTES {
             return Err(size_error());
         }
         let mut bytes = Vec::with_capacity(identity.bytes as usize);
         (&mut file)
-            .take(MAX_MANIFEST_BYTES + 1)
+            .take(MAX_INSTALL_BYTES + 1)
             .read_to_end(&mut bytes)?;
-        if bytes.len() as u64 > MAX_MANIFEST_BYTES {
+        if bytes.len() as u64 > MAX_INSTALL_BYTES {
             return Err(size_error());
         }
         if FileIdentity::from(file.metadata()?) != identity || bytes.len() as u64 != identity.bytes
@@ -144,14 +148,24 @@ pub(super) fn inspect_manifest<T>(
     let digest = manifest::digest(&bytes);
     let manifest = std::str::from_utf8(&bytes)
         .map_err(|error| error.to_string())
-        .and_then(manifest::parse_manifest);
+        .and_then(parse_installable);
     let reviewed = InstalledManifest {
         path: path.to_owned(),
-        id: manifest.as_ref().ok().map(|manifest| manifest.id.clone()),
+        id: manifest
+            .as_ref()
+            .ok()
+            .map(|(manifest, _)| manifest.id.clone()),
+        release: manifest
+            .as_ref()
+            .ok()
+            .and_then(|(_, release)| release.clone()),
         digest,
         identity,
     };
-    (manifest.and_then(process), Some(reviewed))
+    (
+        manifest.and_then(|(manifest, _)| process(manifest)),
+        Some(reviewed),
+    )
 }
 
 #[derive(Clone)]
@@ -161,6 +175,8 @@ pub(in crate::app::extensions) struct ImportPreview {
     pub(in crate::app::extensions) commands: Vec<(String, String)>,
     pub(in crate::app::extensions) lua: bool,
     pub(in crate::app::extensions) digest: String,
+    pub(in crate::app::extensions) release: Option<Release>,
+    script_digests: BTreeMap<String, String>,
     text: String,
 }
 
@@ -168,8 +184,9 @@ pub(in crate::app::extensions) struct ImportPreview {
 pub(in crate::app::extensions) enum InstallChange {
     New,
     Update {
-        installed: InstalledManifest,
+        installed: Box<InstalledManifest>,
         previous_commands: Vec<(String, String)>,
+        changed_scripts: Vec<String>,
     },
     Unchanged,
 }
@@ -178,19 +195,22 @@ pub(in crate::app::extensions) enum InstallChange {
 pub(in crate::app::extensions) struct InstallReview {
     pub(in crate::app::extensions) preview: ImportPreview,
     pub(in crate::app::extensions) change: InstallChange,
+    pub(in crate::app::extensions) publisher_confirmed: bool,
 }
 
 impl ImportPreview {
     pub(in crate::app::extensions) fn open(source: PathBuf) -> Result<Self, String> {
-        let text = projects::read_text(&source, MAX_MANIFEST_BYTES)
+        let text = projects::read_text(&source, MAX_INSTALL_BYTES)
             .map_err(|error| format!("{}: {error}", source.display()))?;
-        let manifest = manifest::parse_manifest(&text)
-            .map_err(|error| format!("{}: {error}", source.display()))?;
+        let (manifest, release) =
+            parse_installable(&text).map_err(|error| format!("{}: {error}", source.display()))?;
         Ok(Self {
             source,
             commands: manifest.command_labels(),
             lua: manifest.lua_digest.is_some(),
             digest: manifest::digest(&text),
+            release,
+            script_digests: manifest.script_digests(),
             id: manifest.id,
             text,
         })
@@ -201,6 +221,7 @@ impl ImportPreview {
         Ok(InstallReview {
             preview: self,
             change,
+            publisher_confirmed: false,
         })
     }
 
@@ -226,9 +247,26 @@ impl ImportPreview {
             if installed.digest == self.digest {
                 return Ok(InstallChange::Unchanged);
             }
+            if let Some(previous) = &installed.release {
+                let update = self
+                    .release
+                    .as_ref()
+                    .ok_or("Choose a newer versioned bundle for this update.")?;
+                update.check_update(previous)?;
+            }
+            let previous = manifest.script_digests();
+            let changed_scripts = previous
+                .keys()
+                .chain(self.script_digests.keys())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .filter(|name| previous.get(*name) != self.script_digests.get(*name))
+                .cloned()
+                .collect();
             return Ok(InstallChange::Update {
-                installed,
+                installed: Box::new(installed),
                 previous_commands: manifest.command_labels(),
+                changed_scripts,
             });
         }
         let destination = directory.join(format!("{}.json", self.id));
@@ -250,7 +288,27 @@ impl ImportPreview {
 }
 
 impl InstallReview {
+    pub(in crate::app::extensions) fn requires_publisher_confirmation(&self) -> bool {
+        let signed = self
+            .preview
+            .release
+            .as_ref()
+            .is_some_and(|release| release.publisher.is_some());
+        signed
+            && match &self.change {
+                InstallChange::New => true,
+                InstallChange::Update { installed, .. } => installed
+                    .release
+                    .as_ref()
+                    .is_none_or(|release| release.publisher.is_none()),
+                InstallChange::Unchanged => false,
+            }
+    }
+
     pub(in crate::app::extensions) fn install(&self, config: &Path) -> Result<Catalog, String> {
+        if self.requires_publisher_confirmation() && !self.publisher_confirmed {
+            return Err("Confirm the publisher key before installing this bundle.".into());
+        }
         let _lock = change_lock(config)?;
         if self.preview.change(config)? != self.change {
             return Err(
@@ -325,7 +383,7 @@ pub(in crate::app::extensions) fn uninstall(
 pub(in crate::app::extensions) fn reset_unreadable_approvals(
     config: &Path,
 ) -> Result<Catalog, String> {
-    let _lock = change_lock(config)?;
+    let lock = change_lock(config)?;
     if Grants::read(config).is_ok() {
         return Err("Lua approvals changed. Reload extensions before resetting them.".into());
     }
@@ -341,6 +399,8 @@ pub(in crate::app::extensions) fn reset_unreadable_approvals(
         .prefix("lua-approvals-backup-")
         .tempdir_in(config)
         .map_err(|error| error.to_string())?;
+    // An absent approvals file must not revive a queued or running permit.
+    advance_one_time_epoch(&lock)?;
     // A rename preserves the file or link without opening or following it.
     fs::rename(&state, backup.path().join(GRANTS_FILE)).map_err(|error| error.to_string())?;
     let backup = backup.keep();

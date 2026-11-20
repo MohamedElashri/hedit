@@ -27,6 +27,7 @@ mod editor_interaction;
 mod editor_layout;
 mod explorer;
 mod extensions;
+pub(crate) use extensions::run_plugin_cli;
 mod file_reference;
 #[cfg(test)]
 mod file_reference_tests;
@@ -156,6 +157,7 @@ use std::{
 };
 
 enum Action {
+    ExtensionSave(extensions::SaveResult),
     Quality(Box<quality::Event>),
     Add(Box<Document>, Page, usize),
     AddTemplate(Box<Document>, Page, extensions::Template),
@@ -1374,6 +1376,7 @@ impl HeditApp {
                         }
                     }
                 }
+                Ok(Action::ExtensionSave(result)) => self.complete_extension_save(ctx, result),
                 Ok(Action::SaveTo(id, path)) => {
                     self.save_to_path(ctx, id, Some(path));
                     // Formatting can fail before a save worker starts, after
@@ -1614,7 +1617,10 @@ impl HeditApp {
             || (self.closing && self.close_flow.is_none())
             || self.checkpoint_pending
             || self.updates.active()
-            || self.lua_transform.is_some()
+            || self
+                .lua_transform
+                .as_ref()
+                .is_some_and(extensions::LuaTransform::needs_poll)
             || self.quality.incoming.is_some()
             || !self.pending_paths.is_empty()
             || self
@@ -3938,7 +3944,7 @@ impl eframe::App for HeditApp {
         self.quality_windows(ctx);
         self.record_copies(ctx);
         self.close_dialog(ctx);
-        self.poll_lua_transform();
+        self.poll_lua_transform(ctx);
         self.terminal_onboarding(ctx);
         self.notification_center(ctx);
         let paths: Vec<_> = ctx.input(|i| {
@@ -4089,6 +4095,7 @@ mod tests {
             app.quality_windows(ctx);
             app.record_copies(ctx);
             app.close_dialog(ctx);
+            app.poll_lua_transform(ctx);
             app.notification_center(ctx);
         });
         assert!(!output.shapes.is_empty());

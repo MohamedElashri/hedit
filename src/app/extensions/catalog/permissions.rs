@@ -5,10 +5,12 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     ffi::OsStr,
     fs::{self, File, OpenOptions},
-    io,
+    io::{self, Seek, Write},
     path::Path,
+    sync::atomic::{AtomicBool, Ordering},
 };
 
+const LOCK_FILE: &str = "extensions.lock";
 pub(super) const DISABLED_FILE: &str = "extensions-disabled.json";
 pub(super) const MAX_DISABLED: usize = 256;
 const MAX_DISABLED_BYTES: u64 = 16 * 1024;
@@ -48,11 +50,81 @@ impl Grant {
         })
     }
 
+    pub(in crate::app::extensions) fn approval_id(&self) -> String {
+        self.token
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+
     pub(super) fn matches(&self, installed: &InstalledManifest) -> bool {
         installed.path.file_name() == Some(OsStr::new(&self.manifest))
             && self.digest == installed.digest
             && self.identity == installed.identity
             && self.capabilities == manifest::LUA_CAPABILITIES
+    }
+}
+
+/// Captures policy revisions without writing an approval to disk. Any managed
+/// policy mutation invalidates the queued or running invocation.
+pub(in crate::app::extensions) struct OneTimeApproval {
+    policy: PermissionState,
+    started: AtomicBool,
+}
+
+impl OneTimeApproval {
+    pub(super) fn new(config: &Path) -> Result<Self, String> {
+        Ok(Self {
+            policy: PermissionState::read(config)?,
+            started: AtomicBool::new(false),
+        })
+    }
+
+    pub(in crate::app::extensions) fn claim(&self) -> bool {
+        !self.started.swap(true, Ordering::AcqRel)
+    }
+
+    pub(super) fn authorizes(&self, config: &Path) -> bool {
+        self.started.load(Ordering::Acquire) && self.policy_unchanged(config)
+    }
+
+    pub(super) fn policy_unchanged(&self, config: &Path) -> bool {
+        PermissionState::read(config).is_ok_and(|state| state == self.policy)
+    }
+}
+
+#[derive(PartialEq, Eq)]
+struct PermissionState {
+    approvals: Option<FileIdentity>,
+    disabled: Option<FileIdentity>,
+    epoch: Vec<u8>,
+}
+
+impl PermissionState {
+    fn read(config: &Path) -> Result<Self, String> {
+        fn revision(path: &Path) -> Result<Option<FileIdentity>, String> {
+            match open_leaf(path, OpenOptions::new().read(true)) {
+                Ok(file) => {
+                    if path.file_name() == Some(OsStr::new(GRANTS_FILE)) {
+                        verify_grant_owner(&file)?;
+                    }
+                    file.metadata()
+                        .map(FileIdentity::from)
+                        .map(Some)
+                        .map_err(|error| error.to_string())
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+                Err(error) => Err(error.to_string()),
+            }
+        }
+        let lock = open_leaf(&config.join(LOCK_FILE), OpenOptions::new().read(true))
+            .map_err(|error| error.to_string())?;
+        Ok(Self {
+            approvals: revision(&config.join(GRANTS_FILE))?,
+            disabled: revision(&config.join(DISABLED_FILE))?,
+            epoch: hedit_core::file_io::read_bounded(lock, 16)
+                .map_err(|error| error.to_string())?,
+        })
     }
 }
 
@@ -231,10 +303,22 @@ fn verify_grant_owner(file: &File) -> Result<(), String> {
     Ok(())
 }
 
+/// Change the epoch when an operation can otherwise leave the policy file
+/// absent both before and after, such as resetting a corrupt approvals file.
+pub(super) fn advance_one_time_epoch(mut lock: &File) -> Result<(), String> {
+    let mut epoch = [0; 16];
+    getrandom::fill(&mut epoch).map_err(|_| "Could not revoke one-time approvals.")?;
+    lock.seek(io::SeekFrom::Start(0))
+        .and_then(|_| lock.write_all(&epoch))
+        .and_then(|()| lock.set_len(epoch.len() as u64))
+        .and_then(|()| lock.sync_data())
+        .map_err(|error| error.to_string())
+}
+
 pub(super) fn change_lock(config: &Path) -> Result<File, String> {
     fs::create_dir_all(config).map_err(|error| error.to_string())?;
     let file = open_leaf(
-        &config.join("extensions.lock"),
+        &config.join(LOCK_FILE),
         OpenOptions::new()
             .create(true)
             .truncate(false)

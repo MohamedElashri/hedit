@@ -1,4 +1,5 @@
-use super::{RunningPlugin, HELPER_ARG, MAX_SELECTION_BYTES};
+use super::{Input, HELPER_ARG, MAX_SELECTIONS, MAX_SELECTION_BYTES};
+use hedit::plugin_options::{self, Value as SettingValue};
 use mlua::chunk::ChunkMode;
 use mlua::{HookTriggers, Lua, LuaOptions, StdLib, Table, Value, VmState};
 use std::cell::Cell;
@@ -9,13 +10,16 @@ use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc};
+#[cfg(test)]
 use std::thread;
 use std::time::{Duration, Instant};
 
 const MAX_SOURCE_BYTES: usize = 64 * 1024;
 const MAX_LANGUAGE_BYTES: usize = 256;
 const MAX_REPLACEMENT_BYTES: usize = 256 * 1024;
+const MAX_BATCH_REQUEST_BYTES: usize = 1024 * 1024;
+const MAX_BATCH_REPLY_BYTES: usize = 2 * 1024 * 1024;
+const BATCH_REQUEST: u32 = u32::MAX - 1;
 const LUA_MEMORY_BYTES: usize = 16 * 1024 * 1024;
 const INSTRUCTION_INTERVAL: u32 = 1_000;
 const INSTRUCTION_BUDGET: u32 = 1_000_000;
@@ -79,89 +83,112 @@ impl Failure {
     }
 }
 
-struct Request {
-    source: String,
-    selection: String,
-    language: String,
+impl Input {
+    fn validate(&self) -> Result<(), Failure> {
+        if self.source.len() > MAX_SOURCE_BYTES
+            || self.language.len() > MAX_LANGUAGE_BYTES
+            || !(1..=MAX_SELECTIONS).contains(&self.selections.len())
+            || self.selections.iter().map(String::len).sum::<usize>() > MAX_SELECTION_BYTES
+            || self.settings.len() > plugin_options::MAX_SETTINGS
+            || self
+                .settings
+                .iter()
+                .any(|(key, value)| !plugin_options::valid_id(key) || !value.valid())
+        {
+            return Err(Failure::Request);
+        }
+        Ok(())
+    }
 }
 
-impl Request {
-    fn encode(self) -> Result<Vec<u8>, Failure> {
-        let fields = [
-            (self.source, MAX_SOURCE_BYTES),
-            (self.selection, MAX_SELECTION_BYTES),
-            (self.language, MAX_LANGUAGE_BYTES),
-        ];
-        let mut bytes = Vec::new();
-        for (field, maximum) in fields {
-            if field.len() > maximum {
-                return Err(Failure::Request);
-            }
-            bytes.extend_from_slice(&(field.len() as u32).to_le_bytes());
-            bytes.extend_from_slice(field.as_bytes());
+fn encode_request(input: &Input) -> Result<Vec<u8>, Failure> {
+    input.validate()?;
+    let payload = serde_json::to_vec(input).map_err(|_| Failure::Request)?;
+    if payload.len() > MAX_BATCH_REQUEST_BYTES {
+        return Err(Failure::Request);
+    }
+    let mut bytes = Vec::with_capacity(payload.len() + 8);
+    bytes.extend(BATCH_REQUEST.to_le_bytes());
+    bytes.extend((payload.len() as u32).to_le_bytes());
+    bytes.extend(payload);
+    Ok(bytes)
+}
+
+fn decode_request(mut input: impl Read) -> Result<(Input, bool), Failure> {
+    fn length(input: &mut impl Read) -> Result<u32, Failure> {
+        let mut size = [0; 4];
+        input.read_exact(&mut size).map_err(|_| Failure::Request)?;
+        Ok(u32::from_le_bytes(size))
+    }
+
+    fn bytes(input: &mut impl Read, size: u32, maximum: usize) -> Result<Vec<u8>, Failure> {
+        if size as usize > maximum {
+            return Err(Failure::Request);
         }
+        let mut bytes = vec![0; size as usize];
+        input.read_exact(&mut bytes).map_err(|_| Failure::Request)?;
         Ok(bytes)
     }
 
-    fn decode(mut input: impl Read) -> Result<Self, Failure> {
-        let mut field = |maximum| {
-            let mut size = [0; 4];
-            input.read_exact(&mut size).map_err(|_| Failure::Request)?;
-            let length = u32::from_le_bytes(size) as usize;
-            if length > maximum {
-                return Err(Failure::Request);
-            }
-            let mut bytes = vec![0; length];
-            input.read_exact(&mut bytes).map_err(|_| Failure::Request)?;
-            String::from_utf8(bytes).map_err(|_| Failure::Request)
-        };
-        let request = Self {
-            source: field(MAX_SOURCE_BYTES)?,
-            selection: field(MAX_SELECTION_BYTES)?,
-            language: field(MAX_LANGUAGE_BYTES)?,
-        };
-        if input.read(&mut [0; 1]).map_err(|_| Failure::Request)? != 0 {
-            return Err(Failure::Request);
-        }
-        Ok(request)
+    fn text(input: &mut impl Read, size: u32, maximum: usize) -> Result<String, Failure> {
+        String::from_utf8(bytes(input, size, maximum)?).map_err(|_| Failure::Request)
     }
+
+    let first = length(&mut input)?;
+    let batch = first == BATCH_REQUEST;
+    let request = if batch {
+        let size = length(&mut input)?;
+        let payload = bytes(&mut input, size, MAX_BATCH_REQUEST_BYTES)?;
+        serde_json::from_slice(&payload).map_err(|_| Failure::Request)?
+    } else {
+        let source = text(&mut input, first, MAX_SOURCE_BYTES)?;
+        let size = length(&mut input)?;
+        let selection = text(&mut input, size, MAX_SELECTION_BYTES)?;
+        let size = length(&mut input)?;
+        let language = text(&mut input, size, MAX_LANGUAGE_BYTES)?;
+        Input {
+            source,
+            selections: vec![selection],
+            language,
+            settings: Default::default(),
+        }
+    };
+    if input.read(&mut [0; 1]).map_err(|_| Failure::Request)? != 0 {
+        return Err(Failure::Request);
+    }
+    request.validate()?;
+    Ok((request, batch))
 }
 
-pub(super) fn start(
-    source: String,
-    selection: String,
-    language: String,
-    approval: File,
-) -> Result<RunningPlugin, String> {
-    let request = Request {
-        source,
-        selection,
-        language,
-    }
-    .encode()
-    .map_err(|failure| failure.message().to_owned())?;
-    let (sender, receiver) = mpsc::channel();
-    let cancelled = Arc::new(AtomicBool::new(false));
-    let thread_cancelled = cancelled.clone();
-    thread::Builder::new()
-        .name("hedit-lua-worker".into())
-        .spawn(move || {
-            // Open the running image, even if an update replaced its installation path.
-            let result = supervise(
-                Path::new("/proc/self/exe"),
-                request,
-                &thread_cancelled,
-                DEADLINE,
-                Some(approval),
-            )
-            .map_err(|failure| failure.message().to_owned());
-            let _ = sender.send(result);
-        })
-        .map_err(|_| Failure::Worker.message().to_owned())?;
-    Ok(RunningPlugin {
-        receiver,
-        cancelled,
-    })
+pub(super) fn run(
+    input: Input,
+    approval: Option<File>,
+    cancelled: &AtomicBool,
+    save: bool,
+) -> Result<Vec<String>, String> {
+    let count = input.selections.len();
+    let response = (|| {
+        let request = encode_request(&input)?;
+        let timeout = if save {
+            Duration::from_millis(400)
+        } else {
+            DEADLINE
+        };
+        let reply = supervise(
+            Path::new("/proc/self/exe"),
+            request,
+            cancelled,
+            timeout,
+            approval,
+        )?;
+        let edits: Vec<String> = serde_json::from_slice(&reply).map_err(|_| Failure::Worker)?;
+        if edits.len() != count {
+            return Err(Failure::Worker);
+        }
+        validate_edits(&edits)?;
+        Ok(edits)
+    })();
+    response.map_err(|failure| failure.message().to_owned())
 }
 
 struct ReapChild(Child);
@@ -190,7 +217,7 @@ fn supervise(
     cancelled: &AtomicBool,
     timeout: Duration,
     mut approval: Option<File>,
-) -> Result<String, Failure> {
+) -> Result<Vec<u8>, Failure> {
     if cancelled.load(Ordering::Relaxed) {
         return Err(Failure::Cancelled);
     }
@@ -212,7 +239,7 @@ fn supervise(
     set_nonblocking(&output)?;
     let mut input = Some(input);
     let output_fd = output.as_raw_fd();
-    let mut output = output.take(MAX_REPLACEMENT_BYTES as u64 + 2);
+    let mut output = output.take(MAX_BATCH_REPLY_BYTES as u64 + 2);
     let mut sent = 0;
     let mut reply = Vec::new();
     loop {
@@ -249,7 +276,7 @@ fn supervise(
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => true,
             Err(_) => return Err(Failure::Worker),
         };
-        if reply.len() > MAX_REPLACEMENT_BYTES + 1 {
+        if reply.len() > MAX_BATCH_REPLY_BYTES + 1 {
             return Err(Failure::Worker);
         }
         if let Some(status) = status {
@@ -295,19 +322,30 @@ fn supervise(
     if sent != request.len() {
         return Err(Failure::Worker);
     }
-    valid_replacement(body)
+    Ok(reply.split_off(1))
 }
 
 pub(super) fn run_helper(isolated: bool) -> bool {
     // No attacker-influenced request bytes or Lua code are consumed before
     // the process is isolated. Failure is reported through a fixed status code.
     let result = if isolated {
-        Request::decode(io::stdin().lock()).and_then(evaluate)
+        decode_request(io::stdin().lock()).and_then(|(input, batch)| {
+            let edits = evaluate(input, batch)?;
+            if batch {
+                serde_json::to_vec(&edits).map_err(|_| Failure::Worker)
+            } else {
+                Ok(edits
+                    .into_iter()
+                    .next()
+                    .ok_or(Failure::Worker)?
+                    .into_bytes())
+            }
+        })
     } else {
         Err(Failure::Sandbox)
     };
     let (status, body) = match &result {
-        Ok(body) => (0, body.as_bytes()),
+        Ok(body) => (0, body.as_slice()),
         Err(failure) => (*failure as u8, &[][..]),
     };
     let mut output = io::stdout().lock();
@@ -318,7 +356,7 @@ pub(super) fn run_helper(isolated: bool) -> bool {
         .is_ok()
 }
 
-fn evaluate(request: Request) -> Result<String, Failure> {
+fn evaluate(request: Input, batch: bool) -> Result<Vec<String>, Failure> {
     let lua = Lua::new_with(
         StdLib::TABLE | StdLib::STRING | StdLib::UTF8 | StdLib::MATH,
         LuaOptions::default(),
@@ -343,14 +381,19 @@ fn evaluate(request: Request) -> Result<String, Failure> {
     )
     .map_err(|_| Failure::Initialization)?;
 
-    let result = call_transform(&lua, environment, request);
+    let result = call_transform(&lua, environment, request, batch);
     if remaining.get() == 0 {
         return Err(Failure::Instructions);
     }
     result
 }
 
-fn call_transform(lua: &Lua, environment: Table, request: Request) -> Result<String, Failure> {
+fn call_transform(
+    lua: &Lua,
+    environment: Table,
+    request: Input,
+    batch: bool,
+) -> Result<Vec<String>, Failure> {
     let entry = lua
         .load(request.source.as_bytes())
         .set_name("plugin")
@@ -363,13 +406,40 @@ fn call_transform(lua: &Lua, environment: Table, request: Request) -> Result<Str
     let Value::Function(entry) = entry else {
         return Err(Failure::EntryPoint);
     };
-    let replacement = entry
-        .call::<Value>((request.selection, request.language))
+    let mut edits = Vec::with_capacity(request.selections.len());
+    for selection in &request.selections {
+        let result = if batch {
+            let settings = lua.create_table().map_err(lua_error)?;
+            for (key, value) in &request.settings {
+                match value {
+                    SettingValue::Boolean(value) => settings.raw_set(key.as_str(), *value),
+                    SettingValue::Integer(value) => settings.raw_set(key.as_str(), *value),
+                    SettingValue::Text(value) => settings.raw_set(key.as_str(), value.as_str()),
+                }
+                .map_err(lua_error)?;
+            }
+            entry.call::<Value>((selection.as_str(), request.language.as_str(), settings))
+        } else {
+            entry.call::<Value>((selection.as_str(), request.language.as_str()))
+        }
         .map_err(lua_error)?;
-    let Value::String(replacement) = replacement else {
-        return Err(Failure::ReturnType);
-    };
-    valid_replacement(&replacement.as_bytes())
+        let Value::String(replacement) = result else {
+            return Err(Failure::ReturnType);
+        };
+        edits.push(valid_replacement(&replacement.as_bytes())?);
+        validate_edits(&edits)?;
+    }
+    Ok(edits)
+}
+
+fn validate_edits(edits: &[String]) -> Result<(), Failure> {
+    if edits.iter().map(String::len).sum::<usize>() > MAX_REPLACEMENT_BYTES {
+        return Err(Failure::ReturnSize);
+    }
+    if edits.iter().any(|edit| edit.contains('\0')) {
+        return Err(Failure::ReturnEncoding);
+    }
+    Ok(())
 }
 
 fn environment(lua: &Lua) -> mlua::Result<Table> {
@@ -429,7 +499,7 @@ mod tests {
         let reply = [b"\0".as_slice(), text.as_bytes()].concat();
         assert_eq!(
             supervise(&worker, reply, &AtomicBool::new(false), DEADLINE, None),
-            Ok(text),
+            Ok(text.into_bytes()),
         );
     }
 
@@ -479,7 +549,7 @@ printf '\000'
             wait(|| marker("received").is_file() && competing.try_lock().is_ok());
             assert!(!run.is_finished());
             fs::write(marker("finish"), []).unwrap();
-            assert_eq!(run.join().unwrap(), Ok(String::new()));
+            assert_eq!(run.join().unwrap(), Ok(Vec::new()));
         });
     }
 
