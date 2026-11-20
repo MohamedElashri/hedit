@@ -1985,7 +1985,6 @@ dependencies = [
 name = "hedit-plugin"
 version = "0.6.2"
 dependencies = [
- "directories",
  "getrandom 0.4.3",
  "hex",
  "libc",

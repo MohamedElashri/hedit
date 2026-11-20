@@ -180,9 +180,10 @@ fn dropping_the_owner_kills_and_reaps_the_job() {
         WAIT_OBJECT_0
     );
     assert!(!image.exists(), "worker image must be removed after exit");
+    let api = ProfileApi::new().unwrap();
     let mut sid = ptr::null_mut();
     let status = unsafe {
-        CreateAppContainerProfile(
+        (api.create)(
             profile.as_ptr(),
             profile.as_ptr(),
             profile.as_ptr(),
@@ -192,7 +193,11 @@ fn dropping_the_owner_kills_and_reaps_the_job() {
         )
     };
     if status >= 0 {
-        drop(Profile { name: profile, sid });
+        drop(Profile {
+            api,
+            name: profile,
+            sid,
+        });
     }
     assert_eq!(status, 0, "the exited worker's profile must be reusable");
 }

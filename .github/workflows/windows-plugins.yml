@@ -45,6 +45,8 @@ jobs:
         run: cargo clippy --locked -p hedit-plugin --features windows-lua --all-targets -- -D warnings
       - name: Build the headless worker
         run: cargo build --locked -p hedit-plugin --features windows-lua --bin hedit-plugin-worker
+      - name: Verify headless startup imports
+        run: python scripts/check-windows-worker.py target/debug/hedit-plugin-worker.exe
       - name: Confinement, resource limits, cancellation, and shared engine tests
         shell: pwsh
         run: |

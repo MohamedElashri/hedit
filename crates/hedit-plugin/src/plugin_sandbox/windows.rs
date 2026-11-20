@@ -12,9 +12,11 @@ use std::{
 };
 use windows_sys::Win32::{
     Foundation::*,
-    Security::{Authorization::*, Isolation::*, *},
+    Security::{Authorization::*, *},
     Storage::FileSystem::*,
-    System::{Console::*, JobObjects::*, Pipes::*, SystemInformation::*, Threading::*},
+    System::{
+        Console::*, JobObjects::*, LibraryLoader::*, Pipes::*, SystemInformation::*, Threading::*,
+    },
 };
 
 const PROCESS_BYTES: usize = 256 * 1024 * 1024;
@@ -32,9 +34,14 @@ fn wide(value: impl AsRef<OsStr>) -> Vec<u16> {
 
 fn environment() -> io::Result<Vec<u16>> {
     // AppContainer creation resolves the per-user profile through LOCALAPPDATA;
-    // Windows side-by-side loading requires SystemRoot. Supply only OS-derived
-    // paths, never the editor's PATH, credentials, or other environment values.
-    let base = directories::BaseDirs::new().ok_or_else(denied)?;
+    // Windows side-by-side loading requires SystemRoot. Allow only the Windows
+    // profile path and OS directory, never PATH, credentials, or other values.
+    // Querying shell known folders here would statically import GUI DLLs into
+    // the worker, which cannot initialize in a service-session AppContainer.
+    let local = std::env::var_os("LOCALAPPDATA").ok_or_else(denied)?;
+    if !Path::new(&local).is_absolute() {
+        return Err(denied());
+    }
     let mut directory = vec![0u16; 32768];
     let length =
         unsafe { GetSystemWindowsDirectoryW(directory.as_mut_ptr(), directory.len() as u32) }
@@ -43,7 +50,7 @@ fn environment() -> io::Result<Vec<u16>> {
         return Err(io::Error::last_os_error());
     }
     let mut environment: Vec<u16> = "LOCALAPPDATA=".encode_utf16().collect();
-    environment.extend(base.data_local_dir().as_os_str().encode_wide());
+    environment.extend(local.encode_wide());
     environment.push(0);
     environment.extend("SystemRoot=".encode_utf16());
     environment.extend_from_slice(&directory[..length]);
@@ -71,18 +78,79 @@ unsafe fn owned(handle: HANDLE) -> io::Result<OwnedHandle> {
     }
 }
 
+type CreateProfile = unsafe extern "system" fn(
+    *const u16,
+    *const u16,
+    *const u16,
+    *const SID_AND_ATTRIBUTES,
+    u32,
+    *mut PSID,
+) -> i32;
+type DeleteProfile = unsafe extern "system" fn(*const u16) -> i32;
+struct ProfileApi {
+    module: HMODULE,
+    create: CreateProfile,
+    delete: DeleteProfile,
+}
+impl ProfileApi {
+    fn new() -> io::Result<Self> {
+        // Parent-only APIs are resolved from the trusted system directory. The
+        // confined child's import table must not pull in USER32 transitively.
+        let module = unsafe {
+            LoadLibraryExW(
+                wide("userenv.dll").as_ptr(),
+                ptr::null_mut(),
+                LOAD_LIBRARY_SEARCH_SYSTEM32,
+            )
+        };
+        if module.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        let create =
+            unsafe { GetProcAddress(module, c"CreateAppContainerProfile".as_ptr().cast()) };
+        let delete =
+            unsafe { GetProcAddress(module, c"DeleteAppContainerProfile".as_ptr().cast()) };
+        let (Some(create), Some(delete)) = (create, delete) else {
+            unsafe {
+                FreeLibrary(module);
+            }
+            return Err(denied());
+        };
+        // SAFETY: These documented userenv exports have the signatures above;
+        // the module is retained until every call and profile cleanup finishes.
+        Ok(Self {
+            module,
+            create: unsafe {
+                mem::transmute::<unsafe extern "system" fn() -> isize, CreateProfile>(create)
+            },
+            delete: unsafe {
+                mem::transmute::<unsafe extern "system" fn() -> isize, DeleteProfile>(delete)
+            },
+        })
+    }
+}
+impl Drop for ProfileApi {
+    fn drop(&mut self) {
+        unsafe {
+            FreeLibrary(self.module);
+        }
+    }
+}
+
 struct Profile {
+    api: ProfileApi,
     name: Vec<u16>,
     sid: PSID,
 }
 impl Profile {
     fn new() -> io::Result<Self> {
+        let api = ProfileApi::new()?;
         let mut random = [0u8; 16];
         getrandom::fill(&mut random).map_err(io::Error::other)?;
         let name = wide(format!("hedit.lua.{}", hex::encode(random)));
         let mut sid = ptr::null_mut();
         let status = unsafe {
-            CreateAppContainerProfile(
+            (api.create)(
                 name.as_ptr(),
                 name.as_ptr(),
                 name.as_ptr(),
@@ -99,13 +167,13 @@ impl Profile {
         if sid.is_null() {
             return Err(denied());
         }
-        Ok(Self { name, sid })
+        Ok(Self { api, name, sid })
     }
 }
 impl Drop for Profile {
     fn drop(&mut self) {
         unsafe {
-            DeleteAppContainerProfile(self.name.as_ptr());
+            (self.api.delete)(self.name.as_ptr());
             FreeSid(self.sid);
         }
     }
