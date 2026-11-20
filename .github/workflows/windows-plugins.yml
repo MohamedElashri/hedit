@@ -50,7 +50,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2.9.3
         with:
           key: windows-lua-${{ runner.arch }}
-          save-if: ${{ github.event_name == 'push' }}
+          save-if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository }}
           cache-on-failure: true
       - name: Lint the headless runtime and adapter
         run: cargo clippy --locked -p hedit-plugin --all-targets -- -D warnings
