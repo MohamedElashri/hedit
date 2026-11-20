@@ -3,10 +3,11 @@ mod app;
 mod launcher;
 #[cfg(target_os = "macos")]
 mod macos_privacy;
-mod plugin_runtime;
 #[cfg(test)]
 mod preview;
 mod ssh_askpass;
+
+use hedit_plugin as plugin_runtime;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args: Vec<_> = std::env::args_os().skip(1).collect();

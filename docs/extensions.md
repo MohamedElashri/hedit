@@ -1,12 +1,15 @@
-# Extension manifests
+# Extensions
 
-Write commands in Lua 5.4 and declare them in a JSON manifest. JSON can also
-define snippets and new-file templates. Lua runs in local buffers on macOS,
-Linux, and Windows x86-64 and ARM64. Linux requires kernel process isolation
-(Linux 5.9 or a backport); macOS requires the signed sandbox helper included in
-the app bundle. Windows requires the adjacent `hedit-plugin-worker.exe` shipped
-in the portable package and isolates it with AppContainer and job limits.
-Declarative extensions work on all hedit platforms.
+Extensions add snippet commands, file templates, or Lua 5.4 text transforms.
+Install a JSON manifest or a versioned `.hedit-plugin` bundle through
+**Settings → Extensions → Install from file…**. Commands run from the Command
+Palette or a personal key binding; file templates appear under
+**New File from Template…**.
+
+Lua works in local buffers on macOS, Linux, and Windows x86-64 and ARM64.
+It requires the sandbox support included in the application package. See
+[building and testing extensions](../DEVELOPER_GUIDE.md#lua-extension-architecture-and-testing)
+for custom builds and platform requirements.
 
 ## Declarative example
 
@@ -23,13 +26,39 @@ In **Settings → Extensions → Install from file…**, open
 [markdown-quote.json](../examples/extensions/markdown-quote.json) and select
 **Install**. Open **Review permissions…** for the command and choose **Allow
 once** or **Approve command**. Select text and run **Quote selection as Markdown**
-from the Command Palette. Review the preview, then choose **Apply changes**.
-One undo restores the original text and selections.
+from the Command Palette. With previews enabled, review the proposal and choose
+**Apply changes**. One Undo restores the original text and selections.
 
-Lua source returns a function `function(selection, language, settings)` and
-returns one replacement string per call. hedit calls it for each selected range,
-with up to 16 selections and 64 KiB total input. The combined replacement limit
-is 256 KiB. hedit preserves the buffer’s line endings.
+## Lua API
+
+A script returns a function receiving the selected text, language ID, and declared
+settings. Return one UTF-8 replacement string without NUL characters:
+
+```lua
+return function(selection, language, settings)
+  return "> " .. selection
+end
+```
+
+hedit calls this function for each selected range and preserves the buffer's
+line endings when applying edits. Each call receives a fresh settings table with
+validated defaults and user overrides. Settings values are booleans, 32-bit
+integers, or strings of at most 256 bytes.
+
+Lua exposes `math`, `string`, `table`, `utf8`, and basic assertion, iteration,
+conversion, and type functions. File access, networking, process execution,
+module loading, dynamic code loading, and editor APIs are unavailable. A new
+worker starts for each invocation; no state persists between invocations.
+
+| Limit | Maximum |
+| --- | --- |
+| Selected ranges | 16 |
+| Combined selected text | 64 KiB |
+| Combined replacement text | 256 KiB |
+| Lua allocations | 16 MiB |
+| Instructions | 1,000,000 |
+| Invocation deadline | 2 seconds; 400 ms for save hooks |
+
 
 ## Manifest fields
 
@@ -65,8 +94,9 @@ extension clears its Lua approvals.
 
 **Lua on Save** lets you explicitly allow a persistently approved, save-capable
 command to read and replace the whole local file for one language on ordinary
-**Save**. A failed hook leaves saving to hedit. Updated or reapproved commands
-need fresh Save permission.
+**Save**. A failed hook saves the current editor text without applying the
+hook's changes. Updated or reapproved commands need a fresh save binding.
+Save hooks do not run on remote, read-only, or paged buffers.
 
 Use **Update…** to review and replace an installed manifest from a file.
 Updated commands require fresh approval. Use **Uninstall…** to remove the
@@ -85,9 +115,20 @@ hedit plugin test extension.json fixtures.json
 hedit plugin pack extension.json extension.hedit-plugin --version X.Y.Z
 ```
 
-Replace `X.Y.Z` with a version for the bundle. Fixtures are a JSON array of objects with `command` (the namespaced ID), `input`,
-`expected`, and optional `language` and `settings` overrides. Tests run inside
-hedit’s Lua sandbox with the declared defaults and validated overrides.
+Replace `X.Y.Z` with a version for the bundle. `check` validates a manifest and
+its referenced source without executing it. `test` runs fixtures inside the same
+sandbox used by editor commands. `pack` embeds sibling Lua source into a
+self-contained bundle for installation.
+
+A fixture file is a JSON array. Each case names a command and its expected text;
+optional `language` and `settings` fields override the declared defaults:
+
+```json
+[
+  {"command": "markdown-quote.quote", "input": "hello", "expected": "> hello"}
+]
+```
+
 Install the resulting bundle through **Install from file…**.
 
 For signed releases, use `hedit plugin keygen publisher.key` once and add

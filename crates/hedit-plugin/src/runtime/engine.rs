@@ -16,7 +16,7 @@ const MAX_REPLACEMENT_BYTES: usize = 256 * 1024;
 const MAX_BATCH_REQUEST_BYTES: usize = 1024 * 1024;
 #[cfg(any(unix, windows))]
 pub(super) const MAX_BATCH_REPLY_BYTES: usize = 2 * 1024 * 1024;
-const BATCH_REQUEST: u32 = u32::MAX - 1;
+const REQUEST_MAGIC: u32 = u32::MAX - 1;
 const LUA_MEMORY_BYTES: usize = 16 * 1024 * 1024;
 const INSTRUCTION_INTERVAL: u32 = 1_000;
 const INSTRUCTION_BUDGET: u32 = 1_000_000;
@@ -109,56 +109,34 @@ fn encode_request(input: &Input) -> Result<Vec<u8>, Failure> {
         return Err(Failure::Request);
     }
     let mut bytes = Vec::with_capacity(payload.len() + 8);
-    bytes.extend(BATCH_REQUEST.to_le_bytes());
+    bytes.extend(REQUEST_MAGIC.to_le_bytes());
     bytes.extend((payload.len() as u32).to_le_bytes());
     bytes.extend(payload);
     Ok(bytes)
 }
 
-fn decode_request(mut input: impl Read) -> Result<(Input, bool), Failure> {
-    fn length(input: &mut impl Read) -> Result<u32, Failure> {
-        let mut size = [0; 4];
-        input.read_exact(&mut size).map_err(|_| Failure::Request)?;
-        Ok(u32::from_le_bytes(size))
+fn decode_request(mut input: impl Read) -> Result<Input, Failure> {
+    let mut header = [0; 8];
+    input
+        .read_exact(&mut header)
+        .map_err(|_| Failure::Request)?;
+    if u32::from_le_bytes(header[..4].try_into().unwrap()) != REQUEST_MAGIC {
+        return Err(Failure::Request);
     }
-
-    fn bytes(input: &mut impl Read, size: u32, maximum: usize) -> Result<Vec<u8>, Failure> {
-        if size as usize > maximum {
-            return Err(Failure::Request);
-        }
-        let mut bytes = vec![0; size as usize];
-        input.read_exact(&mut bytes).map_err(|_| Failure::Request)?;
-        Ok(bytes)
+    let size = u32::from_le_bytes(header[4..].try_into().unwrap()) as usize;
+    if size > MAX_BATCH_REQUEST_BYTES {
+        return Err(Failure::Request);
     }
-
-    fn text(input: &mut impl Read, size: u32, maximum: usize) -> Result<String, Failure> {
-        String::from_utf8(bytes(input, size, maximum)?).map_err(|_| Failure::Request)
-    }
-
-    let first = length(&mut input)?;
-    let batch = first == BATCH_REQUEST;
-    let request = if batch {
-        let size = length(&mut input)?;
-        let payload = bytes(&mut input, size, MAX_BATCH_REQUEST_BYTES)?;
-        serde_json::from_slice(&payload).map_err(|_| Failure::Request)?
-    } else {
-        let source = text(&mut input, first, MAX_SOURCE_BYTES)?;
-        let size = length(&mut input)?;
-        let selection = text(&mut input, size, MAX_SELECTION_BYTES)?;
-        let size = length(&mut input)?;
-        let language = text(&mut input, size, MAX_LANGUAGE_BYTES)?;
-        Input {
-            source,
-            selections: vec![selection],
-            language,
-            settings: Default::default(),
-        }
-    };
+    let mut payload = vec![0; size];
+    input
+        .read_exact(&mut payload)
+        .map_err(|_| Failure::Request)?;
     if input.read(&mut [0; 1]).map_err(|_| Failure::Request)? != 0 {
         return Err(Failure::Request);
     }
+    let request: Input = serde_json::from_slice(&payload).map_err(|_| Failure::Request)?;
     request.validate()?;
-    Ok((request, batch))
+    Ok(request)
 }
 
 pub(super) fn run(
@@ -196,17 +174,9 @@ pub(super) fn run_helper(isolated: bool) -> bool {
     // No attacker-influenced request bytes or Lua code are consumed before
     // the process is isolated. Failure is reported through a fixed status code.
     let result = if isolated {
-        decode_request(io::stdin().lock()).and_then(|(input, batch)| {
-            let edits = evaluate(input, batch)?;
-            if batch {
-                serde_json::to_vec(&edits).map_err(|_| Failure::Worker)
-            } else {
-                Ok(edits
-                    .into_iter()
-                    .next()
-                    .ok_or(Failure::Worker)?
-                    .into_bytes())
-            }
+        decode_request(io::stdin().lock()).and_then(|input| {
+            let edits = evaluate(input)?;
+            serde_json::to_vec(&edits).map_err(|_| Failure::Worker)
         })
     } else {
         Err(Failure::Sandbox)
@@ -244,7 +214,7 @@ pub(super) fn worker_reply(mut reply: Vec<u8>, delivered: bool) -> Result<Vec<u8
     Ok(reply.split_off(1))
 }
 
-fn evaluate(request: Input, batch: bool) -> Result<Vec<String>, Failure> {
+fn evaluate(request: Input) -> Result<Vec<String>, Failure> {
     let lua = Lua::new_with(
         StdLib::TABLE | StdLib::STRING | StdLib::UTF8 | StdLib::MATH,
         LuaOptions::default(),
@@ -269,19 +239,14 @@ fn evaluate(request: Input, batch: bool) -> Result<Vec<String>, Failure> {
     )
     .map_err(|_| Failure::Initialization)?;
 
-    let result = call_transform(&lua, environment, request, batch);
+    let result = call_transform(&lua, environment, request);
     if remaining.get() == 0 {
         return Err(Failure::Instructions);
     }
     result
 }
 
-fn call_transform(
-    lua: &Lua,
-    environment: Table,
-    request: Input,
-    batch: bool,
-) -> Result<Vec<String>, Failure> {
+fn call_transform(lua: &Lua, environment: Table, request: Input) -> Result<Vec<String>, Failure> {
     let entry = lua
         .load(request.source.as_bytes())
         .set_name("plugin")
@@ -296,21 +261,18 @@ fn call_transform(
     };
     let mut edits = Vec::with_capacity(request.selections.len());
     for selection in &request.selections {
-        let result = if batch {
-            let settings = lua.create_table().map_err(lua_error)?;
-            for (key, value) in &request.settings {
-                match value {
-                    SettingValue::Boolean(value) => settings.raw_set(key.as_str(), *value),
-                    SettingValue::Integer(value) => settings.raw_set(key.as_str(), *value),
-                    SettingValue::Text(value) => settings.raw_set(key.as_str(), value.as_str()),
-                }
-                .map_err(lua_error)?;
+        let settings = lua.create_table().map_err(lua_error)?;
+        for (key, value) in &request.settings {
+            match value {
+                SettingValue::Boolean(value) => settings.raw_set(key.as_str(), *value),
+                SettingValue::Integer(value) => settings.raw_set(key.as_str(), *value),
+                SettingValue::Text(value) => settings.raw_set(key.as_str(), value.as_str()),
             }
-            entry.call::<Value>((selection.as_str(), request.language.as_str(), settings))
-        } else {
-            entry.call::<Value>((selection.as_str(), request.language.as_str()))
+            .map_err(lua_error)?;
         }
-        .map_err(lua_error)?;
+        let result = entry
+            .call::<Value>((selection.as_str(), request.language.as_str(), settings))
+            .map_err(lua_error)?;
         let Value::String(replacement) = result else {
             return Err(Failure::ReturnType);
         };

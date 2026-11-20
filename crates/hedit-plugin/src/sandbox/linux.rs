@@ -256,7 +256,7 @@ mod tests {
         let mut child = Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
-                "plugin_sandbox::linux::tests::confines_native_operations",
+                "sandbox::linux::tests::confines_native_operations",
                 "--nocapture",
             ])
             .env_clear()
@@ -389,10 +389,7 @@ mod tests {
             return;
         }
         let status = Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "plugin_sandbox::linux::tests::rejects_non_pipe_stdio",
-            ])
+            .args(["--exact", "sandbox::linux::tests::rejects_non_pipe_stdio"])
             .env_clear()
             .env(PROBE, "1")
             .stdin(Stdio::null())

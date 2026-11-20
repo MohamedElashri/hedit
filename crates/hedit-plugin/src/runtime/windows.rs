@@ -3,7 +3,7 @@ use super::{
     engine::{self, Failure, MAX_BATCH_REPLY_BYTES},
     HELPER_ARG,
 };
-use crate::plugin_sandbox::windows::Worker;
+use crate::sandbox::windows::Worker;
 use std::{
     fs::File,
     io::{Read, Write},
@@ -124,7 +124,7 @@ fn supervise_arguments(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugin_sandbox::windows::tests::PROBE_ARGS;
+    use crate::sandbox::windows::tests::PROBE_ARGS;
     #[test]
     fn supervisor_deadline_reaps_a_worker_that_never_exits() {
         let start = Instant::now();
@@ -163,7 +163,7 @@ mod tests {
 #[cfg(test)]
 mod engine_tests {
     use super::*;
-    use crate::plugin_runtime::{self, Input};
+    use crate::runtime::{self, Input};
     fn input(source: &str, selections: Vec<String>) -> Input {
         Input {
             source: source.into(),
@@ -181,7 +181,7 @@ mod engine_tests {
     #[test]
     fn plugin_shared_engine_save_budget_uses_the_confined_worker() {
         let approval = tempfile::tempfile().unwrap();
-        let result = plugin_runtime::run_save(
+        let result = runtime::run_save(
             input(
                 "return function(text) return text:gsub(' +$', '') end",
                 vec!["café\r\n東京  ".into()],

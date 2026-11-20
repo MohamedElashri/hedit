@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 const CHECK_INTERVAL: Duration = Duration::from_millis(10);
 
 pub(super) fn executable() -> Result<PathBuf, Failure> {
-    crate::plugin_sandbox::worker_executable().map_err(|_| Failure::Sandbox)
+    crate::sandbox::worker_executable().map_err(|_| Failure::Sandbox)
 }
 
 struct ReapChild(Child);
@@ -52,7 +52,7 @@ pub(super) fn supervise(
         cancelled,
         timeout,
         approval,
-        crate::plugin_sandbox::verify_child,
+        crate::sandbox::verify_child,
     )
 }
 
@@ -119,7 +119,7 @@ fn supervise_verified(
         }
         let mut status = child.0.try_wait().map_err(|_| Failure::Worker)?;
         if status.is_none() {
-            match crate::plugin_sandbox::over_memory_limit(&child.0) {
+            match crate::sandbox::over_memory_limit(&child.0) {
                 Ok(true) => return Err(Failure::Memory),
                 Ok(false) => {}
                 Err(_) => {

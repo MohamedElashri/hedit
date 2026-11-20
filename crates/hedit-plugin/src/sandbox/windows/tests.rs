@@ -9,7 +9,7 @@ use windows_sys::Win32::System::Memory::*;
 
 pub(crate) const PROBE_ARGS: &[&str] = &[
     "--exact",
-    "plugin_sandbox::windows::tests::native_probe",
+    "sandbox::windows::tests::native_probe",
     "--ignored",
     "--nocapture",
 ];

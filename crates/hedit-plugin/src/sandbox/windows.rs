@@ -36,8 +36,8 @@ fn environment() -> io::Result<Vec<u16>> {
     // AppContainer creation resolves the per-user profile through LOCALAPPDATA;
     // Windows side-by-side loading requires SystemRoot. Allow only the Windows
     // profile path and OS directory, never PATH, credentials, or other values.
-    // Querying shell known folders here would statically import GUI DLLs into
-    // the worker, which cannot initialize in a service-session AppContainer.
+    // Keep discovery free of shell imports so the headless worker links only
+    // base system DLLs.
     let local = std::env::var_os("LOCALAPPDATA").ok_or_else(denied)?;
     if !Path::new(&local).is_absolute() {
         return Err(denied());
@@ -59,9 +59,8 @@ fn environment() -> io::Result<Vec<u16>> {
 }
 
 fn working_directory() -> io::Result<Vec<u16>> {
-    // An AppContainer cannot traverse the user's private temporary-directory
-    // parents during loader initialization. Use the read-only OS directory;
-    // the worker has no filesystem API and receives all input through pipes.
+    // Use a readable system directory. The worker receives its input through
+    // pipes and exposes no filesystem API to Lua.
     let mut directory = vec![0u16; 32768];
     let length =
         unsafe { GetSystemDirectoryW(directory.as_mut_ptr(), directory.len() as u32) } as usize;

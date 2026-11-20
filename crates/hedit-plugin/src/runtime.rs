@@ -8,9 +8,10 @@ use std::sync::{mpsc, Arc};
 
 mod engine;
 #[cfg(unix)]
+#[path = "runtime/unix.rs"]
 mod supervisor;
 #[cfg(windows)]
-#[path = "plugin_runtime/windows.rs"]
+#[path = "runtime/windows.rs"]
 mod supervisor;
 
 #[cfg(not(any(unix, windows)))]
@@ -38,7 +39,7 @@ mod supervisor {
     }
 }
 
-pub const SUPPORTED: bool = crate::plugin_sandbox::SUPPORTED;
+pub const SUPPORTED: bool = crate::sandbox::SUPPORTED;
 pub const MAX_SELECTION_BYTES: usize = 64 * 1024;
 pub const MAX_SELECTIONS: usize = 16;
 
@@ -68,6 +69,7 @@ impl RunningPlugin {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
     pub fn from_test_result(result: Result<Vec<String>, String>) -> Self {
         let (sender, receiver) = mpsc::channel();
         sender.send(result).unwrap();
@@ -136,6 +138,6 @@ pub fn run_if_requested(args: &[OsString]) -> Option<bool> {
         return Some(false);
     }
     // Install the OS boundary before the worker touches its request pipes.
-    let isolated = crate::plugin_sandbox::enter().is_ok();
+    let isolated = crate::sandbox::enter().is_ok();
     Some(engine::run_helper(isolated))
 }

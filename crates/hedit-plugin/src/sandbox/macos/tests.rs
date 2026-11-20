@@ -6,8 +6,7 @@ use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 
 const PROBE: &str = "HEDIT_MACOS_SANDBOX_PROBE";
-const TEST: &str =
-    "plugin_sandbox::macos::tests::confines_native_file_network_and_inherited_descriptors";
+const TEST: &str = "sandbox::macos::tests::confines_native_file_network_and_inherited_descriptors";
 
 fn prepare(directory: &std::path::Path) -> PathBuf {
     let output = directory.join("hedit-plugin.app");
