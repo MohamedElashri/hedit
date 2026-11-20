@@ -41,10 +41,25 @@ pub(super) fn replace(
     staged_path.disable_cleanup(true);
     let backup = directory.path().join("previous");
     let written = Stamp::from_metadata(&file.metadata().map_err(err)?)?;
-    let displaced = match atomic_replace(&staged_path, target, &backup) {
+    #[cfg(windows)]
+    let (file, fallback) = windows_handle::prepare(file).map_err(err)?;
+    #[cfg(not(windows))]
+    let fallback = false;
+    let publication = if fallback {
+        Ok(None)
+    } else {
+        atomic_replace(&staged_path, target, &backup)
+    };
+    let displaced = match publication {
         Ok(Some(displaced)) => displaced,
         Ok(None) => {
             replace_with_backup(&staged_path, target, &backup, expected, directory)?;
+            #[cfg(windows)]
+            let file = if fallback {
+                file
+            } else {
+                windows_handle::readable(file).map_err(err)?
+            };
             return Ok(file);
         }
         Err(error)
@@ -70,7 +85,65 @@ pub(super) fn replace(
         }
     }
     sync_rename(target, directory.path()).map_err(|error| preserve(directory, &err(error)))?;
+    #[cfg(windows)]
+    let file = windows_handle::readable(file).map_err(err)?;
     Ok(file)
+}
+
+#[cfg(windows)]
+mod windows_handle {
+    use std::{
+        fs::File,
+        io,
+        os::windows::io::{AsRawHandle, FromRawHandle},
+    };
+    use windows_sys::Win32::{
+        Foundation::INVALID_HANDLE_VALUE,
+        Storage::FileSystem::{
+            ReOpenFile, FILE_GENERIC_READ, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
+            FILE_SHARE_READ, FILE_SHARE_WRITE,
+        },
+    };
+
+    fn reopen(file: &File, access: u32) -> io::Result<File> {
+        // SAFETY: The source handle stays live. ReOpenFile retains the same
+        // object across renames, avoiding a reopen through a changing path.
+        let handle = unsafe {
+            ReOpenFile(
+                file.as_raw_handle(),
+                access,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                0,
+            )
+        };
+        if handle == INVALID_HANDLE_VALUE {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: This is a newly owned handle returned by ReOpenFile.
+        Ok(unsafe { File::from_raw_handle(handle) })
+    }
+
+    pub(super) fn prepare(file: File) -> io::Result<(File, bool)> {
+        // Keep the existing backup/rename path for write-only destinations:
+        // their copied DACL cannot grant a new readable handle after publish.
+        match reopen(&file, FILE_GENERIC_READ) {
+            Ok(probe) => drop(probe),
+            Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+                return Ok((file, true));
+            }
+            Err(error) => return Err(error),
+        }
+        // ReplaceFileW opens its replacement with no sharing mode. Retaining
+        // the staging read/write handle conflicts with that exclusive open.
+        // An attributes-only handle keeps object identity without data access.
+        let metadata = reopen(&file, FILE_READ_ATTRIBUTES)?;
+        drop(file);
+        Ok((metadata, false))
+    }
+
+    pub(super) fn readable(file: File) -> io::Result<File> {
+        reopen(&file, FILE_GENERIC_READ)
+    }
 }
 
 fn matches_entry(path: &Path, expected: &Stamp) -> bool {
@@ -196,7 +269,26 @@ fn atomic_replace(_: &Path, _: &Path, _: &Path) -> io::Result<Option<PathBuf>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
+    use std::io::{Read, Seek, Write};
+
+    #[test]
+    fn published_handle_keeps_the_saved_object_when_the_path_changes() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("file.txt");
+        fs::write(&path, "original").unwrap();
+        let expected = Stamp::read(&path).unwrap();
+        let transaction = tempfile::tempdir_in(root.path()).unwrap();
+        let mut staged = NamedTempFile::new_in(transaction.path()).unwrap();
+        staged.write_all(b"editor copy").unwrap();
+        let mut file = replace(staged, transaction, &path, &expected).unwrap();
+        fs::rename(&path, root.path().join("moved.txt")).unwrap();
+        fs::write(&path, "a later revision").unwrap();
+        let mut text = String::new();
+        file.rewind().unwrap();
+        file.read_to_string(&mut text).unwrap();
+        assert_eq!(text, "editor copy");
+        assert_eq!(fs::read_to_string(path).unwrap(), "a later revision");
+    }
 
     #[test]
     fn publishing_preserves_a_write_after_the_final_stamp_check() {
