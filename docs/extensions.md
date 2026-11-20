@@ -1,13 +1,12 @@
 # Extension manifests
 
 Write commands in Lua 5.4 and declare them in a JSON manifest. JSON can also
-define snippets and new-file templates. Lua runs in local buffers on macOS and
-Linux x86-64 and ARM64. Linux requires kernel process isolation (Linux 5.9 or a
-backport); macOS requires the signed sandbox helper included in the app bundle.
+define snippets and new-file templates. Lua runs in local buffers on macOS,
+Linux, and Windows x86-64 and ARM64. Linux requires kernel process isolation
+(Linux 5.9 or a backport); macOS requires the signed sandbox helper included in
+the app bundle. Windows requires the adjacent `hedit-plugin-worker.exe` shipped
+in the portable package and isolates it with AppContainer and job limits.
 Declarative extensions work on all hedit platforms.
-
-Windows can install and inspect Lua bundles, but cannot execute Lua commands,
-fixtures, or save hooks until its native sandbox adapter is available.
 
 ## Declarative example
 

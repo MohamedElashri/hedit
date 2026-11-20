@@ -4,11 +4,7 @@
 use std::io;
 
 pub(crate) const SUPPORTED: bool = cfg!(all(
-    any(
-        target_os = "linux",
-        target_os = "macos",
-        all(windows, feature = "windows-lua")
-    ),
+    any(target_os = "linux", target_os = "macos", windows),
     any(target_arch = "x86_64", target_arch = "aarch64"),
     target_endian = "little",
     target_pointer_width = "64",

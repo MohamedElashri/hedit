@@ -170,8 +170,7 @@ Use `cargo test --locked --test plugin_distribution` to verify packaging, signin
 and fixture commands. Save hooks require a separate user binding to a persistent
 approval nonce. A worker has 400 ms for an on-save invocation.
 
-Windows has an experimental adapter behind `--features windows-lua`; default
-builds still decline execution until native CI validation passes. It launches a
+Windows uses the same engine with a native process adapter. It launches a
 fresh capability-free AppContainer with an invocation-specific helper image and
 protected ACL, an explicit standard-handle list, dynamic-code and child-process
 mitigations, and an atomically assigned kill-on-close job. The job caps native
@@ -382,7 +381,7 @@ accessibility, dialogs, and windows.
 Use x86-64 MSVC Rust and Visual Studio C++ tools for Windows 10+ with OpenGL:
 
 ```powershell
-cargo build --release --locked
+cargo build --release --locked --workspace
 python scripts/package-windows.py --smoke
 ```
 

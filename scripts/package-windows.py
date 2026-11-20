@@ -2,6 +2,7 @@
 """Package an x86-64 Windows executable as a portable ZIP with a checksum."""
 import argparse
 import hashlib
+import json
 from pathlib import Path
 import shutil
 import struct
@@ -86,6 +87,14 @@ def smoke(archive):
         output = subprocess.run([str(binary), '--help'], check=True, capture_output=True, timeout=30)
         if b'Usage: hedit' not in output.stdout:
             raise ValueError('Packaged executable did not print its help.')
+        fixture = Path(work) / 'lua-fixture.json'
+        fixture.write_text(json.dumps([{
+            'command': 'markdown-quote.quote',
+            'input': 'café / 東京', 'expected': '> café / 東京',
+        }]), encoding='utf-8')
+        subprocess.run([str(binary), 'plugin', 'test',
+                        str(root / 'examples/extensions/markdown-quote.json'), str(fixture)],
+                       check=True, capture_output=True, timeout=30)
 
 
 def main():

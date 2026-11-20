@@ -84,11 +84,7 @@ fn developer_cli_packs_checks_and_tests_an_extension() {
     assert!(checked.contains(&format!("Signed by Fixture author ({fingerprint})")));
 
     if cfg!(all(
-        any(
-            target_os = "linux",
-            target_os = "macos",
-            all(windows, feature = "windows-lua")
-        ),
+        any(target_os = "linux", target_os = "macos", windows),
         target_pointer_width = "64",
         any(target_arch = "x86_64", target_arch = "aarch64")
     )) {

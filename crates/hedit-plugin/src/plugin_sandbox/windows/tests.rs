@@ -288,9 +288,18 @@ fn ordinary_editor_process_cannot_enter_the_worker() {
 
 #[test]
 fn confined_headless_worker_starts_without_a_console() {
-    let executable = std::path::PathBuf::from(
-        std::env::var_os("HEDIT_LUA_TEST_WORKER").expect("set the built worker path"),
-    );
+    let executable = std::env::var_os("HEDIT_LUA_TEST_WORKER")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            let test = std::env::current_exe().unwrap();
+            let directory = test.parent().unwrap();
+            let directory = if directory.file_name().is_some_and(|name| name == "deps") {
+                directory.parent().unwrap()
+            } else {
+                directory
+            };
+            directory.join("hedit-plugin-worker.exe")
+        });
     let mut child = Worker::spawn(&executable, &["--version"]).unwrap();
     drop(child.input.take());
     assert!(child.finished(5000).unwrap());

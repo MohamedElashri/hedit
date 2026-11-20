@@ -19,8 +19,6 @@ path = "tests/support/remote_workspace_probe.rs"
 [features]
 default = ["terminal"]
 terminal = ["dep:libghostty-vt", "dep:portable-pty", "dep:rustybuzz"]
-# Stays opt-in until the native Windows confinement suite passes.
-windows-lua = ["hedit-plugin/windows-lua"]
 
 [dependencies]
 getrandom = "0.4"

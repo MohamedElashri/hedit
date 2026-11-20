@@ -180,11 +180,7 @@ mod supported {
 }
 
 #[cfg(not(all(
-    any(
-        target_os = "linux",
-        target_os = "macos",
-        all(windows, feature = "windows-lua")
-    ),
+    any(target_os = "linux", target_os = "macos", windows),
     any(target_arch = "x86_64", target_arch = "aarch64"),
     target_endian = "little",
     target_pointer_width = "64"
@@ -205,7 +201,7 @@ fn worker_exits_without_output_when_isolation_is_unavailable() {
     assert!(output.stderr.is_empty());
 }
 
-#[cfg(any(target_os = "macos", all(windows, feature = "windows-lua")))]
+#[cfg(any(target_os = "macos", windows))]
 #[test]
 fn main_executable_cannot_execute_lua_without_the_confined_helper() {
     use std::process::{Command, Stdio};
@@ -221,7 +217,7 @@ fn main_executable_cannot_execute_lua_without_the_confined_helper() {
     assert!(output.stderr.is_empty());
 }
 
-#[cfg(all(windows, feature = "windows-lua"))]
+#[cfg(windows)]
 #[test]
 fn windows_cli_uses_the_shared_engine_and_enforces_limits() {
     use std::{fs, process::Command};

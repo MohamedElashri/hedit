@@ -2,6 +2,7 @@
 """Check the Windows archive contract without requiring a Windows host."""
 import hashlib
 import importlib.util
+import json
 from pathlib import Path
 import shutil
 import struct
@@ -100,12 +101,21 @@ class WindowsPackage(unittest.TestCase):
                 self.assertTrue(kwargs['check'])
                 self.assertEqual(kwargs['timeout'], 30)
                 calls.append(arguments[1])
-                output = f'hedit {packager.version()}\r\n'.encode() if arguments[1] == '--version' else b'Usage: hedit\r\n'
+                if arguments[1] == 'plugin':
+                    self.assertEqual(arguments[2], 'test')
+                    self.assertEqual(Path(arguments[3]), executable.parent / 'examples/extensions/markdown-quote.json')
+                    self.assertEqual(json.loads(Path(arguments[4]).read_text(encoding='utf-8')), [{
+                        'command': 'markdown-quote.quote',
+                        'input': 'café / 東京', 'expected': '> café / 東京',
+                    }])
+                    output = b''
+                else:
+                    output = f'hedit {packager.version()}\r\n'.encode() if arguments[1] == '--version' else b'Usage: hedit\r\n'
                 return subprocess.CompletedProcess(arguments, 0, stdout=output)
 
             with patch.object(packager.subprocess, 'run', side_effect=run):
                 packager.smoke(archive)
-            self.assertEqual(calls, ['--version', '--help'])
+            self.assertEqual(calls, ['--version', '--help', 'plugin'])
             with patch.object(packager.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, stdout=b'hedit 0.0.0\n')):
                 with self.assertRaisesRegex(ValueError, 'version does not match'):
                     packager.smoke(archive)

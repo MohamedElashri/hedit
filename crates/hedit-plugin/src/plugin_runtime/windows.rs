@@ -160,7 +160,7 @@ mod tests {
     }
 }
 
-#[cfg(all(test, feature = "windows-lua"))]
+#[cfg(test)]
 mod engine_tests {
     use super::*;
     use crate::plugin_runtime::{self, Input};
