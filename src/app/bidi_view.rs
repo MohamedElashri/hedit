@@ -366,8 +366,13 @@ pub(super) fn range_rects_in_rows(
     let (first, first_column) = locate(galley, start);
     let (last, last_column) = locate(galley, end);
     let mut rects = Vec::new();
-    for row in first.max(rows.start)..last.saturating_add(1).min(galley.rows.len()).min(rows.end) {
-        let r = &galley.rows[row];
+    for (row, r) in galley
+        .rows
+        .iter()
+        .enumerate()
+        .take(last.saturating_add(1).min(rows.end))
+        .skip(first.max(rows.start))
+    {
         let a = if row == first { first_column } else { 0 };
         let b = if row == last {
             last_column

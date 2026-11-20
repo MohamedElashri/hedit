@@ -8,6 +8,7 @@ use std::{
     io::{self, Seek, Write},
     path::Path,
     sync::atomic::{AtomicBool, Ordering},
+    time::{Duration, Instant},
 };
 
 const LOCK_FILE: &str = "extensions.lock";
@@ -326,9 +327,26 @@ pub(super) fn change_lock(config: &Path) -> Result<File, String> {
             .write(true),
     )
     .map_err(|error| format!("Could not open the extension change lock: {error}"))?;
-    file.try_lock()
-        .map_err(|error| format!("Could not lock extension changes: {error}. Try again."))?;
-    Ok(file)
+    // A concurrent fork briefly inherits other threads' CLOEXEC descriptors.
+    // Closing our copy can therefore leave a lock held until the child execs.
+    // These operations run on workers; allow that transient lease to close,
+    // while keeping a genuinely busy extension change bounded and exclusive.
+    let started = Instant::now();
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(file),
+            Err(std::fs::TryLockError::WouldBlock)
+                if started.elapsed() < Duration::from_millis(250) =>
+            {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(error) => {
+                return Err(format!(
+                    "Could not lock extension changes: {error}. Try again."
+                ));
+            }
+        }
+    }
 }
 
 fn open_leaf(path: &Path, options: &mut OpenOptions) -> io::Result<File> {

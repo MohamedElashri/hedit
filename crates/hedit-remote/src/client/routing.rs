@@ -102,7 +102,10 @@ impl Plan {
             }))
         }
         #[cfg(not(unix))]
-        Err("SSH config local forwards require a Linux or macOS client.".into())
+        {
+            let _ = command;
+            Err("SSH config local forwards require a Linux or macOS client.".into())
+        }
     }
 }
 

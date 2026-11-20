@@ -30,8 +30,10 @@ config/data/cache/state roots.
 
 ## Checks
 
-Run **`make ci`** before merging: formatting, strict Clippy, docs/native policy,
-Rust/script tests, and Linux release package/install smoke checks.
+Run `make static`, `make clippy`, and the test target for your platform before
+submitting changes. On Linux, `make ci` also verifies release packaging and
+installation. Use `make test-macos` on macOS; the Windows workflow runs native
+MSVC tests and portable-package checks.
 
 | Command | Scope |
 | --- | --- |
@@ -232,6 +234,98 @@ changing their saved preferences. Shared UI metrics scale status and terminal
 headers independently of document and terminal content. Refresh stored built-in
 palettes only when every color matches an old default; preserve custom colors.
 
+### Shared bottom panel
+
+`app/workbench_panel.rs` owns the shared bottom region; Problems, Output and
+Terminal select one content renderer. Visibility flags never own worker lifetimes.
+Build and PTY polling run independently of layout, so hidden tabs drain output
+and report completion. Only the selected tab performs layout. Output line ranges
+and formatted language diagnostics are cached until their source changes; rows
+are virtualized. Switching away clears terminal composition and shortcut prefixes
+without replacing the PTY or touching editor undo.
+
+### Panel focus state
+
+`workbench_panel::State` records the last visible tab, maximize flag and normal
+height for the window. Maximize uses the available native panel region, and
+restore repairs the egui panel state before normal resizing resumes. Hiding a
+panel releases shell input without destroying sessions. Only explicit workbench
+focus/toggle bindings cross the terminal input boundary; editor editing commands
+remain shell input. Focusing the already selected group still returns keyboard
+focus from the terminal.
+
+### Group-local tabs
+
+`app/panes.rs` stores document IDs and per-tab cursor/revision snapshots for each
+stable group ID. `Workspace::open` remains the sole owner of document buffers;
+groups never clone text or undo journals. Shared-tab closure detaches a view,
+while the last reference uses the existing save/discard/recovery flow. Layout
+reduction merges unique references. Restored legacy layouts place existing tabs
+in the first group. Pending reads capture stable group identity as part of their
+focus guard, and background results attach without redirecting input. Tab strips
+reuse derived global title/location geometry and paint only visible tabs.
+
+### Document navigation
+
+`app/document_navigation.rs` derives breadcrumbs from paths without filesystem
+queries and retains at most four groups of metadata. The optional Outline reuses
+the revision/path-checked native symbol cache. It requests no work while hidden,
+skips paged and >2 MiB snapshots, uses a worker above 64 KiB and virtualizes up to
+500 result rows. It starts no language server. Outline filter focus follows the
+same Escape handoff as persistent Search.
+
+### Explorer selection and decorations
+
+`explorer` owns the roving tree focus, bounded type-ahead and tokened inline
+entry drafts. Filesystem actions use existing folder helpers and checkpoint
+before rename, then apply the existing path-retargeting event. Failures keep the
+name/error in the inline field. Tree cache keys include compaction and draft
+locations; incomplete, symlink and branching listings never compact. Rendering
+registers only viewport rows; row selection does not clone document contents.
+
+Git decorations use a single cancellable background status query at a time and
+coalesce invalidations at a one-second minimum interval. Local status avoids
+history/branch/remotes queries; host queries reuse the bounded existing snapshot
+RPC. Root/file/path budgets bound the map. Known Git metadata directories join
+the existing native watcher; their writes invalidate badges without discarding
+working-tree filename caches. Diagnostic counts reuse an invalidated immutable
+summary of current diagnostics, including source removal and malformed-range
+checks. Hidden Files views do not start decoration work.
+
+### Shortcut resolution
+
+`shortcut_preset` resolves personal bindings before the optional common-command
+preset, then suppresses defaults whose keys or chord prefixes are claimed. Its
+cache rebuilds only when the preset or personal bindings change. Menus, palette,
+settings, chords and terminal routing share that result. Context routing still
+restricts shell and settings input; `editor_only` applies to chords as well as
+single keys. Keep local-only availability in `Command::requires_local` so menus
+and execution agree for SSH workspaces.
+
+### Native workspace watching
+
+`workspace_watch` owns one coalescing configuration mailbox and one worker. Native
+non-recursive watches are capped at 1,024 directories; breadth-first discovery
+also has time and path-memory limits and does not traverse symlinks. Root and
+open-file parents retain atomic-save and root-recreation events. The worker
+installs replacement watches before dropping the prior set, rejects old epochs
+and rescans topology at most once a second. Data events increment an atomic
+counter instead of queueing paths. UI invalidation settles for 180 ms with a
+one-second maximum delay; a stopped or limited watcher retains explicit/focus
+refresh. File contents use the existing conflict/reload/save guards.
+
+### Notification history
+
+`app/notifications.rs` stores at most 128 entries and 256 KiB per window, with
+message length caps and consecutive deduplication. Passive observation records
+errors/notices without reopening windows or requesting focus. Typed save retry
+actions retain the buffer ID, source path and Save As mode. Build completions
+and existing error sources link to their corresponding output views. Clearing
+history never clears recovery errors. Cancellation controls target only build,
+folder-search and language-worker cancellation tokens; they do not abort generic
+file-writing jobs. Language cancellation blocks automatic restart until Refresh
+and clears all diagnostics and result caches from the stopped worker.
+
 ## Settings UI
 
 `src/app/settings_browser.rs` contains searchable preference metadata and validated
@@ -255,6 +349,15 @@ the settings catalog. Keep invalid drafts and field focus when drawing flat rows
 The minimum-window and
 pointer-reset tests cover geometry and interaction. The ignored
 `export_settings_browser` test exports previews to `HEDIT_PREVIEW_DIR`.
+
+### Scoped settings and formatting sources
+
+`settings_scope` hosts the existing project GUI/JSON draft in Preferences. Scope
+switches retain the draft, and Save checks the original settings fingerprint and
+dirty project-file buffers before merging unknown JSON keys. Formatting provenance
+uses the same resolver as open/save, with source allocation enabled only for the
+inspector. A single background worker resolves the visible file; context keys reject
+stale results and an explicit refresh rereads external EditorConfig changes.
 
 ## Language-server architecture and tests
 
@@ -310,6 +413,31 @@ Load terminal fonts off the UI thread with generation checks; preserve that fami
 when editor/fallback fonts change. Live style changes resize the existing PTY and
 preserve its VT state, including application OSC color overrides. Reapply the
 configured palette when a session is restarted.
+
+### Problems catalogue
+
+`app/language_servers/problems.rs` shares a bounded catalogue between Problems
+and Explorer. Language publications and build parse generations invalidate the
+catalogue. Filtered indices, source options and group rows are cached until the
+catalogue, filters or active-file scope change. Layout virtualizes that row map;
+it performs no server startup or filesystem reads. Navigation validates the
+original language revision and negotiated position encoding before selecting an
+editor location. Build locations retain their existing line/column open path.
+
+### Reviewed language edits
+
+`language_server/workspace_edit.rs` prepares text-only workspace edits on the
+service worker. It resolves file identities inside the project root, validates
+versions, positions and budgets, and uses synchronized text for unsaved files.
+The SSH bridge maps prepared file paths through the existing workspace boundary.
+The client never executes code-action commands or accepts unsolicited applyEdit.
+
+`app/language_servers/refactor.rs` captures the originating editor group and
+revision for the review. Apply preflights all sources, edits document clones
+through normal Document history and then publishes buffers. Local preparation
+failure leaves all original documents unchanged. Remote edits use existing host
+journal transactions per file; completed edits remain visible if a later file
+fails. Recovery checkpoints surround application.
 
 ## Linux release packages
 
@@ -398,129 +526,3 @@ Local patches: [Markdown](vendor/egui_commonmark/PATCH.md),
 [Ghostty build](vendor/libghostty-vt-sys/PATCH.md). Text-renderer patches share row
 meshes, bound viewport submission, and index cursor/glyph lookups. Preserve their
 normal-gate parity tests, or remove patches and corresponding tests together.
-
-### Shared bottom panel
-
-`app/workbench_panel.rs` owns the shared bottom region; Problems, Output and
-Terminal select one content renderer. Visibility flags never own worker lifetimes.
-Build and PTY polling run independently of layout, so hidden tabs drain output
-and report completion. Only the selected tab performs layout. Output line ranges
-and formatted language diagnostics are cached until their source changes; rows
-are virtualized. Switching away clears terminal composition and shortcut prefixes
-without replacing the PTY or touching editor undo.
-
-### Group-local tabs
-
-`app/panes.rs` stores document IDs and per-tab cursor/revision snapshots for each
-stable group ID. `Workspace::open` remains the sole owner of document buffers;
-groups never clone text or undo journals. Shared-tab closure detaches a view,
-while the last reference uses the existing save/discard/recovery flow. Layout
-reduction merges unique references. Restored legacy layouts place existing tabs
-in the first group. Pending reads capture stable group identity as part of their
-focus guard, and background results attach without redirecting input. Tab strips
-reuse derived global title/location geometry and paint only visible tabs.
-
-### Document navigation
-
-`app/document_navigation.rs` derives breadcrumbs from paths without filesystem
-queries and retains at most four groups of metadata. The optional Outline reuses
-the revision/path-checked native symbol cache. It requests no work while hidden,
-skips paged and >2 MiB snapshots, uses a worker above 64 KiB and virtualizes up to
-500 result rows. It starts no language server. Outline filter focus follows the
-same Escape handoff as persistent Search.
-
-### Scoped settings and formatting sources
-
-`settings_scope` hosts the existing project GUI/JSON draft in Preferences. Scope
-switches retain the draft, and Save checks the original settings fingerprint and
-dirty project-file buffers before merging unknown JSON keys. Formatting provenance
-uses the same resolver as open/save, with source allocation enabled only for the
-inspector. A single background worker resolves the visible file; context keys reject
-stale results and an explicit refresh rereads external EditorConfig changes.
-
-### Shortcut resolution
-
-`shortcut_preset` resolves personal bindings before the optional common-command
-preset, then suppresses defaults whose keys or chord prefixes are claimed. Its
-cache rebuilds only when the preset or personal bindings change. Menus, palette,
-settings, chords and terminal routing share that result. Context routing still
-restricts shell and settings input; `editor_only` applies to chords as well as
-single keys. Keep local-only availability in `Command::requires_local` so menus
-and execution agree for SSH workspaces.
-
-### Native workspace watching
-
-`workspace_watch` owns one coalescing configuration mailbox and one worker. Native
-non-recursive watches are capped at 1,024 directories; breadth-first discovery
-also has time and path-memory limits and does not traverse symlinks. Root and
-open-file parents retain atomic-save and root-recreation events. The worker
-installs replacement watches before dropping the prior set, rejects old epochs
-and rescans topology at most once a second. Data events increment an atomic
-counter instead of queueing paths. UI invalidation settles for 180 ms with a
-one-second maximum delay; a stopped or limited watcher retains explicit/focus
-refresh. File contents use the existing conflict/reload/save guards.
-
-### Explorer selection and decorations
-
-`explorer` owns the roving tree focus, bounded type-ahead and tokened inline
-entry drafts. Filesystem actions use existing folder helpers and checkpoint
-before rename, then apply the existing path-retargeting event. Failures keep the
-name/error in the inline field. Tree cache keys include compaction and draft
-locations; incomplete, symlink and branching listings never compact. Rendering
-registers only viewport rows; row selection does not clone document contents.
-
-Git decorations use a single cancellable background status query at a time and
-coalesce invalidations at a one-second minimum interval. Local status avoids
-history/branch/remotes queries; host queries reuse the bounded existing snapshot
-RPC. Root/file/path budgets bound the map. Known Git metadata directories join
-the existing native watcher; their writes invalidate badges without discarding
-working-tree filename caches. Diagnostic counts reuse an invalidated immutable
-summary of current diagnostics, including source removal and malformed-range
-checks. Hidden Files views do not start decoration work.
-
-### Problems catalogue
-
-`app/language_servers/problems.rs` shares a bounded catalogue between Problems
-and Explorer. Language publications and build parse generations invalidate the
-catalogue. Filtered indices, source options and group rows are cached until the
-catalogue, filters or active-file scope change. Layout virtualizes that row map;
-it performs no server startup or filesystem reads. Navigation validates the
-original language revision and negotiated position encoding before selecting an
-editor location. Build locations retain their existing line/column open path.
-
-### Reviewed language edits
-
-`language_server/workspace_edit.rs` prepares text-only workspace edits on the
-service worker. It resolves file identities inside the project root, validates
-versions, positions and budgets, and uses synchronized text for unsaved files.
-The SSH bridge maps prepared file paths through the existing workspace boundary.
-The client never executes code-action commands or accepts unsolicited applyEdit.
-
-`app/language_servers/refactor.rs` captures the originating editor group and
-revision for the review. Apply preflights all sources, edits document clones
-through normal Document history and then publishes buffers. Local preparation
-failure leaves all original documents unchanged. Remote edits use existing host
-journal transactions per file; completed edits remain visible if a later file
-fails. Recovery checkpoints surround application.
-
-### Panel focus state
-
-`workbench_panel::State` records the last visible tab, maximize flag and normal
-height for the window. Maximize uses the available native panel region, and
-restore repairs the egui panel state before normal resizing resumes. Hiding a
-panel releases shell input without destroying sessions. Only explicit workbench
-focus/toggle bindings cross the terminal input boundary; editor editing commands
-remain shell input. Focusing the already selected group still returns keyboard
-focus from the terminal.
-
-### Notification history
-
-`app/notifications.rs` stores at most 128 entries and 256 KiB per window, with
-message length caps and consecutive deduplication. Passive observation records
-errors/notices without reopening windows or requesting focus. Typed save retry
-actions retain the buffer ID, source path and Save As mode. Build completions
-and existing error sources link to their corresponding output views. Clearing
-history never clears recovery errors. Cancellation controls target only build,
-folder-search and language-worker cancellation tokens; they do not abort generic
-file-writing jobs. Language cancellation blocks automatic restart until Refresh
-and clears all diagnostics and result caches from the stopped worker.
