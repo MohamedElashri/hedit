@@ -100,7 +100,7 @@ mod linux {
         if flags == -1 {
             return Err(io::Error::last_os_error());
         }
-        if unsafe { filesystem.assume_init() }.f_type != PIPEFS_MAGIC.into()
+        if u32::try_from(unsafe { filesystem.assume_init() }.f_type) != Ok(PIPEFS_MAGIC)
             || flags & libc::O_ACCMODE != access_mode
         {
             return Err(io::Error::other(
