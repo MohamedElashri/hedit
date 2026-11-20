@@ -1,14 +1,44 @@
 #[cfg(all(
-    target_os = "linux",
+    any(target_os = "linux", target_os = "macos"),
     any(target_arch = "x86_64", target_arch = "aarch64"),
     target_endian = "little",
     target_pointer_width = "64"
 ))]
-mod linux {
+mod supported {
     use std::io::Write;
     use std::process::{Command, Stdio};
 
     const WORKER: &str = "--hedit-plugin-worker";
+
+    fn worker() -> std::path::PathBuf {
+        let binary = std::path::PathBuf::from(env!("CARGO_BIN_EXE_hedit"));
+        #[cfg(target_os = "macos")]
+        {
+            static READY: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+            READY.get_or_init(|| {
+                let prepared = Command::new("python3")
+                    .arg(concat!(
+                        env!("CARGO_MANIFEST_DIR"),
+                        "/scripts/macos_plugin_helper.py"
+                    ))
+                    .arg("--editor")
+                    .arg(&binary)
+                    .output()
+                    .unwrap();
+                assert!(
+                    prepared.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&prepared.stderr)
+                );
+            });
+            binary
+                .parent()
+                .unwrap()
+                .join("hedit-plugin.app/Contents/MacOS/hedit")
+        }
+        #[cfg(not(target_os = "macos"))]
+        binary
+    }
 
     fn request(source: &str, selection: &str, language: &str) -> Vec<u8> {
         let mut payload = Vec::new();
@@ -20,7 +50,7 @@ mod linux {
     }
 
     fn exchange(payload: Vec<u8>) -> Vec<u8> {
-        let mut worker = Command::new(env!("CARGO_BIN_EXE_hedit"))
+        let mut worker = Command::new(worker())
             .arg(WORKER)
             .env_clear()
             .stdin(Stdio::piped())
@@ -109,7 +139,7 @@ mod linux {
         input
             .write_all(&request("return function() return 'ran' end", "", ""))
             .unwrap();
-        let reply = Command::new(env!("CARGO_BIN_EXE_hedit"))
+        let reply = Command::new(worker())
             .arg(WORKER)
             .stdin(input)
             .stdout(Stdio::piped())
@@ -150,7 +180,11 @@ mod linux {
 }
 
 #[cfg(not(all(
-    target_os = "linux",
+    any(
+        target_os = "linux",
+        target_os = "macos",
+        all(windows, feature = "windows-lua")
+    ),
     any(target_arch = "x86_64", target_arch = "aarch64"),
     target_endian = "little",
     target_pointer_width = "64"
@@ -169,4 +203,44 @@ fn worker_exits_without_output_when_isolation_is_unavailable() {
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
     assert!(output.stderr.is_empty());
+}
+
+#[cfg(any(target_os = "macos", all(windows, feature = "windows-lua")))]
+#[test]
+fn main_executable_cannot_execute_lua_without_the_confined_helper() {
+    use std::process::{Command, Stdio};
+    let output = Command::new(env!("CARGO_BIN_EXE_hedit"))
+        .arg("--hedit-plugin-worker")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, [1]);
+    assert!(output.stderr.is_empty());
+}
+
+#[cfg(all(windows, feature = "windows-lua"))]
+#[test]
+fn windows_cli_uses_the_shared_engine_and_enforces_limits() {
+    use std::{fs, process::Command};
+    let root = tempfile::tempdir().unwrap();
+    let manifest = root.path().join("fixture.json");
+    let fixture = root.path().join("cases.json");
+    for (source, text, expected, error) in [
+        ("assert(io == nil and os == nil and package == nil and debug == nil and require == nil and load == nil and string.dump == nil); return function(text) return text end", "café\r\n東京".to_string(), "café\r\n東京".to_string(), None),
+        ("return function(text) return text end", "x".repeat(65536), "x".repeat(65536), None),
+        ("while true do end", "".into(), "".into(), Some("instruction limit")),
+        ("return function() return ('x'):rep(33554432) end", "".into(), "".into(), Some("memory limit")),
+        ("return function() return 12 end", "".into(), "".into(), Some("must return a string")),
+        ("return function() return '\\0' end", "".into(), "".into(), Some("without NUL")),
+    ] {
+        fs::write(&manifest, serde_json::to_vec(&serde_json::json!({"api_version":2,"id":"fixture","permissions":["selection.read","selection.replace"],"scripts":{"run.lua":source},"commands":[{"id":"run","title":"Fixture","action":{"kind":"lua","source":"run.lua"}}]})).unwrap()).unwrap();
+        fs::write(&fixture, serde_json::to_vec(&serde_json::json!([{"command":"fixture.run","input":text,"expected":expected}])).unwrap()).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_hedit")).arg("plugin").arg("test").arg(&manifest).arg(&fixture).output().unwrap();
+        let diagnostics = String::from_utf8_lossy(&output.stderr);
+        if let Some(error) = error { assert!(!output.status.success()); assert!(diagnostics.contains(error), "{diagnostics}"); }
+        else { assert!(output.status.success(), "{diagnostics}"); }
+    }
 }

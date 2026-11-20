@@ -2,6 +2,24 @@ use std::{fs, process::Command};
 
 #[test]
 fn developer_cli_packs_checks_and_tests_an_extension() {
+    #[cfg(target_os = "macos")]
+    {
+        let output = Command::new("python3")
+            .arg(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/scripts/macos_plugin_helper.py"
+            ))
+            .arg("--editor")
+            .arg(env!("CARGO_BIN_EXE_hedit"))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("author.json");
     let fixture = directory.path().join("fixtures.json");
@@ -66,7 +84,11 @@ fn developer_cli_packs_checks_and_tests_an_extension() {
     assert!(checked.contains(&format!("Signed by Fixture author ({fingerprint})")));
 
     if cfg!(all(
-        target_os = "linux",
+        any(
+            target_os = "linux",
+            target_os = "macos",
+            all(windows, feature = "windows-lua")
+        ),
         target_pointer_width = "64",
         any(target_arch = "x86_64", target_arch = "aarch64")
     )) {

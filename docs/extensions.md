@@ -1,11 +1,24 @@
 # Extension manifests
 
 Write commands in Lua 5.4 and declare them in a JSON manifest. JSON can also
-define snippets and new-file templates. Lua runs in local buffers on Linux
-x86-64 and ARM64 with kernel process isolation (Linux 5.9 or a backport). Declarative
-extensions work on all hedit platforms.
+define snippets and new-file templates. Lua runs in local buffers on macOS and
+Linux x86-64 and ARM64. Linux requires kernel process isolation (Linux 5.9 or a
+backport); macOS requires the signed sandbox helper included in the app bundle.
+Declarative extensions work on all hedit platforms.
 
-## Example
+Windows can install and inspect Lua bundles, but cannot execute Lua commands,
+fixtures, or save hooks until its native sandbox adapter is available.
+
+## Declarative example
+
+In **Settings → Extensions → Install from file…**, open
+[markdown-task.json](../examples/extensions/markdown-task.json) and select
+**Install**. Run **Insert Markdown task** from the Command Palette. The
+insertion is one undoable edit. Type over the selected description and press
+Tab to leave the snippet field. This example works on macOS, Windows, and Linux
+and needs no Lua approval.
+
+## Lua example
 
 In **Settings → Extensions → Install from file…**, open
 [markdown-quote.json](../examples/extensions/markdown-quote.json) and select

@@ -1,0 +1,63 @@
+name: Windows Lua confinement
+on:
+  workflow_dispatch:
+  push:
+    branches: ['v0.7.0/**']
+    paths: ['src/plugin_runtime*', 'src/plugin_runtime/**', 'src/plugin_sandbox*', 'src/plugin_sandbox/**', 'tests/*plugin*', 'Cargo.toml', 'Cargo.lock', '.github/workflows/windows-plugins.yml']
+  pull_request:
+    paths: ['src/plugin_runtime*', 'src/plugin_runtime/**', 'src/plugin_sandbox*', 'src/plugin_sandbox/**', 'tests/*plugin*', 'Cargo.toml', 'Cargo.lock', '.github/workflows/windows-plugins.yml']
+permissions:
+  contents: read
+concurrency:
+  group: windows-lua-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  sandbox:
+    name: Lua sandbox (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2025, windows-11-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      RUST_TEST_THREADS: 2
+      RUSTFLAGS: -C target-feature=+crt-static
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.1
+          components: clippy
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.12'
+      - uses: Swatinem/rust-cache@v2.9.3
+        with:
+          key: windows-lua-${{ runner.arch }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Lint the adapter and shared engine
+        run: cargo clippy --locked --no-default-features --features windows-lua --all-targets -- -D warnings
+      - name: Build the real worker executable
+        run: cargo build --locked --no-default-features --features windows-lua --bin hedit
+      - name: Confinement, resource limits, cancellation, and shared engine tests
+        shell: pwsh
+        run: |
+          $env:HEDIT_LUA_TEST_EDITOR = (Resolve-Path target/debug/hedit.exe).Path
+          cargo test --locked --no-default-features --features windows-lua --bin hedit plugin_ -- --nocapture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: CLI fixtures and signed distribution tests
+        run: cargo test --locked --no-default-features --features windows-lua --test lua_plugin_runtime --test plugin_distribution -- --nocapture
+      - name: Benchmark real confined fixture launches
+        shell: pwsh
+        run: python scripts/profile-windows-lua.py --editor target/debug/hedit.exe --output target/windows-lua-timings.json
+      - uses: actions/upload-artifact@v7.0.2
+        if: always()
+        with:
+          name: windows-lua-${{ runner.arch }}
+          path: target/windows-lua-timings.json
+          if-no-files-found: warn

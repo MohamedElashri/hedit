@@ -11,6 +11,7 @@ import sys
 import tempfile
 import tomllib
 import zlib
+from macos_plugin_helper import prepare as prepare_plugin_helper
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -106,6 +107,7 @@ def package(arm64, intel, output, identity='-', helper_arm64=None, helper_intel=
         if identity != '-':
             signing += ['--options', 'runtime', '--timestamp']
         subprocess.run([*signing, str(helper)], check=True)
+        prepare_plugin_helper(executable, contents / 'Helpers/hedit-plugin.app', identity)
         subprocess.run([*signing, str(app)], check=True)
         subprocess.run(['codesign', '--verify', '--deep', '--strict', str(app)], check=True)
         reported = subprocess.run([str(executable), '--version'], check=True, capture_output=True, text=True)

@@ -6,13 +6,37 @@ use std::fs::File;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 
-#[cfg(all(
-    target_os = "linux",
-    any(target_arch = "x86_64", target_arch = "aarch64"),
-    target_endian = "little",
-    target_pointer_width = "64"
-))]
-mod linux;
+mod engine;
+#[cfg(unix)]
+mod supervisor;
+#[cfg(windows)]
+#[path = "plugin_runtime/windows.rs"]
+mod supervisor;
+
+#[cfg(not(any(unix, windows)))]
+mod supervisor {
+    use super::engine::Failure;
+    use std::{
+        fs::File,
+        path::{Path, PathBuf},
+        sync::atomic::AtomicBool,
+        time::Duration,
+    };
+
+    pub(super) fn executable() -> Result<PathBuf, Failure> {
+        Err(Failure::Sandbox)
+    }
+
+    pub(super) fn supervise(
+        _: &Path,
+        _: Vec<u8>,
+        _: &AtomicBool,
+        _: Duration,
+        _: Option<File>,
+    ) -> Result<Vec<u8>, Failure> {
+        Err(Failure::Sandbox)
+    }
+}
 
 pub(crate) const SUPPORTED: bool = crate::plugin_sandbox::SUPPORTED;
 pub(crate) const MAX_SELECTION_BYTES: usize = 64 * 1024;
@@ -98,48 +122,20 @@ fn run(
     cancelled: &AtomicBool,
     save: bool,
 ) -> Result<Vec<String>, String> {
-    #[cfg(all(
-        target_os = "linux",
-        any(target_arch = "x86_64", target_arch = "aarch64"),
-        target_endian = "little",
-        target_pointer_width = "64"
-    ))]
-    return linux::run(input, approval, cancelled, save);
-
-    #[cfg(not(all(
-        target_os = "linux",
-        any(target_arch = "x86_64", target_arch = "aarch64"),
-        target_endian = "little",
-        target_pointer_width = "64"
-    )))]
-    {
-        let _ = (input, approval, cancelled, save);
-        Err("Lua plugins are unavailable on this platform.".into())
+    if !SUPPORTED {
+        return Err("Lua plugins are unavailable on this platform.".into());
     }
+    engine::run(input, approval, cancelled, save)
 }
 
 pub(crate) fn run_if_requested(args: &[OsString]) -> Option<bool> {
     if args != [OsStr::new(HELPER_ARG)] {
         return None;
     }
+    if !SUPPORTED {
+        return Some(false);
+    }
     // Install the OS boundary before the worker touches its request pipes.
     let isolated = crate::plugin_sandbox::enter().is_ok();
-    #[cfg(all(
-        target_os = "linux",
-        any(target_arch = "x86_64", target_arch = "aarch64"),
-        target_endian = "little",
-        target_pointer_width = "64"
-    ))]
-    return Some(linux::run_helper(isolated));
-
-    #[cfg(not(all(
-        target_os = "linux",
-        any(target_arch = "x86_64", target_arch = "aarch64"),
-        target_endian = "little",
-        target_pointer_width = "64"
-    )))]
-    {
-        let _ = isolated;
-        Some(false)
-    }
+    Some(engine::run_helper(isolated))
 }

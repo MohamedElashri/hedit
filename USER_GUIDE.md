@@ -666,7 +666,7 @@ such as `{"python": {"tab_size": 4}}`, and custom `build_systems`.
 Extensions add snippet commands, file templates, or Lua commands that transform
 selected text. In **Settings → Extensions**, install, update, or uninstall
 manifests and review Lua permissions for individual commands. Lua commands run
-in local buffers on Linux x86-64 and ARM64. See the [extension guide](docs/extensions.md)
+in local buffers on macOS and Linux x86-64 and ARM64. See the [extension guide](docs/extensions.md)
 for an installable example and the manifest fields.
 
 ## Appearance

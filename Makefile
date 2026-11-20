@@ -18,11 +18,13 @@ help: ## Show available commands and configuration
 
 dev: ## Build a debug executable
 	$(CARGO) build --locked --workspace
+	$(PYTHON) scripts/macos_plugin_helper.py --editor target/debug/hedit
 
 build: ## Build the optimized release executable
 	$(CARGO) build --release --locked --workspace
+	$(PYTHON) scripts/macos_plugin_helper.py --editor target/release/hedit
 
-run: ## Launch a development session; pass arguments with ARGS='...'
+run: dev ## Launch a development session; pass arguments with ARGS='...'
 	$(CARGO) run --locked -- $(ARGS)
 
 fmt: ## Format Rust source
@@ -63,6 +65,8 @@ test: ## Run Rust tests and offline release-installer tests
 	$(PYTHON) scripts/test-windows-package.py
 
 test-macos: ## Run the tests that apply on macOS (Rust tests and the app bundle checks)
+	$(CARGO) build --locked --bin hedit
+	$(PYTHON) scripts/macos_plugin_helper.py --editor target/debug/hedit
 	$(CARGO) test --locked --workspace --no-fail-fast
 	$(MAKE) test-renderer
 	$(PYTHON) scripts/test-native-trace.py

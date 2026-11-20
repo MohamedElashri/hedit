@@ -1,0 +1,476 @@
+//! Windows process boundary for the shared Lua engine. No Lua policy lives here.
+use std::{
+    ffi::OsStr,
+    fs::File,
+    io, mem,
+    os::windows::{
+        ffi::OsStrExt,
+        io::{AsRawHandle, FromRawHandle, OwnedHandle},
+    },
+    path::Path,
+    ptr,
+};
+use windows_sys::Win32::{
+    Foundation::*,
+    Security::{Authorization::*, Isolation::*, *},
+    Storage::FileSystem::*,
+    System::{Console::*, JobObjects::*, Pipes::*, Threading::*},
+};
+
+const PROCESS_BYTES: usize = 256 * 1024 * 1024;
+const CPU_TICKS: i64 = 2 * 10_000_000;
+const LIMITS: u32 = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    | JOB_OBJECT_LIMIT_ACTIVE_PROCESS
+    | JOB_OBJECT_LIMIT_PROCESS_MEMORY
+    | JOB_OBJECT_LIMIT_PROCESS_TIME;
+// processthreadsapi.h: prohibit dynamic code and disable extension points.
+const MITIGATIONS: u64 = (1u64 << 36) | (1u64 << 32);
+
+fn wide(value: impl AsRef<OsStr>) -> Vec<u16> {
+    value.as_ref().encode_wide().chain(Some(0)).collect()
+}
+fn check(value: i32) -> io::Result<()> {
+    if value == 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+fn denied() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        "The Windows Lua worker is not confined as required.",
+    )
+}
+unsafe fn owned(handle: HANDLE) -> io::Result<OwnedHandle> {
+    if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(unsafe { OwnedHandle::from_raw_handle(handle) })
+    }
+}
+
+struct Profile {
+    name: Vec<u16>,
+    sid: PSID,
+}
+impl Profile {
+    fn new() -> io::Result<Self> {
+        let mut random = [0u8; 16];
+        getrandom::fill(&mut random).map_err(io::Error::other)?;
+        let name = wide(format!("hedit.lua.{}", hex::encode(random)));
+        let mut sid = ptr::null_mut();
+        let status = unsafe {
+            CreateAppContainerProfile(
+                name.as_ptr(),
+                name.as_ptr(),
+                name.as_ptr(),
+                ptr::null(),
+                0,
+                &mut sid,
+            )
+        };
+        if status < 0 {
+            return Err(io::Error::other(format!(
+                "CreateAppContainerProfile: {status:#x}"
+            )));
+        }
+        if sid.is_null() {
+            return Err(denied());
+        }
+        Ok(Self { name, sid })
+    }
+}
+impl Drop for Profile {
+    fn drop(&mut self) {
+        unsafe {
+            DeleteAppContainerProfile(self.name.as_ptr());
+            FreeSid(self.sid);
+        }
+    }
+}
+
+fn token(process: HANDLE) -> io::Result<OwnedHandle> {
+    let mut handle = ptr::null_mut();
+    check(unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut handle) })?;
+    unsafe { owned(handle) }
+}
+fn token_information(
+    token: &OwnedHandle,
+    class: TOKEN_INFORMATION_CLASS,
+) -> io::Result<Vec<usize>> {
+    let mut bytes = 0;
+    unsafe {
+        GetTokenInformation(token.as_raw_handle(), class, ptr::null_mut(), 0, &mut bytes);
+    }
+    if bytes == 0 || bytes > 64 * 1024 {
+        return Err(denied());
+    }
+    let mut buffer = vec![0usize; (bytes as usize).div_ceil(mem::size_of::<usize>())];
+    check(unsafe {
+        GetTokenInformation(
+            token.as_raw_handle(),
+            class,
+            buffer.as_mut_ptr().cast(),
+            bytes,
+            &mut bytes,
+        )
+    })?;
+    Ok(buffer)
+}
+fn require_token(process: HANDLE, expected: Option<PSID>) -> io::Result<()> {
+    let token = token(process)?;
+    let enabled = token_information(&token, TokenIsAppContainer)?;
+    if enabled[0] == 0 {
+        return Err(denied());
+    }
+    let capabilities = token_information(&token, TokenCapabilities)?;
+    if unsafe { *(capabilities.as_ptr().cast::<u32>()) } != 0 {
+        return Err(denied());
+    }
+    let information = token_information(&token, TokenAppContainerSid)?;
+    let sid = unsafe {
+        &*information
+            .as_ptr()
+            .cast::<TOKEN_APPCONTAINER_INFORMATION>()
+    }
+    .TokenAppContainer;
+    if sid.is_null() || expected.is_some_and(|expected| unsafe { EqualSid(sid, expected) } == 0) {
+        return Err(denied());
+    }
+    for policy in [ProcessDynamicCodePolicy, ProcessChildProcessPolicy] {
+        let mut flags = 0u32;
+        check(unsafe {
+            GetProcessMitigationPolicy(
+                process,
+                policy,
+                (&mut flags as *mut u32).cast(),
+                mem::size_of::<u32>(),
+            )
+        })?;
+        if flags & 1 == 0 {
+            return Err(denied());
+        }
+    }
+    Ok(())
+}
+
+// Construct an explicit protected DACL: the editor owns the image directory;
+// only this invocation's container receives read/execute. No user directory or
+// original editor executable has its permissions expanded.
+fn image_permissions(path: &Path, sid: PSID) -> io::Result<()> {
+    let token = token(unsafe { GetCurrentProcess() })?;
+    let user = token_information(&token, TokenUser)?;
+    let owner = unsafe { &*user.as_ptr().cast::<TOKEN_USER>() }.User.Sid;
+    let entry = |sid: PSID, rights| EXPLICIT_ACCESS_W {
+        grfAccessPermissions: rights,
+        grfAccessMode: SET_ACCESS,
+        grfInheritance: SUB_CONTAINERS_AND_OBJECTS_INHERIT,
+        Trustee: TRUSTEE_W {
+            TrusteeForm: TRUSTEE_IS_SID,
+            TrusteeType: TRUSTEE_IS_UNKNOWN,
+            ptstrName: sid.cast(),
+            ..Default::default()
+        },
+    };
+    let entries = [
+        entry(owner, FILE_ALL_ACCESS),
+        entry(sid, FILE_GENERIC_READ | FILE_GENERIC_EXECUTE),
+    ];
+    let mut acl = ptr::null_mut();
+    let status = unsafe {
+        SetEntriesInAclW(
+            entries.len() as u32,
+            entries.as_ptr(),
+            ptr::null(),
+            &mut acl,
+        )
+    };
+    if status != 0 {
+        return Err(io::Error::from_raw_os_error(status as i32));
+    }
+    let status = unsafe {
+        SetNamedSecurityInfoW(
+            wide(path).as_ptr(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            acl,
+            ptr::null(),
+        )
+    };
+    unsafe {
+        LocalFree(acl.cast());
+    }
+    if status != 0 {
+        return Err(io::Error::from_raw_os_error(status as i32));
+    }
+    Ok(())
+}
+
+struct Attributes {
+    storage: Vec<usize>,
+}
+impl Attributes {
+    fn new(count: u32) -> io::Result<Self> {
+        let mut size = 0;
+        unsafe {
+            InitializeProcThreadAttributeList(ptr::null_mut(), count, 0, &mut size);
+        }
+        if size == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let mut storage = vec![0; size.div_ceil(mem::size_of::<usize>())];
+        check(unsafe {
+            InitializeProcThreadAttributeList(storage.as_mut_ptr().cast(), count, 0, &mut size)
+        })?;
+        Ok(Self { storage })
+    }
+    fn pointer(&mut self) -> LPPROC_THREAD_ATTRIBUTE_LIST {
+        self.storage.as_mut_ptr().cast()
+    }
+    fn set<T>(&mut self, name: u32, value: &T) -> io::Result<()> {
+        check(unsafe {
+            UpdateProcThreadAttribute(
+                self.pointer(),
+                0,
+                name as usize,
+                (value as *const T).cast(),
+                mem::size_of::<T>(),
+                ptr::null_mut(),
+                ptr::null(),
+            )
+        })
+    }
+}
+impl Drop for Attributes {
+    fn drop(&mut self) {
+        unsafe {
+            DeleteProcThreadAttributeList(self.pointer());
+        }
+    }
+}
+
+fn pipe() -> io::Result<(OwnedHandle, OwnedHandle)> {
+    let security = SECURITY_ATTRIBUTES {
+        nLength: mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: ptr::null_mut(),
+        bInheritHandle: 1,
+    };
+    let (mut read, mut write) = (ptr::null_mut(), ptr::null_mut());
+    check(unsafe { CreatePipe(&mut read, &mut write, &security, 64 * 1024) })?;
+    Ok(unsafe { (owned(read)?, owned(write)?) })
+}
+fn job() -> io::Result<OwnedHandle> {
+    let handle = unsafe { owned(CreateJobObjectW(ptr::null(), ptr::null())) }?;
+    let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+    limits.BasicLimitInformation.LimitFlags = LIMITS;
+    limits.BasicLimitInformation.ActiveProcessLimit = 1;
+    limits.BasicLimitInformation.PerProcessUserTimeLimit = CPU_TICKS;
+    limits.ProcessMemoryLimit = PROCESS_BYTES;
+    check(unsafe {
+        SetInformationJobObject(
+            handle.as_raw_handle(),
+            JobObjectExtendedLimitInformation,
+            (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+            mem::size_of_val(&limits) as u32,
+        )
+    })?;
+    Ok(handle)
+}
+fn require_job(handle: HANDLE) -> io::Result<()> {
+    let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+    check(unsafe {
+        QueryInformationJobObject(
+            handle,
+            JobObjectExtendedLimitInformation,
+            (&mut limits as *mut JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+            mem::size_of_val(&limits) as u32,
+            ptr::null_mut(),
+        )
+    })?;
+    let basic = limits.BasicLimitInformation;
+    if basic.LimitFlags & LIMITS != LIMITS
+        || basic.ActiveProcessLimit != 1
+        || limits.ProcessMemoryLimit == 0
+        || limits.ProcessMemoryLimit > PROCESS_BYTES
+        || basic.PerProcessUserTimeLimit <= 0
+        || basic.PerProcessUserTimeLimit > CPU_TICKS
+    {
+        return Err(denied());
+    }
+    Ok(())
+}
+
+pub(crate) struct Worker {
+    process: OwnedHandle,
+    job: OwnedHandle,
+    _image: tempfile::TempDir,
+    _profile: Profile,
+    pub(crate) input: Option<File>,
+    pub(crate) output: Option<File>,
+}
+impl Worker {
+    pub(crate) fn spawn(executable: &Path, arguments: &[&str]) -> io::Result<Self> {
+        let profile = Profile::new()?;
+        let image = tempfile::tempdir()?;
+        image_permissions(image.path(), profile.sid)?;
+        let copied = image.path().join("hedit-worker.exe");
+        std::fs::copy(executable, &copied)?;
+        let job = job()?;
+        let (input, input_writer) = pipe()?;
+        let (output_reader, output) = pipe()?;
+        for handle in [&input_writer, &output_reader] {
+            check(unsafe { SetHandleInformation(handle.as_raw_handle(), HANDLE_FLAG_INHERIT, 0) })?;
+        }
+        let security = SECURITY_ATTRIBUTES {
+            nLength: mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: ptr::null_mut(),
+            bInheritHandle: 1,
+        };
+        let stderr = unsafe {
+            owned(CreateFileW(
+                wide("NUL").as_ptr(),
+                GENERIC_WRITE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                &security,
+                OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL,
+                ptr::null_mut(),
+            ))
+        }?;
+        let handles = [
+            input.as_raw_handle(),
+            output.as_raw_handle(),
+            stderr.as_raw_handle(),
+        ];
+        let capabilities = SECURITY_CAPABILITIES {
+            AppContainerSid: profile.sid,
+            Capabilities: ptr::null_mut(),
+            CapabilityCount: 0,
+            Reserved: 0,
+        };
+        let child_policy = 1u32; // PROCESS_CREATION_CHILD_PROCESS_RESTRICTED
+        let jobs = [job.as_raw_handle()];
+        let mut attributes = Attributes::new(5)?;
+        attributes.set(PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, &capabilities)?;
+        attributes.set(PROC_THREAD_ATTRIBUTE_HANDLE_LIST, &handles)?;
+        attributes.set(PROC_THREAD_ATTRIBUTE_JOB_LIST, &jobs)?;
+        attributes.set(PROC_THREAD_ATTRIBUTE_CHILD_PROCESS_POLICY, &child_policy)?;
+        attributes.set(PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY, &MITIGATIONS)?;
+        let startup = STARTUPINFOEXW {
+            StartupInfo: STARTUPINFOW {
+                cb: mem::size_of::<STARTUPINFOEXW>() as u32,
+                dwFlags: STARTF_USESTDHANDLES,
+                hStdInput: input.as_raw_handle(),
+                hStdOutput: output.as_raw_handle(),
+                hStdError: stderr.as_raw_handle(),
+                ..Default::default()
+            },
+            lpAttributeList: attributes.pointer(),
+        };
+        // The executable path is explicit; fixed internal arguments never contain
+        // quotes. Windows filenames cannot contain a double quote.
+        let mut command = wide(format!("\"{}\" {}", copied.display(), arguments.join(" ")));
+        let environment = [0u16; 2];
+        let mut information = PROCESS_INFORMATION::default();
+        check(unsafe {
+            CreateProcessW(
+                wide(&copied).as_ptr(),
+                command.as_mut_ptr(),
+                ptr::null(),
+                ptr::null(),
+                1,
+                CREATE_SUSPENDED
+                    | CREATE_NO_WINDOW
+                    | CREATE_UNICODE_ENVIRONMENT
+                    | EXTENDED_STARTUPINFO_PRESENT,
+                environment.as_ptr().cast(),
+                wide(image.path()).as_ptr(),
+                &startup.StartupInfo,
+                &mut information,
+            )
+        })?;
+        let process = unsafe { owned(information.hProcess) }?;
+        let thread = unsafe { owned(information.hThread) }?;
+        let worker = Self {
+            process,
+            job,
+            _image: image,
+            _profile: profile,
+            input: Some(File::from(input_writer)),
+            output: Some(File::from(output_reader)),
+        };
+        // RAII owns the kill-on-close job before any verification can fail.
+        require_token(worker.process.as_raw_handle(), Some(worker._profile.sid))?;
+        require_job(worker.job.as_raw_handle())?;
+        let mut included = 0;
+        check(unsafe {
+            IsProcessInJob(
+                worker.process.as_raw_handle(),
+                worker.job.as_raw_handle(),
+                &mut included,
+            )
+        })?;
+        if included == 0 {
+            return Err(denied());
+        }
+        if unsafe { ResumeThread(thread.as_raw_handle()) } == u32::MAX {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(worker)
+    }
+    pub(crate) fn finished(&self, wait_ms: u32) -> io::Result<bool> {
+        match unsafe { WaitForSingleObject(self.process.as_raw_handle(), wait_ms) } {
+            WAIT_OBJECT_0 => Ok(true),
+            WAIT_TIMEOUT => Ok(false),
+            _ => Err(io::Error::last_os_error()),
+        }
+    }
+    pub(crate) fn success(&self) -> io::Result<bool> {
+        let mut code = 0;
+        check(unsafe { GetExitCodeProcess(self.process.as_raw_handle(), &mut code) })?;
+        Ok(code == 0)
+    }
+    pub(crate) fn terminate(&self) {
+        unsafe {
+            TerminateJobObject(self.job.as_raw_handle(), 1);
+            WaitForSingleObject(self.process.as_raw_handle(), 5000);
+        }
+    }
+}
+impl Drop for Worker {
+    fn drop(&mut self) {
+        self.terminate();
+    }
+}
+
+pub(crate) fn enter() -> io::Result<()> {
+    require_token(unsafe { GetCurrentProcess() }, None)?;
+    require_job(ptr::null_mut())?;
+    let mut pipes = Vec::new();
+    for standard in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE] {
+        let handle = unsafe { GetStdHandle(standard) };
+        if unsafe { GetFileType(handle) } != FILE_TYPE_PIPE {
+            return Err(denied());
+        }
+        check(unsafe {
+            GetNamedPipeInfo(
+                handle,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+            )
+        })?;
+        pipes.push(handle);
+    }
+    if pipes[0] == pipes[1] {
+        return Err(denied());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+pub(crate) mod tests;

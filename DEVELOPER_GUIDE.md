@@ -134,12 +134,33 @@ the current installed snapshot with the reviewed copy and durably clear its Lua
 approvals before replacing or removing it. Older extension-wide grants require
 fresh consent per command. See the [extension guide](docs/extensions.md).
 
-The Linux x86-64 and ARM64 editor builds launch a fresh worker with clean environment and
-bounded anonymous pipes. The worker drops inherited descriptors and installs
-kernel process restrictions before reading the request. Lua runs with a text
-loader, a small standard library, and memory, instruction, and wall-clock
-limits. The worker reports fixed error messages and exits after one command.
+`src/plugin_runtime/engine.rs` owns the single Lua 5.4 implementation, request
+codec, library allowlist, and instruction/memory budgets. Commands, fixtures,
+batch edits, and save hooks use this engine on every supported platform.
+`supervisor.rs` shares Unix pipe delivery, cancellation, deadlines, and reaping.
+Only process confinement and native resource queries belong in OS adapters under
+`src/plugin_sandbox/`.
+
+Linux x86-64 and ARM64 use the existing seccomp allowlist, descriptor restrictions,
+and address-space limit. macOS uses a nested App Sandbox application with only
+`com.apple.security.app-sandbox=true` and hardened runtime enabled. The editor
+verifies the running helper's signature, identifier, exact entitlements, and
+matching signing team before sending input. The helper independently checks its
+identity and pipe directions, closes other descriptors, and caps CPU time. The
+parent monitors its physical footprint (256 MiB) because macOS shared-cache
+virtual mappings make Linux's address-space limit unsuitable. App Sandbox
+restricts external files and networking; it still permits the helper's own
+container and some system resources. Its policy differs from Linux's syscall
+allowlist. Lua itself exposes only text processing on both platforms.
+
+Each invocation starts a fresh process with a clean environment and bounded
+pipes. The worker reports fixed errors and exits after one command.
 See the [Lua and mlua licenses](assets/licenses/lua-MIT.txt).
+
+Use `make dev`, `make build`, or `make run` on macOS to prepare the signed helper.
+For a custom Cargo build, run `python3 scripts/macos_plugin_helper.py --editor
+target/debug/hedit` afterward. Packaging embeds a universal helper beneath
+`Contents/Helpers/hedit-plugin.app` and signs it before the containing app.
 
 Run `cargo test --locked --test lua_plugin_runtime` for executable and sample
 coverage and `cargo test --locked --bin hedit plugin_` for isolation and
@@ -149,9 +170,23 @@ Use `cargo test --locked --test plugin_distribution` to verify packaging, signin
 and fixture commands. Save hooks require a separate user binding to a persistent
 approval nonce. A worker has 400 ms for an on-save invocation.
 
-macOS and Windows currently decline executable Lua. A future macOS helper needs
-native sandbox and signing verification. A Windows helper needs a restricted
-AppContainer, explicit inherited handles, and native job-limit tests.
+Windows has an experimental adapter behind `--features windows-lua`; default
+builds still decline execution until native CI validation passes. It launches a
+fresh capability-free AppContainer with an invocation-specific helper image and
+protected ACL, an explicit standard-handle list, dynamic-code and child-process
+mitigations, and an atomically assigned kill-on-close job. The job caps native
+memory at 256 MiB, CPU time at two seconds, and active processes at one. The
+parent verifies the suspended process token and job before resuming it; the
+worker independently checks confinement before reading input. Scoped blocking
+pipe threads let the parent cancel or time out a worker without leaving I/O
+threads behind. The codec, Lua engine, permissions, edits, and save hooks remain
+shared.
+
+`.github/workflows/windows-plugins.yml` runs the native confinement and engine
+suites on x86-64 Windows and Windows 11 ARM. It also records diagnostic fixture
+launch timings; hosted-runner timings do not establish desktop performance.
+The Windows unit engine tests use `HEDIT_LUA_TEST_EDITOR` to locate the real
+feature-enabled editor executable; production builds ignore this variable.
 
 ## SSH architecture and testing
 
