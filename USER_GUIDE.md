@@ -143,6 +143,30 @@ UTF-8 and BOM-marked UTF-16 open directly. **File → File encoding…** reopens
 saves legacy encodings; unrepresentable characters are refused. **Edit → Line
 endings** converts LF/CRLF. Binary files are unsupported.
 
+### Explorer interaction
+
+**View → Side bar → Focus Explorer** gives the folder tree keyboard focus. The
+optional VS Code preset uses Ctrl+Shift+E (Cmd+Shift+E on macOS). Arrows expand,
+collapse and navigate; Home/End and Page Up/Down move the selection. Type a name
+to jump to a matching row, Enter opens it, F2 renames it inline, Delete opens the
+existing trash confirmation, and Escape returns to the editor. Tab leaves the
+roving tree selection. Personal global bindings retain priority.
+
+Right-click a folder for inline **New file…** or **New folder…**; rename is inline
+too. Enter or the action button submits the name, and Escape cancels before the
+operation starts. Invalid names and filesystem conflicts keep the draft available
+to correct. Renaming an open dirty file retargets it without saving its text.
+
+Settings → Folders & Search controls automatic active-file reveal, compact
+single-child folder chains, Git badges and diagnostic counts. Automatic reveal
+runs when Files is visible and leaves Search/Source Control inputs intact. In a
+compact chain, F2 renames the final segment. Badges are cached and computed in
+background/on-demand work; showing diagnostic badges never starts a language
+server. Git refresh follows filesystem and Git-metadata events, explicit refresh,
+and refocusing; SSH Git badges require execution trust and refresh on focus or
+explicit refresh. Decoration budgets bound large repositories; hover Refresh
+folders for status. Unsaved editor text is independent of disk Git status.
+
 ## SSH remote workspaces
 
 Experimental SSH workspaces use a separate native window. Files, search, Git,
@@ -334,6 +358,17 @@ Clean active files reload after external changes; unsaved text is kept with a
 conflict banner and the existing save guard. Notices report
 indexing progress, unreadable folders, and incomplete results.
 
+### Breadcrumbs and Outline
+
+**View → Editor → Show breadcrumbs** displays the file location above each
+group. Click a segment to reveal it in an open folder’s Files tree; hover for
+the full path. SSH breadcrumbs include the host and relative file path.
+**Show Outline** opens a filterable list of functions and types for the active
+file. Click a symbol to navigate; Escape in its filter returns typing to the
+editor. Outline is off by default, scans only while visible, and shows up to
+500 symbols for files up to 2 MiB. Use Go to symbol for larger files. Both
+visibility preferences are also available in Settings → General.
+
 ## Writing code
 
 **Completions:** language-server suggestions, words from fully loaded open files,
@@ -447,6 +482,27 @@ package files and reports the uncertainty; refresh the manager to inspect the
 active version. The previous managed
 installation is retained until the next successful update or removal.
 
+#### Rename Symbol and Quick Fixes
+
+Tools → Language server includes Rename symbol and Quick fixes. The optional
+VS Code shortcut preset uses F2 and Primary+Period. In Explorer, F2 still renames
+the selected file. Each server's Configure page can enable or disable these
+features independently.
+
+Rename requests a new name and opens a preview. Quick fixes lists available
+text edits; choose one to review it. Inspect each file's Before and After text,
+then choose Apply all text changes. The preview shows the first 500 characters
+of long lines. Changes stay unsaved, and each changed file has its own normal
+Undo history and session recovery. Opening a preview never changes file text.
+
+The editor rejects stale previews, stale versions, overlapping edits and paths
+outside the project root. File resource operations and server commands are
+unavailable. A batch supports up to 64 complete files, 2 MiB per file and 8 MiB of
+combined source and proposed text. Local batches preflight every source and
+commit no edits if preparation fails. SSH batches preflight every source too;
+if a later host edit fails, the editor reports the completed files and keeps
+their text and Undo history visible. Files are never saved automatically.
+
 ### Syntax highlighting
 
 Click the status-bar language to override detection or return to
@@ -462,6 +518,52 @@ or a shell. Problems combines build locations and language-server diagnostics;
 click a row to navigate. Output retains the latest build and its Cancel action.
 The close button hides the panel without stopping a build or shell. Escape hides
 Problems or Output; while focused in Terminal, Escape goes to the shell.
+
+### Filtering Problems
+
+The Problems panel combines build results and language-server diagnostics in one
+list. Filter by message, filename or source, select a severity or source, and use
+Current file to follow the active editor. Group by file adds location headers.
+Counts show the filtered total and overall severity totals. Build messages with
+no explicit error or warning prefix appear as information.
+
+Next diagnostic and Previous diagnostic follow the current filters and wrap at
+the ends. The optional VS Code shortcut preset binds them to F8 and Shift+F8.
+These commands preserve the Problems panel and reject stale language positions.
+Explorer diagnostic badges include build results as well as language diagnostics.
+The combined catalogue is limited to 10,000 entries and 8 MiB.
+
+### Panel and focus controls
+
+View → Panel includes Toggle last used panel and Maximize or restore panel.
+Closing or toggling the panel preserves its selected tab, output and shell.
+Maximize expands the panel while remembering its normal height; Restore returns
+to that height. These layout choices are remembered for the current window.
+The VS Code shortcut preset uses Primary+J to toggle the panel.
+
+Focus editor, Focus Explorer, Focus Search and Focus terminal are available in
+the command palette and custom keybindings. Primary+1 through Primary+4 in the
+VS Code preset move from the terminal to an editor group. Sidebar focus leaves
+the panel and active document intact. Focusing a terminal shows its existing
+session, or starts one when explicitly requested and enabled. A disabled terminal
+never starts when restoring the last panel; Problems is shown instead.
+
+### Notifications and progress
+
+Use Notifications in the status bar, View → Panel, or the command palette to
+review recent messages. Messages do not take keyboard focus. The window keeps
+up to 128 entries and 256 KiB of history, combines consecutive repeated messages,
+and shows unread counts. Dismiss individual entries or clear the history; this
+does not dismiss recovery errors or cancel running work. History lasts for the
+current window and is not written to disk.
+
+Failed saves provide Retry save when the original document is still open at the
+same path. Save As retries ask for a destination again. Build completions link to
+Output; language and Git failures link to their existing management/log views.
+Progress controls can cancel builds, folder searches and language-server work
+cooperatively. Cancelling server work clears stale diagnostics and stops owned
+servers; Refresh in Language servers resumes them. Generic file-writing jobs
+are not cancelled by notification controls.
 
 ## Integrated terminal
 
@@ -589,6 +691,19 @@ Click the active Files or Source Control icon to hide its sidebar. Turn off
 
 The status bar shows position, indentation, line endings, encoding, syntax, and
 recovery; hover for details. Click its recovery dot for settings.
+
+### Tabs in editor groups
+
+Each editor group has its own tab strip. Opening a file adds it to the focused
+group; the same file can appear in several groups with independent cursor and
+scroll positions. Edits and undo belong to the shared document. Tab position,
+next/previous tab, Close others, Close to the right and Close all apply to the
+focused group. Drag a tab to another group’s strip or editor, or use Move file
+to other group. Closing a shared tab removes that view; the final dirty tab
+asks before discarding. Empty groups close automatically. Reducing the layout
+merges remaining tabs, and recovery retains their documents and view metadata.
+Git reviews use a reusable tab in one group while other groups remain editable.
+Paged files share the currently loaded page across their groups.
 
 ## Large files and logs
 
@@ -845,118 +960,3 @@ are UTF-8 files under `buffers-*`, indexed by `session.json`. Recovery is not en
 | Terminal RTL reordered twice | Disable terminal bidirectional shaping |
 | SSH fails | Check pinned host key, unlocked agent, helper version, explicit port, and private durable state storage |
 | CUDA tool unavailable | Install the tool, check PATH, and read its output |
-
-### Tabs in editor groups
-
-Each editor group has its own tab strip. Opening a file adds it to the focused
-group; the same file can appear in several groups with independent cursor and
-scroll positions. Edits and undo belong to the shared document. Tab position,
-next/previous tab, Close others, Close to the right and Close all apply to the
-focused group. Drag a tab to another group’s strip or editor, or use Move file
-to other group. Closing a shared tab removes that view; the final dirty tab
-asks before discarding. Empty groups close automatically. Reducing the layout
-merges remaining tabs, and recovery retains their documents and view metadata.
-Git reviews use a reusable tab in one group while other groups remain editable.
-Paged files share the currently loaded page across their groups.
-
-### Breadcrumbs and Outline
-
-**View → Editor → Show breadcrumbs** displays the file location above each
-group. Click a segment to reveal it in an open folder’s Files tree; hover for
-the full path. SSH breadcrumbs include the host and relative file path.
-**Show Outline** opens a filterable list of functions and types for the active
-file. Click a symbol to navigate; Escape in its filter returns typing to the
-editor. Outline is off by default, scans only while visible, and shows up to
-500 symbols for files up to 2 MiB. Use Go to symbol for larger files. Both
-visibility preferences are also available in Settings → General.
-
-### Explorer interaction
-
-**View → Side bar → Focus Explorer** gives the folder tree keyboard focus. The
-optional VS Code preset uses Ctrl+Shift+E (Cmd+Shift+E on macOS). Arrows expand,
-collapse and navigate; Home/End and Page Up/Down move the selection. Type a name
-to jump to a matching row, Enter opens it, F2 renames it inline, Delete opens the
-existing trash confirmation, and Escape returns to the editor. Tab leaves the
-roving tree selection. Personal global bindings retain priority.
-
-Right-click a folder for inline **New file…** or **New folder…**; rename is inline
-too. Enter or the action button submits the name, and Escape cancels before the
-operation starts. Invalid names and filesystem conflicts keep the draft available
-to correct. Renaming an open dirty file retargets it without saving its text.
-
-Settings → Folders & Search controls automatic active-file reveal, compact
-single-child folder chains, Git badges and diagnostic counts. Automatic reveal
-runs when Files is visible and leaves Search/Source Control inputs intact. In a
-compact chain, F2 renames the final segment. Badges are cached and computed in
-background/on-demand work; showing diagnostic badges never starts a language
-server. Git refresh follows filesystem and Git-metadata events, explicit refresh,
-and refocusing; SSH Git badges require execution trust and refresh on focus or
-explicit refresh. Decoration budgets bound large repositories; hover Refresh
-folders for status. Unsaved editor text is independent of disk Git status.
-
-### Filtering Problems
-
-The Problems panel combines build results and language-server diagnostics in one
-list. Filter by message, filename or source, select a severity or source, and use
-Current file to follow the active editor. Group by file adds location headers.
-Counts show the filtered total and overall severity totals. Build messages with
-no explicit error or warning prefix appear as information.
-
-Next diagnostic and Previous diagnostic follow the current filters and wrap at
-the ends. The optional VS Code shortcut preset binds them to F8 and Shift+F8.
-These commands preserve the Problems panel and reject stale language positions.
-Explorer diagnostic badges include build results as well as language diagnostics.
-The combined catalogue is limited to 10,000 entries and 8 MiB.
-
-### Rename Symbol and Quick Fixes
-
-Tools → Language server includes Rename symbol and Quick fixes. The optional
-VS Code shortcut preset uses F2 and Primary+Period. In Explorer, F2 still renames
-the selected file. Each server's Configure page can enable or disable these
-features independently.
-
-Rename requests a new name and opens a preview. Quick fixes lists available
-text edits; choose one to review it. Inspect each file's Before and After text,
-then choose Apply all text changes. The preview shows the first 500 characters
-of long lines. Changes stay unsaved, and each changed file has its own normal
-Undo history and session recovery. Opening a preview never changes file text.
-
-The editor rejects stale previews, stale versions, overlapping edits and paths
-outside the project root. File resource operations and server commands are
-unavailable. A batch supports up to 64 complete files, 2 MiB per file and 8 MiB of
-combined source and proposed text. Local batches preflight every source and
-commit no edits if preparation fails. SSH batches preflight every source too;
-if a later host edit fails, the editor reports the completed files and keeps
-their text and Undo history visible. Files are never saved automatically.
-
-### Panel and focus controls
-
-View → Panel includes Toggle last used panel and Maximize or restore panel.
-Closing or toggling the panel preserves its selected tab, output and shell.
-Maximize expands the panel while remembering its normal height; Restore returns
-to that height. These layout choices are remembered for the current window.
-The VS Code shortcut preset uses Primary+J to toggle the panel.
-
-Focus editor, Focus Explorer, Focus Search and Focus terminal are available in
-the command palette and custom keybindings. Primary+1 through Primary+4 in the
-VS Code preset move from the terminal to an editor group. Sidebar focus leaves
-the panel and active document intact. Focusing a terminal shows its existing
-session, or starts one when explicitly requested and enabled. A disabled terminal
-never starts when restoring the last panel; Problems is shown instead.
-
-### Notifications and progress
-
-Use Notifications in the status bar, View → Panel, or the command palette to
-review recent messages. Messages do not take keyboard focus. The window keeps
-up to 128 entries and 256 KiB of history, combines consecutive repeated messages,
-and shows unread counts. Dismiss individual entries or clear the history; this
-does not dismiss recovery errors or cancel running work. History lasts for the
-current window and is not written to disk.
-
-Failed saves provide Retry save when the original document is still open at the
-same path. Save As retries ask for a destination again. Build completions link to
-Output; language and Git failures link to their existing management/log views.
-Progress controls can cancel builds, folder searches and language-server work
-cooperatively. Cancelling server work clears stale diagnostics and stops owned
-servers; Refresh in Language servers resumes them. Generic file-writing jobs
-are not cancelled by notification controls.
