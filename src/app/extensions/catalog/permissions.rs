@@ -8,7 +8,7 @@ use std::{
     io::{self, Read, Seek, Write},
     path::Path,
     sync::atomic::{AtomicBool, Ordering},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 const LOCK_FILE: &str = "extensions.lock";
@@ -309,26 +309,9 @@ pub(super) fn change_lock(config: &Path) -> Result<File, String> {
             .write(true),
     )
     .map_err(|error| format!("Could not open the extension change lock: {error}"))?;
-    // A concurrent fork briefly inherits other threads' CLOEXEC descriptors.
-    // Closing our copy can therefore leave a lock held until the child execs.
-    // These operations run on workers; allow that transient lease to close,
-    // while keeping a genuinely busy extension change bounded and exclusive.
-    let started = Instant::now();
-    loop {
-        match file.try_lock() {
-            Ok(()) => return Ok(file),
-            Err(std::fs::TryLockError::WouldBlock)
-                if started.elapsed() < Duration::from_millis(250) =>
-            {
-                std::thread::sleep(Duration::from_millis(5));
-            }
-            Err(error) => {
-                return Err(format!(
-                    "Could not lock extension changes: {error}. Try again."
-                ));
-            }
-        }
-    }
+    hedit_core::file_io::lock_with_timeout(&file, Duration::from_millis(250))
+        .map_err(|error| format!("Could not lock extension changes: {error}. Try again."))?;
+    Ok(file)
 }
 
 fn open_leaf(path: &Path, options: &mut OpenOptions) -> io::Result<File> {
@@ -375,6 +358,7 @@ fn open_leaf(path: &Path, options: &mut OpenOptions) -> io::Result<File> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Instant;
 
     #[test]
     fn transient_lock_contention_waits_for_release() {
