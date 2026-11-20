@@ -1797,7 +1797,8 @@ impl Document {
         // Preserve access restrictions before any content reaches the temporary
         // file, as well as when it replaces the destination.
         if target_metadata.is_some() {
-            save_permissions::copy(&target, &temp).map_err(err)?;
+            save_permissions::copy(&target, &temp)
+                .map_err(|error| format!("Could not preserve save permissions: {error}"))?;
         }
         self.write_encoded_content(temp.as_file_mut())?;
         self.check_source()?;
@@ -1809,7 +1810,8 @@ impl Document {
             if meta.permissions().readonly() {
                 return Err("The file is read-only. Use Save As to choose another path.".into());
             }
-            save_permissions::copy(&target, &temp).map_err(err)?;
+            save_permissions::copy(&target, &temp)
+                .map_err(|error| format!("Could not preserve save permissions: {error}"))?;
             temp.as_file().sync_all().map_err(err)?;
             Some(Stamp::from_metadata(&meta)?)
         } else {
@@ -1820,7 +1822,8 @@ impl Document {
         }
         // A destination checked as absent must still be absent at publication.
         let file = if let (Some(expected), Some(staging)) = (target_stamp, staging) {
-            save_target::replace(temp, staging, &target, &expected)?
+            save_target::replace(temp, staging, &target, &expected)
+                .map_err(|error| format!("Could not publish the saved file: {error}"))?
         } else {
             temp.persist_noclobber(&target).map_err(|failure| {
                 if failure.error.kind() == io::ErrorKind::AlreadyExists {
