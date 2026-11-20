@@ -62,7 +62,7 @@ jobs:
       - name: Build the editor
         run: cargo build --locked --no-default-features --bin hedit
       - name: CLI fixtures and signed distribution tests
-        run: cargo test --locked --no-default-features --test lua_plugin_runtime --test plugin_distribution -- --nocapture
+        run: cargo test --locked --no-default-features --test lua_plugin_runtime --test plugin_distribution --test save_security -- --nocapture
       - name: Test the extracted portable package
         if: runner.arch == 'X64'
         run: python scripts/package-windows.py --binary target/debug/hedit.exe --out-dir target/windows-package --smoke
