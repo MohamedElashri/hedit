@@ -543,3 +543,10 @@ fn native_tool_integrity_cannot_be_raised_or_disabled() {
         );
     }
 }
+
+#[test]
+fn ordinary_appcontainer_does_not_pass_native_lpac_verification() {
+    let executable = worker_executable().unwrap();
+    let child = Worker::spawn(&executable, &[]).unwrap();
+    assert!(native::require_lpac(child.process.as_raw_handle()).is_err());
+}

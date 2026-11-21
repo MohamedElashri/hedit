@@ -135,43 +135,7 @@ fn information(class: TOKEN_INFORMATION_CLASS) -> Vec<usize> {
         unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) },
         0
     );
-    if class == TokenIsLessPrivilegedAppContainer {
-        use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
-        type Query = unsafe extern "system" fn(
-            HANDLE,
-            TOKEN_INFORMATION_CLASS,
-            *mut std::ffi::c_void,
-            u32,
-            *mut u32,
-        ) -> i32;
-        let name: Vec<u16> = "ntdll.dll\0".encode_utf16().collect();
-        let module = unsafe { GetModuleHandleW(name.as_ptr()) };
-        let query =
-            unsafe { GetProcAddress(module, c"NtQueryInformationToken".as_ptr().cast()) }.unwrap();
-        let query: Query =
-            unsafe { std::mem::transmute::<unsafe extern "system" fn() -> isize, Query>(query) };
-        let mut value = 0u32;
-        let mut length = std::mem::size_of_val(&value) as u32;
-        assert_eq!(
-            unsafe {
-                query(
-                    token,
-                    class,
-                    (&mut value as *mut u32).cast(),
-                    length,
-                    &mut length,
-                )
-            },
-            0
-        );
-        assert_eq!(length, std::mem::size_of_val(&value) as u32);
-        unsafe { CloseHandle(token) };
-        return vec![value as usize];
-    }
-    if class == TokenIsAppContainer
-        || class == TokenIsLessPrivilegedAppContainer
-        || class == TokenMandatoryPolicy
-    {
+    if class == TokenIsAppContainer || class == TokenMandatoryPolicy {
         let mut value = 0u32;
         let mut count = std::mem::size_of_val(&value) as u32;
         assert_ne!(
@@ -228,7 +192,6 @@ fn probe(args: Vec<std::ffi::OsString>) {
         _ => {}
     }
     assert_eq!(information(TokenIsAppContainer)[0], 1);
-    assert_eq!(information(TokenIsLessPrivilegedAppContainer)[0], 1);
     assert_ne!(
         information(TokenMandatoryPolicy)[0] & TOKEN_MANDATORY_POLICY_NO_WRITE_UP as usize,
         0

@@ -63,50 +63,73 @@ pub(super) fn lower_integrity(process: HANDLE, mode: Mode) -> io::Result<()> {
         )
     })
 }
-fn lpac(token: &OwnedHandle) -> io::Result<u32> {
-    // GetTokenInformation rejects this newer class on supported Windows builds;
-    // query the same kernel token field through the trusted ntdll export.
-    type Query = unsafe extern "system" fn(
-        HANDLE,
-        TOKEN_INFORMATION_CLASS,
-        *mut std::ffi::c_void,
-        u32,
-        *mut u32,
-    ) -> i32;
-    let module = unsafe { GetModuleHandleW(wide("ntdll.dll").as_ptr()) };
-    let query = unsafe { GetProcAddress(module, c"NtQueryInformationToken".as_ptr().cast()) }
-        .ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::Unsupported,
-                "Native LPAC verification is unavailable.",
+/// Verify the documented LPAC access semantics rather than class 46, which
+/// current Windows kernels reject from user mode. Positive and negative probes
+/// distinguish missing access, ordinary AppContainers, and LPACs before resume.
+pub(super) fn require_lpac(process: HANDLE) -> io::Result<()> {
+    let mut primary = ptr::null_mut();
+    check(unsafe { OpenProcessToken(process, TOKEN_QUERY | TOKEN_DUPLICATE, &mut primary) })?;
+    let primary = unsafe { owned(primary) }?;
+    let mut duplicate = ptr::null_mut();
+    check(unsafe {
+        DuplicateToken(
+            primary.as_raw_handle(),
+            SecurityIdentification,
+            &mut duplicate,
+        )
+    })?;
+    let duplicate = unsafe { owned(duplicate) }?;
+    for (package, expected) in [
+        (None, false),
+        (Some("S-1-15-2-1"), false),
+        (Some("S-1-15-2-2"), true),
+    ] {
+        // Everyone satisfies the ordinary user check; the second ACE exercises
+        // the separate package check. Use read access, independent of MIC level.
+        let extra = package.map_or(String::new(), |sid| format!("(A;;0x1;;;{sid})"));
+        let sddl = wide(format!("O:SYG:SYD:(A;;0x1;;;WD){extra}"));
+        let mut descriptor = ptr::null_mut();
+        check(unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                sddl.as_ptr(),
+                1,
+                &mut descriptor,
+                ptr::null_mut(),
             )
         })?;
-    let query: Query =
-        unsafe { mem::transmute::<unsafe extern "system" fn() -> isize, Query>(query) };
-    let mut value = 0u32;
-    let mut length = mem::size_of_val(&value) as u32;
-    let status = unsafe {
-        query(
-            token.as_raw_handle(),
-            TokenIsLessPrivilegedAppContainer,
-            (&mut value as *mut u32).cast(),
-            length,
-            &mut length,
-        )
-    };
-    if status < 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            format!("Native LPAC query failed ({:#010x}).", status as u32),
-        ));
+        let descriptor = LocalSid(descriptor);
+        let mut mapping = GENERIC_MAPPING {
+            GenericRead: 1,
+            GenericWrite: 2,
+            GenericExecute: 4,
+            GenericAll: 7,
+        };
+        // No privileged rights are requested, so one PRIVILEGE_SET is enough.
+        // A larger requirement or any API error fails closed.
+        let mut privileges = PRIVILEGE_SET::default();
+        let mut length = mem::size_of_val(&privileges) as u32;
+        let mut granted = 0;
+        let mut allowed = 0;
+        check(unsafe {
+            AccessCheck(
+                descriptor.0,
+                duplicate.as_raw_handle(),
+                1,
+                &mut mapping,
+                &mut privileges,
+                &mut length,
+                &mut granted,
+                &mut allowed,
+            )
+        })?;
+        if (allowed != 0) != expected || granted != u32::from(expected) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "Native tool LPAC access semantics verification failed.",
+            ));
+        }
     }
-    if length != mem::size_of_val(&value) as u32 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "Invalid LPAC token scalar length.",
-        ));
-    }
-    Ok(value)
+    Ok(())
 }
 fn word(token: &OwnedHandle, class: TOKEN_INFORMATION_CLASS) -> io::Result<u32> {
     let mut value = 0u32;
@@ -136,14 +159,8 @@ fn word(token: &OwnedHandle, class: TOKEN_INFORMATION_CLASS) -> io::Result<u32> 
 }
 pub(super) fn require_token(process: HANDLE, mode: Mode) -> io::Result<()> {
     let token = token(process)?;
-    let lpac = lpac(&token)?;
+    require_lpac(process)?;
     let policy = word(&token, TokenMandatoryPolicy)?;
-    if lpac != 1 {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "Native tool LPAC verification failed.",
-        ));
-    }
     if policy & TOKEN_MANDATORY_POLICY_NO_WRITE_UP == 0 {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,

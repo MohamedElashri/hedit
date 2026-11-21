@@ -259,6 +259,15 @@ no shell interpolation is used. Snapshot trees are validated for regular files,
 reparse points, entry count and aggregate size before ACL propagation. The host
 must supply immutable private image/snapshot copies and retain their ownership.
 
+Before resuming the suspended process, the host verifies LPAC authorization
+semantics with `AccessCheck` on an identification duplicate of its token:
+Everyone alone and Everyone plus ALL_APPLICATION_PACKAGES must deny read;
+Everyone plus ALL_RESTRICTED_APPLICATION_PACKAGES must grant it. This uses the
+[documented LPAC definition](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ne-winnt-token_information_class)
+and [AccessCheck](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-accesscheck),
+with both positive and negative controls. The class-46 token query is rejected
+by the tested Windows kernels and is not used as an authority check.
+
 Native Windows validation is an activation gate. A low-integrity LPAC control
 receives write access to a synthetic low-labelled file; the untrusted tool token
 must fail the same write and must fail attempts to raise its integrity or disable
