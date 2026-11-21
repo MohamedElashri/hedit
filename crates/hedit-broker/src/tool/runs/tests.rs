@@ -90,9 +90,12 @@ fn orphaned_and_mid_retirement_bundles_recover_without_losing_admission() {
         )
         .unwrap();
     let id = run.record.id;
-    let child = runs.child(&run.record).unwrap();
     runs.directory
         .rename(id.to_string(), &runs.directory, format!(".removed-{id}"))
+        .unwrap();
+    let child = runs
+        .directory
+        .open_dir_nofollow(format!(".removed-{id}"))
         .unwrap();
     child.remove_file("image.exe").unwrap();
     drop(child);

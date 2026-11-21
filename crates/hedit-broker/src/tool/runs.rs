@@ -358,12 +358,14 @@ impl Runs {
             Err(error) => return Err(io::Error::other(error)),
         }
         self.contents(&directory, record)?;
+        // cap-std deliberately pins Windows directories against rename. Release
+        // that pin after validation; the global lock and live lease stay held.
+        drop(directory);
         let removed = format!(".removed-{}", record.id);
         self.directory
             .rename(record.id.to_string(), &self.directory, &removed)?;
         native::sync_dir(&self.directory)?;
         drop(lease);
-        drop(directory);
         self.cleanup_retired(&removed)
     }
     fn cleanup_retired(&self, name: &str) -> io::Result<()> {
