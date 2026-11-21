@@ -908,3 +908,14 @@ until those native jobs pass. Broker tool/LSP intents remain unavailable. The
 preceding guardian head `28056e8` passed dedicated Linux x64/ARM64/macOS probes,
 full Linux/macOS/remote checks and both Windows Lua sandbox architectures; its
 Windows package job was still running when this checkpoint was recorded.
+
+
+Native image preflight and durable storage are now implemented separately from
+execution grants. Imports pin and classify the selected image without running
+it, preserve quarantine/Zone.Identifier, and stream a checked private copy.
+The durable store bounds image admission to 64 records/256 MiB, retains failed
+reservations, binds command/source/profile/recipe ownership and revalidates
+content/trust marks before use. Native macOS broker tests include interruption,
+corruption, retirement crash cleanup and repeated import/removal without growth
+of the permanent exclusion registry. Per-run image/snapshot ownership, broker
+activation, persistent LSP and final SDK/reference/performance gates remain open.

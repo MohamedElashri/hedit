@@ -10,6 +10,15 @@ impl Marks {
     pub fn bytes(&self) -> usize {
         self.bytes.as_ref().map_or(0, Vec::len)
     }
+    pub(super) fn fingerprint(&self) -> Option<String> {
+        use sha2::{Digest, Sha256};
+        self.bytes.as_ref().map(|bytes| {
+            Sha256::digest(bytes)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect()
+        })
+    }
     pub fn read(file: &File, path: &Path) -> io::Result<Self> {
         #[cfg(target_os = "macos")]
         {
