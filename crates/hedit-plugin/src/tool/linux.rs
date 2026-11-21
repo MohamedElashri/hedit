@@ -53,12 +53,12 @@ pub(super) fn prepare() -> io::Result<()> {
     Ok(())
 }
 
-pub(super) fn check_resources(child: &std::process::Child) -> io::Result<()> {
+pub(super) fn check_resources(pid: u32) -> io::Result<()> {
     // Read one bounded /proc status record. Address-space and CPU limits are
     // hard kernel limits; thread count is additionally monitored by the host.
     use std::io::Read;
     let mut bytes = Vec::new();
-    File::open(format!("/proc/{}/status", child.id()))?
+    File::open(format!("/proc/{pid}/status"))?
         .take(16 * 1024)
         .read_to_end(&mut bytes)?;
     let status =

@@ -186,9 +186,12 @@ pub(crate) fn verify_child(child: &Child) -> io::Result<()> {
 }
 
 pub(crate) fn over_memory_limit(child: &Child) -> io::Result<bool> {
+    over_memory_limit_pid(child.id())
+}
+pub(crate) fn over_memory_limit_pid(pid: u32) -> io::Result<bool> {
     let mut usage = MaybeUninit::<libc::rusage_info_v0>::uninit();
     // SAFETY: proc_pid_rusage initializes the requested v0 structure on success.
-    if unsafe { libc::proc_pid_rusage(child.id() as i32, 0, usage.as_mut_ptr().cast()) } != 0 {
+    if unsafe { libc::proc_pid_rusage(pid as i32, 0, usage.as_mut_ptr().cast()) } != 0 {
         return Err(io::Error::last_os_error());
     }
     Ok(unsafe { usage.assume_init() }.ri_phys_footprint > MAX_PROCESS_BYTES)
@@ -230,6 +233,9 @@ pub(crate) fn enter() -> io::Result<()> {
     close_descriptors_from(2)
 }
 
+pub(crate) fn close_guardian_descriptors() -> io::Result<()> {
+    close_descriptors_from(5)
+}
 pub(crate) fn close_tool_descriptors() -> io::Result<()> {
     close_descriptors_from(3)
 }

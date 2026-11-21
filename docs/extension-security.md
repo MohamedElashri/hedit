@@ -228,10 +228,17 @@ not conceal arbitrary path metadata; it restricts file contents and effects.
 These residuals must be disclosed in tool review rather than described as total
 filesystem or code-provenance isolation. See the kernel's
 [Landlock documentation](https://docs.kernel.org/userspace-api/landlock.html).
-Linux sets parent-death termination before native exec. A trusted macOS guardian
-for abrupt editor exit remains an activation gate; the current finite-filter
-supervisor handles cleanup while the editor is alive. No broker tool grants are
-enabled by this implementation.
+Linux sets parent-death termination before native exec. macOS arms a trusted,
+event-driven guardian before confinement and text delivery. A private liveness
+socket binds the guardian to the editor. EOF terminates the native process; loss
+of the guardian terminates the process group from the editor. Native exec runs
+as a session leader, so the OS prohibits session/group changes independently of
+Seatbelt. The guardian remains in that group, anchoring its identity during
+cleanup. The editor observes exit without reaping, terminates the group, then
+reaps its direct child; after editor death, the system reaper collects orphaned
+processes. No untrusted tool holds a guardian control descriptor. Native tests
+kill the simulated editor and guardian separately and verify both processes are
+gone. No broker tool grants are enabled by this implementation.
 
 `crates/hedit-plugin/tests/native_tool.rs` runs the actual native image through
 the production boundary: Unicode/full-size input, literal policy parameters,

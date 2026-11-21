@@ -36,6 +36,17 @@ mod native {
             probe(args);
             return;
         }
+        #[cfg(target_os = "macos")]
+        if args.first().is_some_and(|arg| arg == "--owner-probe") {
+            let launch: Launch = serde_json::from_reader(io::stdin()).unwrap();
+            let result = tool::run(
+                &launch,
+                b"private document",
+                &AtomicBool::new(false),
+                Duration::from_secs(10),
+            );
+            std::process::exit(i32::from(result.is_err()));
+        }
         let directory = tempfile::tempdir().unwrap();
         let root = fs::canonicalize(directory.path()).unwrap();
         let snapshot = root.join("snapshot \" café 東京");
@@ -167,6 +178,10 @@ mod native {
             io::ErrorKind::TimedOut
         );
         assert_reaped();
+        #[cfg(target_os = "macos")]
+        for kill_guardian in [false, true] {
+            guardian_lifecycle(&waiting, kill_guardian);
+        }
         // Unknown and duplicate metadata fail before readiness.
         for header in [
             b"{}".as_slice(),
@@ -203,6 +218,106 @@ mod native {
         println!("Native tool confinement, inherited descriptors, reexec, output, memory, threads, CPU, cancellation and metadata probes passed.");
     }
 
+    #[cfg(target_os = "macos")]
+    fn children(pid: u32) -> Vec<u32> {
+        let mut children = [0i32; 16];
+        let count = unsafe {
+            libc::proc_listchildpids(
+                pid as i32,
+                children.as_mut_ptr().cast(),
+                std::mem::size_of_val(&children) as i32,
+            )
+        };
+        assert!(count >= 0 && (count as usize) < children.len());
+        children[..count as usize]
+            .iter()
+            .map(|pid| *pid as u32)
+            .collect()
+    }
+    #[cfg(target_os = "macos")]
+    fn image_path(pid: u32) -> Option<std::path::PathBuf> {
+        use std::os::unix::ffi::OsStrExt;
+        let mut path = [0u8; 4096];
+        if unsafe { libc::proc_pidpath(pid as i32, path.as_mut_ptr().cast(), path.len() as u32) }
+            <= 0
+        {
+            return None;
+        }
+        let length = path.iter().position(|byte| *byte == 0).unwrap();
+        Some(Path::new(std::ffi::OsStr::from_bytes(&path[..length])).into())
+    }
+    #[cfg(target_os = "macos")]
+    fn guardian_lifecycle(launch: &Launch, kill_guardian: bool) {
+        let mut owner = Command::new(std::env::current_exe().unwrap())
+            .arg("--owner-probe")
+            .env_clear()
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        owner
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(&serde_json::to_vec(launch).unwrap())
+            .unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let (guardian, native) = loop {
+            let ready = children(owner.id()).into_iter().find_map(|native| {
+                if image_path(native).as_ref() != Some(&launch.executable) {
+                    return None;
+                }
+                children(native)
+                    .into_iter()
+                    .next()
+                    .map(|guardian| (guardian, native))
+            });
+            if let Some(ready) = ready {
+                break ready;
+            }
+            if owner.try_wait().unwrap().is_some() || std::time::Instant::now() >= deadline {
+                let _ = owner.kill();
+                let result = owner.wait_with_output().unwrap();
+                panic!(
+                    "native owner did not launch the selected image: {}",
+                    String::from_utf8_lossy(&result.stderr)
+                );
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        if kill_guardian {
+            assert_eq!(unsafe { libc::kill(guardian as i32, libc::SIGKILL) }, 0);
+        } else {
+            owner.kill().unwrap();
+        }
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while (unsafe { libc::kill(native as i32, 0) } == 0
+            || unsafe { libc::kill(guardian as i32, 0) } == 0
+            || owner.try_wait().unwrap().is_none())
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        if owner.try_wait().unwrap().is_none() {
+            owner.kill().unwrap();
+            owner.wait().unwrap();
+            panic!("owner did not handle guardian exit");
+        }
+        assert_eq!(
+            unsafe { libc::kill(native as i32, 0) },
+            -1,
+            "native tool survived editor/guardian exit"
+        );
+        assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
+        assert_eq!(
+            unsafe { libc::kill(guardian as i32, 0) },
+            -1,
+            "guardian survived editor/tool exit"
+        );
+        assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
+        assert_reaped();
+    }
     fn assert_reaped() {
         let result = unsafe { libc::waitpid(-1, std::ptr::null_mut(), libc::WNOHANG) };
         assert_eq!(result, -1, "tool child remained after the call");
@@ -345,6 +460,29 @@ mod native {
             unsafe { libc::_exit(31) }
         }
         assert_eq!(pid, -1);
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(
+                unsafe { libc::setsid() },
+                -1,
+                "tool escaped the guardian's session"
+            );
+            assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::EPERM));
+            assert_eq!(
+                unsafe { libc::setpgid(0, 0) },
+                -1,
+                "tool escaped the guardian's process group"
+            );
+            assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::EPERM));
+        }
+        if let Ok(mut child) = Command::new(std::env::current_exe().unwrap())
+            .args(["--probe", "wait"])
+            .spawn()
+        {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("native spawn escaped confinement");
+        }
         // The exec allowlist is the selected image, not all readable system code.
         denied(Err::<(), _>(Command::new("/usr/bin/true").exec()));
         if mode == "reexec" {
