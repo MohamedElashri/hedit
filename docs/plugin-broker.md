@@ -208,9 +208,10 @@ URI/version checks, UTF-16 conversion, and independent lifetime/CPU/restart limi
 
 The macOS prototype demonstrated native filesystem/network/child restrictions,
 but a hard unprivileged native memory ceiling has not been established. VM
-isolation versus native confinement with monitored memory remains a host-policy
-choice. This prototype does not enable tools or establish Windows/Linux tool
-support. Unsupported enforcement must report unavailable.
+isolation is not required for the selected native profile: macOS will use
+monitored memory limits, with explicitly documented detection/termination
+overshoot. This prototype does not enable tools or establish Windows/Linux tool
+support. Unsupported filesystem/process confinement must report unavailable.
 
 Run the shared and native continuation tests with:
 

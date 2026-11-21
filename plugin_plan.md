@@ -749,8 +749,8 @@ Required next work:
   scope/endpoint review, manager disclosure/activity and immediate Stop.
 - Implement complete workspace previews, affected-buffer conflict/freeze/reload
   handling, and explicit recovery/cleanup UI without blocking unrelated buffers.
-- Finish separately confined external-tool and typed LSP backends after choosing
-  the macOS hard-memory boundary. A native prototype is not a production tool
+- Finish separately confined external-tool and typed LSP backends using the selected native macOS sandbox with monitored memory
+  limits and documented overshoot. A native prototype is not a production tool
   policy. Tool/LSP intents currently report unavailable; no fallback runs them.
 - Finish the author CLI, annotations/schema, installed reference integrations,
   extracted-package tests, sustained responsiveness/retention measurements, and
