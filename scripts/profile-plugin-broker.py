@@ -23,9 +23,9 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     paths = [ROOT / 'Cargo.toml', ROOT / 'Cargo.lock', ROOT / 'LICENSE',
              ROOT / 'crates/hedit-core/Cargo.toml', ROOT / 'crates/hedit-broker/Cargo.toml',
-             ROOT / 'crates/hedit-plugin/Cargo.toml', Path(__file__).resolve()]
+             ROOT / 'crates/hedit-plugin/Cargo.toml', ROOT / 'crates/hedit-protocol/Cargo.toml', Path(__file__).resolve()]
     for directory in ['crates/hedit-core/src', 'crates/hedit-broker/src',
-                      'crates/hedit-broker/tests', 'crates/hedit-plugin/src']:
+                      'crates/hedit-broker/tests', 'crates/hedit-plugin/src', 'crates/hedit-protocol/src']:
         paths += sorted((ROOT / directory).rglob('*.rs'))
         paths += sorted((ROOT / directory).rglob('*.lua'))
     hashes = {}

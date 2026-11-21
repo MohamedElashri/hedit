@@ -144,6 +144,20 @@ struct Run {
 }
 
 impl Activity {
+    #[cfg(all(test, target_os = "macos"))]
+    pub(in crate::app::extensions) fn measured(&self) -> Vec<serde_json::Value> {
+        self.recent
+            .iter()
+            .map(|run| {
+                serde_json::json!({
+                    "duration_us":run.duration.as_micros(),
+                    "outcome":run.outcome.label(),
+                    "phases":run.invocation.trace.snapshot()
+                })
+            })
+            .collect()
+    }
+
     pub(super) fn record(&mut self, invocation: Invocation, outcome: InvocationOutcome) {
         if !valid_command_id(&invocation.command) {
             return;
