@@ -686,8 +686,10 @@ install/updater-fixture corrections do not change the measured runtime path.
 
 ### Final validation status
 
-Implementation and sustained performance work are complete. Final full-feature
-macOS regression, documentation verification and corrected universal/full
-platform package CI are being checked. The unchecked completion items above
+Implementation is complete. A deterministic contention regression found and
+fixed transient document-lock cancellations without granting unverified
+authority. The final sustained measurement is being repeated with explicit
+typing/revision assertions. Full-feature macOS regression, documentation
+verification and corrected universal/full platform package CI are being checked. The unchecked completion items above
 remain open until those results are reviewed. No capability uses a weaker
 sandbox or fallback to pass a gate.

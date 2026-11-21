@@ -146,7 +146,7 @@ fn install_json_reference(config: &Path, project: &Path, commands: &[&str]) {
         let token = serde_json::from_value(plugin.grant.approval_id().into()).unwrap();
         let (image, _) = catalog::import_tool(
             ToolSelection {
-                config: config,
+                config,
                 path: &path,
                 extension: "scoped-json",
                 command,

@@ -403,7 +403,12 @@ unconsumed guard even if the window stops pumping frames. Dropping a receipt
 releases it immediately. The UI takes a live guard without blocking and consumes
 it in the authorized operation; expired receipts produce no effect. Prompt and
 preview dwell hold no authorization lock. The editing SDK's approval handoff uses
-the same receipt policy. Tests cover unpumped/expired/dropped receipts and the
+the same receipt policy. UI retention treats a busy document mutex as pending,
+not as a revision change. That hint confers no authority: host/authorization
+threads wait up to 200 ms for a verifiable revision before and after acquiring
+the approval guard. Cancellation, a changed revision, poisoned state or exhausted
+wait denies disclosure/effects. UI retention/publication checks never wait for that mutex. Atomic effect
+application still validates the actual document revision. Tests cover unpumped/expired/dropped receipts and the
 retention of a consumed guard through its authorized operation.
 
 ## Workspace and external-service implementation
