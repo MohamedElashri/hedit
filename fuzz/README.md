@@ -1,18 +1,25 @@
 # Plugin codec fuzzing
 
-This target exercises both request decoders, legacy replacement replies, SDK
-transaction preparation, and SDK failure/success replies. It never evaluates Lua
-or starts processes. Synthetic seeds cover a framed request, transaction,
+The native validation workflow runs a ten-minute sanitizer campaign twice weekly
+on the default branch. Dispatch `macos.yml` with `protocol_security=true` to run it
+on a review branch; ordinary dispatches and release callers retain universal macOS
+packaging. Campaign artifacts retain source snapshots/hashes, metadata, logs, and
+corpus for 14 days.
+
+This target exercises legacy, editing, provider, and broker request decoders; legacy replacement replies;
+SDK transaction preparation; and typed success/failure replies. It never evaluates Lua
+or starts processes. Synthetic seeds cover framed requests, transactions, provider and broker results,
 success, and failure; keep reproducing failures as regression tests.
 
 With `cargo-fuzz` and a supported nightly Rust toolchain installed:
 
 ```sh
-cargo +nightly fuzz run sdk_protocol -- -max_len=1048576 -timeout=5 -rss_limit_mb=1024 -max_total_time=300
+cargo +nightly fuzz run sdk_protocol -- -max_len=2097152 -timeout=5 -rss_limit_mb=1024 -max_total_time=300
 ```
 
-The one-MiB input cap bounds decoder allocation and matches the request frame
-ceiling. Native sandbox and GUI authorization tests remain separate; this target
+The two-MiB input cap covers the new broker envelope. Legacy/editing/provider
+requests retain their separate one-MiB limit. Aggregate text, arrays, and cache
+limits are checked independently of framing. Native sandbox and GUI authorization tests remain separate; this target
 cannot prove confinement, revocation, or whole-editor responsiveness. Do not
 interpret a stable-toolchain compile or deterministic mutation run as a
 coverage-guided campaign. Store campaign duration, toolchain, platform, corpus,
@@ -27,7 +34,8 @@ python3 scripts/fuzz-plugin-codec.py --seconds 300
 
 This runner instruments the explicit host target to avoid instrumenting Cargo
 build scripts. It does **not** enable AddressSanitizer. Its output directory keeps
-raw logs, build metadata, generated corpus, and crash artifacts. Use the nightly
+raw logs, source hashes, dirty-tree status, build metadata, generated corpus, and
+crash artifacts. Use the nightly
 workflow for sanitizer campaigns; both workflows exercise the same target.
 
 For an AddressSanitizer campaign with nightly Rust and a matching Clang runtime:

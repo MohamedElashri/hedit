@@ -606,8 +606,8 @@ The probe records every sample and toolchain/build metadata for reproduction.
 Stage 1's native Windows/Linux, universal macOS, sanitizer, numeric tracing, and
 controlled egui CPU-frame/allocation gates have passed on the implementation
 stack. The measurements below state their practical scope. Stage 2 is implemented
-and validated as recorded in the follow-ups; Stage 3 remains unimplemented and
-unavailable. Do not widen isolation to bypass a gate.
+and validated as recorded in the follow-ups; Stage 3 remains unavailable to installed plugins; its broker foundation is
+under implementation. Do not widen isolation to bypass a gate.
 
 ### Stage 1 validation follow-up
 
@@ -699,3 +699,72 @@ and universal macOS packaging/extracted-app validation (run `44859211258`). The
 Stage 2 implementation gate is closed; PR #112 remains a draft for review. This
 accepts the documented bounded provider API and measurement scope, not a claim of
 unrestricted editor compatibility. Stage 3 remains required to finish this plan.
+
+
+### Stage 3 broker checkpoint — implementation gate remains open
+
+The shared SDK 3 continuation protocol and host-only `hedit-broker` crate now
+cover scoped discovery/read/search, versioned chunks and batched reads, native
+watch continuations, reviewed existing-file plans, recoverable journals and
+retention quotas, exact-endpoint HTTPS, strict JSON helpers, and bounded
+background host execution. These are internal development interfaces. Installed
+manifests still accept APIs 1–4; no workspace, network or tool grants are enabled.
+
+The host validates declarations, source-independent operation envelopes, opaque
+session/version handles, callback steps, UTF-8/CRLF edits, aggregate resource
+limits and current policy guards. Recovery tests cover interruption, competing
+writes, capture races, malformed receipts/ledgers, full-width Windows file IDs,
+replaced/moved private stages, conservative cleanup and retained storage quotas.
+Ordinary capture failures attempt a no-clobber restore. The capture/publication
+visibility gap remains explicit; this is not atomic single-file replacement or
+global multi-file Undo. Dirty-buffer verification/freeze/reload and recovery UI
+are requirements for the editor integration, not completed by the backend tests.
+
+Local macOS evidence: 1,359 workspace tests passed (63 intentionally ignored),
+plus the custom native continuation test. The broker suite has 47 regressions;
+real confined-worker fixtures cover Unicode/CRLF project edits, synthetic HTTPS
+JSON, asynchronous apply, cancellation and stale preview decisions. Strict
+all-feature workspace Clippy, static/offline-Help checks and Linux/macOS/Windows
+packaging-script tests passed. This does not count script mocks as native
+Windows/Linux execution or validate a new universal release artifact.
+
+A final codec-only AddressSanitizer campaign completed 936,553 inputs in 601
+seconds without a finding. Its archived source hashes still match the codec.
+Scheduled campaigns now retain source, metadata, corpus, logs and failure
+artifacts. They do not execute Lua or replace native confinement tests.
+
+The release probe runs 25 two-file fixture trials (100 real confined callbacks),
+with immediate synthetic preview acceptance and separate host/worker timings.
+Input-copy p95 was 3 µs; reply-validation p95 1 µs; broker I/O p95 800 µs. Native callback p95 was 37.927 ms, with the first launch 276.914 ms. Journal preparation/application p95 were 40.870/54.985 ms.
+These measurements cover small local files, not whole-editor input/frame latency,
+large-workspace behavior, allocations or retained heap. Raw samples, archived
+source and environment metadata live under `target/plugin-validation`; reproduce
+with `scripts/profile-plugin-broker.py` after stopping other builds/fuzzing.
+
+Required next work:
+
+- Repeat native platform and universal macOS gates after editor integration.
+- Integrate manifest/SDK compatibility, exact-source resource grants, trusted
+  scope/endpoint review, manager disclosure/activity and immediate Stop.
+- Implement complete workspace previews, affected-buffer conflict/freeze/reload
+  handling, and explicit recovery/cleanup UI without blocking unrelated buffers.
+- Finish separately confined external-tool and typed LSP backends using the
+  selected native macOS sandbox with monitored memory
+  limits and documented overshoot. A native prototype is not a production tool
+  policy. Tool/LSP intents currently report unavailable; no fallback runs them.
+- Finish the author CLI, annotations/schema, installed reference integrations,
+  extracted-package tests, sustained responsiveness/retention measurements, and
+  cross-platform security/release gates. Credentials remain conditional on a
+  reference integration actually requiring them; no ambient/plaintext fallback.
+
+The Stage 3 gate remains open until the editor integration and supported-platform
+checks pass. Local backend checks do not establish completion of the whole plan.
+
+The broker foundation passed Linux, macOS, Windows and remote CI at `a83dd1b`
+(run `44900256772`) and the dedicated Windows x64/ARM64 sandbox/broker/package
+workflow (run `44900256769`). That workflow passed after retrying a save-hook
+deadline failure. Universal macOS packaging, extracted-helper checks and the
+protocol-security workflow passed at `74bb601` (run `44899794017`), before the
+Windows-only rename correction. Native CI found and fixed Linux O_PATH directory
+flushes and Windows handle-relative no-clobber recovery renames. These close the
+foundation's native test gap; the editor integration and tool/LSP gates stay open.

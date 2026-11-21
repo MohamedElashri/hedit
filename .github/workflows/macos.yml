@@ -1,13 +1,21 @@
-name: Universal macOS build
+name: Universal macOS and protocol security
 on:
   workflow_dispatch:
+    inputs:
+      protocol_security:
+        description: Run the protocol sanitizer campaign instead of packaging
+        type: boolean
+        default: false
   workflow_call:
+  schedule:
+    - cron: '23 4 * * 1,4'
 
 permissions:
   contents: read
 
 jobs:
   universal:
+    if: github.event_name != 'schedule' && !inputs.protocol_security
     name: Universal macOS app
     runs-on: macos-15
     timeout-minutes: 40
@@ -81,3 +89,32 @@ jobs:
             dist/hedit-*-macos-universal.zip*
             dist/hedit-remote-*-macos-universal*
           if-no-files-found: error
+
+  codec:
+    if: github.event_name == 'schedule' || inputs.protocol_security
+    concurrency:
+      group: plugin-security-${{ github.ref }}
+      cancel-in-progress: true
+    name: AddressSanitizer protocol fuzzing
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      CC: clang
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-11-19
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Fuzz bounded requests, replies, and transactions
+        run: python scripts/fuzz-plugin-codec.py --sanitizer address --seconds 600 --out-dir target/plugin-security
+      - name: Retain source hashes, logs, corpus, and failure artifacts
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: plugin-security-${{ github.run_id }}
+          path: target/plugin-security
+          retention-days: 14

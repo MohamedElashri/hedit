@@ -292,6 +292,93 @@ impl Input {
     }
 }
 
+/// Encoded replacement bytes after the SDK's LF/CRLF normalization.
+pub fn normalized_replacement_bytes(text: &str, crlf: bool) -> usize {
+    let newlines = text.matches('\n').count();
+    if newlines == 0 {
+        return text.len();
+    }
+    let pairs = text.matches("\r\n").count();
+    text.len() - pairs + if crlf { newlines } else { 0 }
+}
+fn normalize_replacement(text: &str, crlf: bool, bytes: usize) -> std::borrow::Cow<'_, str> {
+    if bytes == text.len() {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let mut output = String::with_capacity(bytes);
+    for line in text.split_inclusive('\n') {
+        if let Some(line) = line.strip_suffix('\n') {
+            output.push_str(line.strip_suffix('\r').unwrap_or(line));
+            output.push_str(if crlf { "\r\n" } else { "\n" });
+        } else {
+            output.push_str(line);
+        }
+    }
+    std::borrow::Cow::Owned(output)
+}
+
+/// Shared UTF-8/CRLF edit validation for host-owned workspace receipts. This does
+/// not grant document authority; SDK transactions still validate their snapshots.
+/// Input is capped at 1 MiB; replacements retain the SDK's 256 KiB/64-edit limits.
+pub fn prepare_text_edits(
+    original: &str,
+    crlf: bool,
+    edits: &[Edit],
+) -> Result<(String, Option<usize>), Error> {
+    if original.len() > 1024 * 1024 || original.contains('\0') || edits.len() > MAX_EDITS {
+        return Err(Error::Request);
+    }
+    let mut normalized_edits = Vec::with_capacity(edits.len());
+    let mut final_bytes = original.len();
+    let mut previous = 0;
+    let mut replacement_bytes = 0usize;
+    let mut raw_bytes = 0usize;
+    for (index, edit) in edits.iter().enumerate() {
+        if edit.start > edit.finish
+            || edit.start < previous
+            || !boundary(original, edit.start)
+            || !boundary(original, edit.finish)
+            || (index > 0 && edits[index - 1].start == edit.start)
+        {
+            return Err(Error::Worker);
+        }
+        if edit.text.contains('\0') {
+            return Err(Error::ReturnEncoding);
+        }
+        raw_bytes = raw_bytes
+            .checked_add(edit.text.len())
+            .ok_or(Error::ReturnSize)?;
+        if raw_bytes > MAX_OUTPUT_BYTES {
+            return Err(Error::ReturnSize);
+        }
+        let normalized_bytes = normalized_replacement_bytes(&edit.text, crlf);
+        replacement_bytes = replacement_bytes
+            .checked_add(normalized_bytes)
+            .ok_or(Error::ReturnSize)?;
+        if replacement_bytes > MAX_OUTPUT_BYTES {
+            return Err(Error::ReturnSize);
+        }
+        let normalized = normalize_replacement(&edit.text, crlf, normalized_bytes);
+        final_bytes = final_bytes
+            .checked_sub(edit.finish - edit.start)
+            .and_then(|bytes| bytes.checked_add(normalized.len()))
+            .ok_or(Error::ReturnSize)?;
+        normalized_edits.push((edit, normalized));
+        previous = edit.finish;
+    }
+    let mut text = String::with_capacity(final_bytes);
+    let mut previous = 0;
+    let mut caret = None;
+    for (edit, normalized) in normalized_edits {
+        text.push_str(&original[previous..edit.start]);
+        text.push_str(&normalized);
+        caret = Some(text.len());
+        previous = edit.finish;
+    }
+    text.push_str(&original[previous..]);
+    Ok((text, caret))
+}
+
 impl Transaction {
     /// Revalidate untrusted output against the original host snapshot before effects.
     pub fn prepare(&self, snapshot: &Snapshot) -> Result<Prepared, Error> {
@@ -308,47 +395,7 @@ impl Transaction {
         {
             return Err(Error::Worker);
         }
-        let mut text = String::with_capacity(snapshot.text.len());
-        let mut previous = 0;
-        let mut replacement_bytes = 0usize;
-        let mut raw_bytes = 0usize;
-        let mut caret = None;
-        for (index, edit) in self.edits.iter().enumerate() {
-            if edit.start > edit.finish
-                || edit.start < previous
-                || !boundary(&snapshot.text, edit.start)
-                || !boundary(&snapshot.text, edit.finish)
-                || (index > 0 && self.edits[index - 1].start == edit.start)
-            {
-                return Err(Error::Worker);
-            }
-            if edit.text.contains('\0') {
-                return Err(Error::ReturnEncoding);
-            }
-            raw_bytes = raw_bytes
-                .checked_add(edit.text.len())
-                .ok_or(Error::ReturnSize)?;
-            if raw_bytes > MAX_OUTPUT_BYTES {
-                return Err(Error::ReturnSize);
-            }
-            let normalized = edit.text.replace("\r\n", "\n");
-            let normalized = if snapshot.crlf {
-                normalized.replace('\n', "\r\n")
-            } else {
-                normalized
-            };
-            replacement_bytes = replacement_bytes
-                .checked_add(normalized.len())
-                .ok_or(Error::ReturnSize)?;
-            if replacement_bytes > MAX_OUTPUT_BYTES {
-                return Err(Error::ReturnSize);
-            }
-            text.push_str(&snapshot.text[previous..edit.start]);
-            text.push_str(&normalized);
-            caret = Some(text.len());
-            previous = edit.finish;
-        }
-        text.push_str(&snapshot.text[previous..]);
+        let (text, caret) = prepare_text_edits(&snapshot.text, snapshot.crlf, &self.edits)?;
         let selections = self.selections.clone().unwrap_or_else(|| {
             if text == snapshot.text {
                 return snapshot.selections.clone();

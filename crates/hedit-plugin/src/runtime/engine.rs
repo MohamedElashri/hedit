@@ -157,6 +157,50 @@ pub(super) fn decode_service_reply(
     }
 }
 
+pub(super) fn run_broker(
+    input: crate::broker::Input,
+    approval: Option<File>,
+    cancelled: &AtomicBool,
+    trace: &crate::telemetry::Recorder,
+) -> Result<crate::broker::Output, crate::sdk::Failure> {
+    if !super::SUPPORTED {
+        return Err(Error::Unavailable.into());
+    }
+    use crate::telemetry::Phase;
+    let request = trace.measure(Phase::Encode, || protocol::encode_broker(&input))?;
+    let reply = super::supervisor::supervise_service(
+        &super::supervisor::executable()?,
+        request,
+        cancelled,
+        Duration::from_millis(crate::service::CALLBACK_MILLIS),
+        approval,
+        trace,
+    )?;
+    trace.measure(Phase::Decode, || decode_broker_reply(&input, &reply))
+}
+pub(super) fn decode_broker_reply(
+    input: &crate::broker::Input,
+    bytes: &[u8],
+) -> Result<crate::broker::Output, crate::sdk::Failure> {
+    if bytes.len() > crate::broker::MAX_MESSAGE_BYTES {
+        return Err(Error::Worker.into());
+    }
+    let reply: crate::broker::Reply = serde_json::from_slice(bytes).map_err(|_| Error::Worker)?;
+    if reply.protocol_version != crate::broker::VERSION {
+        return Err(Error::Worker.into());
+    }
+    match reply.outcome {
+        crate::broker::Outcome::Success(output) => {
+            output.validate(input)?;
+            Ok(*output)
+        }
+        crate::broker::Outcome::Failure(failure) => {
+            failure.validate(&input.package)?;
+            Err(failure)
+        }
+    }
+}
+
 pub(super) fn run_helper(isolated: bool) -> bool {
     run_helper_io(isolated, io::stdin().lock(), io::stdout().lock())
 }
@@ -186,7 +230,12 @@ fn run_helper_io_for(
     // the process is isolated. Error is reported through a fixed status code.
     let result = if isolated {
         protocol::decode_invocation(input).and_then(|input| {
-            if service != matches!(input, protocol::Invocation::Service(_)) {
+            if service
+                != matches!(
+                    input,
+                    protocol::Invocation::Service(_) | protocol::Invocation::Broker(_)
+                )
+            {
                 return Err(Error::Request);
             }
             match input {
@@ -218,6 +267,26 @@ fn run_helper_io_for(
                     };
                     serde_json::to_vec(&crate::service::Reply {
                         protocol_version: crate::service::VERSION,
+                        outcome,
+                    })
+                    .map_err(|_| Error::Worker)
+                }
+                protocol::Invocation::Broker(input) => {
+                    let location = Rc::new(std::cell::RefCell::new(None));
+                    let result = with_lua_budget(
+                        crate::service::CALLBACK_INSTRUCTIONS,
+                        |lua, environment| {
+                            crate::broker::lua::evaluate(lua, environment, input, location.clone())
+                        },
+                    );
+                    let outcome = match result {
+                        Ok(output) => crate::broker::Outcome::Success(Box::new(output)),
+                        Err(error) => crate::broker::Outcome::Failure(
+                            crate::sdk::Failure::evaluation(error, location.borrow_mut().take()),
+                        ),
+                    };
+                    serde_json::to_vec(&crate::broker::Reply {
+                        protocol_version: crate::broker::VERSION,
                         outcome,
                     })
                     .map_err(|_| Error::Worker)
@@ -502,5 +571,84 @@ mod tests {
         trailing.extend(b"{}");
         assert!(decode_service_reply(&input, &trailing).is_err());
         assert!(decode_service_reply(&input,br#"{"protocol_version":1,"protocol_version":1,"outcome":{"failure":{"kind":"execution"}}}"#).is_err());
+    }
+}
+
+#[cfg(test)]
+mod broker_tests {
+    use super::*;
+    use crate::broker::{self, Intent};
+    #[test]
+    fn broker_callbacks_rotate_and_cannot_select_the_command_role() {
+        let mut input = broker::tests::input();
+        input.package.source="local calls=0; return function(ctx) calls=calls+1; return {intent={discover={scope=ctx.broker.scope,query=tostring(calls)}},cache={step=ctx.broker.step}} end".into();
+        for step in [0, 1] {
+            input.step = step;
+            let bytes = protocol::encode_broker(&input).unwrap();
+            let mut reply = Vec::new();
+            assert!(run_helper_io_for(true, false, bytes.as_slice(), &mut reply));
+            assert_eq!(reply, [Error::Request as u8]);
+            reply.clear();
+            assert!(run_helper_io_for(true, true, bytes.as_slice(), &mut reply));
+            assert_eq!(reply[0], 0);
+            let output = decode_broker_reply(&input, &reply[1..]).unwrap();
+            assert!(matches!(output.intent,Intent::Discover{query,..} if query=="1"));
+            assert!(decode_sdk_reply(&input.package, &reply[1..]).is_err());
+        }
+    }
+    #[test]
+    fn broker_reply_codec_rejects_truncation_duplicates_and_foreign_requests() {
+        let input = broker::tests::input();
+        let output = broker::Output {
+            request: input.request,
+            step: 0,
+            intent: Intent::Discover {
+                scope: input.scope.unwrap(),
+                query: String::new(),
+            },
+            cache: Default::default(),
+        };
+        let bytes = serde_json::to_vec(&broker::Reply {
+            protocol_version: broker::VERSION,
+            outcome: broker::Outcome::Success(Box::new(output.clone())),
+        })
+        .unwrap();
+        decode_broker_reply(&input, &bytes).unwrap();
+        for end in 0..bytes.len() {
+            assert!(decode_broker_reply(&input, &bytes[..end]).is_err());
+        }
+        let mut output = output;
+        output.request = broker::Handle::fresh().unwrap();
+        let bytes = serde_json::to_vec(&broker::Reply {
+            protocol_version: broker::VERSION,
+            outcome: broker::Outcome::Success(Box::new(output)),
+        })
+        .unwrap();
+        assert!(decode_broker_reply(&input, &bytes).is_err());
+        assert!(decode_broker_reply(&input,br#"{"protocol_version":1,"protocol_version":1,"outcome":{"failure":{"kind":"syntax"}}}"#).is_err());
+    }
+    #[test]
+    fn new_framing_can_hold_escaped_bounded_text_without_widening_old_protocols() {
+        let mut input = broker::tests::input();
+        input.package.snapshot.text = "\u{1}".repeat(64 * 1024);
+        input.package.resources = (0..4)
+            .map(|index| (format!("resource{index}"), "\u{1}".repeat(16_000)))
+            .collect();
+        input.response = Some(broker::Response::Read {
+            text: "\u{1}".repeat(64 * 1024),
+            next: None,
+        });
+        let bytes = protocol::encode_broker(&input).unwrap();
+        assert!(bytes.len() > 1024 * 1024);
+        assert!(matches!(
+            protocol::decode_invocation(bytes.as_slice()),
+            Ok(protocol::Invocation::Broker(_))
+        ));
+        let mut wrong = bytes.clone();
+        wrong[..4].copy_from_slice(&(u32::MAX - 3).to_le_bytes());
+        assert!(protocol::decode_invocation(wrong.as_slice()).is_err());
+        for end in [0, 1, 7, 8, bytes.len() - 1] {
+            assert!(protocol::decode_invocation(&bytes[..end]).is_err());
+        }
     }
 }
