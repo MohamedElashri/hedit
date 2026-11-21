@@ -4,7 +4,6 @@ use super::{
     manager::{check_cancel, Launch},
     text::{self, Encoding},
     wire::{self, Limits},
-    MAX_MESSAGE,
 };
 use serde_json::{json, Value};
 use std::{
@@ -85,7 +84,7 @@ fn kill_process(pid: u32) {
 }
 pub(crate) struct Client {
     child: Child,
-    input: Option<mpsc::SyncSender<Value>>,
+    input: Option<mpsc::SyncSender<Vec<u8>>>,
     output: mpsc::Receiver<Result<Value, String>>,
     pub encoding: Encoding,
     pub capabilities: Value,
@@ -162,13 +161,13 @@ impl Client {
         let stdin = child.stdin.take().unwrap();
         let stdout = child.stdout.take().unwrap();
         let mut stderr = child.stderr.take().unwrap();
-        let (input, rx) = mpsc::sync_channel(8);
+        let (input, rx) = mpsc::sync_channel::<Vec<u8>>(8);
         let (tx, output) = mpsc::sync_channel(8);
         let failures = tx.clone();
         std::thread::spawn(move || {
             let mut out = stdin;
             while let Ok(message) = rx.recv() {
-                if let Err(e) = write_message(&mut out, &message) {
+                if let Err(e) = write_frame(&mut out, &message) {
                     let _ = failures.send(Err(e));
                     break;
                 }
@@ -245,11 +244,9 @@ impl Client {
             .is_some_and(|v| !v.is_null() && v != false)
     }
     fn send(&self, value: Value) -> Result<(), String> {
-        if serde_json::to_vec(&value).map_err(error)?.len() > MAX_MESSAGE {
-            return Err("LSP message exceeds its size limit.".into());
-        }
         let sender = self.input.as_ref().ok_or("Language server has stopped.")?;
-        let mut message = value;
+        let mut message = wire::encode(&value, Limits::BUILTIN).map_err(error)?;
+        drop(value);
         let started = Instant::now();
         loop {
             match sender.try_send(message) {
@@ -451,8 +448,7 @@ pub(crate) fn read_message(reader: &mut impl BufRead) -> Result<Option<Value>, S
         .map(Some)
         .map_err(error)
 }
-fn write_message(out: &mut impl Write, value: &Value) -> Result<(), String> {
-    let frame = wire::encode(value, Limits::BUILTIN).map_err(error)?;
-    out.write_all(&frame).map_err(error)?;
+fn write_frame(out: &mut impl Write, frame: &[u8]) -> Result<(), String> {
+    out.write_all(frame).map_err(error)?;
     out.flush().map_err(error)
 }

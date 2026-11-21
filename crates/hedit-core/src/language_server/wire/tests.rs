@@ -135,3 +135,48 @@ fn numeric_normalization_has_an_independent_encoding_budget() {
     assert!(encode(&value, Limits::SCOPED).is_err());
     assert!(decode(&frame(&body), READ_BYTES).is_ok());
 }
+
+#[test]
+fn host_structure_validation_matches_decoder_node_limits() {
+    let value =
+        json!({"jsonrpc":"2.0","id":1,"result":{"array":[null,true,1,{"x":"😀"}],"text":"café"}});
+    let bytes = serde_json::to_vec(&value).unwrap();
+    for nodes in 1..40 {
+        let limits = Limits {
+            message: 4096,
+            nodes,
+        };
+        assert_eq!(
+            encode(&value, limits).is_ok(),
+            parse_json(&bytes, limits).is_ok(),
+            "nodes={nodes}"
+        );
+    }
+}
+
+#[test]
+fn escaped_payloads_obey_encoded_byte_limits_and_exact_framing() {
+    let value = json!({"jsonrpc":"2.0","id":1,"result":"\0".repeat(64)});
+    assert!(encode(
+        &value,
+        Limits {
+            message: 128,
+            nodes: 32
+        }
+    )
+    .is_err());
+    let frame = encode(&value, Limits::SCOPED).unwrap();
+    let header_end = frame
+        .windows(4)
+        .position(|bytes| bytes == b"\r\n\r\n")
+        .unwrap()
+        + 4;
+    assert_eq!(
+        content_length(&frame[..header_end], Limits::SCOPED).unwrap(),
+        frame.len() - header_end
+    );
+    assert_eq!(
+        parse_json(&frame[header_end..], Limits::SCOPED).unwrap(),
+        value
+    );
+}
