@@ -143,6 +143,14 @@ static ACTIVE_SERVICES: std::sync::atomic::AtomicUsize = std::sync::atomic::Atom
 pub fn service_available() -> bool {
     ACTIVE_SERVICES.load(Ordering::Acquire) < crate::service::MAX_ACTIVE
 }
+pub struct ServiceAdmission {
+    _permit: ServicePermit,
+}
+pub fn service_admission() -> Result<ServiceAdmission, Error> {
+    Ok(ServiceAdmission {
+        _permit: ServicePermit::reserve()?,
+    })
+}
 struct ServicePermit;
 impl ServicePermit {
     fn reserve() -> Result<Self, Error> {

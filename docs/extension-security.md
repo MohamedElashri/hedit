@@ -246,3 +246,14 @@ fields, bounded arrays/cache, event storms, late completion after Stop/Resume,
 failure quarantine, native confinement, and revoked/stale quick-fix effects.
 The roadmap gate also requires native checks on Linux/Windows and controlled
 active-provider frame/allocation measurements before claiming Stage 2 complete.
+
+Provider disclosure guards use shared locks, while revocation and persistent
+storage changes require exclusive locks. Computation and publication checks share
+the four-slot admission budget. A result waiting for the UI receives a 200 ms
+authorization receipt; the existing bounded authorization thread releases an
+unconsumed guard even if the window stops pumping frames. Dropping a receipt
+releases it immediately. The UI takes a live guard without blocking and consumes
+it in the authorized operation; expired receipts produce no effect. Prompt and
+preview dwell hold no authorization lock. The editing SDK's approval handoff uses
+the same receipt policy. Tests cover unpumped/expired/dropped receipts and the
+retention of a consumed guard through its authorized operation.

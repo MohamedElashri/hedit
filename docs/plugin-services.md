@@ -39,7 +39,9 @@ Registration uses existing language/filename/selection conditions. Priority
 ranges from -100 to 100; higher priority runs first, then command ID breaks ties.
 At most 32 approved providers register per window; the results window reports an
 excess. Results remain grouped by owner; one provider cannot replace another's
-results. Editor decorations show at most 256 ranges across priority order.
+results. Editor decorations deduplicate identical ranges/messages across owners and show
+at most 256 ranges across priority order. Result lists render visible rows for
+one selected provider; long output uses bounded pages.
 There is no implicit call to a built-in LSP, executable, or internal editor command.
 
 ## Callback and state
@@ -72,7 +74,9 @@ A manual formatting request opens the ordinary edit review flow.
 ## Results and native UI
 
 All ranges are `{start=byte, finish=byte}` in the input snapshot. Counts are capped
-at 128 items and eight actions per item. Result JSON is capped at 256 KiB.
+at 128 items and eight actions per item. Result JSON is capped at 256 KiB. Lua result conversion also caps tables at
+16 levels and 4,096 values; combined limits apply even when individual item
+counts fit.
 
 | Kind | Item/result fields |
 | --- | --- |
@@ -121,7 +125,11 @@ budget per 30 seconds. Idle cache expires after 30 seconds. Failures back off;
 three failures quarantine the provider until explicit Resume. Stop clears pending
 work, results and cache. A permission/source watcher invalidates registrations;
 watcher failure disables providers. Authorization is checked before delivery,
-before publishing results, and before effects. Filesystem checks and Lua/IPC
+before publishing results, and before effects. Provider disclosure/publication
+guards permit concurrent readers; policy changes and private storage writes stay
+exclusive. UI authorization receipts expire after 200 ms if unconsumed, so an
+inactive window cannot retain a policy lock indefinitely. User prompt/preview
+dwell holds no such receipt. Filesystem checks and Lua/IPC
 never wait on the UI thread. Revocation cannot retract already disclosed data.
 
 ## Fixtures and declarative packs

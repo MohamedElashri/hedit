@@ -1,5 +1,6 @@
 //! Local extension manifests contribute commands to the Command Palette.
 mod activity;
+mod authority;
 mod catalog;
 mod distribution;
 mod lua;

@@ -634,7 +634,9 @@ serializes callbacks per package, coalesces one pending event per provider, and
 retains only explicitly returned scalar cache data scoped to that provider's
 grant and active document. Each callback gets a fresh native sandbox and Lua VM;
 no global Lua variables survive. Clear cache/results on document scope changes,
-revocation, disable, update, idle shutdown, and crash quarantine.
+revocation, disable, update, and crash quarantine. Idle expiry clears the service
+cache; independently validated host UI results have a separate 120-second lifetime
+and retain no duplicate copy of that cache.
 
 This deliberately avoids a resident untrusted VM and its cumulative CPU-limit
 problem. Keep the native one-shot ceiling and apply stricter service callback
@@ -667,3 +669,29 @@ regressions. The native service-policy checks on Linux/Windows, controlled activ
 provider CPU-frame/allocation evidence, sanitizer follow-up, extracted package
 smokes, and universal macOS validation remain required before closing Stage 2.
 Stage 3 is not implemented or enabled by this change.
+
+### Stage 2 security/performance follow-up
+
+The initial provider feature passed Linux, macOS, Windows x64/ARM64, and remote
+regressions in PR #112. A 601-second AddressSanitizer codec campaign completed
+1,867,776 inputs without a finding, including added service request/result seeds.
+Follow-up fixes bound native result rendering to visible rows for one selected
+provider, paginate long output, cache/deduplicate decorations, and avoid cloning
+transactions until clicked. Returned cache transfers into session state without
+retaining a second copy in UI results.
+
+Provider authorization allows concurrent read/disclosure guards while keeping
+revocation and storage commits exclusive. Publication checks share global worker
+admission. Unconsumed UI authorization receipts expire after 200 ms on the bounded
+authorization thread, covering inactive windows; consumed guards remain held for
+the authorized operation. The same handoff protects ordinary editing commands.
+The updated macOS workspace suite passed 1,302 tests (63 intentionally ignored),
+and strict all-feature Clippy passed. These follow-up changes require fresh CI.
+
+The controlled four-provider egui probe uses three alternating trials and 600
+samples per mode. With no concurrent builds/fuzzing, pooled typing-frame p95 was
+3,428 µs disabled, 3,448 µs installed/idle (+0.6%), and 3,879 µs while repeatedly
+dispatching/cancelling real native callbacks. Individual trials are noisy; this
+is a local CPU-frame/allocation probe, not a physical input/GPU latency guarantee.
+Raw exploratory and final samples are retained under `target/plugin-validation`.
+Universal macOS packaging and final follow-up CI remain open gates.

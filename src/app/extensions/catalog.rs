@@ -400,7 +400,15 @@ pub(super) fn one_time_current(config: &Path, catalog: &Catalog, command: &Contr
 
 /// Keep the lock through launch or edit application so a revoke cannot interleave.
 pub(super) fn lua_authorization(config: &Path, plugin: &LuaPlugin) -> Option<File> {
-    let lock = change_lock(config).ok()?;
+    authorization_with_lock(config, plugin, change_lock(config).ok()?)
+}
+pub(super) fn provider_authorization(config: &Path, plugin: &LuaPlugin) -> Option<File> {
+    if plugin.provider.is_none() || plugin.storage || plugin.is_one_time() {
+        return None;
+    }
+    authorization_with_lock(config, plugin, permissions::disclosure_lock(config).ok()?)
+}
+fn authorization_with_lock(config: &Path, plugin: &LuaPlugin, lock: File) -> Option<File> {
     let grant = &plugin.grant;
     let id = grant.command.split_once('.')?.0;
     if disabled(config).ok()?.contains(id) {

@@ -38,7 +38,12 @@ struct Authority {
     storage: Option<plugin_runtime::sdk::Storage>,
     elapsed: std::time::Duration,
 }
-type ApprovalReceiver = Receiver<Result<Option<Authority>, String>>;
+struct PendingAuthority {
+    file: super::authority::Receipt,
+    storage: Option<plugin_runtime::sdk::Storage>,
+    elapsed: std::time::Duration,
+}
+type ApprovalReceiver = Receiver<Result<Option<PendingAuthority>, String>>;
 
 enum Phase {
     Arguments,
@@ -372,6 +377,7 @@ impl HeditApp {
             .name("hedit-lua-approval".into())
             .spawn(move || {
                 let started = std::time::Instant::now();
+                let mut expiry = None;
                 let result = (|| {
                     let Some(file) = catalog::lua_authorization(&config, &plugin) else {
                         return Ok(None);
@@ -381,7 +387,9 @@ impl HeditApp {
                     } else {
                         None
                     };
-                    Ok(Some(Authority {
+                    let (file, timer) = super::authority::Receipt::new(file);
+                    expiry = Some(timer);
+                    Ok(Some(PendingAuthority {
                         file,
                         storage,
                         elapsed: started.elapsed(),
@@ -389,6 +397,9 @@ impl HeditApp {
                 })();
                 let _ = sender.send(result);
                 ctx.request_repaint();
+                if let Some(expiry) = expiry {
+                    expiry.wait();
+                }
             })
             .map_err(|_| "The extension approval check could not start.")?;
         Ok(receiver)
@@ -943,7 +954,14 @@ fn show_preview(ctx: &egui::Context, diff: &Diff) -> Option<bool> {
 // The returned lock serializes delivery or application with a revocation.
 fn receive_approval(approval: &ApprovalReceiver) -> Result<Option<Authority>, TransformFailure> {
     match approval.try_recv() {
-        Ok(Ok(Some(guard))) => Ok(Some(guard)),
+        Ok(Ok(Some(guard))) => {
+            let file=guard.file.take().ok_or_else(||TransformFailure {message:"Extension authorization expired while the editor was idle. Run the command again.".into(),outcome:InvocationOutcome::Cancelled})?;
+            Ok(Some(Authority {
+                file,
+                storage: guard.storage,
+                elapsed: guard.elapsed,
+            }))
+        }
         Ok(Err(_)) => Err(TransformFailure::failed(
             "Private command storage could not be read. Revoke approval to clear it.",
         )),

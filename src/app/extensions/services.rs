@@ -1,5 +1,6 @@
 //! Lazy, revision-bound providers. Lua is always in a rotated native worker.
 mod policy;
+mod presentation;
 use super::{
     activity::{Invocation, InvocationOutcome},
     catalog,
@@ -24,7 +25,7 @@ const ACTION_LIFETIME_MS: u64 = 120_000;
 struct Job {
     invocation: Invocation,
     worker: Option<plugin_runtime::RunningService>,
-    checked: Option<std::sync::mpsc::Receiver<Option<std::fs::File>>>,
+    checked: Option<std::sync::mpsc::Receiver<Option<super::authority::Receipt>>>,
     output: Option<service::Output>,
     generation: u64,
     target: super::lua::Target,
@@ -32,6 +33,7 @@ struct Job {
     document: String,
     trigger: Trigger,
 }
+#[derive(Clone)]
 pub(in crate::app) struct Decoration {
     pub(in crate::app) start: usize,
     pub(in crate::app) finish: usize,
@@ -57,9 +59,14 @@ struct Entry {
     choice: Option<(String, hedit::plugin_options::Value)>,
     input: Option<hedit::plugin_options::Value>,
     error: Option<String>,
+    output_page: usize,
 }
 pub(in crate::app) struct Services {
     pub(in crate::app) open: bool,
+    selected: Option<String>,
+    paint: Vec<Decoration>,
+    paint_document: Option<(u64, u64)>,
+    paint_sources: [Option<u128>; MAX_PROVIDERS],
     suspended: bool,
     controller: Option<policy::Controller>,
     sequence: Option<u64>,
@@ -76,6 +83,10 @@ impl Default for Services {
     fn default() -> Self {
         Self {
             open: false,
+            selected: None,
+            paint: vec![],
+            paint_document: None,
+            paint_sources: [None; MAX_PROVIDERS],
             suspended: false,
             controller: None,
             sequence: None,
@@ -133,17 +144,51 @@ impl Services {
         document: u64,
         revision: u64,
     ) -> impl Iterator<Item = &Decoration> {
-        self.entries
+        self.paint
             .iter()
-            .filter_map(move |entry| {
-                entry.ready.as_ref().filter(|ready| {
-                    ready.target.document() == document && ready.target.revision() == revision
-                })
-            })
-            .flat_map(|ready| ready.decorations.iter())
+            .filter(move |_| self.paint_document == Some((document, revision)))
+    }
+    fn rebuild_decorations(&mut self, document: Option<(u64, u64)>) {
+        let mut sources = [None; MAX_PROVIDERS];
+        for (index, entry) in self.entries.iter().enumerate() {
+            if let Some(ready) = &entry.ready {
+                if document == Some((ready.target.document(), ready.target.revision())) {
+                    sources[index] = u128::from_str_radix(&ready.output.request, 16).ok();
+                }
+            }
+        }
+        if self.paint_document == document && sources == self.paint_sources {
+            return;
+        }
+        self.paint_document = document;
+        self.paint_sources = sources;
+        self.paint.clear();
+        let mut seen = BTreeSet::new();
+        for entry in &self.entries {
+            let Some(ready) = &entry.ready else {
+                continue;
+            };
+            if document != Some((ready.target.document(), ready.target.revision())) {
+                continue;
+            }
+            for item in &ready.decorations {
+                if self.paint.len() >= 256 {
+                    return;
+                }
+                if seen.insert((
+                    item.start,
+                    item.finish,
+                    item.severity.map(|s| s as u8),
+                    item.text.as_str(),
+                )) {
+                    self.paint.push(item.clone());
+                }
+            }
+        }
     }
     pub(in crate::app) fn suspend(&mut self) {
         self.entries.clear();
+        self.rebuild_decorations(None);
         self.controller = None;
         self.sequence = None;
         self.suspended = true;
@@ -151,6 +196,7 @@ impl Services {
     pub(in crate::app) fn invalidate(&mut self) {
         self.suspended = false;
         self.entries.clear();
+        self.rebuild_decorations(None);
         self.sequence = None;
         if let Some(controller) = &self.controller {
             controller.reload();
@@ -158,6 +204,7 @@ impl Services {
     }
     pub(in crate::app) fn request(&mut self, id: &str) {
         self.manual = Some(id.to_owned());
+        self.selected = Some(id.to_owned());
         self.open = true;
     }
     pub(in crate::app) fn note_save(&mut self, document: u64, revision: u64) {
@@ -241,6 +288,7 @@ impl Services {
                 choice: None,
                 input: None,
                 error: None,
+                output_page: 0,
             });
         }
     }
@@ -298,6 +346,7 @@ impl Services {
         }
         let now = self.started.elapsed().as_millis() as u64;
         if self.entries.is_empty() {
+            self.rebuild_decorations(None);
             self.show(app, ctx, now);
             return;
         }
@@ -460,6 +509,14 @@ impl Services {
             let result = match result {
                 Some(Ok(output)) => {
                     job.worker = None;
+                    job.output = Some(output);
+                    None
+                }
+                result => result,
+            };
+            let mut result = result;
+            if job.output.is_some() && job.checked.is_none() {
+                if let Ok(admission) = plugin_runtime::service_admission() {
                     let plugin = entry.plugin.clone();
                     let config = config.clone();
                     let wake = ctx.clone();
@@ -467,24 +524,31 @@ impl Services {
                     match std::thread::Builder::new()
                         .name("hedit-provider-publish".into())
                         .spawn(move || {
-                            let _ = sender.send(catalog::lua_authorization(&config, &plugin));
-                            wake.request_repaint();
+                            let _admission = admission;
+                            let receipt = catalog::provider_authorization(&config, &plugin)
+                                .map(super::authority::Receipt::new);
+                            if let Some((receipt, expiry)) = receipt {
+                                let _ = sender.send(Some(receipt));
+                                wake.request_repaint();
+                                expiry.wait();
+                            } else {
+                                let _ = sender.send(None);
+                                wake.request_repaint();
+                            }
                         }) {
-                        Ok(_) => {
-                            job.checked = Some(receiver);
-                            job.output = Some(output);
-                            None
-                        }
-                        Err(_) => Some(Err(plugin_runtime::Error::Startup.into())),
+                        Ok(_) => job.checked = Some(receiver),
+                        Err(_) => result = Some(Err(plugin_runtime::Error::Startup.into())),
                     }
                 }
-                result => result,
-            };
+            }
             let (result, _authority) = if let Some(result) = result {
                 (Some(result), None)
             } else if let Some(receiver) = &job.checked {
                 match receiver.try_recv() {
-                    Ok(Some(authority)) => (Some(Ok(job.output.take().unwrap())), Some(authority)),
+                    Ok(Some(receipt)) => match receipt.take() {
+                        Some(authority) => (Some(Ok(job.output.take().unwrap())), Some(authority)),
+                        None => (Some(Err(plugin_runtime::Error::Cancelled.into())), None),
+                    },
                     Ok(None) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                         (Some(Err(plugin_runtime::Error::Cancelled.into())), None)
                     }
@@ -512,15 +576,17 @@ impl Services {
                     _ => InvocationOutcome::Cancelled,
                 };
                 match result {
-                    Ok(output)
+                    Ok(mut output)
                         if valid
                             && output.request == job.request
                             && output.document == job.document =>
                     {
-                        if entry
-                            .state
-                            .finish(job.generation, now, true, Some(output.cache.clone()))
-                        {
+                        if entry.state.finish(
+                            job.generation,
+                            now,
+                            true,
+                            Some(std::mem::take(&mut output.cache)),
+                        ) {
                             outcome = InvocationOutcome::Published;
                             entry.error = None;
                             if job.trigger == Trigger::Close {
@@ -548,6 +614,8 @@ impl Services {
                                     ));
                                 }
                             }
+                            entry.input = None;
+                            entry.output_page = 0;
                             entry.ready = Some(Ready {
                                 decorations: decorations(&output, &app.active().page.text),
                                 output,
@@ -691,7 +759,7 @@ impl Services {
                     if cancelled.load(Ordering::Acquire) {
                         return Err(plugin_runtime::Error::Cancelled);
                     }
-                    catalog::lua_authorization(&config, &plugin)
+                    catalog::provider_authorization(&config, &plugin)
                         .ok_or(plugin_runtime::Error::Cancelled)
                 },
                 move || wake.request_repaint(),
@@ -730,277 +798,16 @@ impl Services {
             }
         }
         self.show(app, ctx, now);
+        self.rebuild_decorations(
+            app.lua_target()
+                .map(|target| (target.document(), target.revision())),
+        );
         if let Some(delay) = self.next_wake() {
             ctx.request_repaint_after(delay.max(Duration::from_millis(10)));
         }
     }
-
-    fn show(&mut self, app: &mut HeditApp, ctx: &egui::Context, now: u64) {
-        if !self.open {
-            return;
-        }
-        let mut open = true;
-        let mut chosen = None;
-        egui::Window::new("Extension results")
-            .id(egui::Id::new("plugin-results"))
-            .open(&mut open)
-            .default_width(480.0)
-            .show(ctx, |ui| {
-                if let Some(error) = &self.error {
-                    ui.label(error);
-                }
-                egui::ScrollArea::vertical()
-                    .max_height(520.0)
-                    .show(ui, |ui| {
-                        for entry in &mut self.entries {
-                            ui.push_id(&entry.contribution.id, |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.strong(&entry.contribution.title);
-                                    if entry.state.stopped || entry.state.quarantined {
-                                        if ui.button("Resume").clicked() {
-                                            self.stopped.remove(&entry.contribution.id);
-                                            if let Some(token) = entry.plugin.approval_id() {
-                                                self.quarantined.remove(&(
-                                                    entry.contribution.id.clone(),
-                                                    token,
-                                                ));
-                                            }
-                                            entry.state.resume();
-                                            entry.scope = None;
-                                            entry.error = None;
-                                        }
-                                    } else if ui.button("Stop").clicked() {
-                                        if let Some(job) = entry.job.take() {
-                                            app.extension_manager.record(
-                                                job.invocation,
-                                                InvocationOutcome::Cancelled,
-                                            );
-                                        }
-                                        entry.close = None;
-                                        entry.ready = None;
-                                        entry.choice = None;
-                                        entry.input = None;
-                                        entry.state.stop(now);
-                                        self.stopped.insert(entry.contribution.id.clone());
-                                    }
-                                });
-                                ui.weak(&entry.plugin.plugin_id);
-                                if entry.state.quarantined {
-                                    ui.label("Stopped after repeated failures. Resume to retry.");
-                                }
-                                if let Some(error) = &entry.error {
-                                    ui.label(error);
-                                }
-                                if entry.job.is_some() {
-                                    ui.spinner();
-                                }
-                                let Some(ready) = &entry.ready else {
-                                    return;
-                                };
-                                let mut button =
-                                    |ui: &mut egui::Ui, title: &str, action: Action| {
-                                        if ui.button(title).clicked() {
-                                            chosen = Some((
-                                                entry.contribution.id.clone(),
-                                                ready.output.request.clone(),
-                                                action,
-                                            ));
-                                        }
-                                    };
-                                match &ready.output.result {
-                                    ResultSet::Closed => {}
-                                    ResultSet::Diagnostics(items) => {
-                                        for item in items {
-                                            ui.label(format!(
-                                                "{:?}: {}",
-                                                item.severity, item.message
-                                            ));
-                                            for action in &item.actions {
-                                                button(ui, &action.title, action.action.clone());
-                                            }
-                                        }
-                                    }
-                                    ResultSet::Completions(items) => {
-                                        for item in items {
-                                            let transaction = plugin_runtime::sdk::Transaction {
-                                                document: ready.output.document.clone(),
-                                                revision: ready.output.revision.clone(),
-                                                edits: vec![plugin_runtime::sdk::Edit {
-                                                    start: item.range.start,
-                                                    finish: item.range.finish,
-                                                    text: item.insert.clone(),
-                                                }],
-                                                selections: None,
-                                                storage: None,
-                                            };
-                                            button(ui, &item.label, Action::Edit(transaction));
-                                            if !item.detail.is_empty() {
-                                                ui.weak(&item.detail);
-                                            }
-                                        }
-                                    }
-                                    ResultSet::Hover(item) => {
-                                        ui.label(&item.text);
-                                    }
-                                    ResultSet::Symbols(items) => {
-                                        for item in items {
-                                            button(
-                                                ui,
-                                                &item.name,
-                                                Action::Select(plugin_runtime::sdk::Selection {
-                                                    anchor: item.range.start,
-                                                    head: item.range.finish,
-                                                }),
-                                            );
-                                            ui.weak(&item.detail);
-                                        }
-                                    }
-                                    ResultSet::Formatting(transaction) => button(
-                                        ui,
-                                        "Review formatting",
-                                        Action::Edit(transaction.clone()),
-                                    ),
-                                    ResultSet::CodeActions(items) => {
-                                        for item in items {
-                                            button(ui, &item.title, item.action.clone());
-                                        }
-                                    }
-                                    ResultSet::Presentation(presentation) => {
-                                        if let Some(status) = &presentation.status {
-                                            ui.label(status);
-                                        }
-                                        if let Some(output) = &presentation.output {
-                                            ui.monospace(output);
-                                        }
-                                        for item in &presentation.annotations {
-                                            button(
-                                                ui,
-                                                &item.text,
-                                                Action::Select(plugin_runtime::sdk::Selection {
-                                                    anchor: item.range.start,
-                                                    head: item.range.finish,
-                                                }),
-                                            );
-                                        }
-                                        if let Some(list) = &presentation.quick_list {
-                                            ui.label(&list.title);
-                                            for item in &list.items {
-                                                button(ui, &item.title, item.action.clone());
-                                            }
-                                        }
-                                        if let Some(prompt) = &presentation.input {
-                                            ui.label(&prompt.title);
-                                            let value = entry
-                                                .input
-                                                .get_or_insert_with(|| prompt.default.clone());
-                                            if prompt.choices.is_empty() {
-                                                match value {
-                                                    hedit::plugin_options::Value::Text(text) => {
-                                                        ui.add(
-                                                            egui::TextEdit::singleline(text)
-                                                                .char_limit(256),
-                                                        );
-                                                    }
-                                                    hedit::plugin_options::Value::Integer(
-                                                        number,
-                                                    ) => {
-                                                        ui.add(
-                                                            egui::DragValue::new(number)
-                                                                .range(i32::MIN..=i32::MAX),
-                                                        );
-                                                    }
-                                                    hedit::plugin_options::Value::Boolean(
-                                                        value,
-                                                    ) => {
-                                                        ui.checkbox(value, "Enabled");
-                                                    }
-                                                }
-                                            } else {
-                                                for option in &prompt.choices {
-                                                    ui.selectable_value(
-                                                        value,
-                                                        option.clone(),
-                                                        format!("{option:?}"),
-                                                    );
-                                                }
-                                            }
-                                            if ui.button("Submit").clicked() {
-                                                chosen = Some((
-                                                    entry.contribution.id.clone(),
-                                                    ready.output.request.clone(),
-                                                    Action::Callback {
-                                                        name: prompt.name.clone(),
-                                                        value: value.clone(),
-                                                    },
-                                                ));
-                                            }
-                                        }
-                                    }
-                                }
-                                ui.separator();
-                            });
-                        }
-                    });
-            });
-        self.open = open;
-        if let Some((id, request, action)) = chosen {
-            let Some(entry) = self
-                .entries
-                .iter_mut()
-                .find(|entry| entry.contribution.id == id)
-            else {
-                return;
-            };
-            let Some(ready) = &entry.ready else {
-                return;
-            };
-            if ready.output.request != request
-                || now.saturating_sub(ready.created) >= ACTION_LIFETIME_MS
-                || app.lua_target().as_ref() != Some(&ready.target)
-            {
-                entry.ready = None;
-                return;
-            }
-            match action {
-                Action::Callback { name, value } => {
-                    entry.choice = Some((name, value));
-                    entry.state.queue(Trigger::Interaction, now, 0);
-                    entry.ready = None;
-                    entry.input = None;
-                }
-                Action::Edit(transaction) => {
-                    let plugin = entry.plugin.clone();
-                    let document = ready.output.document.clone();
-                    entry.ready = None;
-                    self.open = false;
-                    if let Err(error) =
-                        app.propose_provider_edit(ctx, &id, plugin, &document, transaction)
-                    {
-                        app.error = Some(error);
-                    }
-                }
-                Action::Select(selection) => {
-                    let transaction = plugin_runtime::sdk::Transaction {
-                        document: ready.output.document.clone(),
-                        revision: ready.output.revision.clone(),
-                        edits: vec![],
-                        selections: Some(vec![selection]),
-                        storage: None,
-                    };
-                    let plugin = entry.plugin.clone();
-                    let document = ready.output.document.clone();
-                    entry.ready = None;
-                    self.open = false;
-                    if let Err(error) =
-                        app.propose_provider_edit(ctx, &id, plugin, &document, transaction)
-                    {
-                        app.error = Some(error);
-                    }
-                }
-            }
-        }
-    }
 }
+
 impl HeditApp {
     pub(in crate::app) fn poll_plugin_services(&mut self, ctx: &egui::Context) {
         let mut services = std::mem::take(&mut self.plugin_services);
@@ -1128,5 +935,85 @@ mod tests {
         assert!(services.entries.is_empty());
         assert!(services.next_wake().is_none());
         assert_eq!(app.active().page.text, "private fixture");
+    }
+    #[test]
+    fn concurrent_disclosures_allow_readers_but_exclude_revocation_until_delivery_ends() {
+        let config = tempfile::tempdir().unwrap();
+        let (_session, _ctx, app) = provider_app(config.path(), "private fixture");
+        let ExtensionAction::Lua(plugin) = &app.extensions[0].action else {
+            panic!()
+        };
+        let first = catalog::provider_authorization(config.path(), plugin).unwrap();
+        let second = catalog::provider_authorization(config.path(), plugin).unwrap();
+        let path = config.path().join("extensions/document-assist.json");
+        let digest = super::super::manifest::digest(std::fs::read(&path).unwrap());
+        assert!(catalog::set_lua_approved(
+            config.path(),
+            &path,
+            "document-assist",
+            "document-assist.diagnostics",
+            &digest,
+            false
+        )
+        .is_err());
+        drop(first);
+        drop(second);
+        catalog::set_lua_approved(
+            config.path(),
+            &path,
+            "document-assist",
+            "document-assist.diagnostics",
+            &digest,
+            false,
+        )
+        .unwrap();
+        assert!(catalog::provider_authorization(config.path(), plugin).is_none());
+    }
+
+    #[test]
+    fn decoration_cache_deduplicates_owners_and_clears_on_scope_or_stop() {
+        let config = tempfile::tempdir().unwrap();
+        let (_session, _ctx, app) = provider_app(config.path(), "café  \r\n東京");
+        let mut services = Services::default();
+        let contributions = (0..4)
+            .map(|index| {
+                let mut contribution = app.extensions[0].clone();
+                contribution.id = format!("document-assist.probe-{index}");
+                contribution
+            })
+            .collect();
+        services.install(contributions);
+        let target = app.lua_target().unwrap();
+        let identity = (target.document(), target.revision());
+        for (index, entry) in services.entries.iter_mut().enumerate() {
+            entry.ready = Some(Ready {
+                decorations: (0..128)
+                    .map(|_| Decoration {
+                        start: 0,
+                        finish: 4,
+                        text: "Fixture diagnostic".into(),
+                        severity: Some(service::Severity::Hint),
+                    })
+                    .collect(),
+                output: service::Output {
+                    request: format!("{index:032x}"),
+                    document: "a".repeat(32),
+                    revision: identity.1.to_string(),
+                    cache: Default::default(),
+                    result: ResultSet::Diagnostics(vec![]),
+                },
+                target: target.clone(),
+                created: 0,
+            });
+        }
+        services.rebuild_decorations(Some(identity));
+        assert_eq!(services.decorations(identity.0, identity.1).count(), 1);
+        assert_eq!(services.decorations(identity.0, identity.1 + 1).count(), 0);
+        services.rebuild_decorations(None);
+        assert!(services.paint.is_empty());
+        services.rebuild_decorations(Some(identity));
+        assert_eq!(services.paint.len(), 1);
+        services.suspend();
+        assert!(services.paint.is_empty());
     }
 }
