@@ -14,6 +14,68 @@ pub(crate) const PROBE_ARGS: &[&str] = &[
     "--nocapture",
 ];
 
+const PIPE_TOKEN_PROBE_ARGS: &[&str] = &[
+    "--exact",
+    "sandbox::windows::tests::native_pipe_token_probe",
+    "--ignored",
+    "--nocapture",
+];
+
+#[test]
+#[ignore = "only run inside a parent-created AppContainer and job"]
+fn native_pipe_token_probe() {
+    std::panic::set_hook(Box::new(|panic| {
+        println!("native probe assertion: {panic}")
+    }));
+    assert!(enter().is_ok());
+    // Unlike the ordinary EOF-framed probe, the parent keeps its client handle
+    // live until this process exits. Reading first selects that client's token.
+    let mut input = io::stdin().lock();
+    let mut length = [0u8; 4];
+    input.read_exact(&mut length).unwrap();
+    let length = u32::from_le_bytes(length) as usize;
+    assert!(length <= 4096);
+    let mut request = vec![0; length];
+    input.read_exact(&mut request).unwrap();
+    let path: PathBuf = serde_json::from_slice(&request).unwrap();
+    assert_eq!(
+        std::fs::read(&path).unwrap_err().kind(),
+        io::ErrorKind::PermissionDenied
+    );
+    let impersonated = unsafe { ImpersonateNamedPipeClient(GetStdHandle(STD_INPUT_HANDLE)) } != 0;
+    if impersonated {
+        let result = std::fs::read(&path);
+        // Restore the restricted process token before evaluating assertions.
+        check(unsafe { RevertToSelf() }).unwrap();
+        assert!(result.is_err(), "stdin exposed the editor's file authority");
+    }
+    assert_eq!(
+        std::fs::read(&path).unwrap_err().kind(),
+        io::ErrorKind::PermissionDenied
+    );
+    io::stdout()
+        .write_all(b"native pipe token probe passed\n")
+        .unwrap();
+    unsafe { ExitProcess(0) }
+}
+
+#[test]
+fn stdin_cannot_impersonate_the_live_editor_client() {
+    let directory = tempfile::tempdir().unwrap();
+    let secret = directory.path().join("private.txt");
+    std::fs::write(&secret, "private fixture").unwrap();
+    let request = serde_json::to_vec(&secret).unwrap();
+    let (exit_code, bytes) = run_probe_inner(PIPE_TOKEN_PROBE_ARGS, &request, true);
+    assert_eq!(
+        exit_code,
+        0,
+        "probe output: {}",
+        String::from_utf8_lossy(&bytes)
+    );
+    assert!(bytes.ends_with(b"native pipe token probe passed\n"));
+    assert_eq!(std::fs::read_to_string(secret).unwrap(), "private fixture");
+}
+
 pub(crate) const UNREAD_PROBE_ARGS: &[&str] = &[
     "--exact",
     "sandbox::windows::tests::native_unresponsive_probe",
@@ -172,14 +234,25 @@ fn native_file_network_memory_code_and_children_are_confined() {
 }
 
 fn run_probe(request: &[u8]) -> (u32, Vec<u8>) {
-    let mut child = Worker::spawn(&std::env::current_exe().unwrap(), PROBE_ARGS).unwrap();
+    run_probe_inner(PROBE_ARGS, request, false)
+}
+
+fn run_probe_inner(args: &[&str], request: &[u8], keep_client: bool) -> (u32, Vec<u8>) {
+    let mut child = Worker::spawn(&std::env::current_exe().unwrap(), args).unwrap();
     let mut output = child.output.take().unwrap();
     let reader = std::thread::spawn(move || {
         let mut bytes = Vec::new();
         output.read_to_end(&mut bytes).unwrap();
         bytes
     });
-    child.input.take().unwrap().write_all(request).unwrap();
+    let mut input = child.input.take().unwrap();
+    if keep_client {
+        input
+            .write_all(&(request.len() as u32).to_le_bytes())
+            .unwrap();
+    }
+    input.write_all(request).unwrap();
+    let input = keep_client.then_some(input);
     let deadline = Instant::now() + Duration::from_secs(10);
     while !child.finished(10).unwrap() && Instant::now() < deadline {}
     assert!(
@@ -189,6 +262,7 @@ fn run_probe(request: &[u8]) -> (u32, Vec<u8>) {
     let mut exit_code = 0;
     check(unsafe { GetExitCodeProcess(child.process.as_raw_handle(), &mut exit_code) }).unwrap();
     child.terminate();
+    drop(input);
     let bytes = reader.join().unwrap();
     (exit_code, bytes)
 }
