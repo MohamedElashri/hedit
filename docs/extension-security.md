@@ -550,3 +550,25 @@ commands, resource operations and cross-document actions are unsupported by this
 translator and fail closed. Hover markup is plain native-rendered text. These
 typed primitives still require persistent authority/lifecycle integration before
 installed LSP profiles can be enabled.
+
+The persistent native owner drives I/O on a dedicated host thread, including
+while parked. Its one queued request and current request are bounded; UI Drop
+only signals cancellation. The I/O thread kills/reaps before retiring the private
+bundle. Scope cancellation is independent of a callback's cancellation, and both
+are checked before transfers and again before returning a result. Startup and
+requests cannot exceed ten seconds; transport lifetime/CPU/traffic ceilings still
+apply. Failed connections never restart implicitly.
+
+An owner accepts one opaque document ID and increasing SDK revisions. It sends
+didOpen/didChange with an independent increasing LSP version, clears old
+diagnostics and rejects rollback, foreign documents or a changed language.
+Current unsaved text overlays an already-approved projected file, or receives a
+synthetic private filename without the original editor path. The underlying
+project copy stays fixed for that owner's lifetime. Refreshing other project
+files requires an explicit new owner.
+
+Unversioned/foreign diagnostic notifications are filtered before retention.
+Idle message/byte accounting persists across polls, so an output flood cannot
+reset its budget with every wakeup. Installed LSP activation still requires the
+source/resource binding, policy subscriptions and editor scope owner; these
+host-only lifetime primitives do not confer a plugin grant.

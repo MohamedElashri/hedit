@@ -83,6 +83,9 @@ pub struct Connection<T: Transport> {
     retained: usize,
     next: u32,
     initialized: bool,
+    diagnostic_scope: Option<(String, i32)>,
+    idle_messages: usize,
+    idle_bytes: usize,
 }
 fn invalid() -> io::Error {
     io::Error::new(
@@ -101,10 +104,21 @@ impl<T: Transport> Connection<T> {
             retained: 0,
             next: 0,
             initialized: false,
+            diagnostic_scope: None,
+            idle_messages: 0,
+            idle_bytes: 0,
         }
     }
     fn live(&self) -> io::Result<()> {
         self.transport.as_ref().map(|_| ()).ok_or_else(invalid)
+    }
+    pub(super) fn transport_mut(&mut self) -> io::Result<&mut T> {
+        self.transport.as_mut().ok_or_else(invalid)
+    }
+    pub(super) fn diagnostic_scope(&mut self, uri: &str, version: i32) {
+        self.diagnostic_scope = Some((uri.into(), version));
+        self.diagnostics.clear();
+        self.retained = 0;
     }
     fn poison<R>(&mut self, result: io::Result<R>) -> io::Result<R> {
         if result.is_err() {
@@ -164,6 +178,8 @@ impl<T: Transport> Connection<T> {
         deadline: Instant,
     ) -> io::Result<()> {
         let result = (|| {
+            self.idle_messages = 0;
+            self.idle_bytes = 0;
             if !self.initialized {
                 return Err(invalid());
             }
@@ -195,6 +211,8 @@ impl<T: Transport> Connection<T> {
         deadline: Instant,
     ) -> io::Result<Value> {
         self.live()?;
+        self.idle_messages = 0;
+        self.idle_bytes = 0;
         // Reject queued late responses before assigning the next request ID.
         self.receive(None, &mut None, &mut 0)?;
         self.next = self
@@ -231,6 +249,16 @@ impl<T: Transport> Connection<T> {
                 if let Some(id) = value.get("id") {
                     self.enqueue(&json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32601,"message":"Server requests are unavailable."}}))?;
                 } else if method == "textDocument/publishDiagnostics" {
+                    if self
+                        .diagnostic_scope
+                        .as_ref()
+                        .is_some_and(|(uri, version)| {
+                            value["params"]["uri"].as_str() != Some(uri)
+                                || value["params"]["version"].as_i64() != Some(i64::from(*version))
+                        })
+                    {
+                        continue;
+                    }
                     let bytes = serde_json::to_vec(&value).map_err(|_| invalid())?.len();
                     if self.diagnostics.len() >= 16
                         || bytes > (256 * 1024usize).saturating_sub(self.retained)
@@ -261,8 +289,16 @@ impl<T: Transport> Connection<T> {
     ) -> io::Result<Option<Value>> {
         let mut response = None;
         let mut request_sent = pending.is_none();
-        let mut messages = 0;
-        let mut bytes = 0usize;
+        let mut messages = if pending.is_none() {
+            self.idle_messages
+        } else {
+            0
+        };
+        let mut bytes = if pending.is_none() {
+            self.idle_bytes
+        } else {
+            0
+        };
         loop {
             self.live()?;
             if cancel.load(std::sync::atomic::Ordering::Acquire) {
@@ -313,6 +349,10 @@ impl<T: Transport> Connection<T> {
                 &mut response,
                 &mut messages,
             )?;
+            if pending.is_none() {
+                self.idle_messages = messages;
+                self.idle_bytes = bytes;
+            }
             if self.queue.is_empty() && (pending.is_none() || response.is_some()) {
                 return Ok(response);
             }
