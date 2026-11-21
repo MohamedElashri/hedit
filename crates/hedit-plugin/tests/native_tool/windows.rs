@@ -135,12 +135,12 @@ fn information(class: TOKEN_INFORMATION_CLASS) -> Vec<usize> {
         unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) },
         0
     );
-    if matches!(
-        class,
-        TokenIsAppContainer | TokenIsLessPrivilegedAppContainer | TokenMandatoryPolicy
-    ) {
+    if class == TokenIsAppContainer
+        || class == TokenIsLessPrivilegedAppContainer
+        || class == TokenMandatoryPolicy
+    {
         let mut value = 0u32;
-        let mut count = 0;
+        let mut count = std::mem::size_of_val(&value) as u32;
         assert_ne!(
             unsafe {
                 GetTokenInformation(

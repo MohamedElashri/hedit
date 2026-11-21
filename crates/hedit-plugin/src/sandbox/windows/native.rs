@@ -65,7 +65,7 @@ pub(super) fn lower_integrity(process: HANDLE, mode: Mode) -> io::Result<()> {
 }
 fn word(token: &OwnedHandle, class: TOKEN_INFORMATION_CLASS) -> io::Result<u32> {
     let mut value = 0u32;
-    let mut length = 0;
+    let mut length = mem::size_of_val(&value) as u32;
     check(unsafe {
         GetTokenInformation(
             token.as_raw_handle(),
@@ -73,6 +73,12 @@ fn word(token: &OwnedHandle, class: TOKEN_INFORMATION_CLASS) -> io::Result<u32> 
             (&mut value as *mut u32).cast(),
             mem::size_of_val(&value) as u32,
             &mut length,
+        )
+    })
+    .map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!("Native token scalar class {class} query failed: {error}"),
         )
     })?;
     if length != mem::size_of_val(&value) as u32 {
@@ -115,6 +121,12 @@ pub(super) fn require_token(process: HANDLE, mode: Mode) -> io::Result<()> {
             ProcessSystemCallDisablePolicy,
             (&mut flags as *mut u32).cast(),
             mem::size_of_val(&flags),
+        )
+    })
+    .map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!("Native Win32k policy query failed: {error}"),
         )
     })?;
     if flags & 1 == 0 {
