@@ -81,7 +81,7 @@ fn orphaned_and_mid_retirement_bundles_recover_without_losing_admission() {
     runs.reap().unwrap();
     assert!(!path.exists());
     drop(run);
-    let run = runs
+    let mut run = runs
         .prepare(
             image(&images, &source),
             Projection::empty(),
@@ -90,6 +90,7 @@ fn orphaned_and_mid_retirement_bundles_recover_without_losing_admission() {
         )
         .unwrap();
     let id = run.record.id;
+    run.lease.take();
     runs.directory
         .rename(id.to_string(), &runs.directory, format!(".removed-{id}"))
         .unwrap();
