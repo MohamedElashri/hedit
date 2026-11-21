@@ -1,0 +1,20 @@
+[package]
+name = "hedit-json-tools"
+version = "0.6.2"
+edition = "2021"
+rust-version = "1.99"
+license = "MIT"
+publish = false
+
+[dependencies]
+hedit-protocol = { path = "../hedit-protocol" }
+serde_json = "1"
+
+[[test]]
+name = "native_reference"
+harness = false
+
+[dev-dependencies]
+hedit-broker = { path = "../hedit-broker" }
+hedit-plugin = { path = "../hedit-plugin" }
+tempfile = "3"
