@@ -53,6 +53,7 @@ jobs:
       - name: Lint the shared supervisor and native policy
         run: cargo clippy --locked -p hedit-plugin --all-targets -- -D warnings
       - name: Probe hostile native images through the production boundary
+        if: ${{ !cancelled() }}
         run: cargo test --locked -p hedit-plugin --test native_tool
       - name: Verify mandatory integrity against a writable LPAC control
         if: ${{ !cancelled() && runner.os == 'Windows' }}
