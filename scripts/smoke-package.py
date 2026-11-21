@@ -9,7 +9,7 @@ import sys
 import tarfile
 import tempfile
 import tomllib
-from package_resources import copy_documentation
+from package_resources import copy_documentation, DOCUMENTATION_FILES
 
 ROOT = Path(__file__).resolve().parents[1]
 VERSION = tomllib.loads((ROOT / 'Cargo.toml').read_text())['package']['version']
@@ -64,13 +64,8 @@ def main():
             assert (prefix / relative).is_file(), relative
         assert (package / 'examples/cuda/vector_add.cu').is_file()
         assert {path.relative_to(package).as_posix() for path in (package / 'examples').rglob('*')
-                if path.is_file()} == {
-                    'examples/cuda/vector_add.cu', 'examples/extensions/markdown-task.json',
-                    'examples/extensions/markdown-quote.json', 'examples/extensions/sdk-markdown.json',
-                    'examples/extensions/sdk-markdown.fixtures.json', 'examples/extensions/sdk-table.json',
-                    'examples/extensions/sdk-table.fixtures.json', 'examples/extensions/sdk-trim.json',
-                    'examples/extensions/sdk-trim.fixtures.json',
-                }
+                if path.is_file()} == ({'examples/cuda/vector_add.cu'} |
+                    {name for name in DOCUMENTATION_FILES if name.startswith('examples/')})
         documents = ['CHANGELOG.md', 'vendor/egui_commonmark/PATCH.md', 'vendor/libghostty-vt-sys/PATCH.md',
                      'docs/extensions.md', 'docs/extension-security.md', 'examples/extensions/markdown-task.json',
                      'examples/extensions/markdown-quote.json']
