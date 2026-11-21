@@ -126,7 +126,7 @@ class WindowsPackage(unittest.TestCase):
                         self.assertEqual(manifest.parent, executable.parent / 'examples/extensions')
                         self.assertEqual(Path(arguments[4]), manifest.with_suffix('.fixtures.json'))
                         self.assertEqual(json.loads(manifest.read_text())['api_version'], 3)
-                        self.assertTrue(json.loads(Path(arguments[4]).read_text()))
+                        self.assertTrue(json.loads(Path(arguments[4]).read_text(encoding="utf-8")))
                     output = b''
                 else:
                     output = f'hedit {packager.version()}\r\n'.encode() if arguments[1] == '--version' else b'Usage: hedit\r\n'
