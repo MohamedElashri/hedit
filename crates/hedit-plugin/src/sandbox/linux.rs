@@ -4,23 +4,24 @@ use std::mem::MaybeUninit;
 
 // Linux UAPI values from linux/audit.h, linux/magic.h and asm/unistd.h.
 #[cfg(target_arch = "x86_64")]
-const AUDIT_ARCH: u32 = 0xc000_003e;
+pub(crate) const AUDIT_ARCH: u32 = 0xc000_003e;
 #[cfg(target_arch = "aarch64")]
-const AUDIT_ARCH: u32 = 0xc000_00b7;
+pub(crate) const AUDIT_ARCH: u32 = 0xc000_00b7;
 #[cfg(target_arch = "x86_64")]
-const X32_SYSCALL_BIT: u32 = 0x4000_0000;
+pub(crate) const X32_SYSCALL_BIT: u32 = 0x4000_0000;
 const PIPEFS_MAGIC: u32 = 0x5049_5045;
 
 // Layout of seccomp_data for the supported little-endian ABIs. The kernel
 // consumes the low 32 bits for descriptors and protection flags.
-const SYSCALL_NUMBER: u32 = 0;
-const SYSCALL_ARCH: u32 = 4;
-const SYSCALL_ARGS: u32 = 16;
-const ARG_BYTES: u32 = 8;
+pub(crate) const SYSCALL_NUMBER: u32 = 0;
+pub(crate) const SYSCALL_ARCH: u32 = 4;
+pub(crate) const SYSCALL_ARGS: u32 = 16;
+pub(crate) const ARG_BYTES: u32 = 8;
 
-const ALLOW: libc::sock_filter = return_value(libc::SECCOMP_RET_ALLOW);
-const DENY: libc::sock_filter = return_value(libc::SECCOMP_RET_ERRNO | libc::EPERM as u32);
-const KILL: libc::sock_filter = return_value(libc::SECCOMP_RET_KILL_PROCESS);
+pub(crate) const ALLOW: libc::sock_filter = return_value(libc::SECCOMP_RET_ALLOW);
+pub(crate) const DENY: libc::sock_filter =
+    return_value(libc::SECCOMP_RET_ERRNO | libc::EPERM as u32);
+pub(crate) const KILL: libc::sock_filter = return_value(libc::SECCOMP_RET_KILL_PROCESS);
 
 const ADDRESS_SPACE_BYTES: libc::rlim_t = 256 * 1024 * 1024;
 const CPU_SECONDS: libc::rlim_t = 2;
@@ -61,7 +62,7 @@ pub(crate) fn enter() -> io::Result<()> {
     install_filter()
 }
 
-fn validate_pipe(fd: libc::c_int, access_mode: libc::c_int) -> io::Result<()> {
+pub(crate) fn validate_pipe(fd: libc::c_int, access_mode: libc::c_int) -> io::Result<()> {
     let mut filesystem = MaybeUninit::<libc::statfs>::uninit();
     // SAFETY: fstatfs initializes filesystem on success.
     if unsafe { libc::fstatfs(fd, filesystem.as_mut_ptr()) } != 0 {
@@ -81,7 +82,7 @@ fn validate_pipe(fd: libc::c_int, access_mode: libc::c_int) -> io::Result<()> {
     Ok(())
 }
 
-fn set_process_flag(option: libc::c_int, value: libc::c_ulong) -> io::Result<()> {
+pub(crate) fn set_process_flag(option: libc::c_int, value: libc::c_ulong) -> io::Result<()> {
     // SAFETY: These prctl options take scalar unsigned long arguments.
     if unsafe { libc::prctl(option, value, 0_u64, 0_u64, 0_u64) } != 0 {
         return Err(io::Error::last_os_error());
@@ -166,6 +167,10 @@ fn install_filter() -> io::Result<()> {
         allow_if(&mut instructions, syscall, &[]);
     }
     instructions.push(DENY);
+    enforce(instructions)
+}
+
+pub(crate) fn enforce(mut instructions: Vec<libc::sock_filter>) -> io::Result<()> {
     let program = libc::sock_fprog {
         len: instructions.len() as u16,
         filter: instructions.as_mut_ptr(),
@@ -190,20 +195,51 @@ fn install_filter() -> io::Result<()> {
     }
 }
 
-enum Check {
+pub(crate) enum Check {
     Equal(u32, u32),
     NoBits(u32, u32),
+    AllBits(u32, u32),
+    ZeroHigh(u32),
 }
 
-fn allow_if(instructions: &mut Vec<libc::sock_filter>, syscall: libc::c_long, checks: &[Check]) {
+pub(crate) fn allow_if(
+    instructions: &mut Vec<libc::sock_filter>,
+    syscall: libc::c_long,
+    checks: &[Check],
+) {
     // The initial jump skips this entire rule on a syscall mismatch. Each
     // matching syscall has one rule, so a bad argument can return directly.
-    instructions.push(equal(syscall as u32, 0, (checks.len() * 3 + 1) as u8));
+    let length = checks
+        .iter()
+        .map(|check| {
+            if matches!(check, Check::AllBits(..)) {
+                4
+            } else {
+                3
+            }
+        })
+        .sum::<usize>()
+        + 1;
+    instructions.push(equal(syscall as u32, 0, length as u8));
     for check in checks {
         match *check {
             Check::Equal(index, value) => {
                 instructions.push(load_word(SYSCALL_ARGS + index * ARG_BYTES));
                 instructions.push(equal(value, 1, 0));
+            }
+            Check::ZeroHigh(index) => {
+                instructions.push(load_word(SYSCALL_ARGS + index * ARG_BYTES + 4));
+                instructions.push(equal(0, 1, 0));
+            }
+            Check::AllBits(index, mask) => {
+                instructions.push(load_word(SYSCALL_ARGS + index * ARG_BYTES));
+                instructions.push(instruction(
+                    libc::BPF_ALU | libc::BPF_AND | libc::BPF_K,
+                    mask,
+                    0,
+                    0,
+                ));
+                instructions.push(equal(mask, 1, 0));
             }
             Check::NoBits(index, mask) => {
                 instructions.push(load_word(SYSCALL_ARGS + index * ARG_BYTES));
@@ -215,7 +251,7 @@ fn allow_if(instructions: &mut Vec<libc::sock_filter>, syscall: libc::c_long, ch
     instructions.push(ALLOW);
 }
 
-const fn instruction(code: u32, k: u32, jt: u8, jf: u8) -> libc::sock_filter {
+pub(crate) const fn instruction(code: u32, k: u32, jt: u8, jf: u8) -> libc::sock_filter {
     libc::sock_filter {
         code: code as u16,
         jt,
@@ -224,19 +260,19 @@ const fn instruction(code: u32, k: u32, jt: u8, jf: u8) -> libc::sock_filter {
     }
 }
 
-const fn load_word(offset: u32) -> libc::sock_filter {
+pub(crate) const fn load_word(offset: u32) -> libc::sock_filter {
     instruction(libc::BPF_LD | libc::BPF_W | libc::BPF_ABS, offset, 0, 0)
 }
 
-const fn return_value(value: u32) -> libc::sock_filter {
+pub(crate) const fn return_value(value: u32) -> libc::sock_filter {
     instruction(libc::BPF_RET | libc::BPF_K, value, 0, 0)
 }
 
-const fn equal(value: u32, jt: u8, jf: u8) -> libc::sock_filter {
+pub(crate) const fn equal(value: u32, jt: u8, jf: u8) -> libc::sock_filter {
     instruction(libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K, value, jt, jf)
 }
 
-const fn has_bits(value: u32, jt: u8, jf: u8) -> libc::sock_filter {
+pub(crate) const fn has_bits(value: u32, jt: u8, jf: u8) -> libc::sock_filter {
     instruction(libc::BPF_JMP | libc::BPF_JSET | libc::BPF_K, value, jt, jf)
 }
 

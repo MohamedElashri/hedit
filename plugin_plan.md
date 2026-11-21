@@ -876,3 +876,13 @@ is unchanged. The broker tool/LSP intents remain unavailable pending private
 image import, source-bound grants, validated snapshot construction and verified
 Linux/Windows adapters. Persistent LSP, final author/reference tooling, sustained
 performance evidence and universal-package acceptance remain open plan gates.
+
+
+The Linux follow-up shares the Unix bootstrap and supervisor, requires Landlock
+ABI 3, and installs a default-deny syscall policy with constrained pthread
+creation. It has hard address-space/CPU/descriptor limits and monitored thread
+counts. Dedicated native CI covers Linux x64/ARM64 and macOS. Linux metadata
+visibility and fixed system-loader execution are explicit residuals. Native Linux
+validation and a trusted macOS parent-exit guardian remain pending; these are
+activation gates before tool grants, alongside the Windows tool policy and
+broker image/snapshot ownership. The existing Lua policy retains its limits.

@@ -209,6 +209,30 @@ interface; OS updates may make it unavailable. Initialization errors fail closed
 and native CI must validate supported macOS versions. This does not broaden the
 signed Lua helper's App Sandbox entitlements.
 
+The Linux adapter shares the Unix bootstrap, transport and supervisor. It requires
+Landlock ABI 3 to deny content access outside the private snapshot/image and
+system libraries, including write, rename and truncation rights. A seccomp
+allowlist denies sockets, process creation, namespaces, tracing, asynchronous
+kernel I/O, shared-memory APIs, metadata mutation and policy changes. Only
+pthread-style clone flags are permitted, with clone3 returning ENOSYS for libc's
+checked fallback. File-control commands exclude locks and signal-owner changes;
+thread-directed signals are restricted to the tool's process. Address space is
+hard-limited to 256 MiB. Runtimes requiring larger virtual reservations fail
+unavailable instead of receiving a weaker policy.
+
+Linux exec permits the selected image and exact system ELF loaders needed for
+startup. Native code can use those loaders to interpret other readable code
+inside the same sandbox, just as it can already execute code in its address
+space. Initial image selection and digest remain host authority. Landlock does
+not conceal arbitrary path metadata; it restricts file contents and effects.
+These residuals must be disclosed in tool review rather than described as total
+filesystem or code-provenance isolation. See the kernel's
+[Landlock documentation](https://docs.kernel.org/userspace-api/landlock.html).
+Linux sets parent-death termination before native exec. A trusted macOS guardian
+for abrupt editor exit remains an activation gate; the current finite-filter
+supervisor handles cleanup while the editor is alive. No broker tool grants are
+enabled by this implementation.
+
 `crates/hedit-plugin/tests/native_tool.rs` runs the actual native image through
 the production boundary: Unicode/full-size input, literal policy parameters,
 outside reads and symlink escapes, writes and metadata changes, inherited

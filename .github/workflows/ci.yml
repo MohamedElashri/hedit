@@ -30,6 +30,29 @@ env:
   CARGO_PROFILE_DEV_DEBUG: 0
   CARGO_PROFILE_TEST_DEBUG: 0
 jobs:
+  native-tools:
+    name: Native tool boundary (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15]
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.1
+          components: clippy
+      - uses: Swatinem/rust-cache@v2.9.3
+        with:
+          key: native-tools-${{ runner.os }}-${{ runner.arch }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Lint the shared supervisor and native policy
+        run: cargo clippy --locked -p hedit-plugin --all-targets -- -D warnings
+      - name: Probe hostile native images through the production boundary
+        run: cargo test --locked -p hedit-plugin --test native_tool
+
   windows:
     name: Windows
     uses: ./.github/workflows/windows.yml

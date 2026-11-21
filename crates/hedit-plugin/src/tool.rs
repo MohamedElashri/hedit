@@ -5,13 +5,43 @@ use std::{io, path::PathBuf, sync::atomic::AtomicBool, time::Duration};
 
 #[cfg(target_os = "macos")]
 mod macos;
-#[cfg(target_os = "macos")]
+#[cfg(any(
+    target_os = "macos",
+    all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    )
+))]
 mod unix;
+#[cfg(target_os = "macos")]
+use macos as native;
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+mod linux;
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+use linux as native;
 
 const HELPER: &str = "--hedit-tool-worker";
-#[cfg(target_os = "macos")]
+#[cfg(any(
+    target_os = "macos",
+    all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    )
+))]
 const HEADER_BYTES: usize = 16 * 1024;
-#[cfg(target_os = "macos")]
+#[cfg(any(
+    target_os = "macos",
+    all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    )
+))]
 const READY: &[u8; 4] = b"HT01";
 pub const INPUT_BYTES: usize = 64 * 1024;
 pub const OUTPUT_BYTES: usize = 64 * 1024;
@@ -77,7 +107,13 @@ impl Launch {
             ) {
                 return Err(invalid());
             }
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(not(any(
+                target_os = "macos",
+                all(
+                    target_os = "linux",
+                    any(target_arch = "x86_64", target_arch = "aarch64")
+                )
+            )))]
             let _ = magic;
         }
         Ok(())
@@ -106,9 +142,21 @@ pub fn run(
     if input.len() > INPUT_BYTES || timeout.is_zero() || timeout > Duration::from_secs(10) {
         return Err(invalid());
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(any(
+        target_os = "macos",
+        all(
+            target_os = "linux",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    ))]
     return unix::run(&std::env::current_exe()?, launch, input, cancel, timeout);
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(
+        target_os = "macos",
+        all(
+            target_os = "linux",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    )))]
     {
         let _ = (input, cancel, timeout);
         Err(io::Error::new(
@@ -124,8 +172,20 @@ pub fn run_if_requested(args: &[std::ffi::OsString]) -> Option<bool> {
     if args != [HELPER] {
         return None;
     }
-    #[cfg(target_os = "macos")]
-    return Some(macos::bootstrap().is_ok());
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(any(
+        target_os = "macos",
+        all(
+            target_os = "linux",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    ))]
+    return Some(unix::bootstrap().is_ok());
+    #[cfg(not(any(
+        target_os = "macos",
+        all(
+            target_os = "linux",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    )))]
     Some(false)
 }
