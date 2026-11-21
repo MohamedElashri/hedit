@@ -40,7 +40,7 @@ def icon_png(path, size=1024):
                      chunk(b'IDAT', zlib.compress(rows)) + chunk(b'IEND', b''))
 
 
-def package(arm64, intel, output, identity='-', helper_arm64=None, helper_intel=None):
+def package(arm64, intel, output, identity='-', helper_arm64=None, helper_intel=None, json_arm64=None, json_intel=None):
     if sys.platform != 'darwin':
         raise ValueError('Universal macOS packages must be assembled on macOS with Xcode tools.')
     for binary, architecture in [(arm64, 'arm64'), (intel, 'x86_64')]:
@@ -52,6 +52,12 @@ def package(arm64, intel, output, identity='-', helper_arm64=None, helper_intel=
     for binary, architecture in [(helper_arm64, 'arm64'), (helper_intel, 'x86_64')]:
         if not binary.is_file():
             raise ValueError(f'Build the {architecture} helper with cargo build --release --locked --workspace: {binary}')
+        subprocess.run(['lipo', str(binary), '-verify_arch', architecture], check=True)
+    json_arm64 = json_arm64 or arm64.with_name('hedit-json-tools')
+    json_intel = json_intel or intel.with_name('hedit-json-tools')
+    for binary, architecture in [(json_arm64, 'arm64'), (json_intel, 'x86_64')]:
+        if not binary.is_file():
+            raise ValueError(f'Build the {architecture} JSON reference with cargo build --release --locked --workspace: {binary}')
         subprocess.run(['lipo', str(binary), '-verify_arch', architecture], check=True)
     version = tomllib.loads((ROOT / 'Cargo.toml').read_text())['package']['version']
     output.mkdir(parents=True, exist_ok=True)
@@ -69,6 +75,11 @@ def package(arm64, intel, output, identity='-', helper_arm64=None, helper_intel=
         helper = contents / 'MacOS/hedit-remote'
         subprocess.run(['lipo', '-create', str(helper_arm64), str(helper_intel), '-output', str(helper)], check=True)
         helper.chmod(0o755)
+        json_tool = contents / 'MacOS/hedit-json-tools'
+        subprocess.run(['lipo', '-create', str(json_arm64), str(json_intel), '-output', str(json_tool)], check=True)
+        json_tool.chmod(0o755)
+        for architecture in ['arm64', 'x86_64']:
+            subprocess.run(['lipo', str(json_tool), '-verify_arch', architecture], check=True)
         for architecture in ['arm64', 'x86_64']:
             subprocess.run(['lipo', str(helper), '-verify_arch', architecture], check=True)
         for architecture in ['arm64', 'x86_64']:
@@ -99,6 +110,7 @@ def package(arm64, intel, output, identity='-', helper_arm64=None, helper_intel=
         if identity != '-':
             signing += ['--options', 'runtime', '--timestamp']
         subprocess.run([*signing, str(helper)], check=True)
+        subprocess.run([*signing, str(json_tool)], check=True)
         prepare_plugin_helper(executable, contents / 'Helpers/hedit-plugin.app', identity)
         subprocess.run([*signing, str(app)], check=True)
         subprocess.run(['codesign', '--verify', '--deep', '--strict', str(app)], check=True)
@@ -108,6 +120,9 @@ def package(arm64, intel, output, identity='-', helper_arm64=None, helper_intel=
         reported_helper = subprocess.run([str(helper), '--version'], check=True, capture_output=True, text=True)
         if reported_helper.stdout.strip() != f'hedit-remote {version}':
             raise ValueError('The bundled helper version does not match Cargo.toml.')
+        reported_json = subprocess.run([str(json_tool), '--version'], check=True, capture_output=True, text=True)
+        if reported_json.stdout.strip() != f'hedit-json-tools {version}':
+            raise ValueError('The bundled JSON reference version does not match Cargo.toml.')
         archive = stage / name
         subprocess.run(['ditto', '-c', '-k', '--sequesterRsrc', '--keepParent', str(app), str(archive)], check=True)
         archive.replace(output / name)

@@ -2,6 +2,7 @@
 """Package an x86-64 Windows executable as a portable ZIP with a checksum."""
 import argparse
 import hashlib
+import os
 import json
 from pathlib import Path
 import shutil
@@ -31,10 +32,12 @@ def check_binary(binary):
             raise ValueError('Expected an x86-64 Windows PE executable.')
 
 
-def package(binary, out_dir, worker=None):
+def package(binary, out_dir, worker=None, json_tool=None):
     check_binary(binary)
     worker = worker or binary.with_name('hedit-plugin-worker.exe')
     check_binary(worker)
+    json_tool = json_tool or binary.with_name('hedit-json-tools.exe')
+    check_binary(json_tool)
     name = f'hedit-{version()}-windows-x86_64'
     out_dir.mkdir(parents=True, exist_ok=True)
     archive = out_dir / f'{name}.zip'
@@ -43,6 +46,7 @@ def package(binary, out_dir, worker=None):
         stage.mkdir()
         shutil.copy2(binary, stage / 'hedit.exe')
         shutil.copy2(worker, stage / 'hedit-plugin-worker.exe')
+        shutil.copy2(json_tool, stage / 'hedit-json-tools.exe')
         copy_documentation(ROOT, stage)
         shutil.copytree(ROOT / 'themes', stage / 'themes')
         shutil.copytree(ROOT / 'examples/cuda', stage / 'examples/cuda')
@@ -58,7 +62,7 @@ def package(binary, out_dir, worker=None):
     return archive
 
 
-def smoke(archive):
+def smoke(archive, native_broker=False):
     digest, filename = archive.with_name(archive.name + '.sha256').read_text(encoding='utf-8').strip().split('  ')
     if filename != archive.name or digest != hashlib.sha256(archive.read_bytes()).hexdigest():
         raise ValueError('Archive checksum does not match.')
@@ -67,7 +71,7 @@ def smoke(archive):
         with zipfile.ZipFile(archive) as bundle:
             bundle.extractall(work)
         root = Path(work) / archive.stem
-        for relative in ['hedit.exe', 'hedit-plugin-worker.exe', 'LICENSE', 'USER_GUIDE.md',
+        for relative in ['hedit.exe', 'hedit-plugin-worker.exe', 'hedit-json-tools.exe', 'LICENSE', 'USER_GUIDE.md',
                          'themes/hedit-ink.json', 'assets/dictionaries/en_US-LICENSE.txt',
                          'examples/cuda/vector_add.cu', 'docs/extensions.md',
                          'examples/extensions/markdown-task.json',
@@ -82,6 +86,10 @@ def smoke(archive):
         output = subprocess.run([str(worker), '--version'], check=True, capture_output=True, timeout=30)
         if output.stdout.decode('utf-8').strip() != f'hedit-plugin-worker {version()}':
             raise ValueError('Packaged Lua worker version does not match Cargo.toml.')
+        json_tool = root / 'hedit-json-tools.exe'
+        output = subprocess.run([str(json_tool), '--version'], check=True, capture_output=True, timeout=30)
+        if output.stdout.decode('utf-8').strip() != f'hedit-json-tools {version()}':
+            raise ValueError('Packaged JSON reference version does not match Cargo.toml.')
         output = subprocess.run([str(binary), '--help'], check=True, capture_output=True, timeout=30)
         if b'Usage: hedit' not in output.stdout:
             raise ValueError('Packaged executable did not print its help.')
@@ -93,11 +101,16 @@ def smoke(archive):
         subprocess.run([str(binary), 'plugin', 'test',
                         str(root / 'examples/extensions/markdown-quote.json'), str(fixture)],
                        check=True, capture_output=True, timeout=30)
-        for name in ['sdk-markdown', 'sdk-table', 'sdk-trim']:
+        for name in ['sdk-markdown', 'sdk-table', 'sdk-trim', 'scoped-json', 'scoped-rename', 'scoped-markdown-html']:
             subprocess.run([str(binary), 'plugin', 'test',
                             str(root / f'examples/extensions/{name}.json'),
                             str(root / f'examples/extensions/{name}.fixtures.json')],
                            check=True, capture_output=True, timeout=30)
+        if native_broker:
+            environment = dict(os.environ, HEDIT_REFERENCE_TOOL=str(json_tool))
+            subprocess.run(['cargo', 'test', '--locked', '-p', 'hedit-json-tools',
+                            '--test', 'native_reference'], cwd=ROOT, env=environment, check=True)
+
 
 
 def main():
@@ -106,11 +119,12 @@ def main():
     parser.add_argument('--worker', type=Path, help='Headless Lua worker (defaults beside the editor).')
     parser.add_argument('--out-dir', type=Path, default=ROOT / 'dist')
     parser.add_argument('--smoke', action='store_true', help='Extract and run the package (requires Windows).')
+    parser.add_argument('--native-broker', action='store_true', help='Exercise the extracted native image through the workspace broker fixture.')
     args = parser.parse_args()
     try:
         archive = package(args.binary, args.out_dir, args.worker)
         if args.smoke:
-            smoke(archive)
+            smoke(archive, args.native_broker)
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         parser.exit(1, f'{error}\n')
     print(archive)

@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=ROOT / 'target/release/hedit')
+    parser.add_argument('--json-tool', type=Path, help='Native JSON reference, defaults beside the editor.')
     parser.add_argument('--helper', type=Path, default=ROOT / 'target/release/hedit-remote')
     parser.add_argument('--out-dir', type=Path, default=ROOT / 'dist')
     parser.add_argument('--formats', nargs='+', choices=['tar.gz', 'deb', 'rpm', 'appimage'], default=['tar.gz'])
@@ -24,6 +25,7 @@ def main():
     args = parser.parse_args()
     args.binary = args.binary.resolve()
     args.helper = args.helper.resolve()
+    args.json_tool = (args.json_tool or args.binary.with_name('hedit-json-tools')).resolve()
     args.out_dir = args.out_dir.resolve()
     if platform.system() != 'Linux':
         parser.error('Linux packages must be built on Linux.')
@@ -31,12 +33,14 @@ def main():
         parser.error('Build the executable first with cargo build --release --locked.')
     if not args.helper.is_file() or not os.access(args.helper, os.X_OK):
         parser.error('Build the matching helper with cargo build --release --locked --workspace.')
+    if not args.json_tool.is_file() or not os.access(args.json_tool, os.X_OK):
+        parser.error('Build the matching JSON reference with cargo build --release --locked --workspace.')
     machine = platform.machine()
     arch = {'x86_64': 'x86_64', 'amd64': 'x86_64', 'aarch64': 'aarch64', 'arm64': 'aarch64'}.get(machine)
     if not arch:
         parser.error(f'Unsupported package architecture: {machine}')
     version = tomllib.loads((ROOT / 'Cargo.toml').read_text())['package']['version']
-    for binary, name in [(args.binary, 'hedit'), (args.helper, 'hedit-remote')]:
+    for binary, name in [(args.binary, 'hedit'), (args.helper, 'hedit-remote'), (args.json_tool, 'hedit-json-tools')]:
         reported = subprocess.check_output([str(binary), '--version'], text=True).strip()
         if reported != f'{name} {version}':
             parser.error(f'{name} version must match Cargo.toml.')
@@ -48,6 +52,7 @@ def main():
         stage.mkdir()
         shutil.copy2(args.binary, stage / 'hedit')
         shutil.copy2(args.helper, stage / 'hedit-remote')
+        shutil.copy2(args.json_tool, stage / 'hedit-json-tools')
         standalone = stage / f'hedit-remote-{version}-linux-{arch}'
         shutil.copy2(args.helper, standalone)
         publish(standalone, args.out_dir / standalone.name)
@@ -92,7 +97,7 @@ def deb(stage, root, version, arch, out):
     (stage / 'debian').mkdir()
     (stage / 'debian/control').write_text('Source: hedit\n\nPackage: hedit\nArchitecture: any\nDescription: Native text editor\n')
     dependencies = subprocess.check_output(
-        ['dpkg-shlibdeps', '--ignore-missing-info', '-O', '-e' + str(root / 'usr/bin/hedit'), '-e' + str(root / 'usr/bin/hedit-remote')],
+        ['dpkg-shlibdeps', '--ignore-missing-info', '-O', '-e' + str(root / 'usr/bin/hedit'), '-e' + str(root / 'usr/bin/hedit-remote'), '-e' + str(root / 'usr/bin/hedit-json-tools')],
         cwd=stage, text=True).strip().removeprefix('shlibs:Depends=')
     display = 'libx11-6, libxcursor1, libxi6, libxrandr2, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libegl1, libgl1'
     (control / 'control').write_text(f"""Package: hedit
@@ -143,6 +148,7 @@ cp -a "{root}/usr" %{{buildroot}}/
 %files
 /usr/bin/hedit
 /usr/bin/hedit-remote
+/usr/bin/hedit-json-tools
 /usr/share/applications/hedit.desktop
 /usr/share/icons/hicolor/scalable/apps/hedit.svg
 /usr/share/hedit

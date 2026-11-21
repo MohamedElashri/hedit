@@ -96,7 +96,7 @@ package: build ## Create the Linux release archive and SHA-256 file in dist/
 	$(PYTHON) scripts/package-linux.py --helper "$(REMOTE_HELPER)"
 
 smoke: build ## Verify Linux package extraction, installation, checksums, and the executable
-	$(PYTHON) scripts/smoke-package.py --helper "$(REMOTE_HELPER)"
+	$(PYTHON) scripts/smoke-package.py --native-broker --helper "$(REMOTE_HELPER)"
 
 linux-packages: build ## Build Linux tarball, DEB, RPM, and AppImage (requires packaging tools)
 	$(PYTHON) scripts/package-linux.py --helper "$(REMOTE_HELPER)" --formats tar.gz deb rpm appimage

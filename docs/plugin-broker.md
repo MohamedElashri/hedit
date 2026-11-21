@@ -123,12 +123,26 @@ Build the workspace, then use the author CLI to check, test and pack each
 manifest under `examples/extensions`. Install the resulting bundle in Extensions.
 Source approval and each directory/tool/endpoint grant are separate steps.
 
+Open the complete sources and fixtures for
+[JSON tools](../examples/extensions/scoped-json.json),
+[project replacement](../examples/extensions/scoped-rename.json), and
+[Markdown conversion](../examples/extensions/scoped-markdown-html.json).
+The manifests name their sibling Lua sources and companion fixture files.
+
+
 | Reference | Behavior | Extra resource review |
 | --- | --- | --- |
 | `scoped-json.format` | Formats the current JSON document through the native filter | Select `hedit-json-tools`; literal `--format` |
 | `scoped-json.diagnostics`, `hover`, `symbols` | Persistent JSON diagnostics, project summary and root-key navigation | Select `hedit-json-tools`; literal `--project-lsp`; choose a project directory with discovery/read rights |
 | `scoped-rename.replace` | Reviews ASCII identifier replacement across existing UTF-8 files | Choose a project directory with discovery/read/edit rights |
 | `scoped-markdown-html.convert` | Sends only the selected Markdown to GitHub and replaces that selection with returned HTML source | Approve the exact public GitHub Markdown endpoint |
+
+Packaged native images are located beside the editor: `hedit-json-tools` in a
+Linux installation's `bin` directory, `hedit-json-tools.exe` in a Windows portable
+directory, and `hedit.app/Contents/MacOS/hedit-json-tools` on macOS. Mac packages
+contain both native architecture slices. Select/import the image explicitly for
+each approved command/profile; installation or an app update never executes or
+silently grants the reference tool.
 
 The native JSON image has no shell, network or child-process interface. The
 project mode reads at most 32 top-level JSON files, each at most 64 KiB, from the

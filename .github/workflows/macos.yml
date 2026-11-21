@@ -75,8 +75,13 @@ jobs:
           lipo "$worker" -verify_arch x86_64
           python3 -c 'import json, pathlib, sys; pathlib.Path(sys.argv[1]).write_text(json.dumps([{"command":"markdown-quote.quote","input":"café\r\n東京","expected":"> café\n> 東京","language":"markdown"}]))' "$work/lua-fixtures.json"
           "$binary" plugin test "$work/hedit.app/Contents/Resources/Documentation/examples/extensions/markdown-quote.json" "$work/lua-fixtures.json"
+          reference="$work/hedit.app/Contents/MacOS/hedit-json-tools"
+          lipo "$reference" -verify_arch arm64
+          lipo "$reference" -verify_arch x86_64
+          test "$("$reference" --version)" = "hedit-json-tools ${expected#hedit }"
+          HEDIT_REFERENCE_TOOL="$reference" HEDIT_REFERENCE_EDITOR="$binary" cargo test --locked -p hedit-json-tools --test native_reference
           examples="$work/hedit.app/Contents/Resources/Documentation/examples/extensions"
-          for name in sdk-markdown sdk-table sdk-trim; do
+          for name in sdk-markdown sdk-table sdk-trim scoped-json scoped-rename scoped-markdown-html; do
             "$binary" plugin test "$examples/$name.json" "$examples/$name.fixtures.json"
           done
           if arch -x86_64 /usr/bin/true 2>/dev/null; then

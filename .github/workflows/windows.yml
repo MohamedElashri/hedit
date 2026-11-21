@@ -92,7 +92,7 @@ jobs:
         run: cargo build --release --locked --workspace
       - name: Package and verify extracted executable
         if: ${{ !inputs.checks_only }}
-        run: python scripts/package-windows.py --smoke
+        run: python scripts/package-windows.py --smoke --native-broker
       - uses: actions/upload-artifact@v7.0.2
         if: ${{ !inputs.checks_only }}
         with:

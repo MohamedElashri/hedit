@@ -43,6 +43,7 @@ class WindowsPackage(unittest.TestCase):
             binary = root / 'hedit.exe'
             binary.write_bytes(self.pe())
             binary.with_name('hedit-plugin-worker.exe').write_bytes(self.pe())
+            binary.with_name('hedit-json-tools.exe').write_bytes(self.pe())
             project = root / 'source'
             project.mkdir()
             for filename in ['Cargo.toml', 'README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md', 'CHANGELOG.md', 'LICENSE']:
@@ -87,21 +88,22 @@ class WindowsPackage(unittest.TestCase):
             binary = root / 'hedit.exe'
             binary.write_bytes(self.pe())
             binary.with_name('hedit-plugin-worker.exe').write_bytes(self.pe())
+            binary.with_name('hedit-json-tools.exe').write_bytes(self.pe())
             archive = packager.package(binary, root / 'out')
             calls = []
 
             def run(arguments, **kwargs):
                 executable = Path(arguments[0])
                 self.assertTrue(executable.is_file())
-                self.assertIn(executable.name, {'hedit.exe', 'hedit-plugin-worker.exe'})
+                self.assertIn(executable.name, {'hedit.exe', 'hedit-plugin-worker.exe', 'hedit-json-tools.exe'})
                 self.assertIn('hedit portable test ', str(executable))
                 self.assertNotEqual(executable.parent, binary.parent)
                 self.assertTrue(kwargs['check'])
                 self.assertEqual(kwargs['timeout'], 30)
                 calls.append((executable.name, arguments[1]))
-                if executable.name == 'hedit-plugin-worker.exe':
+                if executable.name in {'hedit-plugin-worker.exe', 'hedit-json-tools.exe'}:
                     self.assertEqual(arguments[1:], ['--version'])
-                    output = f'hedit-plugin-worker {packager.version()}\r\n'.encode()
+                    output = f'{executable.stem} {packager.version()}\r\n'.encode()
                 elif arguments[1] == 'plugin':
                     self.assertEqual(arguments[2], 'test')
                     manifest = Path(arguments[3])
@@ -112,10 +114,10 @@ class WindowsPackage(unittest.TestCase):
                             'input': 'café / 東京', 'expected': '> café / 東京',
                         }])
                     else:
-                        self.assertIn(manifest.stem, {'sdk-markdown', 'sdk-table', 'sdk-trim'})
+                        self.assertIn(manifest.stem, {'sdk-markdown', 'sdk-table', 'sdk-trim', 'scoped-json', 'scoped-rename', 'scoped-markdown-html'})
                         self.assertEqual(manifest.parent, executable.parent / 'examples/extensions')
                         self.assertEqual(Path(arguments[4]), manifest.with_suffix('.fixtures.json'))
-                        self.assertEqual(json.loads(manifest.read_text())['api_version'], 3)
+                        self.assertEqual(json.loads(manifest.read_text())['api_version'], 5 if manifest.stem.startswith('scoped-') else 3)
                         self.assertTrue(json.loads(Path(arguments[4]).read_text(encoding="utf-8")))
                     output = b''
                 else:
@@ -125,8 +127,8 @@ class WindowsPackage(unittest.TestCase):
             with patch.object(packager.subprocess, 'run', side_effect=run):
                 packager.smoke(archive)
             self.assertEqual(calls, [
-                ('hedit.exe', '--version'), ('hedit-plugin-worker.exe', '--version'),
-                ('hedit.exe', '--help'), *[('hedit.exe', 'plugin')] * 4,
+                ('hedit.exe', '--version'), ('hedit-plugin-worker.exe', '--version'), ('hedit-json-tools.exe', '--version'),
+                ('hedit.exe', '--help'), *[('hedit.exe', 'plugin')] * 7,
             ])
             with patch.object(packager.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, stdout=b'hedit 0.0.0\n')):
                 with self.assertRaisesRegex(ValueError, 'version does not match'):
@@ -148,6 +150,7 @@ class WindowsPackage(unittest.TestCase):
             binary = root / 'hedit.exe'
             binary.write_bytes(self.pe())
             binary.with_name('hedit-plugin-worker.exe').write_bytes(self.pe())
+            binary.with_name('hedit-json-tools.exe').write_bytes(self.pe())
             archive = packager.package(binary, root / 'out')
             archive.write_bytes(archive.read_bytes() + b'corruption')
             with patch.object(packager.subprocess, 'run') as run:

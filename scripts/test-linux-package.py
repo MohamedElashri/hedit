@@ -42,7 +42,7 @@ class LinuxRelease(unittest.TestCase):
             source = root / 'source'
             smoke.prepare_source(source)
             version = tomllib.loads((source / 'Cargo.toml').read_text())['package']['version']
-            binaries = [root / 'hedit', root / 'hedit-remote']
+            binaries = [root / 'hedit', root / 'hedit-remote', root / 'hedit-json-tools']
             for binary in binaries:
                 binary.write_bytes(b'executable fixture')
                 binary.chmod(0o755)
@@ -65,7 +65,7 @@ class LinuxRelease(unittest.TestCase):
                     patch.object(packager.platform, 'machine', return_value='x86_64'), \
                     patch.object(packager.subprocess, 'check_output', side_effect=reported_version), \
                     redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-                for stale in ['hedit', 'hedit-remote']:
+                for stale in ['hedit', 'hedit-remote', 'hedit-json-tools']:
                     with self.subTest(stale=stale), self.assertRaises(SystemExit):
                         packager.main()
                     self.assertEqual(archive.read_bytes(), b'previous archive')
