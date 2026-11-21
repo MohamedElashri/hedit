@@ -147,6 +147,55 @@ fn native_probe() {
             let mut flags = 0;
             assert_eq!(unsafe { GetHandleInformation(inherited, &mut flags) }, 0);
         }
+        "native-file-write" => {
+            let allowed = request["allowed"].as_bool().unwrap();
+            let mode = if allowed {
+                native::Mode::ToolLow
+            } else {
+                native::Mode::ToolProbe
+            };
+            native::require_token(unsafe { GetCurrentProcess() }, mode).unwrap();
+            if !allowed {
+                assert!(
+                    native::lower_integrity(unsafe { GetCurrentProcess() }, native::Mode::ToolLow)
+                        .is_err(),
+                    "native tool raised its integrity level"
+                );
+                let mut token_handle = ptr::null_mut();
+                if unsafe {
+                    OpenProcessToken(
+                        GetCurrentProcess(),
+                        TOKEN_QUERY | TOKEN_ADJUST_DEFAULT,
+                        &mut token_handle,
+                    )
+                } != 0
+                {
+                    let token = unsafe { owned(token_handle).unwrap() };
+                    let policy = TOKEN_MANDATORY_POLICY {
+                        Policy: TOKEN_MANDATORY_POLICY_OFF,
+                    };
+                    assert_eq!(
+                        unsafe {
+                            SetTokenInformation(
+                                token.as_raw_handle(),
+                                TokenMandatoryPolicy,
+                                (&policy as *const TOKEN_MANDATORY_POLICY).cast(),
+                                mem::size_of_val(&policy) as u32,
+                            )
+                        },
+                        0,
+                        "native tool disabled mandatory integrity policy"
+                    );
+                }
+                native::require_token(unsafe { GetCurrentProcess() }, mode).unwrap();
+            }
+            let result = std::fs::write(request["path"].as_str().unwrap(), "child fixture");
+            if allowed {
+                result.unwrap();
+            } else {
+                assert_eq!(result.unwrap_err().kind(), io::ErrorKind::PermissionDenied);
+            }
+        }
         "confinement" => {
             let path = Path::new(request["path"].as_str().unwrap());
             assert_eq!(
@@ -238,7 +287,10 @@ fn run_probe(request: &[u8]) -> (u32, Vec<u8>) {
 }
 
 fn run_probe_inner(args: &[&str], request: &[u8], keep_client: bool) -> (u32, Vec<u8>) {
-    let mut child = Worker::spawn(&std::env::current_exe().unwrap(), args).unwrap();
+    let child = Worker::spawn(&std::env::current_exe().unwrap(), args).unwrap();
+    collect_probe(child, request, keep_client)
+}
+fn collect_probe(mut child: Worker, request: &[u8], keep_client: bool) -> (u32, Vec<u8>) {
     let mut output = child.output.take().unwrap();
     let reader = std::thread::spawn(move || {
         let mut bytes = Vec::new();
@@ -308,7 +360,7 @@ fn inherited_private_handle_is_unavailable() {
 #[test]
 fn dropping_the_owner_kills_and_reaps_the_job() {
     let mut child = Worker::spawn(&std::env::current_exe().unwrap(), PROBE_ARGS).unwrap();
-    let image = child._image.path().to_path_buf();
+    let image = child._image.as_ref().unwrap().path().to_path_buf();
     let profile = child._profile.name.clone();
     let mut observed = ptr::null_mut();
     check(unsafe {
@@ -405,4 +457,89 @@ fn confined_headless_worker_starts_without_a_console() {
         .read_to_string(&mut output)
         .unwrap();
     assert!(output.starts_with("hedit-plugin-worker "));
+}
+
+// The LPAC low-integrity control must be able to write the exact same kind of
+// low-labelled, explicitly granted object that the untrusted token cannot write.
+// This distinguishes mandatory integrity enforcement from a missing DACL grant.
+#[test]
+fn native_tool_integrity_cannot_be_raised_or_disabled() {
+    for (mode, allowed) in [
+        (native::Mode::ToolLow, true),
+        (native::Mode::ToolProbe, false),
+    ] {
+        let profile = Profile::new("tool-probe").unwrap();
+        let image = tempfile::tempdir().unwrap();
+        image_permissions(image.path(), profile.sid).unwrap();
+        let copied = image.path().join("probe.exe");
+        std::fs::copy(std::env::current_exe().unwrap(), &copied).unwrap();
+        image_permissions(&copied, profile.sid).unwrap();
+        let fixture = tempfile::tempdir().unwrap();
+        image_permissions(fixture.path(), profile.sid).unwrap();
+        let path = fixture.path().join("low-write-control.txt");
+        std::fs::write(&path, "parent fixture").unwrap();
+        let acl = private_acl_rights(Some((profile.sid, FILE_ALL_ACCESS))).unwrap();
+        let mut descriptor = ptr::null_mut();
+        check(unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                wide("S:(ML;;NW;;;LW)").as_ptr(),
+                1,
+                &mut descriptor,
+                ptr::null_mut(),
+            )
+        })
+        .unwrap();
+        let mut present = 0;
+        let mut defaulted = 0;
+        let mut sacl = ptr::null_mut();
+        check(unsafe {
+            GetSecurityDescriptorSacl(descriptor, &mut present, &mut sacl, &mut defaulted)
+        })
+        .unwrap();
+        assert_ne!(present, 0);
+        let status = unsafe {
+            SetNamedSecurityInfoW(
+                wide(&path).as_ptr(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION
+                    | PROTECTED_DACL_SECURITY_INFORMATION
+                    | LABEL_SECURITY_INFORMATION,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                acl.0,
+                sacl,
+            )
+        };
+        unsafe { LocalFree(descriptor) };
+        assert_eq!(status, 0);
+        let child = Worker::launch(
+            &copied,
+            PROBE_ARGS,
+            working_directory().unwrap(),
+            profile,
+            Some(image),
+            mode,
+        )
+        .unwrap();
+        let request = serde_json::to_vec(
+            &serde_json::json!({"action":"native-file-write", "path":path, "allowed":allowed}),
+        )
+        .unwrap();
+        let (exit, bytes) = collect_probe(child, &request, false);
+        assert_eq!(
+            exit,
+            0,
+            "native policy probe output: {}",
+            String::from_utf8_lossy(&bytes)
+        );
+        let contents = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            contents,
+            if allowed {
+                "child fixture"
+            } else {
+                "parent fixture"
+            }
+        );
+    }
 }

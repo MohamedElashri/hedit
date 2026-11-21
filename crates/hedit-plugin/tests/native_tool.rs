@@ -1,5 +1,9 @@
 //! The same native executable acts as trusted bootstrap and hostile tool image.
 //! Never bypass the production policy to exercise a probe.
+#[cfg(windows)]
+#[path = "native_tool/windows.rs"]
+mod windows;
+
 fn main() {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     if let Some(ok) = hedit_plugin::tool::run_if_requested(&args) {
@@ -7,7 +11,9 @@ fn main() {
     }
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     native::run(args);
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(windows)]
+    windows::run(args);
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     println!("Native tool adapter not enabled on this platform.");
 }
 

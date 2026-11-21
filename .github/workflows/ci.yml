@@ -34,10 +34,12 @@ jobs:
     name: Native tool boundary (${{ matrix.runner }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
+    env:
+      RUSTFLAGS: ${{ runner.os == 'Windows' && '-C target-feature=+crt-static' || '' }}
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15]
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, windows-2025, windows-11-arm]
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@master
@@ -52,6 +54,9 @@ jobs:
         run: cargo clippy --locked -p hedit-plugin --all-targets -- -D warnings
       - name: Probe hostile native images through the production boundary
         run: cargo test --locked -p hedit-plugin --test native_tool
+      - name: Verify mandatory integrity against a writable LPAC control
+        if: runner.os == 'Windows'
+        run: cargo test --locked -p hedit-plugin --lib native_tool_integrity_cannot_be_raised_or_disabled -- --nocapture
 
   windows:
     name: Windows

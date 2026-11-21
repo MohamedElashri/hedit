@@ -1,0 +1,190 @@
+//! Stronger token and private-copy permissions for native tool processes.
+use super::*;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Mode {
+    Lua,
+    Tool,
+    #[cfg(test)]
+    ToolLow,
+    #[cfg(test)]
+    ToolProbe,
+}
+impl Mode {
+    fn integrity(self) -> u32 {
+        match self {
+            Self::Tool => 0,
+            #[cfg(test)]
+            Self::ToolProbe => 0,
+            _ => 4096,
+        }
+    }
+}
+
+struct LocalSid(PSID);
+impl Drop for LocalSid {
+    fn drop(&mut self) {
+        unsafe { LocalFree(self.0) };
+    }
+}
+fn integrity_sid(rid: u32) -> io::Result<LocalSid> {
+    let mut sid = ptr::null_mut();
+    check(unsafe { ConvertStringSidToSidW(wide(format!("S-1-16-{rid}")).as_ptr(), &mut sid) })?;
+    Ok(LocalSid(sid))
+}
+pub(super) fn lower_integrity(process: HANDLE, mode: Mode) -> io::Result<()> {
+    let mut handle = ptr::null_mut();
+    check(unsafe { OpenProcessToken(process, TOKEN_QUERY | TOKEN_ADJUST_DEFAULT, &mut handle) })?;
+    let token = unsafe { owned(handle) }?;
+    let sid = integrity_sid(mode.integrity())?;
+    let length = unsafe { GetLengthSid(sid.0) } as usize;
+    let offset = mem::size_of::<TOKEN_MANDATORY_LABEL>();
+    let mut bytes = vec![0usize; (offset + length).div_ceil(mem::size_of::<usize>())];
+    let copied = unsafe { bytes.as_mut_ptr().cast::<u8>().add(offset).cast() };
+    check(unsafe { CopySid(length as u32, copied, sid.0) })?;
+    unsafe {
+        bytes
+            .as_mut_ptr()
+            .cast::<TOKEN_MANDATORY_LABEL>()
+            .write(TOKEN_MANDATORY_LABEL {
+                Label: SID_AND_ATTRIBUTES {
+                    Sid: copied,
+                    Attributes: SE_GROUP_INTEGRITY,
+                },
+            });
+    }
+    check(unsafe {
+        SetTokenInformation(
+            token.as_raw_handle(),
+            TokenIntegrityLevel,
+            bytes.as_ptr().cast(),
+            (offset + length) as u32,
+        )
+    })
+}
+pub(super) fn require_token(process: HANDLE, mode: Mode) -> io::Result<()> {
+    let token = token(process)?;
+    let lpac = token_information(&token, TokenIsLessPrivilegedAppContainer)?;
+    let policy = token_information(&token, TokenMandatoryPolicy)?;
+    if lpac[0] != 1 || policy[0] & TOKEN_MANDATORY_POLICY_NO_WRITE_UP as usize == 0 {
+        return Err(denied());
+    }
+    let label = token_information(&token, TokenIntegrityLevel)?;
+    let label = unsafe { &*label.as_ptr().cast::<TOKEN_MANDATORY_LABEL>() };
+    let expected = integrity_sid(mode.integrity())?;
+    if unsafe { EqualSid(label.Label.Sid, expected.0) } == 0 {
+        return Err(denied());
+    }
+    let mut flags = 0u32;
+    check(unsafe {
+        GetProcessMitigationPolicy(
+            process,
+            ProcessSystemCallDisablePolicy,
+            (&mut flags as *mut u32).cast(),
+            mem::size_of_val(&flags),
+        )
+    })?;
+    if flags & 1 == 0 {
+        return Err(denied());
+    }
+    Ok(())
+}
+
+pub(super) fn snapshot_permissions(root: &Path, sid: PSID) -> io::Result<()> {
+    use std::os::windows::fs::MetadataExt;
+    let mut pending = vec![root.to_path_buf()];
+    let mut paths = Vec::new();
+    let mut bytes = 0u64;
+    while let Some(path) = pending.pop() {
+        let metadata = std::fs::symlink_metadata(&path)?;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 || paths.len() >= 2048 {
+            return Err(denied());
+        }
+        if metadata.is_dir() {
+            for entry in std::fs::read_dir(&path)? {
+                if paths.len() + pending.len() >= 2048 {
+                    return Err(denied());
+                }
+                pending.push(entry?.path());
+            }
+        } else if metadata.is_file() {
+            bytes = bytes.checked_add(metadata.len()).ok_or_else(denied)?;
+            if bytes > 64 * 1024 * 1024 {
+                return Err(denied());
+            }
+        } else {
+            return Err(denied());
+        }
+        paths.push(path);
+    }
+    // Validate the complete host-owned immutable tree before changing any ACL;
+    // inheritable entries must never propagate through an unvalidated junction.
+    for path in paths {
+        image_permissions(&path, sid)?;
+    }
+    Ok(())
+}
+
+pub(super) fn command_line(executable: &Path, arguments: &[&str]) -> io::Result<Vec<u16>> {
+    let mut command = Vec::new();
+    for argument in std::iter::once(executable.as_os_str()).chain(arguments.iter().map(OsStr::new))
+    {
+        if !command.is_empty() {
+            command.push(b' ' as u16);
+        }
+        command.push(b'"' as u16);
+        let mut slashes = 0;
+        for unit in argument.encode_wide() {
+            if unit == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Invalid tool argument.",
+                ));
+            }
+            if unit == b'\\' as u16 {
+                slashes += 1;
+                continue;
+            }
+            command.extend(std::iter::repeat_n(
+                b'\\' as u16,
+                if unit == b'"' as u16 {
+                    2 * slashes + 1
+                } else {
+                    slashes
+                },
+            ));
+            slashes = 0;
+            command.push(unit);
+        }
+        command.extend(std::iter::repeat_n(b'\\' as u16, 2 * slashes));
+        command.push(b'"' as u16);
+    }
+    command.push(0);
+    if command.len() > 32767 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Tool command line is too long.",
+        ));
+    }
+    Ok(command)
+}
+
+pub(super) fn require_job(handle: HANDLE) -> io::Result<()> {
+    let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+    check(unsafe {
+        QueryInformationJobObject(
+            handle,
+            JobObjectExtendedLimitInformation,
+            (&mut limits as *mut JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+            mem::size_of_val(&limits) as u32,
+            ptr::null_mut(),
+        )
+    })?;
+    if limits.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_JOB_MEMORY == 0
+        || limits.JobMemoryLimit == 0
+        || limits.JobMemoryLimit > PROCESS_BYTES
+    {
+        return Err(denied());
+    }
+    Ok(())
+}

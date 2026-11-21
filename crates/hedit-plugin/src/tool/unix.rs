@@ -4,20 +4,13 @@ use std::{
     os::fd::{AsFd, AsRawFd},
     path::Path,
     process::Command,
-    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+    sync::atomic::{AtomicBool, Ordering},
     time::{Duration, Instant},
 };
 
 #[cfg(target_os = "linux")]
 use super::HELPER;
 
-static ACTIVE: AtomicUsize = AtomicUsize::new(0);
-struct Admission;
-impl Drop for Admission {
-    fn drop(&mut self) {
-        ACTIVE.fetch_sub(1, Ordering::AcqRel);
-    }
-}
 #[cfg(target_os = "linux")]
 struct Process {
     child: std::process::Child,
@@ -93,21 +86,6 @@ pub(super) fn run(
     cancel: &AtomicBool,
     timeout: Duration,
 ) -> io::Result<Output> {
-    let mut active = ACTIVE.load(Ordering::Acquire);
-    loop {
-        if active >= 4 {
-            return Err(io::Error::new(
-                io::ErrorKind::WouldBlock,
-                "Tool capacity is exhausted.",
-            ));
-        }
-        match ACTIVE.compare_exchange_weak(active, active + 1, Ordering::AcqRel, Ordering::Acquire)
-        {
-            Ok(_) => break,
-            Err(current) => active = current,
-        }
-    }
-    let _admission = Admission;
     let started = Instant::now();
     let header = serde_json::to_vec(launch).map_err(|_| super::invalid())?;
     if header.len() > HEADER_BYTES {

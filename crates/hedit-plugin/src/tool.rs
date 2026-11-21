@@ -1,7 +1,12 @@
 //! Host-only external-process boundary. This is not a Lua subprocess API.
 //! Broker grants and executable/snapshot ownership must be checked by the host.
 use serde::{Deserialize, Serialize};
-use std::{io, path::PathBuf, sync::atomic::AtomicBool, time::Duration};
+use std::{
+    io,
+    path::PathBuf,
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+    time::Duration,
+};
 
 #[cfg(target_os = "macos")]
 mod guardian;
@@ -27,6 +32,39 @@ mod linux;
     any(target_arch = "x86_64", target_arch = "aarch64")
 ))]
 use linux as native;
+
+#[cfg(windows)]
+mod windows;
+
+static ACTIVE: AtomicUsize = AtomicUsize::new(0);
+struct Admission;
+impl Admission {
+    fn acquire() -> io::Result<Self> {
+        let mut active = ACTIVE.load(Ordering::Acquire);
+        loop {
+            if active >= 4 {
+                return Err(io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "Tool capacity is exhausted.",
+                ));
+            }
+            match ACTIVE.compare_exchange_weak(
+                active,
+                active + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return Ok(Self),
+                Err(current) => active = current,
+            }
+        }
+    }
+}
+impl Drop for Admission {
+    fn drop(&mut self) {
+        ACTIVE.fetch_sub(1, Ordering::AcqRel);
+    }
+}
 
 const HELPER: &str = "--hedit-tool-worker";
 #[cfg(any(
@@ -140,6 +178,7 @@ pub fn run(
     cancel: &AtomicBool,
     timeout: Duration,
 ) -> io::Result<Output> {
+    let _admission = Admission::acquire()?;
     launch.validate()?;
     if input.len() > INPUT_BYTES || timeout.is_zero() || timeout > Duration::from_secs(10) {
         return Err(invalid());
@@ -152,7 +191,10 @@ pub fn run(
         )
     ))]
     return unix::run(&std::env::current_exe()?, launch, input, cancel, timeout);
+    #[cfg(windows)]
+    return windows::run(launch, input, cancel, timeout);
     #[cfg(not(any(
+        windows,
         target_os = "macos",
         all(
             target_os = "linux",
