@@ -30,6 +30,7 @@ documents! {
     "assets/licenses/Noto-Sans-Arabic-OFL.txt",
     "docs/extensions.md", "docs/extension-security.md", "docs/plugin-sdk.md", "docs/plugin-services.md", "docs/plugin-broker.md", "examples/extensions/document-assist.json", "examples/extensions/document-assist.fixtures.json", "examples/extensions/demo-visuals.json", "examples/extensions/markdown-task.json",
     "examples/extensions/markdown-quote.json",
+    "schemas/plugin-manifest.schema.json", "schemas/hedit-sdk.lua",
 }
 
 struct Reader {
@@ -44,6 +45,8 @@ impl Reader {
         } else {
             let language = if path.ends_with(".json") {
                 "json"
+            } else if path.ends_with(".lua") {
+                "lua"
             } else {
                 "text"
             };
