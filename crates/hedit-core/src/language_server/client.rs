@@ -3,6 +3,7 @@ use super::{
     error,
     manager::{check_cancel, Launch},
     text::{self, Encoding},
+    wire::{self, Limits},
     MAX_MESSAGE,
 };
 use serde_json::{json, Value};
@@ -422,57 +423,36 @@ impl Drop for Client {
 }
 
 pub(crate) fn read_message(reader: &mut impl BufRead) -> Result<Option<Value>, String> {
-    let mut length = None;
-    let mut header = 0;
+    let mut header = Vec::new();
     loop {
-        let mut line = Vec::new();
+        let before = header.len();
         let n = reader
-            .take(8193 - header as u64)
-            .read_until(b'\n', &mut line)
+            .take(8193 - before as u64)
+            .read_until(b'\n', &mut header)
             .map_err(error)?;
         if n == 0 {
-            return if header == 0 {
+            return if header.is_empty() {
                 Ok(None)
             } else {
                 Err("Truncated LSP header.".into())
             };
         }
-        header += n;
-        if header > 8192 {
-            return Err("LSP header is too large.".into());
+        if header.len() > 8192 || !header[before..].ends_with(b"\r\n") {
+            return Err("Invalid or oversized LSP header.".into());
         }
-        if !line.ends_with(b"\r\n") {
-            return Err("Invalid LSP header line ending.".into());
-        }
-        if line == b"\r\n" {
+        if &header[before..] == b"\r\n" {
             break;
         }
-        let line = std::str::from_utf8(&line[..line.len() - 2]).map_err(error)?;
-        let (name, value) = line.split_once(':').ok_or("Invalid LSP header.")?;
-        if name.eq_ignore_ascii_case("Content-Length") {
-            if length.is_some() {
-                return Err("Duplicate LSP Content-Length.".into());
-            }
-            length = Some(value.trim().parse::<usize>().map_err(error)?);
-        }
     }
-    let length = length
-        .filter(|&n| n > 0 && n <= MAX_MESSAGE)
-        .ok_or("Invalid or oversized LSP Content-Length.")?;
+    let length = wire::content_length(&header, Limits::BUILTIN).map_err(error)?;
     let mut data = vec![0; length];
     reader.read_exact(&mut data).map_err(error)?;
-    let value: Value = serde_json::from_slice(&data).map_err(error)?;
-    if !value.is_object() || value["jsonrpc"] != "2.0" {
-        return Err("Invalid LSP JSON-RPC message.".into());
-    }
-    Ok(Some(value))
+    wire::parse_json(&data, Limits::BUILTIN)
+        .map(Some)
+        .map_err(error)
 }
 fn write_message(out: &mut impl Write, value: &Value) -> Result<(), String> {
-    let data = serde_json::to_vec(value).map_err(error)?;
-    if data.len() > MAX_MESSAGE {
-        return Err("LSP message is too large.".into());
-    }
-    write!(out, "Content-Length: {}\r\n\r\n", data.len()).map_err(error)?;
-    out.write_all(&data).map_err(error)?;
+    let frame = wire::encode(value, Limits::BUILTIN).map_err(error)?;
+    out.write_all(&frame).map_err(error)?;
     out.flush().map_err(error)
 }

@@ -12,10 +12,18 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 hedit-plugin = { path = "../crates/hedit-plugin", features = ["fuzzing"] }
+hedit-core = { path = "../crates/hedit-core" }
 
 [[bin]]
 name = "sdk_protocol"
 path = "fuzz_targets/sdk_protocol.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "lsp_wire"
+path = "fuzz_targets/lsp_wire.rs"
 test = false
 doc = false
 bench = false

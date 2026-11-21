@@ -16,6 +16,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--seconds', type=int, default=300)
     parser.add_argument('--out-dir', type=Path, default=ROOT / 'target/plugin-fuzz')
+    parser.add_argument('--target', choices=['sdk_protocol', 'lsp_wire'], default='sdk_protocol')
     parser.add_argument('--sanitizer', choices=['none', 'address'], default='none')
     args = parser.parse_args()
     if not 1 <= args.seconds <= 86400:
@@ -23,7 +24,7 @@ def main():
     output = args.out_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
     corpus = output / 'corpus'
-    shutil.copytree(ROOT / 'fuzz/corpus/sdk_protocol', corpus, dirs_exist_ok=True)
+    shutil.copytree(ROOT / 'fuzz/corpus' / args.target, corpus, dirs_exist_ok=True)
     rustc = subprocess.check_output(['rustc', '-vV'], text=True)
     target = next(line.removeprefix('host: ') for line in rustc.splitlines() if line.startswith('host: '))
     flags = ('-Cpasses=sancov-module -Cllvm-args=-sanitizer-coverage-level=4 '
@@ -39,11 +40,14 @@ def main():
     # An explicit target keeps host build scripts uninstrumented: they do not
     # link libFuzzer and cannot resolve its coverage callbacks.
     command = ['cargo', 'run', '--locked', '--manifest-path', str(ROOT / 'fuzz/Cargo.toml'),
-               '--target', target, '--bin', 'sdk_protocol', '--', str(corpus),
+               '--target', target, '--bin', args.target, '--', str(corpus),
                f'-artifact_prefix={output}{os.sep}', '-max_len=2097152', '-timeout=5',
                '-rss_limit_mb=1024', f'-max_total_time={args.seconds}']
     sources = [ROOT / 'fuzz/Cargo.toml', ROOT / 'fuzz/Cargo.lock', ROOT / 'crates/hedit-plugin/Cargo.toml']
     sources += sorted((ROOT / 'crates/hedit-plugin/src').rglob('*.rs'))
+    if args.target == 'lsp_wire':
+        sources.append(ROOT / 'crates/hedit-core/Cargo.toml')
+        sources += sorted((ROOT / 'crates/hedit-core/src').rglob('*.rs'))
     sources += sorted((ROOT / 'fuzz/fuzz_targets').glob('*.rs'))
     sources.append(ROOT / 'LICENSE')
     source_hashes = {}
