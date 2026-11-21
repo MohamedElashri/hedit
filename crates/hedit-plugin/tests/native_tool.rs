@@ -248,8 +248,10 @@ mod macos {
                 let mut blocks = Vec::new();
                 loop {
                     let mut block = vec![0u8; 8 * 1024 * 1024];
-                    for (index, byte) in block.iter_mut().enumerate() {
-                        *byte = (index % 251) as u8;
+                    // Dirty every page without making a debug-build byte loop
+                    // consume the CPU budget before the memory probe finishes.
+                    for (index, page) in block.chunks_mut(4096).enumerate() {
+                        page[0] = (index % 251 + 1) as u8;
                     }
                     blocks.push(block);
                     std::hint::black_box(&blocks);
