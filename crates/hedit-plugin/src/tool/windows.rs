@@ -140,7 +140,7 @@ pub(super) fn run(
             "Tool cancelled.",
         ));
     }
-    let mut child = Worker::spawn_native(launch)?;
+    let mut child = Worker::spawn_native(launch, super::Role::Filter)?;
     let mut stdin = Some(Pipe::new(child.input.take().ok_or_else(super::invalid)?)?);
     let mut stdout = Pipe::new(child.output.take().ok_or_else(super::invalid)?)?;
     let mut stderr = Pipe::new(child.stderr.take().ok_or_else(super::invalid)?)?;

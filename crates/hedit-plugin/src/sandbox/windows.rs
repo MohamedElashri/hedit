@@ -9,6 +9,7 @@ use std::{
     },
     path::{Path, PathBuf},
     ptr,
+    time::Duration,
 };
 use windows_sys::Win32::{
     Foundation::*,
@@ -493,7 +494,7 @@ fn connection(
     Ok((read, write))
 }
 
-fn job(service: bool, native: bool) -> io::Result<OwnedHandle> {
+fn job(service: bool, native: bool, cpu_ticks: i64) -> io::Result<OwnedHandle> {
     let handle = unsafe { owned(CreateJobObjectW(ptr::null(), ptr::null())) }?;
     let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
     limits.BasicLimitInformation.LimitFlags = LIMITS
@@ -507,7 +508,7 @@ fn job(service: bool, native: bool) -> io::Result<OwnedHandle> {
         limits.BasicLimitInformation.PriorityClass = BELOW_NORMAL_PRIORITY_CLASS;
     }
     limits.BasicLimitInformation.ActiveProcessLimit = 1;
-    limits.BasicLimitInformation.PerProcessUserTimeLimit = CPU_TICKS;
+    limits.BasicLimitInformation.PerProcessUserTimeLimit = cpu_ticks;
     limits.ProcessMemoryLimit = PROCESS_BYTES;
     if native {
         limits.JobMemoryLimit = PROCESS_BYTES;
@@ -536,7 +537,7 @@ fn job(service: bool, native: bool) -> io::Result<OwnedHandle> {
     }
     Ok(handle)
 }
-fn require_job(handle: HANDLE) -> io::Result<()> {
+fn require_job(handle: HANDLE, cpu_ticks: i64) -> io::Result<()> {
     let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
     check(unsafe {
         QueryInformationJobObject(
@@ -553,7 +554,7 @@ fn require_job(handle: HANDLE) -> io::Result<()> {
         || limits.ProcessMemoryLimit == 0
         || limits.ProcessMemoryLimit > PROCESS_BYTES
         || basic.PerProcessUserTimeLimit <= 0
-        || basic.PerProcessUserTimeLimit > CPU_TICKS
+        || basic.PerProcessUserTimeLimit > cpu_ticks
     {
         return Err(denied());
     }
@@ -562,6 +563,7 @@ fn require_job(handle: HANDLE) -> io::Result<()> {
 
 pub(crate) struct Worker {
     process: OwnedHandle,
+    cpu_ticks: i64,
     job: OwnedHandle,
     _image: Option<tempfile::TempDir>,
     _profile: Profile,
@@ -587,7 +589,10 @@ impl Worker {
             native::Mode::Lua,
         )
     }
-    pub(crate) fn spawn_native(launch: &crate::tool::Launch) -> io::Result<Self> {
+    pub(crate) fn spawn_native(
+        launch: &crate::tool::Launch,
+        role: crate::tool::Role,
+    ) -> io::Result<Self> {
         let profile = Profile::new("tool")?;
         image_permissions(&launch.executable, profile.sid)?;
         native::snapshot_permissions(&launch.snapshot, profile.sid)?;
@@ -598,7 +603,10 @@ impl Worker {
             wide(&launch.snapshot),
             profile,
             None,
-            native::Mode::Tool,
+            match role {
+                crate::tool::Role::Filter => native::Mode::Tool,
+                crate::tool::Role::Service => native::Mode::ToolService,
+            },
         )
     }
     fn launch(
@@ -610,11 +618,17 @@ impl Worker {
         mode: native::Mode,
     ) -> io::Result<Self> {
         let native = mode != native::Mode::Lua;
+        let cpu_ticks = if mode == native::Mode::ToolService {
+            crate::tool::Role::Service.cpu_seconds() as i64 * 10_000_000
+        } else {
+            CPU_TICKS
+        };
         let job = job(
             native || arguments == [crate::runtime::SERVICE_HELPER_ARG],
             native,
+            cpu_ticks,
         )?;
-        let asynchronous = mode == native::Mode::Tool;
+        let asynchronous = matches!(mode, native::Mode::Tool | native::Mode::ToolService);
         let (input, input_writer) = if asynchronous {
             let (parent, child) = connection(
                 PIPE_ACCESS_OUTBOUND,
@@ -706,7 +720,7 @@ impl Worker {
         let mut information = PROCESS_INFORMATION::default();
         // Console initialization can require a helper process and conflicts
         // with the child-process restriction. All worker I/O uses these pipes.
-        let write_token = if mode == native::Mode::Tool || {
+        let write_token = if matches!(mode, native::Mode::Tool | native::Mode::ToolService) || {
             #[cfg(test)]
             {
                 mode == native::Mode::ToolProbe
@@ -765,6 +779,7 @@ impl Worker {
         let thread = unsafe { owned(information.hThread) }?;
         let worker = Self {
             process,
+            cpu_ticks,
             job,
             _image: image,
             _profile: profile,
@@ -803,7 +818,7 @@ impl Worker {
                 )
             })?;
         }
-        require_job(worker.job.as_raw_handle()).map_err(|error| {
+        require_job(worker.job.as_raw_handle(), cpu_ticks).map_err(|error| {
             if native {
                 io::Error::new(
                     error.kind(),
@@ -865,6 +880,9 @@ impl Worker {
         }
     }
     pub(crate) fn over_cpu_limit(&self) -> io::Result<bool> {
+        Ok(self.cpu_time()?.as_nanos() >= self.cpu_ticks as u128 * 100)
+    }
+    pub(crate) fn cpu_time(&self) -> io::Result<Duration> {
         let mut created = FILETIME::default();
         let mut exited = FILETIME::default();
         let mut kernel = FILETIME::default();
@@ -878,8 +896,12 @@ impl Worker {
                 &mut user,
             )
         })?;
-        let ticks = u64::from(user.dwHighDateTime) << 32 | u64::from(user.dwLowDateTime);
-        Ok(ticks >= CPU_TICKS as u64)
+        let ticks =
+            |time: FILETIME| u64::from(time.dwHighDateTime) << 32 | u64::from(time.dwLowDateTime);
+        let nanos = (u128::from(ticks(user)) + u128::from(ticks(kernel))) * 100;
+        Ok(Duration::from_nanos(u64::try_from(nanos).map_err(
+            |_| io::Error::other("Tool CPU accounting overflow."),
+        )?))
     }
     pub(crate) fn success(&self) -> io::Result<bool> {
         Ok(self.exit_code()? == 0)
@@ -904,7 +926,7 @@ impl Drop for Worker {
 
 pub(crate) fn enter() -> io::Result<()> {
     require_token(unsafe { GetCurrentProcess() }, None)?;
-    require_job(ptr::null_mut())?;
+    require_job(ptr::null_mut(), CPU_TICKS)?;
     let mut pipes = Vec::new();
     for standard in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE] {
         let handle = unsafe { GetStdHandle(standard) };

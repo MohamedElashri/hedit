@@ -294,9 +294,14 @@ private storage admission and residual OS risks. macOS uses monitored memory
 limits under the selected native model, with explicit overshoot rather than a VM
 or hard unprivileged memory-cap claim. Unknown/corrupt storage is preserved.
 
-Persistent LSP still needs strict framing/JSON-RPC, issued URI and revision checks,
-UTF-16 conversion, typed results and independent process lifetime/CPU/restart
-limits before activation.
+The persistent LSP host implements bounded framing/JSON-RPC, exact issued URI
+and revision checks, UTF-8/16/32 conversion, typed results, source/document
+lifetimes and soft cancellation fencing. Native service limits are separate from
+finite filters: 60 cumulative CPU seconds, a 30-minute wall lifetime, two CPU
+seconds and 8 MiB in each direction per ten-second interval, and no automatic
+restarts. The rolling implementation conservatively retains ten to fifteen
+seconds of charges. See the threat model for platform enforcement and overshoot.
+Installed manager activation and reference/package acceptance remain gated.
 
 Run the shared and native continuation tests with:
 

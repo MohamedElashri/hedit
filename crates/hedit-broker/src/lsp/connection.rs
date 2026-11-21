@@ -10,7 +10,7 @@ use std::{
 
 const QUEUE_BYTES: usize = 1024 * 1024;
 const MESSAGES: usize = 64;
-const REQUESTS: u32 = 256;
+const REQUESTS: u32 = 32_768;
 pub trait Transport {
     fn poll(
         &mut self,

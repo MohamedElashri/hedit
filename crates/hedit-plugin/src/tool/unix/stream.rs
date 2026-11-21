@@ -1,6 +1,6 @@
 use super::{nonblocking, Process};
 use crate::tool::{
-    stream::{check, Progress, CHUNK},
+    stream::{check, Progress, Rate, CHUNK},
     Launch, HEADER_BYTES, READY, STDERR_BYTES,
 };
 use std::{
@@ -16,7 +16,8 @@ pub(in crate::tool) struct Stream {
     input: ChildStdin,
     output: ChildStdout,
     stderr: ChildStderr,
-    errors: usize,
+    errors: Rate,
+    cpu: Duration,
     error_eof: bool,
     accounting: Instant,
 }
@@ -71,7 +72,12 @@ impl Stream {
         }
         let mut bytes = (header.len() as u32).to_le_bytes().to_vec();
         bytes.extend(header);
-        let mut child = Process::spawn(&std::env::current_exe()?, cancel, deadline)?;
+        let mut child = Process::spawn(
+            &std::env::current_exe()?,
+            cancel,
+            deadline,
+            crate::tool::Role::Service,
+        )?;
         let input = child.child.stdin.take().ok_or_else(crate::tool::invalid)?;
         let output = child.child.stdout.take().ok_or_else(crate::tool::invalid)?;
         let stderr = child.child.stderr.take().ok_or_else(crate::tool::invalid)?;
@@ -83,7 +89,8 @@ impl Stream {
             input,
             output,
             stderr,
-            errors: 0,
+            errors: Rate::new(Instant::now(), STDERR_BYTES as u64),
+            cpu: Duration::ZERO,
             error_eof: false,
             accounting: Instant::now(),
         };
@@ -112,7 +119,7 @@ impl Stream {
             return Err(io::Error::other("Native service exited."));
         }
         if self.accounting.elapsed() >= Duration::from_millis(50) {
-            crate::tool::native::check_resources(self.child.pid)?;
+            self.cpu = crate::tool::native::check_resources(self.child.pid)?;
             self.accounting = Instant::now();
         }
         Ok(())
@@ -125,10 +132,7 @@ impl Stream {
         match self.stderr.read(&mut bytes) {
             Ok(count) => {
                 self.error_eof = count == 0;
-                self.errors += count;
-                if self.errors > STDERR_BYTES {
-                    return Err(io::Error::other("Tool output limit exceeded."));
-                }
+                self.errors.charge(Instant::now(), count as u64)?;
             }
             Err(error)
                 if matches!(
@@ -138,6 +142,9 @@ impl Stream {
             Err(error) => return Err(error),
         }
         Ok(())
+    }
+    pub(in crate::tool) fn cpu_time(&self) -> Duration {
+        self.cpu
     }
     pub(in crate::tool) fn poll(
         &mut self,

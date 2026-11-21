@@ -6,6 +6,7 @@ use windows_sys::Win32::System::SystemServices::SE_GROUP_INTEGRITY;
 pub(super) enum Mode {
     Lua,
     Tool,
+    ToolService,
     #[cfg(test)]
     ToolLow,
     #[cfg(test)]
@@ -14,7 +15,7 @@ pub(super) enum Mode {
 impl Mode {
     fn integrity(self) -> u32 {
         match self {
-            Self::Tool => 0,
+            Self::Tool | Self::ToolService => 0,
             #[cfg(test)]
             Self::ToolProbe => 0,
             _ => 4096,

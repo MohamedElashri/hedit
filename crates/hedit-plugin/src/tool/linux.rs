@@ -11,7 +11,7 @@ use std::{
     path::Path,
 };
 
-pub(super) fn prepare() -> io::Result<()> {
+pub(super) fn prepare(role: super::Role) -> io::Result<()> {
     for (fd, mode) in [
         (0, libc::O_RDONLY),
         (1, libc::O_WRONLY),
@@ -31,7 +31,7 @@ pub(super) fn prepare() -> io::Result<()> {
     set_process_flag(libc::PR_SET_NO_NEW_PRIVS, 1)?;
     for (resource, maximum) in [
         (libc::RLIMIT_CORE, 0),
-        (libc::RLIMIT_CPU, 2),
+        (libc::RLIMIT_CPU, role.cpu_seconds()),
         (libc::RLIMIT_NICE, 0),
         (libc::RLIMIT_AS, 256 * 1024 * 1024),
         (libc::RLIMIT_NOFILE, 64),
@@ -53,25 +53,44 @@ pub(super) fn prepare() -> io::Result<()> {
     Ok(())
 }
 
-pub(super) fn check_resources(pid: u32) -> io::Result<()> {
-    // Read one bounded /proc status record. Address-space and CPU limits are
-    // hard kernel limits; thread count is additionally monitored by the host.
+pub(super) fn check_resources(pid: u32) -> io::Result<std::time::Duration> {
+    // The final ')' delimits comm, which may itself contain spaces/parens.
     use std::io::Read;
     let mut bytes = Vec::new();
-    File::open(format!("/proc/{pid}/status"))?
-        .take(16 * 1024)
+    File::open(format!("/proc/{pid}/stat"))?
+        .take(4097)
         .read_to_end(&mut bytes)?;
+    if bytes.len() > 4096 {
+        return Err(io::Error::other("Tool accounting failed."));
+    }
     let status =
         std::str::from_utf8(&bytes).map_err(|_| io::Error::other("Tool accounting failed."))?;
-    let threads = status
-        .lines()
-        .find_map(|line| line.strip_prefix("Threads:"))
-        .and_then(|n| n.trim().parse::<u32>().ok())
+    let tail = status
+        .rsplit_once(") ")
+        .ok_or_else(|| io::Error::other("Tool accounting failed."))?
+        .1;
+    let mut fields = tail.split_ascii_whitespace();
+    let user = fields.nth(11).and_then(|n| n.parse::<u64>().ok());
+    let system = fields.next().and_then(|n| n.parse::<u64>().ok());
+    let threads = fields
+        .nth(4)
+        .and_then(|n| n.parse::<u32>().ok())
         .ok_or_else(|| io::Error::other("Tool accounting failed."))?;
     if threads > 32 {
         return Err(io::Error::other("Tool thread limit exceeded."));
     }
-    Ok(())
+    let ticks = user
+        .zip(system)
+        .and_then(|(a, b)| a.checked_add(b))
+        .ok_or_else(|| io::Error::other("Tool accounting failed."))?;
+    let hz = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+    if hz <= 0 {
+        return Err(io::Error::other("Tool accounting failed."));
+    }
+    let nanos = u128::from(ticks) * 1_000_000_000 / hz as u128;
+    Ok(std::time::Duration::from_nanos(
+        u64::try_from(nanos).map_err(|_| io::Error::other("Tool accounting overflow."))?,
+    ))
 }
 
 // Linux UAPI ABI 3: all filesystem actions through TRUNCATE, including REFER.
