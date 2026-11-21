@@ -1,0 +1,1 @@
+{"protocol_version":1,"outcome":{"success":{"request":"ffffffffffffffffffffffffffffffff","step":0,"intent":{"read":{"resource":"ffffffffffffffffffffffffffffffff","version":"ffffffffffffffffffffffffffffffff","offset":0,"maximum":65536}},"cache":{}}}}

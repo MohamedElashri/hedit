@@ -79,6 +79,7 @@ pub const HELPER_ARG: &str = "--hedit-plugin-worker";
 pub const SERVICE_HELPER_ARG: &str = "--hedit-plugin-service-worker";
 
 pub type RunningPlugin = Running<Vec<String>>;
+pub type RunningBroker = Running<crate::broker::Output, crate::sdk::Failure>;
 pub type RunningSdk = Running<crate::sdk::Transaction, crate::sdk::Failure>;
 
 pub struct Running<T, E = Error> {
@@ -207,6 +208,31 @@ pub fn run_service_fixture(
 ) -> Result<crate::service::Output, crate::sdk::Failure> {
     let _permit = ServicePermit::reserve()?;
     engine::run_service(input, None, &AtomicBool::new(false), &Default::default())
+}
+
+pub fn start_broker_checked(
+    input: crate::broker::Input,
+    authorize: impl FnOnce(&AtomicBool) -> Result<File, Error> + Send + 'static,
+    wake: impl FnOnce() + Send + 'static,
+) -> Result<RunningBroker, Error> {
+    let permit = ServicePermit::reserve()?;
+    spawn(wake, move |cancelled, trace| {
+        let _permit = permit;
+        if cancelled.load(Ordering::Acquire) {
+            return Err(Error::Cancelled.into());
+        }
+        let approval = authorize(cancelled)?;
+        if cancelled.load(Ordering::Acquire) {
+            return Err(Error::Cancelled.into());
+        }
+        engine::run_broker(input, Some(approval), cancelled, trace)
+    })
+}
+pub fn run_broker_fixture(
+    input: crate::broker::Input,
+) -> Result<crate::broker::Output, crate::sdk::Failure> {
+    let _permit = ServicePermit::reserve()?;
+    engine::run_broker(input, None, &AtomicBool::new(false), &Default::default())
 }
 
 fn launch<T: Send + 'static, E: Send + 'static>(
@@ -347,10 +373,11 @@ pub fn run_if_requested(args: &[OsString]) -> Option<bool> {
 
 #[cfg(feature = "fuzzing")]
 pub(crate) fn fuzz_protocol(bytes: &[u8]) {
-    if bytes.len() > 1024 * 1024 {
+    if bytes.len() > crate::broker::MAX_MESSAGE_BYTES {
         return;
     }
     let _ = protocol::decode_invocation(bytes);
+    let _ = crate::broker::json::decode(bytes);
     let _ = protocol::decode_edits(bytes, 1);
     let snapshot = crate::sdk::Snapshot {
         document: "0123456789abcdef0123456789abcdef".into(),
@@ -389,6 +416,31 @@ pub(crate) fn fuzz_protocol(bytes: &[u8]) {
         may_edit: false,
     };
     let _ = engine::decode_service_reply(&input, bytes);
+    let handle: crate::broker::Handle =
+        serde_json::from_str("\"ffffffffffffffffffffffffffffffff\"").unwrap();
+    let input = crate::broker::Input {
+        protocol_version: crate::broker::VERSION,
+        request: handle,
+        step: 0,
+        package: input.package,
+        scope: Some(handle),
+        may_edit: true,
+        workspace_edit: true,
+        may_present: true,
+        provider: None,
+        response: None,
+        cache: Default::default(),
+    };
+    let _ = engine::decode_broker_reply(&input, bytes);
+    if let Ok(intent) = serde_json::from_slice::<crate::broker::Intent>(bytes) {
+        let _ = crate::broker::Output {
+            request: handle,
+            step: 0,
+            intent,
+            cache: Default::default(),
+        }
+        .validate(&input);
+    }
 }
 
 #[cfg(test)]

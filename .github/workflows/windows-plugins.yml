@@ -8,6 +8,9 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'crates/hedit-plugin/**'
+      - 'crates/hedit-broker/**'
+      - 'crates/hedit-core/src/private_io*'
+      - 'crates/hedit-core/src/private_io/**'
       - 'crates/hedit-core/src/document*'
       - 'crates/hedit-core/src/document/**'
       - 'src/main.rs'
@@ -71,6 +74,10 @@ jobs:
           $env:HEDIT_LUA_TEST_WORKER = (Resolve-Path target/debug/hedit-plugin-worker.exe).Path
           cargo test --locked -p hedit-plugin -- --nocapture
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Scoped workspace, recovery, watcher, and HTTPS broker regressions
+        run: cargo test --locked -p hedit-broker -- --nocapture
+      - name: Lint the host broker
+        run: cargo clippy --locked -p hedit-broker --all-targets -- -D warnings
       - name: Lint the editor integration
         run: cargo clippy --locked --no-default-features --all-targets -- -D warnings
       - name: Atomic save and permission regressions

@@ -215,34 +215,43 @@ impl Input {
     pub fn validate(&self) -> Result<(), Error> {
         self.package.validate()?;
         self.cache.validate()?;
-        if self.protocol_version != VERSION
-            || !token(&self.request.id)
-            || self.package.storage.is_some()
-            || !sdk::boundary(&self.package.snapshot.text, self.request.position)
+        if self.protocol_version != VERSION || self.package.storage.is_some() {
+            return Err(Error::Request);
+        }
+        self.request.validate(
+            &self.package.snapshot,
+            self.cache.0.is_empty(),
+            self.may_edit,
+        )
+    }
+}
+impl Request {
+    pub fn validate(
+        &self,
+        snapshot: &sdk::Snapshot,
+        cache_empty: bool,
+        may_edit: bool,
+    ) -> Result<(), Error> {
+        if !token(&self.id)
+            || !sdk::boundary(&snapshot.text, self.position)
             || self
-                .request
                 .action
                 .as_deref()
                 .is_some_and(|name| !options::valid_id(name))
-            || self
-                .request
-                .choice
-                .as_ref()
-                .is_some_and(|value| !value.valid())
-            || (self.request.trigger == Trigger::Interaction
-                && (self.request.action.is_none() || self.request.choice.is_none()))
-            || (self.request.trigger == Trigger::Close
-                && (!self.package.snapshot.text.is_empty()
-                    || !self.cache.0.is_empty()
-                    || self.may_edit))
-            || (self.request.trigger != Trigger::Interaction
-                && (self.request.action.is_some() || self.request.choice.is_some()))
+            || self.choice.as_ref().is_some_and(|value| !value.valid())
+            || (self.trigger == Trigger::Interaction
+                && (self.action.is_none() || self.choice.is_none()))
+            || (self.trigger == Trigger::Close
+                && (!snapshot.text.is_empty() || !cache_empty || may_edit))
+            || (self.trigger != Trigger::Interaction
+                && (self.action.is_some() || self.choice.is_some()))
         {
             return Err(Error::Request);
         }
         Ok(())
     }
 }
+
 impl Range {
     pub fn validate(&self, snapshot: &sdk::Snapshot) -> Result<(), Error> {
         if self.start > self.finish

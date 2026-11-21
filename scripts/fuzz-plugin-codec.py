@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run a bounded codec fuzz campaign with LLVM coverage and retain its evidence."""
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -39,9 +40,23 @@ def main():
     # link libFuzzer and cannot resolve its coverage callbacks.
     command = ['cargo', 'run', '--locked', '--manifest-path', str(ROOT / 'fuzz/Cargo.toml'),
                '--target', target, '--bin', 'sdk_protocol', '--', str(corpus),
-               f'-artifact_prefix={output}{os.sep}', '-max_len=1048576', '-timeout=5',
+               f'-artifact_prefix={output}{os.sep}', '-max_len=2097152', '-timeout=5',
                '-rss_limit_mb=1024', f'-max_total_time={args.seconds}']
-    report = {'source_commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(), 'rustc': rustc, 'command': command, 'rustflags': env['RUSTFLAGS'],
+    sources = [ROOT / 'fuzz/Cargo.toml', ROOT / 'fuzz/Cargo.lock', ROOT / 'crates/hedit-plugin/Cargo.toml']
+    sources += sorted((ROOT / 'crates/hedit-plugin/src').rglob('*.rs'))
+    sources += sorted((ROOT / 'fuzz/fuzz_targets').glob('*.rs'))
+    sources.append(ROOT / 'LICENSE')
+    source_hashes = {}
+    for path in sources:
+        if not path.is_file() or path.is_symlink():
+            continue
+        content = path.read_bytes()
+        relative = path.relative_to(ROOT)
+        source_hashes[str(relative)] = hashlib.sha256(content).hexdigest()
+        archived = output / 'source' / relative
+        archived.parent.mkdir(parents=True, exist_ok=True)
+        archived.write_bytes(content)
+    report = {'source_commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(), 'source_dirty': bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT)), 'source_sha256': source_hashes, 'rustc': rustc, 'command': command, 'rustflags': env['RUSTFLAGS'],
               'address_sanitizer': args.sanitizer == 'address',
               'native_build': {key: env.get(key, '') for key in ['CC', 'CXX', 'CFLAGS', 'CXXFLAGS', 'MACOSX_DEPLOYMENT_TARGET']}, 'scope': 'Codec-only LLVM coverage; no Lua or native confinement.'}
     (output / 'metadata.json').write_text(json.dumps(report, indent=2) + '\n')

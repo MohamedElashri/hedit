@@ -7,7 +7,7 @@ description = "A native text editor with durable recovery, Git, and private SSH 
 license = "MIT"
 
 [workspace]
-members = ["crates/hedit-remote", "crates/hedit-core", "crates/hedit-plugin"]
+members = ["crates/hedit-remote", "crates/hedit-core", "crates/hedit-plugin", "crates/hedit-broker"]
 default-members = ["."]
 exclude = ["vendor/egui", "vendor/epaint"]
 resolver = "2"
