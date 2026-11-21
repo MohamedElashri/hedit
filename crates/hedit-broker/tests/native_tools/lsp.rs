@@ -5,83 +5,14 @@ use hedit_broker::{
     tool::{Binding, Projection, Source},
     Handle,
 };
-use hedit_core::language_server::wire::{self, Limits};
 use serde_json::json;
 use std::{
-    io::{self, BufRead, Read, Write},
+    io,
     sync::atomic::AtomicBool,
     time::{Duration, Instant},
 };
 
-pub fn peer(mode: &str) {
-    let mut input = io::BufReader::new(io::stdin().lock());
-    let mut output = io::stdout().lock();
-    let mut requests = 0;
-    loop {
-        let mut header = Vec::new();
-        loop {
-            if input.read_until(b'\n', &mut header).unwrap() == 0 {
-                return;
-            }
-            assert!(header.len() <= 8192);
-            if header.ends_with(b"\r\n\r\n") {
-                break;
-            }
-        }
-        let length = wire::content_length(&header, Limits::SCOPED).unwrap();
-        let mut body = vec![0; length];
-        input.read_exact(&mut body).unwrap();
-        let value = wire::parse_json(&body, Limits::SCOPED).unwrap();
-        if value.get("method").is_none() {
-            assert_eq!(value["error"]["code"], -32601);
-            continue;
-        }
-        let Some(id) = value.get("id") else {
-            continue;
-        };
-        requests += 1;
-        let result = if value["method"] == "initialize" {
-            json!({"capabilities":{"hoverProvider":true,"positionEncoding":"utf-16"}})
-        } else {
-            match mode {
-                "stall" => {
-                    std::thread::sleep(Duration::from_secs(30));
-                    return;
-                }
-                "duplicate" => {
-                    let body =
-                        format!(r#"{{"jsonrpc":"2.0","id":{id},"result":null,"result":{{}}}}"#);
-                    write!(output, "Content-Length: {}\r\n\r\n{}", body.len(), body).unwrap();
-                    output.flush().unwrap();
-                    continue;
-                }
-                "truncated" => {
-                    output.write_all(b"Content-Length: 100\r\n\r\n{}").unwrap();
-                    output.flush().unwrap();
-                    return;
-                }
-                "flood" => {
-                    for _ in 0..100 {
-                        output.write_all(&wire::encode(&json!({"jsonrpc":"2.0","method":"window/logMessage","params":{"message":"flood"}}), Limits::SCOPED).unwrap()).unwrap();
-                    }
-                }
-                "server-request" => {
-                    output.write_all(&wire::encode(&json!({"jsonrpc":"2.0","id":"server","method":"workspace/applyEdit","params":{"edit":{"changes":{"file:///unissued/private.txt":[]}}}}), Limits::SCOPED).unwrap()).unwrap();
-                }
-                _ => {}
-            }
-            json!({"contents":"café / 東京 / 😀", "requests":requests})
-        };
-        let response = json!({"jsonrpc":"2.0","id":if mode == "foreign" && requests > 1 { json!(999) } else { id.clone() },"result":result});
-        let bytes = wire::encode(&response, Limits::SCOPED).unwrap();
-        // Real fragmented writes exercise the OS transport, not just the codec.
-        for chunk in bytes.chunks(3) {
-            output.write_all(chunk).unwrap();
-            output.flush().unwrap();
-        }
-    }
-}
-pub fn verify(state: &State) {
+pub fn verify(state: &State, executable: &std::path::Path) {
     let cancel = AtomicBool::new(false);
     let definition = serde_json::from_value(
         json!({"protocol":"language_server","workspace":false,"arguments":[]}),
@@ -98,7 +29,7 @@ pub fn verify(state: &State) {
     let runs = state.tool_runs().unwrap();
     let image = images
         .import(
-            Source::select(&std::env::current_exe().unwrap()).unwrap(),
+            Source::select(executable).unwrap(),
             binding.clone(),
             &cancel,
         )
@@ -117,7 +48,7 @@ pub fn verify(state: &State) {
             .prepare(
                 images.resolve(image, &binding, &cancel).unwrap(),
                 Projection::empty(),
-                vec!["--lsp-peer".into(), mode.into()],
+                vec![mode.into()],
                 &cancel,
             )
             .unwrap();
