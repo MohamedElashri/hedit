@@ -346,7 +346,9 @@ impl Runs {
         Ok(run)
     }
     fn reap_one(&self, record: &Record) -> io::Result<()> {
-        let directory = self.child(record)?;
+        let directory = self
+            .child(record)
+            .map_err(|error| context("open run directory", error))?;
         let lease = match store::read(&directory, "lease") {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Err(invalid()),
@@ -355,18 +357,21 @@ impl Runs {
         match lease.try_lock() {
             Ok(()) => (),
             Err(std::fs::TryLockError::WouldBlock) => return Ok(()),
-            Err(error) => return Err(io::Error::other(error)),
+            Err(error) => return Err(context("lock run lease", io::Error::other(error))),
         }
-        self.contents(&directory, record)?;
+        self.contents(&directory, record)
+            .map_err(|error| context("validate retirement payload", error))?;
         // cap-std deliberately pins Windows directories against rename. Release
         // that pin after validation; the global lock and live lease stay held.
         drop(directory);
         let removed = format!(".removed-{}", record.id);
         self.directory
-            .rename(record.id.to_string(), &self.directory, &removed)?;
+            .rename(record.id.to_string(), &self.directory, &removed)
+            .map_err(|error| context("rename retired bundle", error))?;
         native::sync_dir(&self.directory)?;
         drop(lease);
         self.cleanup_retired(&removed)
+            .map_err(|error| context("remove retired payload", error))
     }
     fn cleanup_retired(&self, name: &str) -> io::Result<()> {
         let id: Handle = serde_json::from_value(serde_json::Value::String(
@@ -527,3 +532,10 @@ fn paths<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<BTreeMap<String
 
 #[cfg(test)]
 mod tests;
+
+fn context(stage: &str, error: io::Error) -> io::Error {
+    io::Error::new(
+        error.kind(),
+        format!("Native tool storage could not {stage}: {error}"),
+    )
+}
