@@ -1,5 +1,6 @@
 ---@meta
--- Editing SDK 1, manifest API 3. Byte offsets are zero-based UTF-8.
+-- SDK 1–3, manifest API 3–5. Byte offsets are zero-based UTF-8.
+-- Helpers marked SDK 2 or SDK 3 are available only in that callback role.
 ---@class HeditSelection
 ---@field anchor integer
 ---@field head integer
@@ -52,3 +53,143 @@ function hedit.import(name) end
 ---@param name string Resource ID, never a path or URI.
 ---@return string
 function hedit.resource(name) end
+
+---@alias HeditScalar boolean|integer|string
+---@alias HeditCache table<string,HeditScalar>
+---@alias HeditProviderKind 'diagnostics'|'completions'|'hover'|'symbols'|'formatting'|'code_actions'|'presentation'
+---@alias HeditTrigger 'open'|'change'|'selection'|'save'|'manual'|'interaction'|'close'
+---@class HeditProviderRequest
+---@field id string Opaque request handle.
+---@field kind HeditProviderKind
+---@field trigger HeditTrigger
+---@field position integer Snapshot byte offset.
+---@field action? string Reviewed callback name, only for interaction.
+---@field choice? HeditScalar
+---@class HeditProviderContext: HeditContext
+---@field request HeditProviderRequest
+---@field cache HeditCache Explicit scalar state; each callback has a fresh VM.
+---@class HeditRange
+---@field start integer Inclusive snapshot byte offset.
+---@field finish integer Exclusive snapshot byte offset.
+---@class HeditAction
+---@field edit? HeditTransaction
+---@field select? HeditSelection
+---@field callback? {name:string,value:HeditScalar}
+---@class HeditActionItem
+---@field title string
+---@field action HeditAction Exactly one action field.
+---@class HeditDiagnostic
+---@field range HeditRange
+---@field severity 'error'|'warning'|'information'|'hint'
+---@field message string Plain text.
+---@field actions? HeditActionItem[] At most eight.
+---@class HeditCompletion
+---@field label string
+---@field detail? string
+---@field range HeditRange
+---@field insert string Plain text; no snippet evaluation.
+---@class HeditHover
+---@field range HeditRange
+---@field text string Plain text.
+---@class HeditSymbol
+---@field name string
+---@field detail? string
+---@field range HeditRange
+---@class HeditPresentation
+---@field status? string
+---@field output? string Plain text; no HTML or terminal escape evaluation.
+---@field annotations? {range:HeditRange,text:string}[]
+---@field quick_list? {title:string,items:HeditActionItem[]}
+---@field input? {title:string,name:string,default:HeditScalar,choices:HeditScalar[]}
+---@class HeditProviderResult
+---@field diagnostics? HeditDiagnostic[]
+---@field completions? HeditCompletion[]
+---@field hover? HeditHover
+---@field symbols? HeditSymbol[]
+---@field formatting? HeditTransaction
+---@field code_actions? HeditActionItem[]
+---@field presentation? HeditPresentation
+---@alias HeditResult HeditProviderResult|'closed'
+---@class HeditProviderProposal
+---@field result HeditResult Exactly one result matching the declared provider kind.
+---@field cache? HeditCache
+---@param byte integer SDK 2 providers only.
+---@return integer line
+---@return integer character UTF-16 units, zero-based.
+function hedit.to_utf16(byte) end
+---@param line integer SDK 2 providers only.
+---@param character integer UTF-16 units.
+---@return integer byte
+function hedit.from_utf16(line, character) end
+
+-- SDK 3: return one intent and exit; the next callback receives its response.
+-- Handles are opaque strings, never paths, descriptors, permissions or commands.
+---@class HeditResource
+---@field resource string
+---@field version string
+---@field relative string Approved workspace-relative name, using '/'.
+---@field bytes integer
+---@class HeditResourceText
+---@field resource HeditResource
+---@field text string Complete bounded UTF-8 content.
+---@class HeditWorkspaceChange
+---@field resource string
+---@field version string
+---@field edits HeditEdit[]
+---@alias HeditLspMethod 'diagnostics'|'completions'|'hover'|'symbols'|'formatting'|'code_actions'
+---@class HeditBrokerIntent
+---@field discover? {scope:string,query:string}
+---@field search? {scope:string,query:string}
+---@field open? {scope:string,relative:string}
+---@field open_many? {scope:string,paths:string[]}
+---@field read? {resource:string,version:string,offset:integer,maximum:integer}
+---@field release? {resource:string}
+---@field stage_edits? {scope:string,change:HeditWorkspaceChange}
+---@field review_edits? {scope:string,changes?:HeditWorkspaceChange[]}
+---@field watch? {scope:string}
+---@field unwatch? {watch:string}
+---@field wait_changes? {watch:string}
+---@field tool? {profile:string,input:string,arguments:HeditCache}
+---@field language_server? {profile:string,method:HeditLspMethod,position?:integer}
+---@field https? {endpoint:string,body:string} Fixed declared endpoint/method; no arbitrary headers or credentials.
+---@field finish? {transaction?:HeditTransaction,result?:HeditResult}
+---@class HeditBrokerResponse
+---@field discovered? {entries:{relative:string,directory:boolean,bytes:integer}[],truncated:boolean}
+---@field searched? {matches:{relative:string,start:integer,finish:integer,excerpt:string}[],truncated:boolean}
+---@field opened? HeditResource
+---@field opened_many? {files:HeditResourceText[]}
+---@field read? {text:string,next?:integer}
+---@field released? table
+---@field staged? {files:integer}
+---@field edited? {files:integer}
+---@field watching? {watch:string,truncated:boolean}
+---@field changed? {paths:string[],truncated:boolean}
+---@field unwatched? table
+---@field tool? {status:integer,output:string}
+---@field language_server? {result:HeditResult}
+---@field https? {status:integer,body:string}
+---@field failed? {code:'unavailable'|'denied'|'changed'|'cancelled'|'limit'|'failed'}
+---@class HeditBrokerContext
+---@field request string Opaque continuation request identity.
+---@field scope? string Only when an approved workspace scope is available.
+---@field step integer Zero-based callback index, at most 31.
+---@field response? HeditBrokerResponse Absent on the first callback.
+---@class HeditScopedContext: HeditContext
+---@field request? HeditProviderRequest Present for providers.
+---@field cache HeditCache
+---@field broker HeditBrokerContext
+---@class HeditScopedProposal
+---@field intent HeditBrokerIntent Exactly one intent field.
+---@field cache? HeditCache
+
+---@param value any SDK 3 only; bounded data, no cycles/metatable execution.
+---@return string json
+function hedit.json_encode(value) end
+---@param json string SDK 3 only; duplicate keys/non-finite numbers rejected.
+---@return any value Arrays retain array identity; null is hedit.json_null.
+function hedit.json_decode(json) end
+---@param values table SDK 3 only; dense one-based array.
+---@return table array
+function hedit.json_array(values) end
+---@type userdata SDK 3 JSON null sentinel; use only with JSON helpers.
+hedit.json_null = nil
