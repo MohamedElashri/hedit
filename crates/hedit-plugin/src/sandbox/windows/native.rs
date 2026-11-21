@@ -364,6 +364,24 @@ pub(super) fn require_job(handle: HANDLE) -> io::Result<()> {
     if limits.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_JOB_MEMORY == 0
         || limits.JobMemoryLimit == 0
         || limits.JobMemoryLimit > PROCESS_BYTES
+        || limits.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_PRIORITY_CLASS == 0
+        || limits.BasicLimitInformation.PriorityClass != BELOW_NORMAL_PRIORITY_CLASS
+    {
+        return Err(denied());
+    }
+    let mut rate = JOBOBJECT_CPU_RATE_CONTROL_INFORMATION::default();
+    check(unsafe {
+        QueryInformationJobObject(
+            handle,
+            JobObjectCpuRateControlInformation,
+            (&mut rate as *mut JOBOBJECT_CPU_RATE_CONTROL_INFORMATION).cast(),
+            mem::size_of_val(&rate) as u32,
+            ptr::null_mut(),
+        )
+    })?;
+    if rate.ControlFlags
+        != JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP
+        || unsafe { rate.Anonymous.CpuRate } != 1000
     {
         return Err(denied());
     }

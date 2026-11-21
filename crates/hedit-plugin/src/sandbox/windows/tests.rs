@@ -551,3 +551,63 @@ fn ordinary_appcontainer_does_not_pass_native_lpac_verification() {
     let child = Worker::spawn(&executable, &[]).unwrap();
     assert!(native::require_lpac(child.process.as_raw_handle()).is_err());
 }
+
+#[test]
+fn native_tool_cpu_rate_and_time_limits() {
+    let profile = Profile::new("tool-cpu-probe").unwrap();
+    let image = tempfile::tempdir().unwrap();
+    image_permissions(image.path(), profile.sid).unwrap();
+    let copied = image.path().join("probe.exe");
+    std::fs::copy(std::env::current_exe().unwrap(), &copied).unwrap();
+    image_permissions(&copied, profile.sid).unwrap();
+    let mut child = Worker::launch(
+        &copied,
+        PROBE_ARGS,
+        working_directory().unwrap(),
+        profile,
+        Some(image),
+        native::Mode::ToolProbe,
+    )
+    .unwrap();
+    child
+        .input
+        .take()
+        .unwrap()
+        .write_all(br#"{"action":"spin"}"#)
+        .unwrap();
+    assert!(
+        child.finished(45_000).unwrap(),
+        "the 10% job did not terminate at its two-second CPU cap"
+    );
+    assert!(!child.success().unwrap());
+    let mut created = FILETIME::default();
+    let mut exited = FILETIME::default();
+    let mut kernel = FILETIME::default();
+    let mut user = FILETIME::default();
+    check(unsafe {
+        GetProcessTimes(
+            child.process.as_raw_handle(),
+            &mut created,
+            &mut exited,
+            &mut kernel,
+            &mut user,
+        )
+    })
+    .unwrap();
+    let ticks = u64::from(user.dwHighDateTime) << 32 | u64::from(user.dwLowDateTime);
+    assert!(
+        (18_000_000..=30_000_000).contains(&ticks),
+        "unexpected native CPU time: {ticks} ticks"
+    );
+    let mut output = String::new();
+    child
+        .output
+        .take()
+        .unwrap()
+        .read_to_string(&mut output)
+        .unwrap();
+    assert!(
+        output.contains("native spin ready"),
+        "probe did not enter the native loop: {output}"
+    );
+}
