@@ -46,7 +46,7 @@ enum Phase {
     Checking(ApprovalReceiver),
     Running(RunningPlugin),
     Preview {
-        diff: Vec<DiffLine>,
+        diff: Diff,
         output: Output,
     },
     Committing {
@@ -61,9 +61,63 @@ struct Output {
     storage: Option<plugin_runtime::sdk::Storage>,
 }
 
-struct DiffLine {
+#[derive(Default)]
+struct Diff {
+    blocks: Vec<DiffBlock>,
+    rows: usize,
+}
+
+struct DiffBlock {
     added: bool,
     text: String,
+    starts: Vec<usize>,
+}
+
+impl Diff {
+    fn push(&mut self, added: bool, text: String) {
+        if text.is_empty() {
+            return;
+        }
+        let mut starts = vec![0];
+        starts.extend(
+            text.match_indices('\n')
+                .filter_map(|(at, _)| (at + 1 < text.len()).then_some(at + 1)),
+        );
+        self.rows += starts.len();
+        self.blocks.push(DiffBlock {
+            added,
+            text,
+            starts,
+        });
+    }
+
+    fn is_empty(&self) -> bool {
+        self.rows == 0
+    }
+
+    fn row(&self, mut index: usize) -> Option<(bool, String)> {
+        for block in &self.blocks {
+            if index < block.starts.len() {
+                let end = block
+                    .starts
+                    .get(index + 1)
+                    .copied()
+                    .unwrap_or(block.text.len());
+                let line = &block.text[block.starts[index]..end];
+                let line = line
+                    .strip_suffix("\r\n")
+                    .or_else(|| line.strip_suffix('\n'))
+                    .unwrap_or(line)
+                    .replace('\r', "␍");
+                return Some((
+                    block.added,
+                    format!("{} {line}", if block.added { '+' } else { '−' }),
+                ));
+            }
+            index -= block.starts.len();
+        }
+        None
+    }
 }
 
 struct Proposal {
@@ -371,7 +425,13 @@ impl HeditApp {
                         selections: None,
                         storage: None,
                     };
-                    if edit_diff(self.active(), &proposal.ranges, &output.replacements).is_empty() {
+                    let crlf = self.active().page.info.eol == "CRLF";
+                    if proposal.ranges.iter().zip(&output.replacements).all(
+                        |(range, replacement)| {
+                            self.active().page.text[range.clone()]
+                                == clipboard_lines::line_endings(replacement, crlf)
+                        },
+                    ) {
                         self.notice = "The extension proposed no changes.".into();
                         return Ok(Some(InvocationOutcome::Applied));
                     }
@@ -509,16 +569,10 @@ impl HeditApp {
         if self.settings.extensions.preview_edits {
             let mut diff = edit_diff(self.active(), &proposal.ranges, &output.replacements);
             if output.storage.is_some() {
-                diff.push(DiffLine {
-                    added: true,
-                    text: "Update private command storage".into(),
-                });
+                diff.push(true, "Update private command storage".into());
             }
             if diff.is_empty() {
-                diff.push(DiffLine {
-                    added: true,
-                    text: "Update editor selections".into(),
-                });
+                diff.push(true, "Update editor selections".into());
             }
             ctx.request_repaint();
             Ok(Phase::Preview { diff, output })
@@ -700,48 +754,39 @@ fn edit_diff(
     buffer: &hedit::workspace::Buffer,
     ranges: &[Range<usize>],
     replacements: &[String],
-) -> Vec<DiffLine> {
+) -> Diff {
     let crlf = buffer.page.info.eol == "CRLF";
-    let mut diff = Vec::new();
+    let mut diff = Diff::default();
     for (range, replacement) in ranges.iter().zip(replacements) {
         let original = &buffer.page.text[range.clone()];
         let replacement = clipboard_lines::line_endings(replacement, crlf);
         if original != replacement {
-            for (added, text) in [(false, original), (true, replacement.as_str())] {
-                for line in text.split_inclusive('\n') {
-                    let line = line
-                        .strip_suffix("\r\n")
-                        .or_else(|| line.strip_suffix('\n'))
-                        .unwrap_or(line)
-                        .replace('\r', "␍");
-                    let prefix = if added { '+' } else { '−' };
-                    diff.push(DiffLine {
-                        added,
-                        text: format!("{prefix} {line}"),
-                    });
-                }
-            }
+            diff.push(false, original.to_owned());
+            diff.push(true, replacement);
         }
     }
     diff
 }
 
-fn show_preview(ctx: &egui::Context, diff: &[DiffLine]) -> Option<bool> {
+fn show_preview(ctx: &egui::Context, diff: &Diff) -> Option<bool> {
     let modal = egui::Modal::new(egui::Id::new("lua-edit-preview")).show(ctx, |ui| {
         ui.set_width((ctx.screen_rect().width() - 64.0).clamp(224.0, 740.0));
         ui.heading("Extension edit preview");
         let height = ui.text_style_height(&egui::TextStyle::Monospace);
         egui::ScrollArea::both()
             .max_height((ctx.screen_rect().height() * 0.52).max(70.0))
-            .show_rows(ui, height, diff.len(), |ui, lines| {
-                for line in &diff[lines] {
-                    let color = if line.added {
+            .show_rows(ui, height, diff.rows, |ui, lines| {
+                for row in lines {
+                    let Some((added, text)) = diff.row(row) else {
+                        continue;
+                    };
+                    let color = if added {
                         ui.visuals().strong_text_color()
                     } else {
                         ui.visuals().weak_text_color()
                     };
                     ui.add(
-                        egui::Label::new(egui::RichText::new(&line.text).monospace().color(color))
+                        egui::Label::new(egui::RichText::new(text).monospace().color(color))
                             .extend(),
                     );
                 }
@@ -1434,5 +1479,28 @@ mod tests {
             }]
         )
         .is_err());
+    }
+    #[test]
+    fn compact_preview_rows_match_unicode_and_crlf_without_per_line_strings() {
+        let mut diff = Diff::default();
+        diff.push(false, "café\r\n東京\r\n\nend\r".into());
+        diff.push(true, "→ 東京\n".into());
+        assert_eq!(diff.rows, 5);
+        let expected = [
+            (false, "− café"),
+            (false, "− 東京"),
+            (false, "− "),
+            (false, "− end␍"),
+            (true, "+ → 東京"),
+        ];
+        for (row, (added, text)) in expected.into_iter().enumerate() {
+            assert_eq!(diff.row(row).unwrap(), (added, text.into()));
+        }
+        assert!(diff.row(5).is_none());
+        let mut large = Diff::default();
+        large.push(true, "\n".repeat(plugin_runtime::sdk::MAX_OUTPUT_BYTES));
+        assert_eq!(large.rows, plugin_runtime::sdk::MAX_OUTPUT_BYTES);
+        assert_eq!(large.blocks.len(), 1);
+        assert_eq!(large.row(large.rows - 1).unwrap(), (true, "+ ".into()));
     }
 }

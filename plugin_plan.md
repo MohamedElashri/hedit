@@ -590,6 +590,8 @@ The first Stage 1 increment is implemented on `v0.7.0/plugin-sdk`:
   confined fixtures, three reference packages, and extracted-package resources.
 - Adversarial broker/codec/storage tests, independent Unicode edit checks,
   a reproducible coverage-guided codec fuzz target, and a synthetic latency probe.
+- Compact preview text blocks with indexed rows, formatted only when visible;
+  no-change detection does not construct a full preview.
 
 Local macOS validation includes the full workspace regression suite, native
 confinement tests, SDK fixtures, strict all-feature lint, and offline package

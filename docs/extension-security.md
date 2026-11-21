@@ -114,12 +114,13 @@ this snapshot. Host-owned argument forms run before worker launch.
 
 The worker proposes at most 64 ordered non-overlapping edits and 16 resulting
 selections. Parent and worker independently validate target handle/revision,
-UTF-8 and CRLF boundaries, normalized replacement limits, and final selection
+UTF-8 and CRLF boundaries, raw/normalized replacement limits, and final selection
 positions. Parent application also checks live editor context and current grants.
 A forged worker cannot select another document. No SDK helper exposes filesystem
 paths, networking, subprocesses, or editor objects. The Lua core and native
 sandbox policy are shared with legacy transforms. Verified package-local imports
-and text resources use only bounded reviewed bytes; no runtime paths are resolved. See the [SDK contract](plugin-sdk.md).
+and text resources use only bounded reviewed bytes; no runtime paths are resolved.
+See the [SDK contract](plugin-sdk.md).
 
 Private command storage requires `storage.private` plus an explicit per-command
 request and persistent approval. Only that command's quota-limited scalar snapshot
