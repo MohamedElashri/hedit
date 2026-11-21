@@ -24,8 +24,8 @@ fn installed_json_reference_formats_and_keeps_lsp_alive_until_native_revocation(
     let id = app.workspace.editor.id();
     let mut document = hedit::document::Document::open(id, &active).unwrap();
     let page = document.page(0).unwrap();
-    app.workspace.add(document, page).unwrap();
-    // Complete the initial pane/focus reconciliation before capturing a target.
+    app.finish_opened_document(document, page, 0, None, false, None);
+    frame(&ctx, &mut app, vec![]);
     frame(&ctx, &mut app, vec![]);
     app.settings.extensions.preview_edits = false;
     assert!(app.run_extension_by_id(&ctx, "scoped-json.format"));
@@ -33,7 +33,13 @@ fn installed_json_reference_formats_and_keeps_lsp_alive_until_native_revocation(
         (app.broker_command.is_none() && app.lua_transform.is_none()) || app.error.is_some()
     });
     assert!(app.error.is_none(), "{:?}", app.error);
-    assert!(app.active().page.text.contains("\n  \""));
+    assert!(
+        app.active().page.text.contains("\n  \""),
+        "target={:?}, notice={}, activity={:?}",
+        app.lua_target(),
+        app.notice,
+        app.extension_manager.measured_activity()
+    );
     assert_eq!(std::fs::read_to_string(&active).unwrap(), initial);
     for _ in 0..3 {
         assert!(app.run_extension_by_id(&ctx, "scoped-json.hover"));
@@ -254,7 +260,8 @@ fn profile_scoped_native_frames() {
             let id = app.workspace.editor.id();
             let mut document = hedit::document::Document::open(id, &active).unwrap();
             let page = document.page(0).unwrap();
-            app.workspace.add(document, page).unwrap();
+            app.finish_opened_document(document, page, 0, None, false, None);
+            frame(&ctx, &mut app, vec![]);
             frame(&ctx, &mut app, vec![]);
             if !mode.starts_with("disabled") {
                 for command in [
@@ -280,6 +287,8 @@ fn profile_scoped_native_frames() {
                 frame(&ctx, &mut app, vec![]);
                 std::thread::sleep(Duration::from_millis(16));
             }
+            let text_bytes_before = app.active().page.text.len();
+            let revision_before = app.active().page.info.revision;
             let before = usage();
             let work_started = Instant::now();
             let mut published = 0usize;
@@ -349,6 +358,23 @@ fn profile_scoped_native_frames() {
             }
             let elapsed_us = work_started.elapsed().as_micros();
             let after = usage();
+            let text_bytes_after = app.active().page.text.len();
+            let revision_after = app.active().page.info.revision;
+            let expected_events = if matches!(mode, "disabled_typing" | "typing_with_native") {
+                frames.div_ceil(10)
+            } else {
+                0
+            };
+            assert_eq!(
+                text_bytes_after,
+                text_bytes_before + expected_events,
+                "{mode}: input events did not reach the active document"
+            );
+            assert_eq!(
+                revision_after - revision_before,
+                expected_events as u64,
+                "{mode}: every typing event must edit the real document"
+            );
             if mode == "typing_with_native" {
                 assert!(published > 0, "No real results published during typing");
             }
@@ -389,7 +415,8 @@ fn profile_scoped_native_frames() {
             assert_eq!(live_runs, 0, "native payloads retained after Stop");
             workloads.push(
                 json!({"trial":trial,"mode":mode,"snapshot_bytes":text.len(),
-                "frames":frames,"elapsed_us":elapsed_us,"published_results":published,"recent_activity":phases,"samples_us_allocations_requested_bytes":samples,
+                "frames":frames,"text_bytes_before":text_bytes_before,"text_bytes_after":text_bytes_after,
+                "revision_before":revision_before,"revision_after":revision_after,"elapsed_us":elapsed_us,"published_results":published,"recent_activity":phases,"samples_us_allocations_requested_bytes":samples,
                 "usage_before":before,"usage_after":after,"usage_after_stop":stopped,
                 "memory_samples":memory,"stop_cleanup_us":before_stop.elapsed().as_micros(),"stop_ui_us":stop_ui.0,
                 "live_runs_after_stop":live_runs}),

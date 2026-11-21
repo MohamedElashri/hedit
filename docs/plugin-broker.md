@@ -4,8 +4,6 @@ Manifest API 5 / SDK 3 adds scoped workspace operations, HTTPS and supervised
 native tools to the shared Lua engine. Commands and providers use the same
 continuation contract. APIs 1–4 retain their existing meanings. The manager
 supports exact-image filter/LSP selection and separate workspace/endpoint review.
-See the [implementation status](../plugin_plan.md#implementation-status) for
-acceptance evidence.
 See the [security model](extension-security.md) for enforcement and residuals.
 
 ## Author contract

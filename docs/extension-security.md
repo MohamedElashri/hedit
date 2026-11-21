@@ -669,5 +669,5 @@ Coverage-guided AddressSanitizer campaigns run separately for SDK worker replies
 and shared LSP/data JSON, retaining corpus, logs, hashes and source snapshots.
 Native adversarial probes, real editor integration and extracted-package tests
 remain required: a clean parser campaign cannot establish sandbox enforcement.
-The [implementation plan](../plugin_plan.md#completion-checklist) records current
-acceptance evidence and any outstanding release gates.
+The [broker validation guide](plugin-broker.md#external-tools-and-validation)
+describes reproduction commands and the scope of the measurements.

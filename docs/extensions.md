@@ -148,8 +148,8 @@ remain a separate approval.
 
 Provider API 4 / SDK 2 and declarative language/theme packs are described in the
 [provider reference](plugin-services.md). The
-[implementation plan](../plugin_plan.md#implementation-status) records validation
-evidence and deliberate capability limits.
+[broker validation guide](plugin-broker.md#external-tools-and-validation)
+describes native checks and deliberate capability limits.
 
 ## Native filter approval
 

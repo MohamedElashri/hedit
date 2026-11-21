@@ -220,9 +220,8 @@ The fuzz command retains its log, metadata, corpus, and crash artifacts under
 campaign is smoke evidence, not a completed security or performance gate.
 Native platform enforcement, provider lifetimes, consent timing and sustained
 egui CPU-frame measurements have separate tests. See the
-[broker validation guide](plugin-broker.md#external-tools-and-validation) and
-[implementation status](../plugin_plan.md#implementation-status) for scope and
-acceptance evidence.
+[broker validation guide](plugin-broker.md#external-tools-and-validation) for
+scope and reproduction commands.
 
 Phase profiling is available with `hedit plugin test MANIFEST FIXTURES --timings`
 and under Recent Lua activity in the extension manager. Samples contain only a
