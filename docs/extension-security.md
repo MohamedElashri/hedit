@@ -154,7 +154,14 @@ helper with exact entitlements, hardened runtime, a CPU cap, a zero hard
 `RLIMIT_NPROC` limit to deny child-process creation, and a parent-polled
 256 MiB physical-footprint check. Windows uses a capability-free AppContainer,
 private worker image ACL, explicit inherited handles, process mitigations, and a
-single-process job with CPU/memory limits and kill-on-close cleanup.
+single-process job with CPU/memory limits and kill-on-close cleanup. Its local
+byte pipes have owner-only access and identification-only client tokens, so a
+child holding stdin's server end cannot act with the editor's authority through
+pipe impersonation. A native regression keeps the parent client connected while
+the confined child attempts to read a private parent file through that token.
+The client requests individual write rights to avoid the named-pipe instance
+creation right included in generic write access. See Microsoft's
+[named-pipe impersonation rules](https://learn.microsoft.com/en-us/windows/win32/ipc/impersonating-a-named-pipe-client).
 
 These are OS process sandboxes, not virtual machines. App Sandbox and AppContainer
 permit some system/container resources; a native runtime exploit is therefore

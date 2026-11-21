@@ -15,7 +15,8 @@ use windows_sys::Win32::{
     Security::{Authorization::*, *},
     Storage::FileSystem::*,
     System::{
-        Console::*, JobObjects::*, LibraryLoader::*, Pipes::*, SystemInformation::*, Threading::*,
+        Console::*, JobObjects::*, LibraryLoader::*, Pipes::*, SystemInformation::*,
+        SystemServices::SECURITY_DESCRIPTOR_REVISION, Threading::*,
     },
 };
 
@@ -273,10 +274,16 @@ fn require_token(process: HANDLE, expected: Option<PSID>) -> io::Result<()> {
     Ok(())
 }
 
-// Construct an explicit protected DACL: the editor owns the image directory;
-// only this invocation's container receives read/execute. No user directory or
-// original editor executable has its permissions expanded.
-fn image_permissions(path: &Path, sid: PSID) -> io::Result<()> {
+// Protected DACLs grant the editor access, plus optional container read/execute.
+struct Acl(*mut ACL);
+impl Drop for Acl {
+    fn drop(&mut self) {
+        unsafe {
+            LocalFree(self.0.cast());
+        }
+    }
+}
+fn private_acl(sid: Option<PSID>) -> io::Result<Acl> {
     let token = token(unsafe { GetCurrentProcess() })?;
     let user = token_information(&token, TokenUser)?;
     let owner = unsafe { &*user.as_ptr().cast::<TOKEN_USER>() }.User.Sid;
@@ -291,10 +298,10 @@ fn image_permissions(path: &Path, sid: PSID) -> io::Result<()> {
             ..Default::default()
         },
     };
-    let entries = [
-        entry(owner, FILE_ALL_ACCESS),
-        entry(sid, FILE_GENERIC_READ | FILE_GENERIC_EXECUTE),
-    ];
+    let mut entries = vec![entry(owner, FILE_ALL_ACCESS)];
+    if let Some(sid) = sid {
+        entries.push(entry(sid, FILE_GENERIC_READ | FILE_GENERIC_EXECUTE));
+    }
     let mut acl = ptr::null_mut();
     let status = unsafe {
         SetEntriesInAclW(
@@ -307,6 +314,10 @@ fn image_permissions(path: &Path, sid: PSID) -> io::Result<()> {
     if status != 0 {
         return Err(io::Error::from_raw_os_error(status as i32));
     }
+    Ok(Acl(acl))
+}
+fn image_permissions(path: &Path, sid: PSID) -> io::Result<()> {
+    let acl = private_acl(Some(sid))?;
     let status = unsafe {
         SetNamedSecurityInfoW(
             wide(path).as_ptr(),
@@ -314,13 +325,10 @@ fn image_permissions(path: &Path, sid: PSID) -> io::Result<()> {
             DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
             ptr::null_mut(),
             ptr::null_mut(),
-            acl,
+            acl.0,
             ptr::null(),
         )
     };
-    unsafe {
-        LocalFree(acl.cast());
-    }
     if status != 0 {
         return Err(io::Error::from_raw_os_error(status as i32));
     }
@@ -371,15 +379,66 @@ impl Drop for Attributes {
 }
 
 fn pipe() -> io::Result<(OwnedHandle, OwnedHandle)> {
+    // A child receives the server/read end of stdin. Bound the client's token
+    // to identification so that end cannot impersonate the editor's authority.
+    // https://learn.microsoft.com/en-us/windows/win32/ipc/impersonating-a-named-pipe-client
+    let acl = private_acl(None)?;
+    let mut descriptor = SECURITY_DESCRIPTOR::default();
+    check(unsafe {
+        InitializeSecurityDescriptor(
+            (&mut descriptor as *mut SECURITY_DESCRIPTOR).cast(),
+            SECURITY_DESCRIPTOR_REVISION,
+        )
+    })?;
+    check(unsafe {
+        SetSecurityDescriptorDacl(
+            (&mut descriptor as *mut SECURITY_DESCRIPTOR).cast(),
+            1,
+            acl.0,
+            0,
+        )
+    })?;
     let security = SECURITY_ATTRIBUTES {
         nLength: mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
-        lpSecurityDescriptor: ptr::null_mut(),
+        lpSecurityDescriptor: (&mut descriptor as *mut SECURITY_DESCRIPTOR).cast(),
         bInheritHandle: 1,
     };
-    let (mut read, mut write) = (ptr::null_mut(), ptr::null_mut());
-    check(unsafe { CreatePipe(&mut read, &mut write, &security, 64 * 1024) })?;
-    Ok(unsafe { (owned(read)?, owned(write)?) })
+    let mut random = [0u8; 16];
+    getrandom::fill(&mut random).map_err(io::Error::other)?;
+    let name = wide(format!(r"\\.\pipe\hedit-worker-{}", hex::encode(random)));
+    let read = unsafe {
+        owned(CreateNamedPipeW(
+            name.as_ptr(),
+            PIPE_ACCESS_INBOUND | FILE_FLAG_FIRST_PIPE_INSTANCE,
+            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
+            1,
+            64 * 1024,
+            64 * 1024,
+            0,
+            &security,
+        ))
+    }?;
+    // FILE_APPEND_DATA aliases FILE_CREATE_PIPE_INSTANCE. Request only the
+    // individual write right instead of granting GENERIC_WRITE to the child.
+    let write = unsafe {
+        owned(CreateFileW(
+            name.as_ptr(),
+            FILE_WRITE_DATA | SYNCHRONIZE,
+            0,
+            &security,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL | SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
+            ptr::null_mut(),
+        ))
+    }?;
+    if unsafe { ConnectNamedPipe(read.as_raw_handle(), ptr::null_mut()) } == 0
+        && unsafe { GetLastError() } != ERROR_PIPE_CONNECTED
+    {
+        return Err(io::Error::last_os_error());
+    }
+    Ok((read, write))
 }
+
 fn job(service: bool) -> io::Result<OwnedHandle> {
     let handle = unsafe { owned(CreateJobObjectW(ptr::null(), ptr::null())) }?;
     let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
