@@ -79,7 +79,17 @@ pub(crate) fn private_directory(parent: &Dir, name: &str) -> io::Result<Dir> {
 pub(crate) fn sync_dir(directory: &Dir) -> io::Result<()> {
     #[cfg(unix)]
     {
-        directory.try_clone()?.into_std_file().sync_all()
+        // cap-std may pin Linux directories with O_PATH. That descriptor can
+        // anchor openat but cannot be fsynced; reopen the same object for I/O.
+        use cap_std::fs::OpenOptionsExt;
+        let file = directory.open_with(
+            ".",
+            OpenOptions::new()
+                .read(true)
+                .follow(FollowSymlinks::No)
+                .custom_flags(libc::O_DIRECTORY),
+        )?;
+        file.sync_all()
     }
     #[cfg(windows)]
     {

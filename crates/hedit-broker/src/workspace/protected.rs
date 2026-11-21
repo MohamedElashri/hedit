@@ -111,6 +111,7 @@ impl Protected {
         let unlocked = file.unlock();
         result?;
         unlocked?;
+        crate::journal::native::sync_dir(directory)?;
         let protected = Self {
             state: Arc::new(Mutex::new(State {
                 directories: BTreeMap::new(),

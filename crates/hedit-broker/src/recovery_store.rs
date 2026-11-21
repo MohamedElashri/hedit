@@ -196,8 +196,7 @@ impl RecoveryStore {
         let bytes = serde_json::to_vec(&record).map_err(|_| invalid())?;
         file.write_all(&bytes)?;
         file.sync_all()?;
-        #[cfg(unix)]
-        self.directory.try_clone()?.into_std_file().sync_all()?;
+        crate::journal::native::sync_dir(&self.directory)?;
         Ok(Lease { record })
     }
     /// Persist the private stage's physical identity before any payload or
@@ -252,8 +251,7 @@ impl RecoveryStore {
             self.directory.remove_file(format!("{}.stage", record.id))?;
         }
         self.directory.remove_file(filename(record.id))?;
-        #[cfg(unix)]
-        self.directory.try_clone()?.into_std_file().sync_all()?;
+        crate::journal::native::sync_dir(&self.directory)?;
         Ok(())
     }
     pub(crate) fn lease(&self, id: Handle, root: Identity) -> io::Result<Lease> {
