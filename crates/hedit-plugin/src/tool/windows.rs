@@ -180,23 +180,21 @@ pub(super) fn run(
                     stdin.take();
                 }
             }
-            if child.finished(0)? {
-                if out_eof && err_eof {
-                    if !child.success()? {
-                        return Err(io::Error::other(format!(
-                            "Isolated tool exited with status {:#010x}: {:?}",
-                            child.exit_code()?,
-                            String::from_utf8_lossy(&err)
-                        )));
-                    }
-                    if sent != input.len() {
-                        return Err(io::Error::other("Tool input was not delivered."));
-                    }
-                    return Ok(Output {
-                        stdout: out,
-                        stderr: err,
-                    });
+            if child.finished(0)? && out_eof && err_eof {
+                if !child.success()? {
+                    return Err(io::Error::other(format!(
+                        "Isolated tool exited with status {:#010x}: {:?}",
+                        child.exit_code()?,
+                        String::from_utf8_lossy(&err)
+                    )));
                 }
+                if sent != input.len() {
+                    return Err(io::Error::other("Tool input was not delivered."));
+                }
+                return Ok(Output {
+                    stdout: out,
+                    stderr: err,
+                });
             }
             if previous == (sent, out_eof, err_eof, out.len(), err.len()) {
                 std::thread::sleep(Duration::from_millis(5));
