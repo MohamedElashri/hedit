@@ -150,10 +150,9 @@ impl WriteToken {
         let primary = unsafe { owned(handle) }?;
         let mut random = [0u8; 16];
         getrandom::fill(&mut random).map_err(io::Error::other)?;
-        let parts: Vec<_> = random
-            .chunks_exact(4)
-            .map(|bytes| u32::from_le_bytes(bytes.try_into().unwrap()))
-            .collect();
+        let parts: [u32; 4] = std::array::from_fn(|index| {
+            u32::from_le_bytes(random[index * 4..index * 4 + 4].try_into().unwrap())
+        });
         let mut sid = ptr::null_mut();
         check(unsafe {
             ConvertStringSidToSidW(
