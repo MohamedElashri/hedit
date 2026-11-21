@@ -265,19 +265,22 @@ impl Range {
 }
 impl Action {
     pub fn validate(&self, input: &Input) -> Result<(), Error> {
+        self.validate_for(&input.package.snapshot, input.may_edit)
+    }
+    fn validate_for(&self, snapshot: &sdk::Snapshot, may_edit: bool) -> Result<(), Error> {
         match self {
             Self::Edit(transaction) => {
-                if !input.may_edit || transaction.storage.is_some() {
+                if !may_edit || transaction.storage.is_some() {
                     return Err(Error::Worker);
                 }
-                transaction.prepare(&input.package.snapshot)?;
+                transaction.prepare(snapshot)?;
             }
             Self::Select(selection) => {
                 Range {
                     start: selection.anchor.min(selection.head),
                     finish: selection.anchor.max(selection.head),
                 }
-                .validate(&input.package.snapshot)?;
+                .validate(snapshot)?;
             }
             Self::Callback { name, value } => {
                 if !options::valid_id(name) || !value.valid() {
@@ -289,9 +292,9 @@ impl Action {
     }
 }
 impl ActionItem {
-    fn validate(&self, input: &Input) -> Result<(), Error> {
+    fn validate_for(&self, snapshot: &sdk::Snapshot, may_edit: bool) -> Result<(), Error> {
         label(&self.title, 256)?;
-        self.action.validate(input)
+        self.action.validate_for(snapshot, may_edit)
     }
 }
 impl Output {
@@ -304,14 +307,6 @@ impl Output {
         {
             return Err(Error::Worker);
         }
-        if serde_json::to_vec(&self.result)
-            .map_err(|_| Error::Worker)?
-            .len()
-            > MAX_RESULT_BYTES
-        {
-            return Err(Error::ReturnSize);
-        }
-        let snapshot = &input.package.snapshot;
         if input.request.trigger == Trigger::Close {
             return if matches!(self.result, ResultSet::Closed) && self.cache.0.is_empty() {
                 Ok(())
@@ -319,7 +314,24 @@ impl Output {
                 Err(Error::Worker)
             };
         }
-        match (&self.result, input.request.kind) {
+        self.result
+            .validate(&input.package.snapshot, input.request.kind, input.may_edit)
+    }
+}
+impl ResultSet {
+    /// Validate host-produced results with the same document/permission limits
+    /// as worker results, without copying a package or transaction.
+    pub fn validate(
+        &self,
+        snapshot: &sdk::Snapshot,
+        kind: Kind,
+        may_edit: bool,
+    ) -> Result<(), Error> {
+        snapshot.validate()?;
+        if serde_json::to_vec(self).map_err(|_| Error::Worker)?.len() > MAX_RESULT_BYTES {
+            return Err(Error::ReturnSize);
+        }
+        match (self, kind) {
             (ResultSet::Diagnostics(items), Kind::Diagnostics) => {
                 if items.len() > MAX_ITEMS {
                     return Err(Error::ReturnSize);
@@ -331,12 +343,12 @@ impl Output {
                         return Err(Error::ReturnSize);
                     }
                     for action in &item.actions {
-                        action.validate(input)?;
+                        action.validate_for(snapshot, may_edit)?;
                     }
                 }
             }
             (ResultSet::Completions(items), Kind::Completions) => {
-                if !input.may_edit {
+                if !may_edit {
                     return Err(Error::Worker);
                 }
                 if items.len() > MAX_ITEMS {
@@ -364,14 +376,17 @@ impl Output {
                 }
             }
             (ResultSet::Formatting(transaction), Kind::Formatting) => {
-                Action::Edit(transaction.clone()).validate(input)?
+                if !may_edit || transaction.storage.is_some() {
+                    return Err(Error::Worker);
+                }
+                transaction.prepare(snapshot)?;
             }
             (ResultSet::CodeActions(items), Kind::CodeActions) => {
                 if items.len() > MAX_ITEMS {
                     return Err(Error::ReturnSize);
                 }
                 for item in items {
-                    item.validate(input)?;
+                    item.validate_for(snapshot, may_edit)?;
                 }
             }
             (ResultSet::Presentation(ui), Kind::Presentation) => {
@@ -394,7 +409,7 @@ impl Output {
                         return Err(Error::ReturnSize);
                     }
                     for item in &list.items {
-                        item.validate(input)?;
+                        item.validate_for(snapshot, may_edit)?;
                     }
                 }
                 if let Some(prompt) = &ui.input {

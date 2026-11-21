@@ -250,6 +250,18 @@ impl Input {
         }
         if let Some(response) = &self.response {
             response.validate()?;
+            if let Response::LanguageServer { result } = response {
+                let kind = match result.as_ref() {
+                    service::ResultSet::Diagnostics(_) => service::Kind::Diagnostics,
+                    service::ResultSet::Completions(_) => service::Kind::Completions,
+                    service::ResultSet::Hover(_) => service::Kind::Hover,
+                    service::ResultSet::Symbols(_) => service::Kind::Symbols,
+                    service::ResultSet::Formatting(_) => service::Kind::Formatting,
+                    service::ResultSet::CodeActions(_) => service::Kind::CodeActions,
+                    _ => return Err(Error::Worker),
+                };
+                result.validate(&self.package.snapshot, kind, self.may_edit)?;
+            }
         }
         if serde_json::to_vec(self).map_err(|_| Error::Request)?.len() > MAX_MESSAGE_BYTES {
             return Err(Error::Request);
@@ -293,7 +305,12 @@ impl Response {
                 paths.len() <= 256 && paths.iter().all(|path| text(path, 4096))
             }
             Self::Staged { files } | Self::Edited { files } => *files <= 32,
-            Self::LanguageServer { .. } => true, // Validated against the originating document by the host and Output.
+            Self::LanguageServer { result } => {
+                serde_json::to_vec(result)
+                    .map_err(|_| Error::Request)?
+                    .len()
+                    <= service::MAX_RESULT_BYTES
+            }
             _ => true,
         };
         let disclosed: usize = match self {

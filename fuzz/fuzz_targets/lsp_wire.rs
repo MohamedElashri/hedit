@@ -3,8 +3,12 @@ use hedit_core::language_server::wire::{self, Decoder, Limits, READ_BYTES};
 
 libfuzzer_sys::fuzz_target!(|bytes: &[u8]| {
     let limits = Limits::SCOPED;
-    if let Ok(value) = wire::parse_json(bytes, limits) {
-        let frame = wire::encode(&value, limits).unwrap();
+    // A short exponent may normalize into a longer decimal representation.
+    // Encoding has its own byte budget, so not every accepted source JSON
+    // representation can be re-encoded within the same limit.
+    if let Ok((value, frame)) = wire::parse_json(bytes, limits).and_then(|value| {
+        wire::encode(&value, limits).map(|frame| (value, frame))
+    }) {
         let mut decoder = Decoder::new(limits);
         let mut decoded = Vec::new();
         for chunk in frame.chunks(READ_BYTES) {
