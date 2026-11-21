@@ -1,24 +1,31 @@
 use std::{fs, process::Command};
 
-#[test]
-fn developer_cli_packs_checks_and_tests_an_extension() {
+fn prepare_native_cli() {
     #[cfg(target_os = "macos")]
     {
-        let output = Command::new("python3")
-            .arg(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/scripts/macos_plugin_helper.py"
-            ))
-            .arg("--editor")
-            .arg(env!("CARGO_BIN_EXE_hedit"))
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        static READY: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+        READY.get_or_init(|| {
+            let output = Command::new("python3")
+                .arg(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/scripts/macos_plugin_helper.py"
+                ))
+                .arg("--editor")
+                .arg(env!("CARGO_BIN_EXE_hedit"))
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        });
     }
+}
+
+#[test]
+fn developer_cli_packs_checks_and_tests_an_extension() {
+    prepare_native_cli();
 
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("author.json");
@@ -112,17 +119,7 @@ fn developer_cli_packs_checks_and_tests_an_extension() {
 #[test]
 fn scoped_cli_rotates_callbacks_checks_transcripts_and_preserves_legacy_routes() {
     use serde_json::json;
-    #[cfg(target_os = "macos")]
-    assert!(Command::new("python3")
-        .arg(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/scripts/macos_plugin_helper.py"
-        ))
-        .arg("--editor")
-        .arg(env!("CARGO_BIN_EXE_hedit"))
-        .status()
-        .unwrap()
-        .success());
+    prepare_native_cli();
     let directory = tempfile::tempdir().unwrap();
     let manifest = directory.path().join("scoped.json");
     let fixtures = directory.path().join("cases.json");

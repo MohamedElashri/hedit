@@ -97,6 +97,8 @@ fn installed_json_reference_formats_and_keeps_lsp_alive_until_native_revocation(
     let mut document = hedit::document::Document::open(id, &active).unwrap();
     let page = document.page(0).unwrap();
     app.workspace.add(document, page).unwrap();
+    // Complete the initial pane/focus reconciliation before capturing a target.
+    frame(&ctx, &mut app, vec![]);
     app.settings.extensions.preview_edits = false;
     assert!(app.run_extension_by_id(&ctx, "scoped-json.format"));
     pump(&mut app, &ctx, |app| {
