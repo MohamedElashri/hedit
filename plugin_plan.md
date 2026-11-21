@@ -563,9 +563,9 @@ stage gates, with explicit remaining limitations.
 
 ## Completion checklist
 
-- [ ] Stage 1: documented editing SDK, reference plugins, compatible legacy API,
+- [x] Stage 1: documented editing SDK, reference plugins, compatible legacy API,
   native/package validation, and recorded performance baseline.
-- [ ] Stage 2: language/event/presentation interfaces, safe service lifecycle,
+- [x] Stage 2: language/event/presentation interfaces, safe service lifecycle,
   bounded sustained workloads, and native service-policy validation.
 - [ ] Stage 3: scoped workspace/tool/network services, recoverable multi-file
   behavior, reference integrations, and native enforcement across supported OSes.
@@ -603,12 +603,11 @@ include editor process startup, confinement, transport, Lua, and exit. These are
 local synthetic measurements, not a GUI responsiveness or release-build claim.
 The probe records every sample and toolchain/build metadata for reproduction.
 
-The Stage 1 release gate remains open pending native Windows/Linux and universal
-macOS validation of this increment, longer sanitizer fuzz campaigns, separate
-consent/startup/execution/IPC/commit traces, and controlled GUI frame/input and
-allocation/copy measurements. Stages 2 and 3 remain planned and disabled. Do not
-reuse one-shot cumulative CPU limits for a persistent service or widen the
-sandbox to bypass a stage gate.
+Stage 1's native Windows/Linux, universal macOS, sanitizer, numeric tracing, and
+controlled egui CPU-frame/allocation gates have passed on the implementation
+stack. The measurements below state their practical scope. Stage 2 is implemented
+and validated as recorded in the follow-ups; Stage 3 remains unimplemented and
+unavailable. Do not widen isolation to bypass a gate.
 
 ### Stage 1 validation follow-up
 
@@ -625,7 +624,8 @@ stale-result cases over three trials; idle p95 CPU-frame overhead stayed below
 allocation traffic, not OS delivery, GPU presentation, or retained process heap.
 Raw samples, corpus/logs, and environment metadata are retained locally under
 `target/plugin-validation`; reproduction commands are in the SDK reference.
-The instrumentation follow-up must pass CI before closing the Stage 1 gate.
+The instrumentation follow-up and Windows UTF-8 package-test correction passed
+CI. Universal macOS validation of the provider stack also includes this SDK.
 
 ### Stage 2 service policy decision
 
@@ -694,4 +694,8 @@ samples per mode. With no concurrent builds/fuzzing, pooled typing-frame p95 was
 dispatching/cancelling real native callbacks. Individual trials are noisy; this
 is a local CPU-frame/allocation probe, not a physical input/GPU latency guarantee.
 Raw exploratory and final samples are retained under `target/plugin-validation`.
-Universal macOS packaging and final follow-up CI remain open gates.
+Final follow-up `9dd7f7c` passed Linux, macOS, Windows x64/ARM64, remote regressions,
+and universal macOS packaging/extracted-app validation (run `44859211258`). The
+Stage 2 implementation gate is closed; PR #112 remains a draft for review. This
+accepts the documented bounded provider API and measurement scope, not a claim of
+unrestricted editor compatibility. Stage 3 remains required to finish this plan.
