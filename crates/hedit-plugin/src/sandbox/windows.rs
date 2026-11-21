@@ -735,7 +735,18 @@ impl Worker {
             stderr: stderr_reader.map(File::from),
         };
         // RAII owns the kill-on-close job before any verification can fail.
-        require_token(worker.process.as_raw_handle(), Some(worker._profile.sid))?;
+        require_token(worker.process.as_raw_handle(), Some(worker._profile.sid)).map_err(
+            |error| {
+                if native {
+                    io::Error::new(
+                        error.kind(),
+                        format!("Native tool AppContainer verification failed: {error}"),
+                    )
+                } else {
+                    error
+                }
+            },
+        )?;
         if native {
             native::lower_integrity(worker.process.as_raw_handle(), mode)?;
             native::require_token(worker.process.as_raw_handle(), mode)?;

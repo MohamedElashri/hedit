@@ -55,7 +55,7 @@ jobs:
       - name: Probe hostile native images through the production boundary
         run: cargo test --locked -p hedit-plugin --test native_tool
       - name: Verify mandatory integrity against a writable LPAC control
-        if: runner.os == 'Windows'
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
         run: cargo test --locked -p hedit-plugin --lib native_tool_integrity_cannot_be_raised_or_disabled -- --nocapture
 
   windows:

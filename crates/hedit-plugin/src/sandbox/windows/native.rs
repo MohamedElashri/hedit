@@ -67,14 +67,26 @@ pub(super) fn require_token(process: HANDLE, mode: Mode) -> io::Result<()> {
     let token = token(process)?;
     let lpac = token_information(&token, TokenIsLessPrivilegedAppContainer)?;
     let policy = token_information(&token, TokenMandatoryPolicy)?;
-    if lpac[0] != 1 || policy[0] & TOKEN_MANDATORY_POLICY_NO_WRITE_UP as usize == 0 {
-        return Err(denied());
+    if lpac[0] != 1 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "Native tool LPAC verification failed.",
+        ));
+    }
+    if policy[0] & TOKEN_MANDATORY_POLICY_NO_WRITE_UP as usize == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "Native tool mandatory write-up policy verification failed.",
+        ));
     }
     let label = token_information(&token, TokenIntegrityLevel)?;
     let label = unsafe { &*label.as_ptr().cast::<TOKEN_MANDATORY_LABEL>() };
     let expected = integrity_sid(mode.integrity())?;
     if unsafe { EqualSid(label.Label.Sid, expected.0) } == 0 {
-        return Err(denied());
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "Native tool integrity verification failed.",
+        ));
     }
     let mut flags = 0u32;
     check(unsafe {
@@ -86,7 +98,10 @@ pub(super) fn require_token(process: HANDLE, mode: Mode) -> io::Result<()> {
         )
     })?;
     if flags & 1 == 0 {
-        return Err(denied());
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "Native tool Win32k verification failed.",
+        ));
     }
     Ok(())
 }
