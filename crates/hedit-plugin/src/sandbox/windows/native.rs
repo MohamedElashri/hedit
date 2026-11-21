@@ -1,5 +1,6 @@
 //! Stronger token and private-copy permissions for native tool processes.
 use super::*;
+use windows_sys::Win32::System::SystemServices::SE_GROUP_INTEGRITY;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Mode {
@@ -49,7 +50,7 @@ pub(super) fn lower_integrity(process: HANDLE, mode: Mode) -> io::Result<()> {
             .write(TOKEN_MANDATORY_LABEL {
                 Label: SID_AND_ATTRIBUTES {
                     Sid: copied,
-                    Attributes: SE_GROUP_INTEGRITY,
+                    Attributes: SE_GROUP_INTEGRITY as u32,
                 },
             });
     }

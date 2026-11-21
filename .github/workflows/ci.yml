@@ -35,7 +35,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     env:
-      RUSTFLAGS: ${{ runner.os == 'Windows' && '-C target-feature=+crt-static' || '' }}
+      RUSTFLAGS: ${{ startsWith(matrix.runner, 'windows-') && '-C target-feature=+crt-static' || '' }}
     strategy:
       fail-fast: false
       matrix:
