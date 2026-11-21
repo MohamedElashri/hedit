@@ -227,10 +227,13 @@ pub(crate) fn enter() -> io::Result<()> {
             }
         }
     }
-    close_descriptors()
+    close_descriptors_from(2)
 }
 
-fn close_descriptors() -> io::Result<()> {
+pub(crate) fn close_tool_descriptors() -> io::Result<()> {
+    close_descriptors_from(3)
+}
+fn close_descriptors_from(first: i32) -> io::Result<()> {
     // Enumerate actual descriptors instead of assuming RLIMIT_NOFILE covers
     // descriptors inherited before a caller lowered that limit.
     let mut descriptors = vec![
@@ -254,7 +257,7 @@ fn close_descriptors() -> io::Result<()> {
         return Err(denied());
     }
     for descriptor in &descriptors[..bytes as usize / std::mem::size_of::<libc::proc_fdinfo>()] {
-        if descriptor.proc_fd >= 2 {
+        if descriptor.proc_fd >= first {
             // SAFETY: This single-purpose worker no longer uses inherited descriptors.
             unsafe { libc::close(descriptor.proc_fd) };
         }

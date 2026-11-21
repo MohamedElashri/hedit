@@ -171,6 +171,50 @@ Parent-polled limits can overshoot between checks, and per-invocation limits do
 not bound aggregate usage across multiple editor processes. Kernel exploits,
 side channels, and correctness of permitted output remain residual risks.
 
+### Native tool boundary under development
+
+The host-only macOS filter launcher is separate from the Lua helper. Broker tool
+and language-server requests still return unavailable: executable import, grants,
+snapshot construction and the other OS adapters must be completed before those
+capabilities can use this primitive.
+
+Treat the selected native image as hostile code. The trusted host supplies a
+private read-only executable copy and private project snapshot, never a live
+workspace directory. The launcher rejects noncanonical paths, symlink images,
+shared or writable executable files, scripts, excessive arguments and oversized
+metadata. Ownership and source/digest approval remain host responsibilities.
+Workspace writers and other processes running as the user remain outside this
+boundary; private-copy integrity must be checked by the broker before launch.
+
+Before reading document input, a fresh editor process closes inherited
+descriptors, reads at most 16 KiB of policy metadata and applies a fixed Seatbelt
+policy. Only after its ready acknowledgement does the parent deliver text. The
+image receives no ambient environment, network, filesystem writes, child-process
+creation or execution of another image. It can read its own image, the snapshot
+and required system libraries. Same-image exec retains the policy and CPU limit.
+No shell or user-supplied policy text is interpreted.
+
+Four finite filters can run per editor process. Input and stdout are each capped
+at 64 KiB; stderr is capped at 4 KiB and is not rendered as a trusted host error.
+Each run has a maximum ten-second wall deadline, two-second hard CPU limit,
+64-descriptor hard limit, and monitored limits of 256 MiB physical footprint and
+32 threads. Cancellation, protocol failures and resource violations kill and reap
+the process. Sleeping occurs only when no transport progress is possible.
+
+The selected macOS model uses native isolation with monitored limits. Memory and
+thread use can overshoot between observations, and resource pressure can affect
+the host before termination. This is not a hard memory guarantee or a VM boundary.
+The fixed policy uses the system sandbox library's deprecated/private policy
+interface; OS updates may make it unavailable. Initialization errors fail closed,
+and native CI must validate supported macOS versions. This does not broaden the
+signed Lua helper's App Sandbox entitlements.
+
+`crates/hedit-plugin/tests/native_tool.rs` runs the actual native image through
+the production boundary: Unicode/full-size input, literal policy parameters,
+outside reads and symlink escapes, writes and metadata changes, inherited
+descriptors, network attempts, fork, different-image exec, same-image reexec,
+output floods, CPU/memory/thread violations, cancellation and child reaping.
+
 ## Verification and change requirements
 
 | Layer | Regression coverage |
