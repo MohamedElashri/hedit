@@ -15,7 +15,11 @@ fn main() {
     if let Some(success) = hedit_plugin::tool::run_if_requested(&args) {
         std::process::exit(if success { 0 } else { 1 });
     }
-    assert!(args.is_empty());
+    assert!(
+        args.iter()
+            .all(|arg| arg == "--nocapture" || arg == "--test-threads=1"),
+        "unsupported test arguments"
+    );
     let root = tempfile::tempdir().unwrap();
     let config = root.path().join("config");
     std::fs::create_dir(&config).unwrap();
