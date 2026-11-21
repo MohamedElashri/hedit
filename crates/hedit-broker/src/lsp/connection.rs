@@ -1,7 +1,12 @@
 use hedit_core::language_server::wire::{self, Decoder, Limits, READ_BYTES};
 use hedit_plugin::tool::Progress;
 use serde_json::{json, Value};
-use std::{collections::VecDeque, io, sync::atomic::AtomicBool, time::Instant};
+use std::{
+    collections::{BTreeSet, VecDeque},
+    io,
+    sync::atomic::AtomicBool,
+    time::Instant,
+};
 
 const QUEUE_BYTES: usize = 1024 * 1024;
 const MESSAGES: usize = 64;
@@ -72,8 +77,8 @@ struct Frame {
     request: Option<u32>,
 }
 /// One serial JSON-RPC connection. Requests never share an ID, and an error
-/// destroys the native owner. Cancellation cannot leave a late response attached
-/// to a new request. Server requests receive MethodNotFound, never host effects.
+/// destroys the native owner. Superseded IDs remain fenced until their late
+/// reply is discarded; scope cancellation still destroys the owner. Server requests receive MethodNotFound, never host effects.
 pub struct Connection<T: Transport> {
     transport: Option<T>,
     decoder: Decoder,
@@ -86,6 +91,8 @@ pub struct Connection<T: Transport> {
     diagnostic_scope: Option<(String, i32)>,
     idle_messages: usize,
     idle_bytes: usize,
+    retired: BTreeSet<u32>,
+    soft_cancelled: bool,
 }
 fn invalid() -> io::Error {
     io::Error::new(
@@ -107,7 +114,12 @@ impl<T: Transport> Connection<T> {
             diagnostic_scope: None,
             idle_messages: 0,
             idle_bytes: 0,
+            retired: BTreeSet::new(),
+            soft_cancelled: false,
         }
+    }
+    pub(super) fn open(&self) -> bool {
+        self.transport.is_some()
     }
     fn live(&self) -> io::Result<()> {
         self.transport.as_ref().map(|_| ()).ok_or_else(invalid)
@@ -127,6 +139,7 @@ impl<T: Transport> Connection<T> {
             self.queued = 0;
             self.diagnostics.clear();
             self.retained = 0;
+            self.retired.clear();
         }
         result
     }
@@ -159,13 +172,13 @@ impl<T: Transport> Connection<T> {
             if self.initialized || self.next != 0 {
                 return Err(invalid());
             }
-            let result = self.exchange("initialize", params, cancel, deadline)?;
+            let result = self.exchange("initialize", params, cancel, deadline, None)?;
             if !result.get("capabilities").is_some_and(Value::is_object) {
                 return Err(invalid());
             }
             self.initialized = true;
             self.enqueue(&json!({"jsonrpc":"2.0", "method":"initialized", "params":{}}))?;
-            self.pump(None, cancel, deadline)?;
+            self.pump(None, cancel, deadline, None)?;
             Ok(result)
         })();
         self.poison(result)
@@ -184,7 +197,7 @@ impl<T: Transport> Connection<T> {
                 return Err(invalid());
             }
             self.enqueue(&json!({"jsonrpc":"2.0", "method":method.name(), "params":params}))?;
-            self.pump(None, cancel, deadline)?;
+            self.pump(None, cancel, deadline, None)?;
             Ok(())
         })();
         self.poison(result)
@@ -196,12 +209,40 @@ impl<T: Transport> Connection<T> {
         cancel: &AtomicBool,
         deadline: Instant,
     ) -> io::Result<Value> {
+        self.request_with(method, params, cancel, None, deadline)
+    }
+    /// A superseded callback fences its already-delivered request ID and sends
+    /// $/cancelRequest. Scope cancellation and protocol failures still kill.
+    pub fn request_cancellable(
+        &mut self,
+        method: Method,
+        params: Value,
+        cancel: &AtomicBool,
+        superseded: &AtomicBool,
+        deadline: Instant,
+    ) -> io::Result<Value> {
+        self.request_with(method, params, cancel, Some(superseded), deadline)
+    }
+    fn request_with(
+        &mut self,
+        method: Method,
+        params: Value,
+        cancel: &AtomicBool,
+        superseded: Option<&AtomicBool>,
+        deadline: Instant,
+    ) -> io::Result<Value> {
+        self.soft_cancelled = false;
         let result = if self.initialized {
-            self.exchange(method.name(), params, cancel, deadline)
+            self.exchange(method.name(), params, cancel, deadline, superseded)
         } else {
             Err(invalid())
         };
-        self.poison(result)
+        if self.soft_cancelled && !cancel.load(std::sync::atomic::Ordering::Acquire) && self.open()
+        {
+            result
+        } else {
+            self.poison(result)
+        }
     }
     fn exchange(
         &mut self,
@@ -209,6 +250,7 @@ impl<T: Transport> Connection<T> {
         params: Value,
         cancel: &AtomicBool,
         deadline: Instant,
+        superseded: Option<&AtomicBool>,
     ) -> io::Result<Value> {
         self.live()?;
         self.idle_messages = 0;
@@ -221,13 +263,13 @@ impl<T: Transport> Connection<T> {
             .filter(|id| *id <= REQUESTS)
             .ok_or_else(invalid)?;
         self.enqueue(&json!({"jsonrpc":"2.0", "id":self.next, "method":method, "params":params}))?;
-        self.pump(Some(self.next), cancel, deadline)?
+        self.pump(Some(self.next), cancel, deadline, superseded)?
             .ok_or_else(invalid)
     }
     /// Drive idle input on the service's host I/O thread. Callers retain no
     /// authority guard while waiting; raw notifications cannot publish results.
     pub fn idle(&mut self, cancel: &AtomicBool, deadline: Instant) -> io::Result<()> {
-        let result = self.pump(None, cancel, deadline).map(|_| ());
+        let result = self.pump(None, cancel, deadline, None).map(|_| ());
         self.poison(result)
     }
     pub fn take_diagnostics(&mut self) -> VecDeque<Value> {
@@ -269,6 +311,15 @@ impl<T: Transport> Connection<T> {
                     self.diagnostics.push_back(value);
                 }
             } else {
+                if let Some(id) = value
+                    .get("id")
+                    .and_then(Value::as_u64)
+                    .and_then(|id| u32::try_from(id).ok())
+                {
+                    if self.retired.remove(&id) {
+                        continue;
+                    }
+                }
                 if pending.is_none()
                     || response.is_some()
                     || value.get("id").and_then(Value::as_u64) != pending.map(u64::from)
@@ -286,6 +337,7 @@ impl<T: Transport> Connection<T> {
         pending: Option<u32>,
         cancel: &AtomicBool,
         deadline: Instant,
+        superseded: Option<&AtomicBool>,
     ) -> io::Result<Option<Value>> {
         let mut response = None;
         let mut request_sent = pending.is_none();
@@ -306,6 +358,41 @@ impl<T: Transport> Connection<T> {
                     io::ErrorKind::Interrupted,
                     "Scoped language-server request cancelled.",
                 ));
+            }
+            let superseded_now =
+                superseded.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire));
+            if superseded_now {
+                if let Some(id) = pending {
+                    if request_sent {
+                        if response.is_none() {
+                            if self.retired.len() >= 16 {
+                                return Err(invalid());
+                            }
+                            self.retired.insert(id);
+                            self.enqueue(&json!({"jsonrpc":"2.0","method":"$/cancelRequest","params":{"id":id}}))?;
+                        }
+                        self.soft_cancelled = true;
+                        return Err(io::Error::new(
+                            io::ErrorKind::Interrupted,
+                            "Scoped language-server callback superseded.",
+                        ));
+                    }
+                    // An unsent request can be removed. A partially written
+                    // frame must finish under the caller's disclosure guard.
+                    if let Some(index) = self
+                        .queue
+                        .iter()
+                        .position(|frame| frame.request == Some(id) && frame.sent == 0)
+                    {
+                        let frame = self.queue.remove(index).ok_or_else(invalid)?;
+                        self.queued -= frame.bytes.len();
+                        self.soft_cancelled = true;
+                        return Err(io::Error::new(
+                            io::ErrorKind::Interrupted,
+                            "Scoped language-server callback superseded.",
+                        ));
+                    }
+                }
             }
             if Instant::now() >= deadline {
                 return Err(io::Error::new(
@@ -354,6 +441,16 @@ impl<T: Transport> Connection<T> {
                 self.idle_bytes = bytes;
             }
             if self.queue.is_empty() && (pending.is_none() || response.is_some()) {
+                if pending.is_some()
+                    && superseded
+                        .is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire))
+                {
+                    self.soft_cancelled = true;
+                    return Err(io::Error::new(
+                        io::ErrorKind::Interrupted,
+                        "Scoped language-server callback superseded.",
+                    ));
+                }
                 return Ok(response);
             }
             if progress.idle() {

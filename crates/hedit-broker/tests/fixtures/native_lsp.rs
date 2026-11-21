@@ -28,6 +28,7 @@ fn main() {
         let mut body = vec![0; length];
         input.read_exact(&mut body).unwrap();
         let body = String::from_utf8(body).unwrap();
+        if body.contains("\"method\":\"$/cancelRequest\"") { continue; }
         if body.contains("\"method\":\"textDocument/didOpen\"") || body.contains("\"method\":\"textDocument/didChange\"") {
             let next: String = body.split_once("\"version\":").unwrap().1.chars().take_while(char::is_ascii_digit).collect();
             assert_eq!(next.parse::<i32>().unwrap(), version + 1);
@@ -52,6 +53,7 @@ fn main() {
             emit(&mut output, &format!(r#"{{"jsonrpc":"2.0","id":{id},"result":{{"capabilities":{{"hoverProvider":true,"positionEncoding":"utf-16","textDocumentSync":1}}}}}}"#));
             continue;
         }
+        if mode == "late" && requests == 2 { std::thread::sleep(std::time::Duration::from_millis(300)); }
         match mode.as_str() {
             "stall" => { std::thread::sleep(std::time::Duration::from_secs(30)); return; }
             "duplicate" => { emit(&mut output, &format!(r#"{{"jsonrpc":"2.0","id":{id},"result":null,"result":{{}}}}"#)); continue; }
