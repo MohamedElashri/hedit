@@ -63,17 +63,37 @@ pub(super) fn lower_integrity(process: HANDLE, mode: Mode) -> io::Result<()> {
         )
     })
 }
+fn word(token: &OwnedHandle, class: TOKEN_INFORMATION_CLASS) -> io::Result<u32> {
+    let mut value = 0u32;
+    let mut length = 0;
+    check(unsafe {
+        GetTokenInformation(
+            token.as_raw_handle(),
+            class,
+            (&mut value as *mut u32).cast(),
+            mem::size_of_val(&value) as u32,
+            &mut length,
+        )
+    })?;
+    if length != mem::size_of_val(&value) as u32 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Invalid native token scalar length.",
+        ));
+    }
+    Ok(value)
+}
 pub(super) fn require_token(process: HANDLE, mode: Mode) -> io::Result<()> {
     let token = token(process)?;
-    let lpac = token_information(&token, TokenIsLessPrivilegedAppContainer)?;
-    let policy = token_information(&token, TokenMandatoryPolicy)?;
-    if lpac[0] != 1 {
+    let lpac = word(&token, TokenIsLessPrivilegedAppContainer)?;
+    let policy = word(&token, TokenMandatoryPolicy)?;
+    if lpac != 1 {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             "Native tool LPAC verification failed.",
         ));
     }
-    if policy[0] & TOKEN_MANDATORY_POLICY_NO_WRITE_UP as usize == 0 {
+    if policy & TOKEN_MANDATORY_POLICY_NO_WRITE_UP == 0 {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             "Native tool mandatory write-up policy verification failed.",

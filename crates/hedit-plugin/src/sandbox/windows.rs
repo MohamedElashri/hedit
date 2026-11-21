@@ -749,10 +749,29 @@ impl Worker {
         )?;
         if native {
             native::lower_integrity(worker.process.as_raw_handle(), mode)?;
-            native::require_token(worker.process.as_raw_handle(), mode)?;
-            native::require_job(worker.job.as_raw_handle())?;
+            native::require_token(worker.process.as_raw_handle(), mode).map_err(|error| {
+                io::Error::new(
+                    error.kind(),
+                    format!("Native tool token verification failed: {error}"),
+                )
+            })?;
+            native::require_job(worker.job.as_raw_handle()).map_err(|error| {
+                io::Error::new(
+                    error.kind(),
+                    format!("Native tool job verification failed: {error}"),
+                )
+            })?;
         }
-        require_job(worker.job.as_raw_handle())?;
+        require_job(worker.job.as_raw_handle()).map_err(|error| {
+            if native {
+                io::Error::new(
+                    error.kind(),
+                    format!("Native tool process-limit verification failed: {error}"),
+                )
+            } else {
+                error
+            }
+        })?;
         let mut included = 0;
         check(unsafe {
             IsProcessInJob(
