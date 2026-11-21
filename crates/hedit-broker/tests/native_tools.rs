@@ -10,8 +10,14 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
+#[path = "native_tools/lsp.rs"]
+mod native_lsp;
 fn main() {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if args.first().is_some_and(|arg| arg == "--lsp-peer") {
+        native_lsp::peer(args.get(1).and_then(|arg| arg.to_str()).unwrap());
+        return;
+    }
     if let Some(success) = hedit_plugin::run_if_requested(&args) {
         std::process::exit(i32::from(!success));
     }
@@ -101,6 +107,7 @@ fn main() {
     cancel.store(false, Ordering::Release);
     duplex(&state, id, &owner);
     empty(&config.join("extensions-broker/tool-runs"));
+    native_lsp::verify(&state);
     broker_chain(&state, id, token, definition);
     images.remove(id, &owner).unwrap();
     println!("Imported native image: exact Unicode bytes, private run ownership, cancellation and cleanup passed.");
