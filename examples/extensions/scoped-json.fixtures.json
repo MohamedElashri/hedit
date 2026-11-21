@@ -1,0 +1,71 @@
+[
+  {
+    "command": "scoped-json.format",
+    "language": "json",
+    "input": "{\"東京\":\"café\"}",
+    "expected": "{\n  \"東京\": \"café\"\n}\n",
+    "broker": {
+      "exchanges": [
+        {
+          "intent": {
+            "tool": {
+              "profile": "json",
+              "input": "{\"東京\":\"café\"}",
+              "arguments": {}
+            }
+          },
+          "response": {
+            "tool": {
+              "status": 0,
+              "output": "{\n  \"東京\": \"café\"\n}\n"
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "command": "scoped-json.diagnostics",
+    "language": "json",
+    "input": "{\"東京\":\"café\"}",
+    "expected": "{\"東京\":\"café\"}",
+    "selections": [
+      {
+        "anchor": 0,
+        "head": 0
+      }
+    ],
+    "expected_result": {
+      "diagnostics": []
+    },
+    "broker": {
+      "scope": true,
+      "exchanges": [
+        {
+          "intent": {
+            "language_server": {
+              "profile": "json",
+              "method": "diagnostics",
+              "position": 0
+            }
+          },
+          "response": {
+            "language_server": {
+              "result": {
+                "diagnostics": []
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "command": "scoped-json.hover",
+    "language": "json",
+    "input": "private",
+    "expected": "private",
+    "trigger": "close",
+    "expected_result": "closed"
+  }
+]

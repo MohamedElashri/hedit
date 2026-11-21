@@ -73,7 +73,7 @@ impl Stream {
         let mut bytes = (header.len() as u32).to_le_bytes().to_vec();
         bytes.extend(header);
         let mut child = Process::spawn(
-            &std::env::current_exe()?,
+            &crate::tool::launcher()?,
             cancel,
             deadline,
             crate::tool::Role::Service,

@@ -1,0 +1,32 @@
+[
+  {
+    "command": "scoped-markdown-html.convert",
+    "language": "markdown",
+    "input": "Before **café** after",
+    "expected": "Before <p><strong>café</strong></p>\n after",
+    "selections": [
+      {
+        "anchor": 7,
+        "head": 16
+      }
+    ],
+    "broker": {
+      "exchanges": [
+        {
+          "intent": {
+            "https": {
+              "endpoint": "github-markdown",
+              "body": "**café**"
+            }
+          },
+          "response": {
+            "https": {
+              "status": 200,
+              "body": "<p><strong>café</strong></p>\n"
+            }
+          }
+        }
+      ]
+    }
+  }
+]

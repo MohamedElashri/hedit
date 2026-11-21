@@ -2,8 +2,8 @@
 
 Manifest API 5 / SDK 3 adds scoped workspace operations, HTTPS and supervised
 native tools to the shared Lua engine. Commands and providers use the same
-continuation contract. APIs 1–4 retain their existing meanings. Native LSP manager
-activation and final package/reference gates remain under validation on this branch.
+continuation contract. APIs 1–4 retain their existing meanings. The manager supports exact-image filter/LSP selection. Final package and sustained
+performance gates remain under validation on this branch.
 See the [security model](extension-security.md) for enforcement and residuals.
 
 ## Author contract
@@ -117,6 +117,48 @@ approval-store writes. Responses and resource identities are synthetic fixture
 data. Native broker/installed/extracted-package tests separately establish
 confinement and resource-policy behavior.
 
+## Reference integrations
+
+Build the workspace, then use the author CLI to check, test and pack each
+manifest under `examples/extensions`. Install the resulting bundle in Extensions.
+Source approval and each directory/tool/endpoint grant are separate steps.
+
+| Reference | Behavior | Extra resource review |
+| --- | --- | --- |
+| `scoped-json.format` | Formats the current JSON document through the native filter | Select `hedit-json-tools`; literal `--format` |
+| `scoped-json.diagnostics`, `hover`, `symbols` | Persistent JSON diagnostics, project summary and root-key navigation | Select `hedit-json-tools`; literal `--project-lsp`; choose a project directory with discovery/read rights |
+| `scoped-rename.replace` | Reviews ASCII identifier replacement across existing UTF-8 files | Choose a project directory with discovery/read/edit rights |
+| `scoped-markdown-html.convert` | Sends only the selected Markdown to GitHub and replaces that selection with returned HTML source | Approve the exact public GitHub Markdown endpoint |
+
+The native JSON image has no shell, network or child-process interface. The
+project mode reads at most 32 top-level JSON files, each at most 64 KiB, from the
+approved private projection. Hover reports its activation-time project summary;
+live unsaved document changes use the LSP channel. Refresh the provider explicitly
+to rebuild the fixed project copy. This is a bounded reference, without JSON Schema
+completion or cross-file semantic analysis. Formatting sorts object keys, uses
+two-space indentation and appends LF. Invalid/duplicate/over-complex JSON produces
+diagnostics; an unformattable or oversized formatting result produces no edits.
+
+Project replacement is case-sensitive textual identifier replacement, not
+language-aware symbol renaming. It excludes matches adjacent to ASCII identifier
+characters or non-ASCII bytes, refuses truncated search/more than 32 files, and
+uses each opened resource's version. The complete preview and recoverable commit
+flow apply before any file changes. A conflict requires a fresh run; no partial
+search result becomes an accepted plan.
+
+The HTTPS reference uses GitHub's
+[public Markdown raw endpoint](https://docs.github.com/en/rest/markdown/markdown#render-a-markdown-document-in-raw-mode),
+which supports unauthenticated public-resource requests. It transmits the selected
+text only, never an editor path, account token or environment secret. GitHub sees
+that selection and can rate-limit/fail the request; the original document then
+stays unchanged. Returned HTML is inserted as text, never executed or rendered by
+a webview. No credentials are required by these references.
+
+Companion `*.fixtures.json` files test the complete continuation exchanges
+offline, including Unicode and CRLF. Native tests separately run the actual JSON
+image through import, confinement, persistent typed results and cleanup on every
+supported platform.
+
 ## Implementation boundary
 
 The host crate implements scoped workspace access, search, versioned resources,
@@ -142,7 +184,7 @@ resource, revocation and commit checks. Explicit recovery is available in
 Extensions settings. The CLI supports offline continuation transcripts; extracted-package references remain open.
 Native filters require separate image selection and final exact-source resource
 approval. Language-server requests use persistent source/document-bound owners in the host;
-the manager picker stays gated until final installed-reference acceptance. There is no unsandboxed fallback.
+the manager exposes separate exact-image review for these profiles. There is no unsandboxed fallback.
 
 ## Authority and threat model
 
@@ -412,7 +454,8 @@ finite filters: 60 cumulative CPU seconds, a 30-minute wall lifetime, two CPU
 seconds and 8 MiB in each direction per ten-second interval, and no automatic
 restarts. The rolling implementation conservatively retains ten to fifteen
 seconds of charges. See the threat model for platform enforcement and overshoot.
-Installed manager activation and reference/package acceptance remain gated.
+Installed native editor acceptance exercises the formatter and project LSP;
+final extracted-package and sustained UI/load gates remain open.
 
 Run the shared and native continuation tests with:
 

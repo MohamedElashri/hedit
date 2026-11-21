@@ -150,20 +150,25 @@ impl ResourceReview {
                         if ui.button("Review selected image").clicked() { self.tool_action = Some(ToolAction::Inspect(id.clone())); }
                     } else { ui.weak("No executable selected. This tool is denied."); }
                     if tool.workspace { ui.label("Receives a read-only copy of eligible files in the separately selected workspace."); }
-                    else { ui.label("Receives text supplied by the command, with an empty private working directory."); }
+                    else if tool.protocol == hedit_broker::declaration::ToolProtocol::LanguageServer {
+                        ui.label("Receives the current document snapshot in a private working directory.");
+                    } else { ui.label("Receives text supplied by the command, with an empty private working directory."); }
                     let recipe: Vec<_> = tool.arguments.iter().map(|argument| match argument {
                         hedit_broker::declaration::Argument::Literal(value) => format!("{value:?}"),
                         hedit_broker::declaration::Argument::Choice(key) => format!("<{key}: {}>", tool.choices[key].iter().map(|value| serde_json::to_string(value).unwrap_or_default()).collect::<Vec<_>>().join(", ")),
                     }).collect();
                     ui.monospace(format!("Arguments: {}", recipe.join(" ")));
-                    if tool.protocol == hedit_broker::declaration::ToolProtocol::Filter {
-                        ui.horizontal_wrapped(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                             if ui.add_enabled(self.tools.contains_key(id) || self.tools.len() < 8, egui::Button::new("Choose native executable…")).clicked() { self.tool_action = Some(ToolAction::Pick(id.clone())); }
                             if self.tools.contains_key(id) && ui.button("Remove tool access").clicked() { self.tools.remove(id); self.tool_info.remove(id); }
                         });
-                        ui.weak("64 KiB input/output; ten-second wall deadline; two-second CPU budget. Network, child processes and file writes are blocked.");
-                        ui.weak("256 MiB memory and 32 threads. Monitoring and OS enforcement can briefly overshoot their configured limits.");
-                    } else { ui.weak("Language servers are unavailable in this build."); }
+                    if tool.protocol == hedit_broker::declaration::ToolProtocol::Filter {
+                        ui.weak("64 KiB input/output; ten-second wall deadline; two-second CPU budget.");
+                    } else {
+                        ui.weak("Persistent language server: ten-second requests, 30-minute process lifetime, 60 cumulative CPU seconds. Restart explicitly after a failure or exhausted lifetime.");
+                        ui.weak("Rolling limits: two CPU seconds, 8 MiB per transport direction and 4 KiB stderr per ten seconds, conservatively accounted over ten to fifteen seconds.");
+                    }
+                    ui.weak("Network, child processes and file writes are blocked. Memory is limited to 256 MiB and threads to 32; monitored limits can briefly overshoot.");
                     ui.separator();
                 });
             }

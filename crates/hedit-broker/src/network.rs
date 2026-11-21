@@ -273,6 +273,7 @@ async fn transfer(
     let mut response = client
         .request(endpoint.method.clone(), endpoint.url.clone())
         .header(header::ACCEPT_ENCODING, "identity")
+        .header(header::USER_AGENT, "hedit-plugin-broker")
         .header(header::CONTENT_TYPE, endpoint.content_type.header())
         .body(body)
         .send()

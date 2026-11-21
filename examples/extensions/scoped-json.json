@@ -1,0 +1,165 @@
+{
+  "api_version": 5,
+  "sdk_version": 3,
+  "id": "scoped-json",
+  "commands": [
+    {
+      "id": "format",
+      "title": "Format JSON with reviewed native tool",
+      "action": {
+        "kind": "lua",
+        "source": "scoped-json.lua"
+      },
+      "broker": {
+        "capabilities": [
+          "document.read",
+          "document.edit",
+          "tools.run"
+        ],
+        "tools": {
+          "json": {
+            "protocol": "filter",
+            "workspace": false,
+            "arguments": [
+              {
+                "literal": "--format"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "diagnostics",
+      "title": "JSON project diagnostics",
+      "action": {
+        "kind": "lua",
+        "source": "scoped-json.lua"
+      },
+      "broker": {
+        "capabilities": [
+          "document.read",
+          "events.observe",
+          "ui.present",
+          "tools.run",
+          "workspace.discover",
+          "workspace.read"
+        ],
+        "tools": {
+          "json": {
+            "protocol": "language_server",
+            "workspace": true,
+            "arguments": [
+              {
+                "literal": "--project-lsp"
+              }
+            ]
+          }
+        }
+      },
+      "provider": {
+        "kind": "diagnostics",
+        "events": [
+          "open",
+          "change",
+          "manual",
+          "close"
+        ],
+        "may_edit": false
+      },
+      "when": {
+        "languages": [
+          "json"
+        ]
+      }
+    },
+    {
+      "id": "hover",
+      "title": "JSON project summary",
+      "action": {
+        "kind": "lua",
+        "source": "scoped-json.lua"
+      },
+      "broker": {
+        "capabilities": [
+          "document.read",
+          "events.observe",
+          "ui.present",
+          "tools.run",
+          "workspace.discover",
+          "workspace.read"
+        ],
+        "tools": {
+          "json": {
+            "protocol": "language_server",
+            "workspace": true,
+            "arguments": [
+              {
+                "literal": "--project-lsp"
+              }
+            ]
+          }
+        }
+      },
+      "provider": {
+        "kind": "hover",
+        "events": [
+          "selection",
+          "manual",
+          "close"
+        ],
+        "may_edit": false
+      },
+      "when": {
+        "languages": [
+          "json"
+        ]
+      }
+    },
+    {
+      "id": "symbols",
+      "title": "JSON top-level keys",
+      "action": {
+        "kind": "lua",
+        "source": "scoped-json.lua"
+      },
+      "broker": {
+        "capabilities": [
+          "document.read",
+          "events.observe",
+          "ui.present",
+          "tools.run",
+          "workspace.discover",
+          "workspace.read"
+        ],
+        "tools": {
+          "json": {
+            "protocol": "language_server",
+            "workspace": true,
+            "arguments": [
+              {
+                "literal": "--project-lsp"
+              }
+            ]
+          }
+        }
+      },
+      "provider": {
+        "kind": "symbols",
+        "events": [
+          "manual",
+          "close"
+        ],
+        "may_edit": false
+      },
+      "when": {
+        "languages": [
+          "json"
+        ]
+      }
+    }
+  ],
+  "script_files": [
+    "scoped-json.lua"
+  ]
+}

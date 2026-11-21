@@ -307,3 +307,21 @@ fn provider_reference_fixtures_run_with_the_distinct_native_role() {
         4
     );
 }
+
+#[test]
+fn scoped_reference_plugins_pass_offline_continuation_fixtures() {
+    for name in ["scoped-json", "scoped-rename", "scoped-markdown-html"] {
+        let examples = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/extensions");
+        let output = Command::new(prepare())
+            .args(["plugin", "test"])
+            .arg(examples.join(format!("{name}.json")))
+            .arg(examples.join(format!("{name}.fixtures.json")))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{name}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}

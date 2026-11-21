@@ -187,6 +187,34 @@ impl Launch {
         Ok(())
     }
 }
+#[cfg(all(feature = "test-support", unix))]
+static FIXTURE_LAUNCHER: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+/// Native editor acceptance uses the actual editor bootstrap, not libtest's main.
+/// This override is absent from normal application builds and never read from IPC.
+#[cfg(all(feature = "test-support", unix))]
+pub fn fixture_launcher(path: &std::path::Path) -> io::Result<()> {
+    let path = std::fs::canonicalize(path)?;
+    if !std::fs::metadata(&path)?.is_file() {
+        return Err(invalid());
+    }
+    if let Some(previous) = FIXTURE_LAUNCHER.get() {
+        return if *previous == path {
+            Ok(())
+        } else {
+            Err(invalid())
+        };
+    }
+    FIXTURE_LAUNCHER.set(path).map_err(|_| invalid())
+}
+#[cfg(unix)]
+fn launcher() -> io::Result<PathBuf> {
+    #[cfg(feature = "test-support")]
+    if let Some(path) = FIXTURE_LAUNCHER.get() {
+        return Ok(path.clone());
+    }
+    std::env::current_exe()
+}
+
 fn invalid() -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, "Invalid isolated tool launch.")
 }
@@ -218,7 +246,7 @@ pub fn run(
             any(target_arch = "x86_64", target_arch = "aarch64")
         )
     ))]
-    return unix::run(&std::env::current_exe()?, launch, input, cancel, timeout);
+    return unix::run(&launcher()?, launch, input, cancel, timeout);
     #[cfg(windows)]
     return windows::run(launch, input, cancel, timeout);
     #[cfg(not(any(

@@ -254,6 +254,7 @@ mod tests {
                 .map(|parent| parent.join("hedit"))
                 .find(|path| path.is_file())
                 .expect("Build the editor first with make test-macos.");
+            crate::plugin_runtime::tool::fixture_launcher(&editor).unwrap();
             let status = std::process::Command::new("python3")
                 .arg(concat!(
                     env!("CARGO_MANIFEST_DIR"),

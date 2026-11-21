@@ -14,7 +14,13 @@ DOCUMENTATION_FILES = ['README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md', 'CHAN
                      'docs/plugin-services.md', 'docs/plugin-broker.md', 'examples/extensions/demo-visuals.json',
                      'examples/extensions/sdk-trim.json', 'examples/extensions/sdk-trim.fixtures.json',
                      'examples/extensions/markdown-task.json',
-                     'examples/extensions/markdown-quote.json']
+                     'examples/extensions/markdown-quote.json',
+                     'examples/extensions/scoped-json.json', 'examples/extensions/scoped-json.lua',
+                     'examples/extensions/scoped-json.fixtures.json',
+                     'examples/extensions/scoped-rename.json', 'examples/extensions/scoped-rename.lua',
+                     'examples/extensions/scoped-rename.fixtures.json',
+                     'examples/extensions/scoped-markdown-html.json', 'examples/extensions/scoped-markdown-html.lua',
+                     'examples/extensions/scoped-markdown-html.fixtures.json']
 
 def copy_documentation(root, destination):
     destination.mkdir(parents=True, exist_ok=True)

@@ -1,0 +1,35 @@
+{
+  "api_version": 5,
+  "sdk_version": 3,
+  "id": "scoped-rename",
+  "commands": [
+    {
+      "id": "replace",
+      "title": "Review project identifier replacement",
+      "action": {
+        "kind": "lua",
+        "source": "scoped-rename.lua"
+      },
+      "broker": {
+        "capabilities": [
+          "workspace.discover",
+          "workspace.read",
+          "workspace.edit"
+        ]
+      },
+      "arguments": {
+        "from": {
+          "label": "Existing identifier",
+          "default": "old_name"
+        },
+        "to": {
+          "label": "Replacement identifier",
+          "default": "new_name"
+        }
+      }
+    }
+  ],
+  "script_files": [
+    "scoped-rename.lua"
+  ]
+}

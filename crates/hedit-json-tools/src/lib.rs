@@ -1,4 +1,4 @@
-//! Bounded JSON formatting and single-document LSP; no ambient I/O or subprocesses.
+//! Bounded JSON formatting and single-document LSP. Project mode reads only cwd.
 use hedit_protocol::lsp::{self, Decoder, Limits, READ_BYTES};
 use serde_json::{json, Value};
 use std::io::{self, Read, Write};
@@ -175,6 +175,7 @@ struct Server {
     ready: bool,
     shutdown: bool,
     document: Option<Document>,
+    summary: Option<String>,
 }
 impl Server {
     fn message(&mut self, message: Value) -> io::Result<(Option<Value>, bool)> {
@@ -265,7 +266,15 @@ impl Server {
             | "textDocument/formatting"
             | "textDocument/documentSymbol"
             | "textDocument/hover" => {
-                json!({"jsonrpc":"2.0","id":id,"result":document.result(method)?})
+                let mut result = document.result(method)?;
+                if method == "textDocument/hover" && !result.is_null() {
+                    if let Some(summary) = &self.summary {
+                        if let Some(text) = result["contents"]["value"].as_str() {
+                            result["contents"]["value"] = format!("{text}\n{summary}").into();
+                        }
+                    }
+                }
+                json!({"jsonrpc":"2.0","id":id,"result":result})
             }
             _ => {
                 json!({"jsonrpc":"2.0","id":id,"error":{"code":-32601,"message":"Unsupported method"}})
@@ -274,8 +283,62 @@ impl Server {
         Ok((Some(result), false))
     }
 }
-pub fn serve(mut input: impl Read, mut output: impl Write) -> io::Result<()> {
-    let mut server = Server::default();
+pub fn serve(input: impl Read, output: impl Write) -> io::Result<()> {
+    serve_summary(input, output, None)
+}
+/// Summarize at most 32 top-level JSON files in the host's immutable projection.
+pub fn serve_project(input: impl Read, output: impl Write) -> io::Result<()> {
+    serve_summary(
+        input,
+        output,
+        Some(project_summary(std::path::Path::new("."))?),
+    )
+}
+fn project_summary(root: &std::path::Path) -> io::Result<String> {
+    let (mut files, mut valid) = (0usize, 0usize);
+    for (index, entry) in std::fs::read_dir(root)?.enumerate() {
+        if index >= 512 {
+            return Err(invalid());
+        }
+        let entry = entry?;
+        if entry
+            .path()
+            .extension()
+            .is_none_or(|extension| extension != "json")
+        {
+            continue;
+        }
+        if !entry.file_type()?.is_file() {
+            return Err(invalid());
+        }
+        files += 1;
+        if files > 32 || entry.metadata()?.len() > TEXT as u64 {
+            return Err(invalid());
+        }
+        let mut bytes = Vec::new();
+        std::fs::File::open(entry.path())?
+            .take((TEXT + 1) as u64)
+            .read_to_end(&mut bytes)?;
+        if bytes.len() > TEXT {
+            return Err(invalid());
+        }
+        if lsp::parse_data(&bytes, Limits::DATA).is_ok() {
+            valid += 1;
+        }
+    }
+    Ok(format!(
+        "Approved project: {files} top-level JSON files ({valid} valid)"
+    ))
+}
+fn serve_summary(
+    mut input: impl Read,
+    mut output: impl Write,
+    summary: Option<String>,
+) -> io::Result<()> {
+    let mut server = Server {
+        summary,
+        ..Default::default()
+    };
     let mut decoder = Decoder::new(Limits::SCOPED);
     let mut bytes = [0; READ_BYTES];
     let mut messages = 0usize;
