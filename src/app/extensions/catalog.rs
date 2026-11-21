@@ -61,6 +61,7 @@ pub(super) struct LuaCommandStatus {
     pub(super) title: String,
     pub(super) approved: bool,
     pub(super) storage: bool,
+    pub(super) provider: Option<crate::plugin_runtime::service::Definition>,
 }
 
 impl View {
@@ -169,10 +170,11 @@ pub(super) fn read(config: &Path) -> Catalog {
                         }
                         let storage = manifest.uses_storage(&id);
                         LuaCommandStatus {
-                            id,
+                            id: id.clone(),
                             title: title.to_owned(),
                             approved: grant.is_some(),
                             storage,
+                            provider: manifest.provider(&id).cloned(),
                         }
                     })
                     .collect();
@@ -332,8 +334,8 @@ pub(super) fn prepare_one_time(
     let ExtensionAction::Lua(plugin) = &mut contribution.action else {
         return Err("This command does not use Lua.".into());
     };
-    if plugin.storage {
-        return Err("Private storage requires persistent command approval.".into());
+    if plugin.storage || plugin.provider.is_some() {
+        return Err("Private storage and provider sessions require persistent approval.".into());
     }
     plugin.one_time = Some(Arc::new(OneTimeApproval::new(config, &lock)?));
     Ok(contribution)
@@ -415,6 +417,11 @@ pub(super) fn lua_authorization(config: &Path, plugin: &LuaPlugin) -> Option<Fil
     let (installed, _) =
         current_lua_command(config, &plugin.installed_path, id, &grant.command).ok()?;
     grant.matches(&installed).then_some(lock)
+}
+
+pub(super) fn read_consistent(config: &std::path::Path) -> Result<Catalog, String> {
+    let _lock = change_lock(config)?;
+    Ok(read(config))
 }
 
 #[cfg(test)]

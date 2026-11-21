@@ -41,6 +41,12 @@
                   },
                   {
                     "$ref": "#/$defs/fileAction"
+                  },
+                  {
+                    "$ref": "#/$defs/languageAction"
+                  },
+                  {
+                    "$ref": "#/$defs/themeAction"
                   }
                 ]
               },
@@ -415,6 +421,285 @@
         }
       ],
       "x-maxUtf8Bytes": 131072
+    },
+    {
+      "type": "object",
+      "required": [
+        "api_version",
+        "id",
+        "commands",
+        "permissions",
+        "sdk_version"
+      ],
+      "properties": {
+        "api_version": {
+          "const": 4
+        },
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "title",
+              "action"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/id"
+              },
+              "title": {
+                "$ref": "#/$defs/label"
+              },
+              "action": {
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/snippetAction"
+                  },
+                  {
+                    "$ref": "#/$defs/fileAction"
+                  },
+                  {
+                    "$ref": "#/$defs/luaAction"
+                  }
+                ]
+              },
+              "when": {
+                "$ref": "#/$defs/context"
+              },
+              "on_save": {
+                "type": "boolean"
+              },
+              "arguments": {
+                "type": "object",
+                "propertyNames": {
+                  "$ref": "#/$defs/id"
+                },
+                "maxProperties": 16,
+                "additionalProperties": {
+                  "$ref": "#/$defs/argument"
+                }
+              },
+              "private_storage": {
+                "type": "boolean"
+              },
+              "provider": {
+                "type": "object",
+                "required": [
+                  "kind",
+                  "events"
+                ],
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "diagnostics",
+                      "completions",
+                      "hover",
+                      "symbols",
+                      "formatting",
+                      "code_actions",
+                      "presentation"
+                    ]
+                  },
+                  "events": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 6,
+                    "uniqueItems": true,
+                    "items": {
+                      "enum": [
+                        "open",
+                        "change",
+                        "selection",
+                        "save",
+                        "manual",
+                        "close"
+                      ]
+                    }
+                  },
+                  "may_edit": {
+                    "type": "boolean"
+                  },
+                  "priority": {
+                    "type": "integer",
+                    "minimum": -100,
+                    "maximum": 100
+                  },
+                  "debounce_ms": {
+                    "type": "integer",
+                    "minimum": 50,
+                    "maximum": 1000
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "required": [
+                    "arguments"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "action": {
+                      "properties": {
+                        "kind": {
+                          "const": "lua"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "required": [
+                    "private_storage"
+                  ],
+                  "properties": {
+                    "private_storage": {
+                      "const": true
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "action": {
+                      "properties": {
+                        "kind": {
+                          "const": "lua"
+                        }
+                      }
+                    },
+                    "on_save": {
+                      "const": false
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "required": [
+                    "provider"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "action": {
+                      "$ref": "#/$defs/luaAction"
+                    },
+                    "on_save": {
+                      "const": false
+                    }
+                  },
+                  "not": {
+                    "anyOf": [
+                      {
+                        "required": [
+                          "arguments"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "private_storage"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "minItems": 1,
+          "maxItems": 16
+        },
+        "permissions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "document.read",
+              "document.edit",
+              "storage.private",
+              "events.observe",
+              "ui.present"
+            ]
+          },
+          "minItems": 2,
+          "maxItems": 5
+        },
+        "scripts": {
+          "$ref": "#/$defs/luaSources"
+        },
+        "script_files": {
+          "$ref": "#/$defs/luaFiles"
+        },
+        "settings": {
+          "$ref": "#/$defs/settings"
+        },
+        "sdk_version": {
+          "const": 2
+        },
+        "modules": {
+          "$ref": "#/$defs/luaSources"
+        },
+        "module_files": {
+          "$ref": "#/$defs/luaFiles"
+        },
+        "resources": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/id"
+          },
+          "maxProperties": 16,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 16384,
+            "x-maxUtf8Bytes": 16384
+          }
+        },
+        "resource_files": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/id"
+          },
+          "maxProperties": 16,
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,47}\\.(txt|md|json|csv)$"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "scripts"
+          ],
+          "not": {
+            "required": [
+              "script_files"
+            ]
+          }
+        },
+        {
+          "required": [
+            "script_files"
+          ],
+          "not": {
+            "required": [
+              "scripts"
+            ]
+          }
+        }
+      ],
+      "x-maxUtf8Bytes": 131072
     }
   ],
   "$defs": {
@@ -595,6 +880,79 @@
       "additionalProperties": {
         "$ref": "#/$defs/setting"
       }
+    },
+    "languageAction": {
+      "type": "object",
+      "required": [
+        "kind",
+        "definition"
+      ],
+      "properties": {
+        "kind": {
+          "const": "language"
+        },
+        "definition": {
+          "type": "object",
+          "required": [
+            "name",
+            "extensions"
+          ],
+          "properties": {
+            "name": {
+              "$ref": "#/$defs/label"
+            },
+            "extensions": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 16,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z0-9]{1,16}$"
+              }
+            },
+            "keywords": {
+              "type": "array",
+              "maxItems": 256,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,47}$"
+              }
+            },
+            "line_comment": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8
+            },
+            "quoted_strings": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "themeAction": {
+      "type": "object",
+      "required": [
+        "kind",
+        "definition"
+      ],
+      "properties": {
+        "kind": {
+          "const": "theme"
+        },
+        "definition": {
+          "type": "object",
+          "required": [
+            "name"
+          ],
+          "x-parser": "hedit native theme JSON"
+        }
+      },
+      "additionalProperties": false
     }
   }
 }

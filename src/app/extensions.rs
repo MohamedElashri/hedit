@@ -6,6 +6,7 @@ mod lua;
 mod manager;
 mod manifest;
 mod options;
+mod services;
 mod templates;
 
 use super::{snippet_fields, HeditApp};
@@ -20,11 +21,49 @@ pub(super) use manager::Manager;
 use manifest::ExtensionAction;
 pub(super) use manifest::{load, Contribution};
 pub(super) use options::SaveResult;
+pub(super) use services::Services;
 pub(super) use templates::Template;
 
 const MAX_INDENT_BYTES: usize = 4096;
 const MAX_EXPANSION_BYTES: usize = 128 * 1024;
 
+pub(super) fn syntax_for(
+    contributions: &[Contribution],
+    selected: Option<&String>,
+    filename: &str,
+    language: hedit::syntax::Language,
+) -> Option<std::sync::Arc<hedit::syntax::declarative::Definition>> {
+    if let Some(selected) = selected {
+        return contributions.iter().find_map(|item| {
+            if item.id == *selected {
+                if let ExtensionAction::Language(definition) = &item.action {
+                    Some(definition.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        });
+    }
+    (language == hedit::syntax::Language::PlainText)
+        .then(|| {
+            contributions
+                .iter()
+                .filter_map(|item| {
+                    if let ExtensionAction::Language(definition) = &item.action {
+                        definition
+                            .matches(filename)
+                            .then_some((item.id.as_str(), definition))
+                    } else {
+                        None
+                    }
+                })
+                .min_by_key(|item| item.0)
+                .map(|(_, definition)| definition.clone())
+        })
+        .flatten()
+}
 impl HeditApp {
     pub(super) fn extension_commands(&self) -> impl Iterator<Item = &Contribution> {
         let editor = self.active();
@@ -57,9 +96,14 @@ impl HeditApp {
                     ExtensionAction::InsertSnippet { .. } => {
                         editable && editor.view.selections.is_empty()
                     }
-                    ExtensionAction::NewFile { .. } => available,
+                    ExtensionAction::NewFile { .. } | ExtensionAction::Theme(_) => available,
+                    ExtensionAction::Language(_) => editable,
                     ExtensionAction::Lua(ref plugin) => {
                         editable
+                            && plugin.provider.as_ref().is_none_or(|p| {
+                                p.events
+                                    .contains(&crate::plugin_runtime::service::Trigger::Manual)
+                            })
                             && (selection || plugin.sdk)
                             && self.workspace.remote.is_none()
                             && self.lua_transform.is_none()
@@ -95,10 +139,43 @@ impl HeditApp {
             return false;
         };
         match action {
+            ExtensionAction::Language(_) => {
+                self.extension_syntax.retain(|document, _| {
+                    self.workspace
+                        .open
+                        .iter()
+                        .any(|buffer| buffer.page.info.id == *document)
+                });
+                if self.extension_syntax.len() >= 128
+                    && !self
+                        .extension_syntax
+                        .contains_key(&self.active().page.info.id)
+                {
+                    self.error=Some("Close a document with a custom syntax before selecting another (128 active selections).".into());
+                    return true;
+                }
+                self.extension_syntax
+                    .insert(self.active().page.info.id, id.to_owned());
+                ctx.request_repaint();
+            }
+            ExtensionAction::Theme(theme) => {
+                self.appearance.follow_system = false;
+                if theme.dark {
+                    self.appearance.dark = (*theme).clone();
+                } else {
+                    self.appearance.light = (*theme).clone();
+                }
+                self.set_theme(ctx, (*theme).clone());
+                self.sync_theme_settings();
+            }
             ExtensionAction::InsertSnippet { body } => self.run_extension_snippet(&body),
             ExtensionAction::Lua(plugin) => {
                 self.extension_manager.consume_one_time(id);
-                self.start_lua_transform(ctx, id, plugin);
+                if plugin.provider.is_some() {
+                    self.plugin_services.request(id);
+                } else {
+                    self.start_lua_transform(ctx, id, plugin);
+                }
             }
             ExtensionAction::NewFile { body, language } => {
                 self.run_extension_template(ctx, &body, language)

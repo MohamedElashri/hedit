@@ -643,3 +643,27 @@ and restart budgets. A worker cannot choose a weaker role or request another
 provider's cache. Validate this rotating service policy natively on each OS.
 A resident-VM optimization remains a separate policy change, not a prerequisite
 for provider semantics and not an excuse to remove the native CPU ceiling.
+
+### Stage 2 implementation follow-up
+
+Implemented on `v0.7.0/plugin-services` (review/validation pending): manifest API
+4 / SDK 2 with separate provider grants; diagnostics, completions, hover,
+symbols, formatting, code actions and presentation; a coalescing/rate-limited
+scheduler; rotated workers with distinct trusted launch role, bounded readiness
+handshake, lower priority and native limits; explicit per-provider/document cache;
+revision/selection-bound results and expiring typed actions; native results,
+quick lists, inputs, output/status, diagnostic gutter/underlines and annotations;
+and non-executable bounded language/theme packs. Formatting/quick fixes reuse the
+editing SDK validator, approval recheck, review policy and Undo. The manager
+cancels providers before policy mutations; policy watcher failures disable them.
+
+The `document-assist` and `demo-visuals` references use the ordinary public API.
+The macOS workspace suite passed 1,298 tests (62 intentionally ignored), and
+strict all-feature Clippy passed. Native macOS probes include service priority
+and unchanged file/network/descriptor/child restrictions. Reply/role confusion,
+request identity, truncation/duplicate fields, UTF-16, event storms, stale
+completion, cache invalidation, quarantine, revoked quick fixes and Undo have
+regressions. The native service-policy checks on Linux/Windows, controlled active
+provider CPU-frame/allocation evidence, sanitizer follow-up, extracted package
+smokes, and universal macOS validation remain required before closing Stage 2.
+Stage 3 is not implemented or enabled by this change.

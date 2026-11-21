@@ -1,0 +1,101 @@
+[
+  {
+    "command": "document-assist.diagnostics",
+    "input": "café  \n東京\n",
+    "expected": "café  \n東京\n",
+    "expected_cache": {
+      "calls": 1
+    },
+    "expected_result": {
+      "diagnostics": [
+        {
+          "range": {
+            "start": 5,
+            "finish": 7
+          },
+          "severity": "warning",
+          "message": "Trailing whitespace",
+          "actions": [
+            {
+              "title": "Remove trailing whitespace",
+              "action": {
+                "edit": {
+                  "document": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "revision": "0",
+                  "edits": [
+                    {
+                      "start": 5,
+                      "finish": 7,
+                      "text": ""
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "command": "document-assist.hover",
+    "input": "café\r\n東京",
+    "selections": [
+      {
+        "anchor": 10,
+        "head": 10
+      }
+    ],
+    "expected": "café\r\n東京",
+    "expected_result": {
+      "hover": {
+        "range": {
+          "start": 10,
+          "finish": 10
+        },
+        "text": "Line 2, UTF-16 column 2"
+      }
+    }
+  },
+  {
+    "command": "document-assist.navigation",
+    "input": "# One\nbody\n## 東京\n",
+    "expected": "# One\nbody\n## 東京\n",
+    "expected_result": {
+      "presentation": {
+        "status": "Found 2 headings",
+        "output": null,
+        "annotations": [],
+        "quick_list": {
+          "title": "Document headings",
+          "items": [
+            {
+              "title": "One",
+              "action": {
+                "select": {
+                  "anchor": 0,
+                  "head": 5
+                }
+              }
+            },
+            {
+              "title": "東京",
+              "action": {
+                "select": {
+                  "anchor": 11,
+                  "head": 20
+                }
+              }
+            }
+          ]
+        },
+        "input": null
+      }
+    }
+  },
+  {
+    "command": "document-assist.format",
+    "input": "café  \r\n東京 \r\n",
+    "expected": "café\r\n東京\r\n"
+  }
+]

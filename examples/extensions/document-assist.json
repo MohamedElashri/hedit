@@ -1,0 +1,99 @@
+{
+  "api_version": 4,
+  "sdk_version": 2,
+  "id": "document-assist",
+  "permissions": [
+    "document.read",
+    "document.edit",
+    "events.observe",
+    "ui.present"
+  ],
+  "commands": [
+    {
+      "id": "diagnostics",
+      "title": "Whitespace diagnostics",
+      "action": {
+        "kind": "lua",
+        "source": "diagnostics.lua"
+      },
+      "provider": {
+        "kind": "diagnostics",
+        "events": [
+          "open",
+          "change",
+          "close",
+          "manual"
+        ],
+        "may_edit": true
+      }
+    },
+    {
+      "id": "completions",
+      "title": "Document word completions",
+      "action": {
+        "kind": "lua",
+        "source": "completions.lua"
+      },
+      "provider": {
+        "kind": "completions",
+        "events": [
+          "manual"
+        ],
+        "may_edit": true
+      }
+    },
+    {
+      "id": "hover",
+      "title": "Document position information",
+      "action": {
+        "kind": "lua",
+        "source": "hover.lua"
+      },
+      "provider": {
+        "kind": "hover",
+        "events": [
+          "selection",
+          "manual"
+        ],
+        "may_edit": false
+      }
+    },
+    {
+      "id": "navigation",
+      "title": "Navigate Markdown headings",
+      "action": {
+        "kind": "lua",
+        "source": "navigation.lua"
+      },
+      "provider": {
+        "kind": "presentation",
+        "events": [
+          "manual"
+        ],
+        "may_edit": false
+      }
+    },
+    {
+      "id": "format",
+      "title": "Format document whitespace",
+      "action": {
+        "kind": "lua",
+        "source": "format.lua"
+      },
+      "provider": {
+        "kind": "formatting",
+        "events": [
+          "manual"
+        ],
+        "may_edit": true
+      }
+    }
+  ],
+  "scripts": {
+    "diagnostics.lua": "return function(ctx)\n  if ctx.request.trigger == 'close' then return {result='closed'} end\n  local items, offset = {}, 0\n  for line in (ctx.document.text .. '\\n'):gmatch('(.-)\\n') do\n    local start = line:find('[ \\t]+\\r?$')\n    if start and #items < 128 then\n      local finish = offset + #line\n      if line:sub(-1) == '\\r' then finish = finish - 1 end\n      local edit = hedit.transaction({hedit.edit(offset + start - 1, finish, '')})\n      items[#items+1] = {range={start=offset+start-1,finish=finish},severity='warning',message='Trailing whitespace',actions={{title='Remove trailing whitespace',action={edit=edit}}}}\n    end\n    offset = offset + #line + 1\n  end\n  ctx.cache.calls = (ctx.cache.calls or 0) + 1\n  return {cache=ctx.cache,result={diagnostics=items}}\nend",
+    "completions.lua": "return function(ctx)\n  local items, seen = {}, {}\n  for word in ctx.document.text:gmatch('[%a_][%w_]+') do\n    if not seen[word] and #items < 128 then\n      seen[word] = true\n      items[#items+1] = {label=word,range={start=ctx.request.position,finish=ctx.request.position},insert=word}\n    end\n  end\n  return {result={completions=items}}\nend",
+    "hover.lua": "return function(ctx)\n  local p = ctx.request.position\n  local line, col = hedit.to_utf16(p)\n  return {result={hover={range={start=p,finish=p},text=('Line %d, UTF-16 column %d'):format(line+1,col+1)}}}\nend",
+    "navigation.lua": "return function(ctx)\n  local items, offset = {}, 0\n  for line in (ctx.document.text .. '\\n'):gmatch('(.-)\\n') do\n    local title = line:match('^#+%s+(.+)')\n    if title and #items < 128 then items[#items+1]={title=title,action={select={anchor=offset,head=offset+#line}}} end\n    offset = offset + #line + 1\n  end\n  return {result={presentation={status=('Found %d headings'):format(#items),quick_list={title='Document headings',items=items}}}}\nend",
+    "format.lua": "return function(ctx)\n  local text = ctx.document.text:gsub('[ \\t]+(\\r?\\n)', '%1'):gsub('[ \\t]+$', '')\n  return {result={formatting=hedit.replace(text)}}\nend"
+  }
+}

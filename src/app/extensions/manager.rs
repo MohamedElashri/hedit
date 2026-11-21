@@ -65,6 +65,7 @@ enum Review {
 struct Approval {
     sdk: bool,
     storage: bool,
+    provider: Option<crate::plugin_runtime::service::Definition>,
     path: PathBuf,
     extension: String,
     command: String,
@@ -364,6 +365,7 @@ fn installed_row(
                             let approval = Approval {
                                 sdk: lua.sdk,
                                 storage: command.storage,
+                                provider: command.provider.clone(),
                                 path: entry.path.clone(),
                                 extension: details.id.clone(),
                                 command: command.id.clone(),
@@ -430,7 +432,7 @@ impl Review {
             if matches!(self, Self::Approve(_))
                 && ui
                     .add_enabled(
-                        ready && !matches!(self,Self::Approve(approval) if approval.storage),
+                        ready && !matches!(self,Self::Approve(approval) if approval.storage || approval.provider.is_some()),
                         egui::Button::new("Allow once"),
                     )
                     .clicked()
@@ -501,7 +503,21 @@ impl Review {
                 ui.monospace(&approval.command);
                 path_label(ui, "Manifest", &approval.path);
                 ui.label("Approval applies to this command and these exact manifest contents.");
-                requested_permissions(ui, approval.sdk, approval.storage);
+                if let Some(provider) = &approval.provider {
+                    ui.label(format!(
+                        "Provider: {:?}; triggers: {:?}; debounce: {} ms",
+                        provider.kind, provider.events, provider.debounce_ms
+                    ));
+                    ui.label("Reads the eligible active local document and presents native results. Background triggers require this separate approval.");
+                    ui.label(if provider.may_edit {
+                        "May propose document edits for explicit user actions."
+                    } else {
+                        "Cannot edit document text."
+                    });
+                    ui.weak("Each callback uses a fresh isolated worker; private cache is scoped to this grant and active document.");
+                } else {
+                    requested_permissions(ui, approval.sdk, approval.storage);
+                }
                 ui.collapsing("Manifest SHA-256", |ui| {
                     ui.monospace(&approval.digest);
                 });
@@ -621,6 +637,7 @@ impl HeditApp {
                     manager.one_time = None;
                 }
                 self.extensions = catalog.contributions;
+                self.plugin_services.invalidate();
                 self.chord = None;
                 if showing {
                     manager.view = Some(catalog.view);
@@ -662,6 +679,12 @@ impl HeditApp {
         let ctx = ui.ctx();
         if request.is_some() {
             manager.feedback = None;
+        }
+        if matches!(
+            &request,
+            Some(Request::SetEnabled(..) | Request::Revoke(_) | Request::Confirm)
+        ) {
+            self.plugin_services.suspend();
         }
         match request {
             Some(Request::Reload) => manager.reload(ctx, config, true),

@@ -76,6 +76,7 @@ pub(super) fn code_job(
 
 #[derive(Default)]
 pub(super) struct LayoutCache {
+    pub(super) custom: Option<Arc<syntax::declarative::Definition>>,
     entry: Option<Entry>,
     document: Option<(u64, u64)>,
     inactive: Vec<((u64, u64), Entry)>,
@@ -90,6 +91,7 @@ struct HighlightJob {
 }
 
 struct Entry {
+    custom: Option<Arc<syntax::declarative::Definition>>,
     language: Language,
     font: Font,
     wrap_width: f32,
@@ -193,7 +195,22 @@ impl LayoutCache {
         wrap_width: f32,
         theme: &Theme,
     ) -> Arc<Galley> {
-        let runs = self.grammar_runs(ui.ctx(), text, language, theme);
+        let custom_matches = |entry: &Entry| match (&entry.custom, &self.custom) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        };
+        let runs = if let Some(custom) = &self.custom {
+            self.entry
+                .as_ref()
+                .filter(|entry| {
+                    custom_matches(entry) && entry.galley.job.text == text && entry.theme == *theme
+                })
+                .and_then(|entry| entry.runs.clone())
+                .or_else(|| Some(Arc::new(custom.highlight(text, theme))))
+        } else {
+            self.grammar_runs(ui.ctx(), text, language, theme)
+        };
         let pixels_per_point = ui.ctx().pixels_per_point();
         // egui can recreate the font atlas when fonts change or it fills up.
         // A galley's texture coordinates belong to that particular atlas.
@@ -251,6 +268,7 @@ impl LayoutCache {
             }
         });
         self.entry = Some(Entry {
+            custom: self.custom.clone(),
             language,
             font,
             wrap_width,
