@@ -864,6 +864,23 @@ impl Worker {
             _ => Err(io::Error::last_os_error()),
         }
     }
+    pub(crate) fn over_cpu_limit(&self) -> io::Result<bool> {
+        let mut created = FILETIME::default();
+        let mut exited = FILETIME::default();
+        let mut kernel = FILETIME::default();
+        let mut user = FILETIME::default();
+        check(unsafe {
+            GetProcessTimes(
+                self.process.as_raw_handle(),
+                &mut created,
+                &mut exited,
+                &mut kernel,
+                &mut user,
+            )
+        })?;
+        let ticks = u64::from(user.dwHighDateTime) << 32 | u64::from(user.dwLowDateTime);
+        Ok(ticks >= CPU_TICKS as u64)
+    }
     pub(crate) fn success(&self) -> io::Result<bool> {
         Ok(self.exit_code()? == 0)
     }

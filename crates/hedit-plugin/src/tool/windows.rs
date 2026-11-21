@@ -157,8 +157,13 @@ pub(super) fn run(
                 return Err(io::Error::new(io::ErrorKind::TimedOut, "Tool timed out."));
             }
             if accounting.elapsed() >= Duration::from_millis(50) {
-                if !child.finished(0)? && child.over_thread_limit()? {
-                    return Err(io::Error::other("Tool thread limit exceeded."));
+                if !child.finished(0)? {
+                    if child.over_cpu_limit()? {
+                        return Err(io::Error::other("Tool CPU limit exceeded."));
+                    }
+                    if child.over_thread_limit()? {
+                        return Err(io::Error::other("Tool thread limit exceeded."));
+                    }
                 }
                 accounting = Instant::now();
             }

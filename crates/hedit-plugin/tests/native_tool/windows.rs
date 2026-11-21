@@ -98,7 +98,14 @@ pub fn run(args: Vec<std::ffi::OsString>) {
             "threads" => assert_eq!(error.to_string(), "Tool thread limit exceeded."),
             // At 10% CPU, the wall deadline can precede two CPU seconds.
             // A separate native job probe verifies the hard CPU time cap.
-            "spin" => assert_eq!(error.kind(), io::ErrorKind::TimedOut),
+            "spin" => assert!(
+                error.kind() == io::ErrorKind::TimedOut
+                    || error.to_string() == "Tool CPU limit exceeded."
+                    || error
+                        .to_string()
+                        .starts_with("Isolated tool exited with status "),
+                "unexpected spin failure: {error}"
+            ),
             _ => {}
         }
     }

@@ -595,9 +595,15 @@ fn native_tool_cpu_rate_and_time_limits() {
     })
     .unwrap();
     let ticks = u64::from(user.dwHighDateTime) << 32 | u64::from(user.dwLowDateTime);
+    // Windows checks the configured CPU time periodically. Verify native
+    // enforcement, without inventing a maximum kernel overshoot guarantee.
     assert!(
-        (18_000_000..=30_000_000).contains(&ticks),
-        "unexpected native CPU time: {ticks} ticks"
+        ticks >= CPU_TICKS as u64,
+        "native loop exited before its CPU budget: {ticks} ticks"
+    );
+    println!(
+        "Native job CPU time: {ticks} ticks; exit {:#010x}",
+        child.exit_code().unwrap()
     );
     let mut output = String::new();
     child
