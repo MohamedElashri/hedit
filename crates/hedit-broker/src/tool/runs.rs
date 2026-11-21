@@ -119,7 +119,34 @@ pub struct Run {
     lease: Option<File>,
     launch: Launch,
 }
+/// A service retains the private image/snapshot lease through native kill/reap.
+/// Field order intentionally drops the transport before retiring its bundle.
+pub struct Service {
+    transport: hedit_plugin::tool::Stream,
+    _run: Run,
+}
+impl Service {
+    pub fn poll(
+        &mut self,
+        input: &[u8],
+        output: &mut [u8; 4096],
+        cancel: &AtomicBool,
+        deadline: std::time::Instant,
+    ) -> io::Result<hedit_plugin::tool::Progress> {
+        self.transport.poll(input, output, cancel, deadline)
+    }
+    pub fn wait(&self, input_pending: bool) -> io::Result<()> {
+        self.transport.wait(input_pending)
+    }
+}
 impl Run {
+    pub fn service(self, cancel: &AtomicBool, deadline: std::time::Instant) -> io::Result<Service> {
+        let transport = hedit_plugin::tool::Stream::open(&self.launch, cancel, deadline)?;
+        Ok(Service {
+            transport,
+            _run: self,
+        })
+    }
     /// This consuming method retains the private bundle through native kill and
     /// reaping, including cancellation, errors and unwind. No process/path is
     /// exposed to the Lua worker. Persistent services need a separate owner.

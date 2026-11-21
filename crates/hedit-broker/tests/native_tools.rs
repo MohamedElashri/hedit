@@ -99,9 +99,167 @@ fn main() {
     );
     empty(&config.join("extensions-broker/tool-runs"));
     cancel.store(false, Ordering::Release);
+    duplex(&state, id, &owner);
+    empty(&config.join("extensions-broker/tool-runs"));
     broker_chain(&state, id, token, definition);
     images.remove(id, &owner).unwrap();
     println!("Imported native image: exact Unicode bytes, private run ownership, cancellation and cleanup passed.");
+}
+fn duplex(state: &State, image: Handle, binding: &Binding) {
+    use std::time::Instant;
+    let cancel = AtomicBool::new(false);
+    let prepare = || {
+        state
+            .tool_runs()
+            .unwrap()
+            .prepare(
+                state
+                    .tool_store()
+                    .unwrap()
+                    .resolve(image, binding, &cancel)
+                    .unwrap(),
+                Projection::empty(),
+                vec!["--stream".into()],
+                &cancel,
+            )
+            .unwrap()
+    };
+    let start = || {
+        prepare()
+            .service(&cancel, Instant::now() + Duration::from_secs(10))
+            .unwrap()
+    };
+    let mut services = vec![start(), start(), start()];
+    assert_eq!(
+        prepare()
+            .service(&cancel, Instant::now() + Duration::from_secs(10))
+            .err()
+            .unwrap()
+            .kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+    // Three background owners leave a fourth native slot for a foreground filter.
+    let run = state
+        .tool_runs()
+        .unwrap()
+        .prepare(
+            state
+                .tool_store()
+                .unwrap()
+                .resolve(image, binding, &cancel)
+                .unwrap(),
+            Projection::empty(),
+            vec![],
+            &cancel,
+        )
+        .unwrap();
+    assert_eq!(
+        run.filter(b"foreground", &cancel, Duration::from_secs(10))
+            .unwrap()
+            .stdout,
+        b"FOREGROUND"
+    );
+    for round in 0..8 {
+        for service in &mut services {
+            let text = format!("round {round}: café / 東京 / 😀");
+            let mut request = (text.len() as u32).to_le_bytes().to_vec();
+            request.extend(text.as_bytes());
+            let mut sent = 0;
+            let mut response = Vec::new();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let expected = text.to_uppercase();
+            while response.len() < 4 + expected.len() {
+                let mut buffer = [0; 4096];
+                let progress = service
+                    .poll(&request[sent..], &mut buffer, &cancel, deadline)
+                    .unwrap();
+                sent += progress.written;
+                response.extend_from_slice(&buffer[..progress.read]);
+                if progress.idle() {
+                    service.wait(sent < request.len()).unwrap();
+                }
+            }
+            assert_eq!(sent, request.len());
+            assert_eq!(
+                u32::from_le_bytes(response[..4].try_into().unwrap()) as usize,
+                expected.len()
+            );
+            assert_eq!(&response[4..], expected.as_bytes());
+        }
+    }
+    cancel.store(true, Ordering::Release);
+    for service in &mut services {
+        let mut output = [0; 4096];
+        assert_eq!(
+            service
+                .poll(
+                    b"never deliver",
+                    &mut output,
+                    &cancel,
+                    Instant::now() + Duration::from_secs(10)
+                )
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::Interrupted
+        );
+        cancel.store(false, Ordering::Release);
+        assert!(service
+            .poll(
+                b"cannot reuse",
+                &mut output,
+                &cancel,
+                Instant::now() + Duration::from_secs(10)
+            )
+            .is_err());
+        cancel.store(true, Ordering::Release);
+    }
+    drop(services);
+    cancel.store(false, Ordering::Release);
+    drop(start());
+    let mut expired = start();
+    assert_eq!(
+        expired
+            .poll(b"never deliver", &mut [0; 4096], &cancel, Instant::now())
+            .unwrap_err()
+            .kind(),
+        std::io::ErrorKind::TimedOut
+    );
+    assert!(expired
+        .poll(
+            &[],
+            &mut [0; 4096],
+            &cancel,
+            Instant::now() + Duration::from_secs(10)
+        )
+        .is_err());
+    drop(expired);
+    let run = state
+        .tool_runs()
+        .unwrap()
+        .prepare(
+            state
+                .tool_store()
+                .unwrap()
+                .resolve(image, binding, &cancel)
+                .unwrap(),
+            Projection::empty(),
+            vec!["--stderr-flood".into()],
+            &cancel,
+        )
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut noisy = run.service(&cancel, deadline).unwrap();
+    loop {
+        match noisy.poll(&[], &mut [0; 4096], &cancel, deadline) {
+            Ok(_) => noisy.wait(false).unwrap(),
+            Err(error) => {
+                assert_eq!(error.to_string(), "Tool output limit exceeded.");
+                break;
+            }
+        }
+    }
+    drop(noisy);
+    println!("Duplex native transport: repeated Unicode exchanges, foreground reservation, cancellation, poison and lease cleanup passed.");
 }
 fn empty(path: &Path) {
     let names: Vec<_> = std::fs::read_dir(path)

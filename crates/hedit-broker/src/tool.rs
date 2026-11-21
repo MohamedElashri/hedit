@@ -7,7 +7,7 @@ mod store;
 mod trust;
 pub use projection::Projection;
 mod runs;
-pub use runs::{Run, Runs};
+pub use runs::{Run, Runs, Service};
 mod grant;
 pub use grant::Grant;
 pub use store::{Binding, Image, Info, Record, Store};
