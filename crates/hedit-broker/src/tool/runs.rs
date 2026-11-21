@@ -392,8 +392,10 @@ impl Runs {
                 }
                 let lease = store::read(&directory, "lease")?;
                 lease.try_lock().map_err(io::Error::other)?;
-                self.cleanup(&directory, &record)?;
+                // The global lock and retired namespace prevent resurrection;
+                // no open lease handle should interfere with payload deletion.
                 drop(lease);
+                self.cleanup(&directory, &record)?;
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 // Reservation is removed last, after every payload. A crash
@@ -408,6 +410,7 @@ impl Runs {
                         return Err(invalid());
                     }
                     file.try_lock().map_err(io::Error::other)?;
+                    drop(file);
                     directory.remove_file("lease")?;
                 }
             }
