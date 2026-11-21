@@ -105,6 +105,7 @@ fn interrupted_and_oversized_reservations_survive_reopen_without_quota_reset() {
         },
     )
     .unwrap();
+    drop(child);
     assert_eq!(
         store
             .import(source, owner.clone(), &AtomicBool::new(false))
