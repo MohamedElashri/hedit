@@ -63,6 +63,51 @@ pub(super) fn lower_integrity(process: HANDLE, mode: Mode) -> io::Result<()> {
         )
     })
 }
+fn lpac(token: &OwnedHandle) -> io::Result<u32> {
+    // GetTokenInformation rejects this newer class on supported Windows builds;
+    // query the same kernel token field through the trusted ntdll export.
+    type Query = unsafe extern "system" fn(
+        HANDLE,
+        TOKEN_INFORMATION_CLASS,
+        *mut std::ffi::c_void,
+        u32,
+        *mut u32,
+    ) -> i32;
+    let module = unsafe { GetModuleHandleW(wide("ntdll.dll").as_ptr()) };
+    let query = unsafe { GetProcAddress(module, c"NtQueryInformationToken".as_ptr().cast()) }
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::Unsupported,
+                "Native LPAC verification is unavailable.",
+            )
+        })?;
+    let query: Query =
+        unsafe { mem::transmute::<unsafe extern "system" fn() -> isize, Query>(query) };
+    let mut value = 0u32;
+    let mut length = mem::size_of_val(&value) as u32;
+    let status = unsafe {
+        query(
+            token.as_raw_handle(),
+            TokenIsLessPrivilegedAppContainer,
+            (&mut value as *mut u32).cast(),
+            length,
+            &mut length,
+        )
+    };
+    if status < 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("Native LPAC query failed ({:#010x}).", status as u32),
+        ));
+    }
+    if length != mem::size_of_val(&value) as u32 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Invalid LPAC token scalar length.",
+        ));
+    }
+    Ok(value)
+}
 fn word(token: &OwnedHandle, class: TOKEN_INFORMATION_CLASS) -> io::Result<u32> {
     let mut value = 0u32;
     let mut length = mem::size_of_val(&value) as u32;
@@ -91,7 +136,7 @@ fn word(token: &OwnedHandle, class: TOKEN_INFORMATION_CLASS) -> io::Result<u32> 
 }
 pub(super) fn require_token(process: HANDLE, mode: Mode) -> io::Result<()> {
     let token = token(process)?;
-    let lpac = word(&token, TokenIsLessPrivilegedAppContainer)?;
+    let lpac = lpac(&token)?;
     let policy = word(&token, TokenMandatoryPolicy)?;
     if lpac != 1 {
         return Err(io::Error::new(
