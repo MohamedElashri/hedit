@@ -142,10 +142,12 @@ pub(crate) struct Reply {
     pub outcome: Outcome,
 }
 #[derive(Deserialize, Serialize)]
-#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+// External tagging lets serde stream bounded transaction arrays directly;
+// internal tagging would buffer the entire untrusted outcome before validation.
+#[serde(rename_all = "snake_case")]
 pub(crate) enum Outcome {
-    Success { transaction: Transaction },
-    Failure { failure: Failure },
+    Success(Transaction),
+    Failure(Failure),
 }
 
 pub struct Prepared {

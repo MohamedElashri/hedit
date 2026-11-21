@@ -593,7 +593,7 @@ The first Stage 1 increment is implemented on `v0.7.0/plugin-sdk`:
 
 Local macOS validation includes the full workspace regression suite, native
 confinement tests, SDK fixtures, strict all-feature lint, and offline package
-checks. The initial 31-second LLVM coverage campaign completed 332,081 inputs
+checks. The latest 61-second LLVM coverage campaign completed 713,703 inputs
 without a crash; it did not enable AddressSanitizer. On this arm64 development
 build, synthetic host transaction preparation measured p95 of 1–10 microseconds;
 complete CLI fixture invocations measured p95 of 46–62 milliseconds. CLI timings

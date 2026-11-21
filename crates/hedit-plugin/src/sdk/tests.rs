@@ -307,3 +307,17 @@ fn single_edit_results_match_an_independent_character_splice_oracle() {
         }
     }
 }
+
+#[test]
+fn reply_decoder_rejects_excess_edits_before_buffering_or_parsing_their_payload() {
+    let input = invocation("return function(ctx) return hedit.transaction({}) end");
+    let edits = vec![r#"{"start":0,"finish":0,"text":""}"#; MAX_EDITS].join(",");
+    // The 65th value is deliberately truncated. A streaming bounded decoder
+    // rejects the count before looking at this value; buffering would hit EOF.
+    let reply = format!(
+        r#"{{"protocol_version":1,"outcome":{{"success":{{"document":"{}","revision":"42","edits":[{},{{"#,
+        input.snapshot.document, edits
+    );
+    let error = serde_json::from_str::<Reply>(&reply).err().unwrap();
+    assert!(error.to_string().contains("too many entries"), "{error}");
+}

@@ -136,7 +136,8 @@ Administrative access and user-configured backup/sync remain outside this bounda
 ## Confinement and resource limits
 
 Lua exposes a small text-processing library allowlist, with no file, network,
-process, module-loading, dynamic-code-loading, or editor APIs. Source is loaded
+process, filesystem module search, dynamic-code-loading, or editor APIs.
+SDK imports load only reviewed package bytes already delivered by the host. Source is loaded
 as text. Each invocation is limited to 16 MiB of Lua allocations and one million
 instructions. The supervisor allows two seconds for commands and 400 ms for save
 hooks, in addition to native memory and CPU restrictions.

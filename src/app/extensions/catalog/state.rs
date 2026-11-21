@@ -42,12 +42,14 @@ fn directory(config: &Path, create: bool) -> Result<PathBuf, String> {
         Ok(_) => return Err("Private storage requires a regular directory.".into()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             if create {
-                let mut builder = fs::DirBuilder::new();
+                let builder = fs::DirBuilder::new();
                 #[cfg(unix)]
-                {
+                let builder = {
                     use std::os::unix::fs::DirBuilderExt;
-                    builder.mode(0o700);
-                }
+                    let mut owner_only = builder;
+                    owner_only.mode(0o700);
+                    owner_only
+                };
                 builder.create(&path).map_err(|e| e.to_string())?;
             }
         }

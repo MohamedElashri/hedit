@@ -92,5 +92,14 @@ fn sdk_latency_probe() {
         workloads.push(serde_json::json!({"name":name,"snapshot_bytes":text.len(),"edits":count,"host_validation_and_preparation":percentiles(&prepare),"first_cli_invocation_us":invocations[0],"repeated_cli_invocations":percentiles(&invocations[1..])}));
     }
     let rustc = Command::new("rustc").arg("--version").output().unwrap();
-    fs::write(out,serde_json::to_vec_pretty(&serde_json::json!({"os":std::env::consts::OS,"arch":std::env::consts::ARCH,"debug_assertions":cfg!(debug_assertions),"rustc":String::from_utf8_lossy(&rustc.stdout).trim(),"scope":"Synthetic single-command measurements. CLI includes editor process startup, fixture parsing, confinement, IPC, Lua, validation, and process exit. Preparation excludes authorization, GUI, Undo, and commit. First invocation is not a guaranteed filesystem cold start. No UI responsiveness or cross-platform claim.","workloads":workloads})).unwrap()).unwrap();
+    let revision = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    let clean = Command::new("git")
+        .args(["diff", "--quiet", "HEAD"])
+        .status()
+        .unwrap()
+        .success();
+    fs::write(out,serde_json::to_vec_pretty(&serde_json::json!({"os":std::env::consts::OS,"arch":std::env::consts::ARCH,"debug_assertions":cfg!(debug_assertions),"revision":String::from_utf8_lossy(&revision.stdout).trim(),"working_tree_dirty":!clean,"rustc":String::from_utf8_lossy(&rustc.stdout).trim(),"scope":"Synthetic single-command measurements. CLI includes editor process startup, fixture parsing, confinement, IPC, Lua, validation, and process exit. Preparation excludes authorization, GUI, Undo, and commit. First invocation is not a guaranteed filesystem cold start. No UI responsiveness or cross-platform claim.","workloads":workloads})).unwrap()).unwrap();
 }

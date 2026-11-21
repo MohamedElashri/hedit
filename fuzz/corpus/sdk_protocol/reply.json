@@ -1,1 +1,1 @@
-{"protocol_version": 1, "outcome": {"status": "success", "transaction": {"document": "0123456789abcdef0123456789abcdef", "revision": "42", "edits": [{"start": 0, "finish": 0, "text": "\u2192 "}]}}}
+{"protocol_version": 1, "outcome": {"success": {"document": "0123456789abcdef0123456789abcdef", "revision": "42", "edits": [{"start": 0, "finish": 0, "text": "\u2192 "}]}}}

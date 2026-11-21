@@ -1,4 +1,4 @@
-//! A script gets selected text and can propose one normal editor edit.
+//! Confined Lua proposals, host review, authorization rechecks, and atomic effects.
 use super::{
     activity::{Invocation, InvocationOutcome},
     catalog,
@@ -948,57 +948,72 @@ mod tests {
     }
     #[test]
     fn sdk_storage_only_transactions_persist_without_mutating_document_or_revision() {
-        let config = tempfile::tempdir().unwrap();
-        let (_session, ctx, mut app) = sdk_app(config.path(), "private fixture");
-        let path = config.path().join("extensions/sdk-markdown.json");
-        let mut manifest: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        manifest["permissions"]
-            .as_array_mut()
-            .unwrap()
-            .push("storage.private".into());
-        manifest["commands"][0]["private_storage"] = true.into();
-        std::fs::write(&path, manifest.to_string()).unwrap();
-        let catalog = catalog::set_lua_approved(
-            config.path(),
-            &path,
-            "sdk-markdown",
-            "sdk-markdown.prefix",
-            &super::super::manifest::digest(manifest.to_string()),
-            true,
-        )
-        .unwrap();
-        app.extensions = catalog.contributions;
-        let super::super::ExtensionAction::Lua(plugin) = &app.extensions[0].action else {
-            unreachable!()
-        };
-        let plugin = plugin.clone();
-        let revision = app.active().page.info.revision;
-        let mut proposal = app
-            .lua_proposal("sdk-markdown.prefix", plugin.clone())
+        for conflicting in [false, true] {
+            let config = tempfile::tempdir().unwrap();
+            let (_session, ctx, mut app) = sdk_app(config.path(), "private fixture");
+            let path = config.path().join("extensions/sdk-markdown.json");
+            let mut manifest: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            manifest["permissions"]
+                .as_array_mut()
+                .unwrap()
+                .push("storage.private".into());
+            manifest["commands"][0]["private_storage"] = true.into();
+            std::fs::write(&path, manifest.to_string()).unwrap();
+            let catalog = catalog::set_lua_approved(
+                config.path(),
+                &path,
+                "sdk-markdown",
+                "sdk-markdown.prefix",
+                &super::super::manifest::digest(manifest.to_string()),
+                true,
+            )
             .unwrap();
-        proposal.storage = Some(catalog::read_state(config.path(), &plugin).unwrap());
-        let snapshot = proposal.snapshot.as_ref().unwrap();
-        let values = plugin_runtime::sdk::Storage(
-            [("count".into(), hedit::plugin_options::Value::Integer(1))].into(),
-        );
-        let transaction = plugin_runtime::sdk::Transaction {
-            document: snapshot.document.clone(),
-            revision: snapshot.revision.clone(),
-            edits: vec![],
-            selections: None,
-            storage: Some(values.clone()),
-        };
-        app.lua_transform = Some(LuaTransform {
-            proposal,
-            phase: Phase::SdkRunning(plugin_runtime::RunningSdk::from_test_result(Ok(
-                transaction,
-            ))),
-        });
-        finish_transform(&mut app, &ctx);
-        assert_eq!(app.active().page.text, "private fixture");
-        assert_eq!(app.active().page.info.revision, revision);
-        assert_eq!(catalog::read_state(config.path(), &plugin).unwrap(), values);
+            app.extensions = catalog.contributions;
+            let super::super::ExtensionAction::Lua(plugin) = &app.extensions[0].action else {
+                unreachable!()
+            };
+            let plugin = plugin.clone();
+            let revision = app.active().page.info.revision;
+            let mut proposal = app
+                .lua_proposal("sdk-markdown.prefix", plugin.clone())
+                .unwrap();
+            proposal.storage = Some(catalog::read_state(config.path(), &plugin).unwrap());
+            let snapshot = proposal.snapshot.as_ref().unwrap();
+            let values = plugin_runtime::sdk::Storage(
+                [("count".into(), hedit::plugin_options::Value::Integer(1))].into(),
+            );
+            let transaction = plugin_runtime::sdk::Transaction {
+                document: snapshot.document.clone(),
+                revision: snapshot.revision.clone(),
+                edits: vec![],
+                selections: None,
+                storage: Some(values.clone()),
+            };
+            app.lua_transform = Some(LuaTransform {
+                proposal,
+                phase: Phase::SdkRunning(plugin_runtime::RunningSdk::from_test_result(Ok(
+                    transaction,
+                ))),
+            });
+            let concurrent = plugin_runtime::sdk::Storage(
+                [("count".into(), hedit::plugin_options::Value::Integer(99))].into(),
+            );
+            if conflicting {
+                let _authority = catalog::lua_authorization(config.path(), &plugin).unwrap();
+                catalog::write_state(config.path(), &plugin, &concurrent).unwrap();
+            }
+            finish_transform(&mut app, &ctx);
+            assert_eq!(app.active().page.text, "private fixture");
+            assert_eq!(app.active().page.info.revision, revision);
+            assert_eq!(
+                catalog::read_state(config.path(), &plugin).unwrap(),
+                if conflicting { concurrent } else { values }
+            );
+            if conflicting {
+                assert!(app.error.as_ref().unwrap().contains("storage changed"));
+            }
+        }
     }
 
     #[test]

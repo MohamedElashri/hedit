@@ -1,1 +1,1 @@
-{"protocol_version": 1, "outcome": {"status": "failure", "failure": {"kind": "syntax", "location": {"script": "plugin", "line": 1}}}}
+{"protocol_version": 1, "outcome": {"failure": {"kind": "syntax", "location": {"script": "plugin", "line": 1}}}}

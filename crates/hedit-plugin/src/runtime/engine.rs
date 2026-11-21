@@ -70,14 +70,14 @@ pub(super) fn decode_sdk_reply(
         return Err(Error::Worker.into());
     }
     match reply.outcome {
-        crate::sdk::Outcome::Success { transaction } => {
+        crate::sdk::Outcome::Success(transaction) => {
             if transaction.storage.is_some() && input.storage.is_none() {
                 return Err(Error::Worker.into());
             }
             transaction.prepare(&input.snapshot)?;
             Ok(transaction)
         }
-        crate::sdk::Outcome::Failure { failure } => {
+        crate::sdk::Outcome::Failure(failure) => {
             failure.validate(input)?;
             Err(failure)
         }
@@ -102,13 +102,11 @@ fn run_helper_io(isolated: bool, input: impl Read, mut output: impl Write) -> bo
                     crate::sdk::lua::evaluate_detailed(lua, environment, input, location.clone())
                 });
                 let outcome = match result {
-                    Ok(transaction) => crate::sdk::Outcome::Success { transaction },
-                    Err(error) => crate::sdk::Outcome::Failure {
-                        failure: crate::sdk::Failure::evaluation(
-                            error,
-                            location.borrow_mut().take(),
-                        ),
-                    },
+                    Ok(transaction) => crate::sdk::Outcome::Success(transaction),
+                    Err(error) => crate::sdk::Outcome::Failure(crate::sdk::Failure::evaluation(
+                        error,
+                        location.borrow_mut().take(),
+                    )),
                 };
                 serde_json::to_vec(&crate::sdk::Reply {
                     protocol_version: 1,
@@ -282,7 +280,7 @@ mod tests {
     #[test]
     fn sdk_reply_binds_protocol_target_authority_and_diagnostic_locations() {
         let input = sdk_input();
-        let valid = serde_json::json!({"protocol_version":1,"outcome":{"status":"success","transaction":{"document":input.snapshot.document,"revision":"1","edits":[]}}});
+        let valid = serde_json::json!({"protocol_version":1,"outcome":{"success":{"document":input.snapshot.document,"revision":"1","edits":[]}}});
         let bytes = serde_json::to_vec(&valid).unwrap();
         assert!(decode_sdk_reply(&input, &bytes).is_ok());
         for index in 0..bytes.len() {
@@ -298,7 +296,7 @@ mod tests {
             if path == "protocol_version" {
                 reply[path] = value;
             } else {
-                reply["outcome"]["transaction"][path] = value;
+                reply["outcome"]["success"][path] = value;
             }
             assert!(decode_sdk_reply(&input, &serde_json::to_vec(&reply).unwrap()).is_err());
         }
@@ -309,11 +307,11 @@ mod tests {
             ("plugin", 2, false),
             ("../plugin", 1, false),
         ] {
-            let reply = serde_json::json!({"protocol_version":1,"outcome":{"status":"failure","failure":{"kind":"syntax","location":{"script":script,"line":line}}}});
+            let reply = serde_json::json!({"protocol_version":1,"outcome":{"failure":{"kind":"syntax","location":{"script":script,"line":line}}}});
             let error = decode_sdk_reply(&input, &serde_json::to_vec(&reply).unwrap()).unwrap_err();
             assert_eq!(error.location.is_some(), accepted);
             assert!(!error.to_string().contains("private fixture"));
         }
-        assert!(decode_sdk_reply(&input, br#"{"protocol_version":1,"protocol_version":1,"outcome":{"status":"failure","failure":{"kind":"syntax"}}}"#).is_err());
+        assert!(decode_sdk_reply(&input, br#"{"protocol_version":1,"protocol_version":1,"outcome":{"failure":{"kind":"syntax"}}}"#).is_err());
     }
 }
