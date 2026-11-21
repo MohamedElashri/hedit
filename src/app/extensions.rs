@@ -58,9 +58,9 @@ impl HeditApp {
                         editable && editor.view.selections.is_empty()
                     }
                     ExtensionAction::NewFile { .. } => available,
-                    ExtensionAction::Lua(_) => {
+                    ExtensionAction::Lua(ref plugin) => {
                         editable
-                            && selection
+                            && (selection || plugin.sdk)
                             && self.workspace.remote.is_none()
                             && self.lua_transform.is_none()
                             && crate::plugin_runtime::SUPPORTED

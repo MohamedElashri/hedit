@@ -47,24 +47,65 @@ pub(super) fn supervise(
     timeout: Duration,
     approval: Option<File>,
 ) -> Result<Vec<u8>, Error> {
-    supervise_verified(
+    supervise_profiled(
+        executable,
+        request,
+        cancelled,
+        timeout,
+        approval,
+        &Default::default(),
+    )
+}
+pub(super) fn supervise_profiled(
+    executable: &Path,
+    request: Vec<u8>,
+    cancelled: &AtomicBool,
+    timeout: Duration,
+    approval: Option<File>,
+    trace: &crate::telemetry::Recorder,
+) -> Result<Vec<u8>, Error> {
+    supervise_traced(
         executable,
         request,
         cancelled,
         timeout,
         approval,
         crate::sandbox::verify_child,
+        trace,
     )
 }
 
+#[cfg(test)]
 fn supervise_verified(
+    executable: &Path,
+    request: Vec<u8>,
+    cancelled: &AtomicBool,
+    timeout: Duration,
+    approval: Option<File>,
+    verify: impl FnOnce(&Child) -> io::Result<()>,
+) -> Result<Vec<u8>, Error> {
+    supervise_traced(
+        executable,
+        request,
+        cancelled,
+        timeout,
+        approval,
+        verify,
+        &Default::default(),
+    )
+}
+fn supervise_traced(
     executable: &Path,
     request: Vec<u8>,
     cancelled: &AtomicBool,
     timeout: Duration,
     mut approval: Option<File>,
     verify: impl FnOnce(&Child) -> io::Result<()>,
+    trace: &crate::telemetry::Recorder,
 ) -> Result<Vec<u8>, Error> {
+    use crate::telemetry::Phase;
+    let started = Instant::now();
+    let mut delivered = None;
     if cancelled.load(Ordering::Relaxed) {
         return Err(Error::Cancelled);
     }
@@ -81,6 +122,8 @@ fn supervise_verified(
             .map_err(|_| Error::Worker)?,
     );
     verify(&child.0).map_err(|_| Error::Sandbox)?;
+    trace.record(Phase::Startup, started.elapsed());
+    let transfer_started = Instant::now();
     let input = child.0.stdin.take().ok_or(Error::Worker)?;
     let output = child.0.stdout.take().ok_or(Error::Worker)?;
     set_nonblocking(&input)?;
@@ -116,6 +159,10 @@ fn supervise_verified(
         // Serialize revocation with delivery of the selection to the worker.
         // Once delivery ends, a revoke can proceed while computation runs.
         if input.is_none() {
+            if delivered.is_none() {
+                trace.record(Phase::Delivery, transfer_started.elapsed());
+                delivered = Some(Instant::now());
+            }
             drop(approval.take());
         }
         let mut status = child.0.try_wait().map_err(|_| Error::Worker)?;
@@ -173,6 +220,9 @@ fn supervise_verified(
         };
     }
 
+    if let Some(delivered) = delivered {
+        trace.record(Phase::Transport, delivered.elapsed());
+    }
     super::protocol::worker_reply(reply, sent == request.len())
 }
 

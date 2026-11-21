@@ -63,6 +63,8 @@ enum Review {
 }
 
 struct Approval {
+    sdk: bool,
+    storage: bool,
     path: PathBuf,
     extension: String,
     command: String,
@@ -360,6 +362,8 @@ fn installed_row(
                         };
                         if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
                             let approval = Approval {
+                                sdk: lua.sdk,
+                                storage: command.storage,
                                 path: entry.path.clone(),
                                 extension: details.id.clone(),
                                 command: command.id.clone(),
@@ -425,7 +429,10 @@ impl Review {
             }
             if matches!(self, Self::Approve(_))
                 && ui
-                    .add_enabled(ready, egui::Button::new("Allow once"))
+                    .add_enabled(
+                        ready && !matches!(self,Self::Approve(approval) if approval.storage),
+                        egui::Button::new("Allow once"),
+                    )
                     .clicked()
             {
                 return Some(ReviewChoice::Once);
@@ -481,7 +488,7 @@ impl Review {
                     ui.label("Commands in this manifest");
                     command_list(ui, &review.preview.commands);
                     if review.preview.lua {
-                        requested_permissions(ui);
+                        requested_permissions(ui, review.preview.sdk, review.preview.storage);
                         ui.weak("Approve each Lua command separately after installation.");
                     }
                 } else {
@@ -494,7 +501,7 @@ impl Review {
                 ui.monospace(&approval.command);
                 path_label(ui, "Manifest", &approval.path);
                 ui.label("Approval applies to this command and these exact manifest contents.");
-                requested_permissions(ui);
+                requested_permissions(ui, approval.sdk, approval.storage);
                 ui.collapsing("Manifest SHA-256", |ui| {
                     ui.monospace(&approval.digest);
                 });
@@ -529,8 +536,16 @@ fn release_details(ui: &mut egui::Ui, release: &super::distribution::Release) {
     });
 }
 
-fn requested_permissions(ui: &mut egui::Ui) {
+fn requested_permissions(ui: &mut egui::Ui, sdk: bool, storage: bool) {
     ui.strong("Requested permissions");
+    if sdk {
+        ui.label("Read the whole current local document, up to 64 KiB.");
+        ui.label("Propose edits and selections anywhere in that document.");
+        if storage {
+            ui.label("Read and update private command storage. Revoking approval clears it.");
+        }
+        return;
+    }
     ui.label("Read the selected text in a local editor.");
     ui.label("Replace that selection when this command is run.");
 }

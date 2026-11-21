@@ -27,7 +27,7 @@ pub(in crate::app::extensions) struct Grant {
     digest: String,
     manifest: String,
     identity: FileIdentity,
-    capabilities: [manifest::Permission; 2],
+    capabilities: Vec<manifest::Permission>,
     token: [u8; 16],
 }
 
@@ -41,12 +41,17 @@ impl Grant {
             .ok_or("The installed Lua manifest needs a UTF-8 JSON filename.")?;
         let mut token = [0; 16];
         getrandom::fill(&mut token).map_err(|_| "Could not generate a Lua approval token.")?;
+        let capabilities = installed
+            .capabilities
+            .get(&command)
+            .cloned()
+            .ok_or("This command has no executable permissions.")?;
         Ok(Self {
             command,
             digest: installed.digest.clone(),
             manifest: manifest.to_owned(),
             identity: installed.identity.clone(),
-            capabilities: manifest::LUA_CAPABILITIES,
+            capabilities,
             token,
         })
     }
@@ -62,7 +67,7 @@ impl Grant {
         installed.path.file_name() == Some(OsStr::new(&self.manifest))
             && self.digest == installed.digest
             && self.identity == installed.identity
-            && self.capabilities == manifest::LUA_CAPABILITIES
+            && installed.capabilities.get(&self.command) == Some(&self.capabilities)
     }
 }
 
@@ -196,7 +201,7 @@ impl Grants {
             if !super::super::valid_command_id(&grant.command)
                 || !valid_digest(&grant.digest)
                 || !valid_filename(&grant.manifest)
-                || grant.capabilities != manifest::LUA_CAPABILITIES
+                || !manifest::valid_capabilities(&grant.capabilities)
                 || commands.insert(grant.command.clone(), grant).is_some()
             {
                 return Err("Invalid Lua command approvals.".into());
@@ -206,11 +211,21 @@ impl Grants {
     }
 
     pub(super) fn write(self, config: &Path) -> Result<(), String> {
+        let active = self
+            .commands
+            .values()
+            .filter(|g| {
+                g.capabilities
+                    .contains(&manifest::Permission::PrivateStorage)
+            })
+            .map(Grant::approval_id)
+            .collect();
         let document = GrantDocument {
             version: GRANTS_VERSION,
             grants: self.commands.into_values().collect(),
         };
         hedit::projects::atomic_json(&config.join(GRANTS_FILE), &document)?;
+        super::state::prune(config, &active)?;
         #[cfg(target_os = "linux")]
         File::open(config)
             .and_then(|directory| directory.sync_all())
@@ -270,7 +285,7 @@ fn read_optional<T: serde::de::DeserializeOwned>(
     }
 }
 
-fn verify_grant_owner(file: &File) -> Result<(), String> {
+pub(super) fn verify_grant_owner(file: &File) -> Result<(), String> {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         use std::os::unix::fs::MetadataExt as _;
@@ -314,7 +329,7 @@ pub(super) fn change_lock(config: &Path) -> Result<File, String> {
     Ok(file)
 }
 
-fn open_leaf(path: &Path, options: &mut OpenOptions) -> io::Result<File> {
+pub(super) fn open_leaf(path: &Path, options: &mut OpenOptions) -> io::Result<File> {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         use rustix::fs::OFlags;

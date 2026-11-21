@@ -43,6 +43,50 @@ pub(super) fn input(
     }
 }
 
+pub(super) fn sdk_snapshot(
+    language: &str,
+    text: String,
+    selections: Vec<plugin_runtime::sdk::Selection>,
+    crlf: bool,
+) -> Result<plugin_runtime::sdk::Snapshot, plugin_runtime::Error> {
+    let mut nonce = [0; 16];
+    getrandom::fill(&mut nonce).map_err(|_| plugin_runtime::Error::Initialization)?;
+    let snapshot = plugin_runtime::sdk::Snapshot {
+        document: hex::encode(nonce),
+        revision: "0".into(),
+        language: language.into(),
+        text,
+        selections,
+        crlf,
+    };
+    snapshot.validate()?;
+    Ok(snapshot)
+}
+
+pub(super) fn sdk_input(
+    options: &Options,
+    plugin: &LuaPlugin,
+    snapshot: plugin_runtime::sdk::Snapshot,
+    arguments: std::collections::BTreeMap<String, Value>,
+    storage: Option<plugin_runtime::sdk::Storage>,
+) -> plugin_runtime::sdk::Input {
+    let settings = input(options, plugin, &snapshot.language, vec![]).settings;
+    plugin_runtime::sdk::Input {
+        sdk_version: plugin_runtime::sdk::VERSION,
+        modules: plugin
+            .modules
+            .iter()
+            .map(|(k, v)| (k.clone(), v.to_string()))
+            .collect(),
+        resources: plugin.resources.as_ref().clone(),
+        source: plugin.source.to_string(),
+        snapshot,
+        settings,
+        arguments,
+        storage,
+    }
+}
+
 pub(in crate::app) struct SaveResult {
     id: u64,
     revision: u64,
@@ -284,7 +328,7 @@ impl HeditApp {
     }
 }
 
-fn setting_control(ui: &mut egui::Ui, label: &str, value: &mut Value) -> bool {
+pub(super) fn setting_control(ui: &mut egui::Ui, label: &str, value: &mut Value) -> bool {
     match value {
         Value::Boolean(value) => ui.checkbox(value, label).changed(),
         Value::Integer(value) => {
@@ -322,9 +366,33 @@ fn run_hook(
     let Some((authority, options)) = approved() else {
         return Err(InvocationOutcome::Denied);
     };
-    let replacement =
+    let replacement = if plugin.sdk {
+        let len = text.len();
+        let crlf = text.contains("\r\n");
+        let snapshot = sdk_snapshot(
+            language,
+            text,
+            vec![plugin_runtime::sdk::Selection {
+                anchor: 0,
+                head: len,
+            }],
+            crlf,
+        )
+        .map_err(InvocationOutcome::worker_failure)?;
+        let arguments = plugin
+            .arguments
+            .iter()
+            .map(|(key, definition)| (key.clone(), definition.default.clone()))
+            .collect();
+        plugin_runtime::run_sdk_save(
+            sdk_input(&options, plugin, snapshot, arguments, None),
+            authority,
+        )
+        .map_err(|error| InvocationOutcome::worker_failure(error.kind))
+    } else {
         plugin_runtime::run_save(input(&options, plugin, language, vec![text]), authority)
-            .map_err(InvocationOutcome::worker_failure)?;
+            .map_err(InvocationOutcome::worker_failure)
+    }?;
     let (authority, _) = approved().ok_or(InvocationOutcome::Denied)?;
     Ok((replacement, authority))
 }

@@ -1,0 +1,22 @@
+{
+  "api_version": 3,
+  "sdk_version": 1,
+  "id": "sdk-table",
+  "permissions": [
+    "document.read",
+    "document.edit"
+  ],
+  "commands": [
+    {
+      "id": "convert",
+      "title": "Convert tab-separated text to Markdown",
+      "action": {
+        "kind": "lua",
+        "source": "table.lua"
+      }
+    }
+  ],
+  "scripts": {
+    "table.lua": "return function(ctx)\n  local function convert(text)\n    local rows = {}\n    for row in (text:gsub(\"\\r\\n\", \"\\n\"):gsub(\"\\n$\", \"\") .. \"\\n\"):gmatch(\"(.-)\\n\") do\n      rows[#rows + 1] = row\n    end\n    local columns = 1\n    for _ in rows[1]:gmatch(\"\\t\") do columns = columns + 1 end\n    local output = {}\n    for index, row in ipairs(rows) do\n      output[#output + 1] = \"| \" .. row:gsub(\"|\", \"\\\\|\"):gsub(\"\\t\", \" | \") .. \" |\"\n      if index == 1 then\n        local cells = {}\n        for i = 1, columns do cells[i] = \"---\" end\n        output[#output + 1] = \"| \" .. table.concat(cells, \" | \") .. \" |\"\n      end\n    end\n    return table.concat(output, \"\\n\")\n  end\n  local edits = {}\n  for _, selection in ipairs(ctx.document.selections) do\n    local start = math.min(selection.anchor, selection.head)\n    local finish = math.max(selection.anchor, selection.head)\n    if start ~= finish then\n      edits[#edits + 1] = hedit.edit(start, finish, convert(ctx.document.text:sub(start + 1, finish)))\n    end\n  end\n  if #edits == 0 then return hedit.replace(convert(ctx.document.text)) end\n  table.sort(edits, function(a, b) return a.start < b.start end)\n  return hedit.transaction(edits)\nend"
+  }
+}

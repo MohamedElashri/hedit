@@ -1,6 +1,8 @@
 //! Local manifest discovery and atomic changes from the Extensions manager.
 mod lifecycle;
 mod permissions;
+mod state;
+pub(super) use state::{read_state, write_state};
 
 use super::manifest::{self, Contribution, ExtensionAction, LuaPlugin, MAX_MANIFESTS};
 use hedit::projects;
@@ -49,6 +51,7 @@ pub(super) struct Details {
 }
 
 pub(super) struct LuaStatus {
+    pub(super) sdk: bool,
     pub(super) digest: String,
     pub(super) commands: Vec<LuaCommandStatus>,
 }
@@ -57,6 +60,7 @@ pub(super) struct LuaCommandStatus {
     pub(super) id: String,
     pub(super) title: String,
     pub(super) approved: bool,
+    pub(super) storage: bool,
 }
 
 impl View {
@@ -163,14 +167,17 @@ pub(super) fn read(config: &Path) -> Catalog {
                         if let Some(grant) = grant {
                             matched.insert(id.clone(), grant.clone());
                         }
+                        let storage = manifest.uses_storage(&id);
                         LuaCommandStatus {
                             id,
                             title: title.to_owned(),
                             approved: grant.is_some(),
+                            storage,
                         }
                     })
                     .collect();
                 LuaStatus {
+                    sdk: manifest.sdk,
                     digest: digest.clone(),
                     commands,
                 }
@@ -325,6 +332,9 @@ pub(super) fn prepare_one_time(
     let ExtensionAction::Lua(plugin) = &mut contribution.action else {
         return Err("This command does not use Lua.".into());
     };
+    if plugin.storage {
+        return Err("Private storage requires persistent command approval.".into());
+    }
     plugin.one_time = Some(Arc::new(OneTimeApproval::new(config, &lock)?));
     Ok(contribution)
 }
@@ -598,6 +608,145 @@ mod tests {
         assert!(!state.commands[0].approved);
         assert_eq!(state.digest, manifest::digest(&original));
         assert!(!config.path().join(GRANTS_FILE).exists());
+    }
+
+    #[test]
+    fn private_storage_is_scoped_to_approval_and_cleared_on_revocation() {
+        let config = tempfile::tempdir().unwrap();
+        let (path, _) = lua_install(config.path());
+        let manifest=serde_json::json!({"api_version":3,"sdk_version":1,"id":"lua","permissions":["document.read","document.edit","storage.private"],"scripts":{"transform.lua":"return function(ctx) local t=hedit.transaction({});t.storage={count=1};return t end"},"commands":[{"id":"transform","title":"Counter","private_storage":true,"action":{"kind":"lua","source":"transform.lua"}}]}).to_string();
+        fs::write(&path, &manifest).unwrap();
+        let digest = manifest::digest(&manifest);
+        let plugin = authorized_plugin(&set_approval(config.path(), &digest, true).unwrap());
+        assert!(prepare_one_time(config.path(), &path, "lua", COMMAND, &digest).is_err());
+        let authority = lua_authorization(config.path(), &plugin).unwrap();
+        assert!(read_state(config.path(), &plugin).unwrap().0.is_empty());
+        let values = crate::plugin_runtime::sdk::Storage(
+            [("count".into(), hedit::plugin_options::Value::Integer(7))].into(),
+        );
+        write_state(config.path(), &plugin, &values).unwrap();
+        assert_eq!(read_state(config.path(), &plugin).unwrap(), values);
+        drop(authority);
+        set_approval(config.path(), &digest, false).unwrap();
+        assert_eq!(
+            fs::read_dir(config.path().join("extensions-state"))
+                .unwrap()
+                .count(),
+            0
+        );
+        let fresh = authorized_plugin(&set_approval(config.path(), &digest, true).unwrap());
+        assert_ne!(plugin.approval_id(), fresh.approval_id());
+        assert!(read_state(config.path(), &fresh).unwrap().0.is_empty());
+        assert!(lua_authorization(config.path(), &plugin).is_none());
+    }
+
+    #[test]
+    fn private_storage_commands_cannot_read_sibling_buckets_or_unsafe_files() {
+        let config = tempfile::tempdir().unwrap();
+        let (path, _) = lua_install(config.path());
+        let manifest = serde_json::json!({
+            "api_version":3,"sdk_version":1,"id":"lua",
+            "permissions":["document.read","document.edit","storage.private"],
+            "scripts":{"transform.lua":"return function(ctx) return hedit.transaction({}) end"},
+            "commands":[
+                {"id":"transform","title":"One","private_storage":true,"action":{"kind":"lua","source":"transform.lua"}},
+                {"id":"other","title":"Two","private_storage":true,"action":{"kind":"lua","source":"transform.lua"}}
+            ]
+        }).to_string();
+        fs::write(&path, &manifest).unwrap();
+        let digest = manifest::digest(&manifest);
+        let first = authorized_plugin(&set_approval(config.path(), &digest, true).unwrap());
+        let catalog =
+            set_lua_approved(config.path(), &path, "lua", "lua.other", &digest, true).unwrap();
+        let ExtensionAction::Lua(second) = &catalog
+            .contributions
+            .iter()
+            .find(|c| c.id == "lua.other")
+            .unwrap()
+            .action
+        else {
+            unreachable!()
+        };
+        let values = crate::plugin_runtime::sdk::Storage(
+            [(
+                "secret".into(),
+                hedit::plugin_options::Value::Text("private fixture".into()),
+            )]
+            .into(),
+        );
+        write_state(config.path(), &first, &values).unwrap();
+        assert_eq!(read_state(config.path(), &first).unwrap(), values);
+        assert!(read_state(config.path(), second).unwrap().0.is_empty());
+        let bucket = config
+            .path()
+            .join("extensions-state")
+            .join(format!("{}.json", first.approval_id().unwrap()));
+        fs::write(
+            &bucket,
+            br#"{"version":1,"values":{"secret":"one","secret":"two"}}"#,
+        )
+        .unwrap();
+        assert!(read_state(config.path(), &first).is_err());
+        #[cfg(target_os = "macos")]
+        {
+            write_state(config.path(), &first, &values).unwrap();
+            use std::os::unix::fs::PermissionsExt;
+            for target in [&bucket, &config.path().join("extensions-state")] {
+                assert!(std::process::Command::new("/bin/chmod")
+                    .args([
+                        "+a",
+                        "everyone allow read,readattr,readextattr,readsecurity"
+                    ])
+                    .arg(target)
+                    .status()
+                    .unwrap()
+                    .success());
+                assert_eq!(
+                    fs::metadata(target).unwrap().permissions().mode() & 0o077,
+                    0
+                );
+                assert!(read_state(config.path(), &first).is_err());
+                assert!(write_state(config.path(), &first, &values).is_err());
+                assert!(std::process::Command::new("/bin/chmod")
+                    .arg("-N")
+                    .arg(target)
+                    .status()
+                    .unwrap()
+                    .success());
+            }
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{symlink, PermissionsExt};
+            fs::remove_file(&bucket).unwrap();
+            let outside = config.path().join("outside");
+            fs::write(&outside, b"outside sentinel").unwrap();
+            symlink(&outside, &bucket).unwrap();
+            assert!(read_state(config.path(), &first).is_err());
+            assert!(write_state(config.path(), &first, &values).is_err());
+            assert_eq!(fs::read(&outside).unwrap(), b"outside sentinel");
+            fs::remove_file(&bucket).unwrap();
+            write_state(config.path(), &first, &values).unwrap();
+            fs::set_permissions(&bucket, fs::Permissions::from_mode(0o644)).unwrap();
+            assert!(read_state(config.path(), &first).is_err());
+        }
+    }
+
+    #[test]
+    fn selection_grants_do_not_authorize_document_sdk_commands() {
+        let config = tempfile::tempdir().unwrap();
+        let (path, digest) = lua_install(config.path());
+        let old = authorized_plugin(&set_approval(config.path(), &digest, true).unwrap());
+        let manifest=serde_json::json!({"api_version":3,"sdk_version":1,"id":"lua","permissions":["document.read","document.edit"],"scripts":{"transform.lua":"return function(ctx) return hedit.replace(ctx.document.text) end"},"commands":[{"id":"transform","title":"Edit document","action":{"kind":"lua","source":"transform.lua"}}]}).to_string();
+        fs::write(&path, &manifest).unwrap();
+        assert!(lua_authorization(config.path(), &old).is_none());
+        assert!(read(config.path()).contributions.is_empty());
+        let new = authorized_plugin(
+            &set_approval(config.path(), &manifest::digest(&manifest), true).unwrap(),
+        );
+        assert!(new.sdk);
+        assert!(lua_authorization(config.path(), &new).is_some());
+        assert!(lua_authorization(config.path(), &old).is_none());
     }
 
     #[test]

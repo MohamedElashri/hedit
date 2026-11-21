@@ -38,6 +38,81 @@ pub(super) fn run(
     protocol::decode_edits(&reply, count)
 }
 
+pub(super) fn run_sdk(
+    input: crate::sdk::Input,
+    approval: Option<File>,
+    cancelled: &AtomicBool,
+    save: bool,
+) -> Result<crate::sdk::Transaction, crate::sdk::Failure> {
+    run_sdk_profiled(input, approval, cancelled, save, &Default::default())
+}
+
+pub(super) fn run_sdk_profiled(
+    input: crate::sdk::Input,
+    approval: Option<File>,
+    cancelled: &AtomicBool,
+    save: bool,
+    trace: &crate::telemetry::Recorder,
+) -> Result<crate::sdk::Transaction, crate::sdk::Failure> {
+    use crate::telemetry::Phase;
+    if !super::SUPPORTED {
+        return Err(Error::Unavailable.into());
+    }
+    let request = trace.measure(Phase::Encode, || protocol::encode_sdk(&input))?;
+    let reply = super::supervisor::supervise_profiled(
+        &super::supervisor::executable()?,
+        request,
+        cancelled,
+        if save {
+            Duration::from_millis(400)
+        } else {
+            DEADLINE
+        },
+        approval,
+        trace,
+    )?;
+    trace.measure(Phase::Decode, || {
+        decode_sdk_reply_traced(&input, &reply, trace)
+    })
+}
+#[cfg(any(test, feature = "fuzzing"))]
+pub(super) fn decode_sdk_reply(
+    input: &crate::sdk::Input,
+    reply: &[u8],
+) -> Result<crate::sdk::Transaction, crate::sdk::Failure> {
+    decode_sdk_reply_traced(input, reply, &Default::default())
+}
+fn decode_sdk_reply_traced(
+    input: &crate::sdk::Input,
+    reply: &[u8],
+    trace: &crate::telemetry::Recorder,
+) -> Result<crate::sdk::Transaction, crate::sdk::Failure> {
+    if reply.len() > protocol::MAX_BATCH_REPLY_BYTES {
+        return Err(Error::Worker.into());
+    }
+    let reply: crate::sdk::Reply = serde_json::from_slice(reply).map_err(|_| Error::Worker)?;
+    if reply.protocol_version != 1 || reply.worker_time_us > 2_000_000 {
+        return Err(Error::Worker.into());
+    }
+    trace.record(
+        crate::telemetry::Phase::Worker,
+        std::time::Duration::from_micros(reply.worker_time_us),
+    );
+    match reply.outcome {
+        crate::sdk::Outcome::Success(transaction) => {
+            if transaction.storage.is_some() && input.storage.is_none() {
+                return Err(Error::Worker.into());
+            }
+            transaction.prepare(&input.snapshot)?;
+            Ok(transaction)
+        }
+        crate::sdk::Outcome::Failure(failure) => {
+            failure.validate(input)?;
+            Err(failure)
+        }
+    }
+}
+
 pub(super) fn run_helper(isolated: bool) -> bool {
     run_helper_io(isolated, io::stdin().lock(), io::stdout().lock())
 }
@@ -46,9 +121,30 @@ fn run_helper_io(isolated: bool, input: impl Read, mut output: impl Write) -> bo
     // No attacker-influenced request bytes or Lua code are consumed before
     // the process is isolated. Error is reported through a fixed status code.
     let result = if isolated {
-        protocol::decode_request(input).and_then(|input| {
-            let edits = evaluate(input)?;
-            serde_json::to_vec(&edits).map_err(|_| Error::Worker)
+        protocol::decode_invocation(input).and_then(|input| match input {
+            protocol::Invocation::Legacy(input) => {
+                serde_json::to_vec(&evaluate(input)?).map_err(|_| Error::Worker)
+            }
+            protocol::Invocation::Sdk(input) => {
+                let worker_started = std::time::Instant::now();
+                let location = Rc::new(std::cell::RefCell::new(None));
+                let result = with_lua(|lua, environment| {
+                    crate::sdk::lua::evaluate_detailed(lua, environment, input, location.clone())
+                });
+                let outcome = match result {
+                    Ok(transaction) => crate::sdk::Outcome::Success(transaction),
+                    Err(error) => crate::sdk::Outcome::Failure(crate::sdk::Failure::evaluation(
+                        error,
+                        location.borrow_mut().take(),
+                    )),
+                };
+                serde_json::to_vec(&crate::sdk::Reply {
+                    protocol_version: 1,
+                    worker_time_us: worker_started.elapsed().as_micros().min(2_000_000) as u64,
+                    outcome,
+                })
+                .map_err(|_| Error::Worker)
+            }
         })
     } else {
         Err(Error::Sandbox)
@@ -65,6 +161,16 @@ fn run_helper_io(isolated: bool, input: impl Read, mut output: impl Write) -> bo
 }
 
 fn evaluate(request: Input) -> Result<Vec<String>, Error> {
+    with_lua(|lua, environment| call_transform(lua, environment, request))
+}
+
+pub(crate) fn with_lua<T>(call: impl FnOnce(&Lua, Table) -> Result<T, Error>) -> Result<T, Error> {
+    with_lua_budget(INSTRUCTION_BUDGET, call)
+}
+pub(crate) fn with_lua_budget<T>(
+    budget: u32,
+    call: impl FnOnce(&Lua, Table) -> Result<T, Error>,
+) -> Result<T, Error> {
     let lua = Lua::new_with(
         StdLib::TABLE | StdLib::STRING | StdLib::UTF8 | StdLib::MATH,
         LuaOptions::default(),
@@ -74,7 +180,7 @@ fn evaluate(request: Input) -> Result<Vec<String>, Error> {
         .map_err(|_| Error::Initialization)?;
     let environment = environment(&lua).map_err(|_| Error::Initialization)?;
 
-    let remaining = Rc::new(Cell::new(INSTRUCTION_BUDGET));
+    let remaining = Rc::new(Cell::new(budget));
     let hook_remaining = remaining.clone();
     lua.set_hook(
         HookTriggers::new().every_nth_instruction(INSTRUCTION_INTERVAL),
@@ -89,7 +195,7 @@ fn evaluate(request: Input) -> Result<Vec<String>, Error> {
     )
     .map_err(|_| Error::Initialization)?;
 
-    let result = call_transform(&lua, environment, request);
+    let result = call(&lua, environment);
     if remaining.get() == 0 {
         return Err(Error::Instructions);
     }
@@ -148,10 +254,11 @@ fn environment(lua: &Lua) -> mlua::Result<Table> {
     Ok(environment)
 }
 
-fn lua_error(error: mlua::Error) -> Error {
+pub(crate) fn lua_error(error: mlua::Error) -> Error {
     match error {
         mlua::Error::SyntaxError { .. } => Error::Syntax,
         mlua::Error::MemoryError(_) => Error::Memory,
+        mlua::Error::CallbackError { cause, .. } => lua_error(cause.as_ref().clone()),
         _ => Error::Execution,
     }
 }
@@ -203,5 +310,45 @@ mod tests {
             .unwrap(),
             ["PRIVATE FIXTURE"]
         );
+    }
+    fn sdk_input() -> crate::sdk::Input {
+        serde_json::from_value(serde_json::json!({"sdk_version":1,"source":"return function(ctx) return hedit.transaction({}) end","snapshot":{"document":"0123456789abcdef0123456789abcdef","revision":"1","language":"markdown","text":"private fixture","selections":[{"anchor":0,"head":0}],"crlf":false},"settings":{},"arguments":{}})).unwrap()
+    }
+    #[test]
+    fn sdk_reply_binds_protocol_target_authority_and_diagnostic_locations() {
+        let input = sdk_input();
+        let valid = serde_json::json!({"protocol_version":1,"outcome":{"success":{"document":input.snapshot.document,"revision":"1","edits":[]}}});
+        let bytes = serde_json::to_vec(&valid).unwrap();
+        assert!(decode_sdk_reply(&input, &bytes).is_ok());
+        for index in 0..bytes.len() {
+            assert!(decode_sdk_reply(&input, &bytes[..index]).is_err());
+        }
+        for (path, value) in [
+            ("protocol_version", serde_json::json!(2)),
+            ("document", serde_json::json!("f".repeat(32))),
+            ("revision", serde_json::json!("2")),
+            ("storage", serde_json::json!({"private":true})),
+        ] {
+            let mut reply = valid.clone();
+            if path == "protocol_version" {
+                reply[path] = value;
+            } else {
+                reply["outcome"]["success"][path] = value;
+            }
+            assert!(decode_sdk_reply(&input, &serde_json::to_vec(&reply).unwrap()).is_err());
+        }
+        for (script, line, accepted) in [
+            ("plugin", 1, true),
+            ("private fixture", 1, false),
+            ("plugin", 0, false),
+            ("plugin", 2, false),
+            ("../plugin", 1, false),
+        ] {
+            let reply = serde_json::json!({"protocol_version":1,"outcome":{"failure":{"kind":"syntax","location":{"script":script,"line":line}}}});
+            let error = decode_sdk_reply(&input, &serde_json::to_vec(&reply).unwrap()).unwrap_err();
+            assert_eq!(error.location.is_some(), accepted);
+            assert!(!error.to_string().contains("private fixture"));
+        }
+        assert!(decode_sdk_reply(&input, br#"{"protocol_version":1,"protocol_version":1,"outcome":{"failure":{"kind":"syntax"}}}"#).is_err());
     }
 }
