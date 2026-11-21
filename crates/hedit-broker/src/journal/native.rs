@@ -230,6 +230,10 @@ pub(super) fn rename(
     {
         use std::{mem, os::windows::io::AsRawHandle};
         use windows_sys::Win32::Storage::FileSystem::*;
+        use windows_sys::{
+            Wdk::Storage::FileSystem::{FileRenameInformation, NtSetInformationFile},
+            Win32::{Foundation::RtlNtStatusToDosError, System::IO::IO_STATUS_BLOCK},
+        };
         let opened;
         let file = match file {
             Some(file) => file,
@@ -262,16 +266,25 @@ pub(super) fn rename(
                 name.len(),
             );
         }
-        if unsafe {
-            SetFileInformationByHandle(
+        let mut status_block = IO_STATUS_BLOCK::default();
+        // Use the native directory-relative operation directly; never fall back
+        // to concatenating an absolute path after a Win32-layer rejection.
+        let status = unsafe {
+            NtSetInformationFile(
                 file.as_raw_handle(),
-                FileRenameInfo,
+                &mut status_block,
                 info.cast(),
                 bytes as u32,
+                FileRenameInformation,
             )
-        } == 0
-        {
-            Err(io::Error::last_os_error())
+        };
+        if status < 0 {
+            let code = unsafe { RtlNtStatusToDosError(status) };
+            let error = io::Error::from_raw_os_error(code as i32);
+            Err(io::Error::new(
+                error.kind(),
+                format!("Handle-relative rename failed (NTSTATUS {status:#010x}, Windows {code})."),
+            ))
         } else {
             Ok(())
         }

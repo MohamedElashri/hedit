@@ -396,9 +396,23 @@ fn a_replaced_or_moved_preparation_stage_cannot_release_its_retention_reservatio
     let identity = root.protected().insert(stage.try_clone().unwrap()).unwrap();
     store.bind_stage(&mut lease, identity).unwrap();
     drop(stage);
-    root.directory()
-        .rename(&name, root.directory(), "moved-stage")
-        .unwrap();
+    let moved = root
+        .directory()
+        .rename(&name, root.directory(), "moved-stage");
+    #[cfg(windows)]
+    if let Err(error) = &moved {
+        // Some Windows directory handles prevent renaming while pinned. That
+        // stronger native restriction must preserve the reservation too.
+        assert!(
+            matches!(error.raw_os_error(), Some(32) | Some(5)),
+            "{error}"
+        );
+        assert_eq!(store.records().unwrap().len(), 1);
+        Journal::discard_unprepared(root, id, &store, &mut budget(&cancel)).unwrap();
+        assert!(store.records().unwrap().is_empty());
+        return;
+    }
+    moved.unwrap();
     assert!(Journal::discard_unprepared(root, id, &store, &mut budget(&cancel)).is_err());
     let replacement = native::private_directory(root.directory(), &name).unwrap();
     assert!(Journal::discard_unprepared(root, id, &store, &mut budget(&cancel)).is_err());
