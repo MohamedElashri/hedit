@@ -41,7 +41,7 @@ def main():
                '--target', target, '--bin', 'sdk_protocol', '--', str(corpus),
                f'-artifact_prefix={output}{os.sep}', '-max_len=1048576', '-timeout=5',
                '-rss_limit_mb=1024', f'-max_total_time={args.seconds}']
-    report = {'rustc': rustc, 'command': command, 'rustflags': env['RUSTFLAGS'],
+    report = {'source_commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(), 'rustc': rustc, 'command': command, 'rustflags': env['RUSTFLAGS'],
               'address_sanitizer': args.sanitizer == 'address',
               'native_build': {key: env.get(key, '') for key in ['CC', 'CXX', 'CFLAGS', 'CXXFLAGS', 'MACOSX_DEPLOYMENT_TARGET']}, 'scope': 'Codec-only LLVM coverage; no Lua or native confinement.'}
     (output / 'metadata.json').write_text(json.dumps(report, indent=2) + '\n')

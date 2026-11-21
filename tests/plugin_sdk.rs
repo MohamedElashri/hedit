@@ -276,3 +276,34 @@ fn opt_in_phase_samples_have_only_fixed_names_and_numeric_counters() {
     assert_eq!(batches, 2);
     assert!(!stdout.contains("café") && !stdout.contains("東京"));
 }
+
+#[test]
+fn provider_reference_fixtures_run_with_the_distinct_native_role() {
+    let result = Command::new(prepare())
+        .args([
+            "plugin",
+            "test",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/examples/extensions/document-assist.json"
+            ),
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/examples/extensions/document-assist.fixtures.json"
+            ),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&result.stdout)
+            .matches("PASS")
+            .count(),
+        4
+    );
+}

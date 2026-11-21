@@ -380,10 +380,14 @@ fn pipe() -> io::Result<(OwnedHandle, OwnedHandle)> {
     check(unsafe { CreatePipe(&mut read, &mut write, &security, 64 * 1024) })?;
     Ok(unsafe { (owned(read)?, owned(write)?) })
 }
-fn job() -> io::Result<OwnedHandle> {
+fn job(service: bool) -> io::Result<OwnedHandle> {
     let handle = unsafe { owned(CreateJobObjectW(ptr::null(), ptr::null())) }?;
     let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
     limits.BasicLimitInformation.LimitFlags = LIMITS;
+    if service {
+        limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_PRIORITY_CLASS;
+        limits.BasicLimitInformation.PriorityClass = BELOW_NORMAL_PRIORITY_CLASS;
+    }
     limits.BasicLimitInformation.ActiveProcessLimit = 1;
     limits.BasicLimitInformation.PerProcessUserTimeLimit = CPU_TICKS;
     limits.ProcessMemoryLimit = PROCESS_BYTES;
@@ -395,6 +399,20 @@ fn job() -> io::Result<OwnedHandle> {
             mem::size_of_val(&limits) as u32,
         )
     })?;
+    if service {
+        let rate = JOBOBJECT_CPU_RATE_CONTROL_INFORMATION {
+            ControlFlags: JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP,
+            Anonymous: JOBOBJECT_CPU_RATE_CONTROL_INFORMATION_0 { CpuRate: 1000 },
+        };
+        check(unsafe {
+            SetInformationJobObject(
+                handle.as_raw_handle(),
+                JobObjectCpuRateControlInformation,
+                (&rate as *const JOBOBJECT_CPU_RATE_CONTROL_INFORMATION).cast(),
+                mem::size_of_val(&rate) as u32,
+            )
+        })?;
+    }
     Ok(handle)
 }
 fn require_job(handle: HANDLE) -> io::Result<()> {
@@ -438,7 +456,7 @@ impl Worker {
         std::fs::copy(executable, &copied)?;
         // Do not rely on the source file's permissions or copy semantics.
         image_permissions(&copied, profile.sid)?;
-        let job = job()?;
+        let job = job(arguments == [crate::runtime::SERVICE_HELPER_ARG])?;
         let (input, input_writer) = pipe()?;
         let (output_reader, output) = pipe()?;
         for handle in [&input_writer, &output_reader] {
@@ -597,3 +615,40 @@ pub(crate) fn enter() -> io::Result<()> {
 
 #[cfg(test)]
 pub(crate) mod tests;
+
+pub(crate) fn require_service_priority() -> io::Result<()> {
+    let mut rate = JOBOBJECT_CPU_RATE_CONTROL_INFORMATION::default();
+    check(unsafe {
+        QueryInformationJobObject(
+            ptr::null_mut(),
+            JobObjectCpuRateControlInformation,
+            (&mut rate as *mut JOBOBJECT_CPU_RATE_CONTROL_INFORMATION).cast(),
+            mem::size_of_val(&rate) as u32,
+            ptr::null_mut(),
+        )
+    })?;
+    if rate.ControlFlags
+        & (JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP)
+        != (JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP)
+        || unsafe { rate.Anonymous.CpuRate } == 0
+        || unsafe { rate.Anonymous.CpuRate } > 1000
+    {
+        return Err(denied());
+    }
+    let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+    check(unsafe {
+        QueryInformationJobObject(
+            ptr::null_mut(),
+            JobObjectExtendedLimitInformation,
+            (&mut limits as *mut JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+            mem::size_of_val(&limits) as u32,
+            ptr::null_mut(),
+        )
+    })?;
+    if limits.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_PRIORITY_CLASS == 0
+        || limits.BasicLimitInformation.PriorityClass != BELOW_NORMAL_PRIORITY_CLASS
+    {
+        return Err(denied());
+    }
+    Ok(())
+}

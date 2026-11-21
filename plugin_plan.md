@@ -563,9 +563,9 @@ stage gates, with explicit remaining limitations.
 
 ## Completion checklist
 
-- [ ] Stage 1: documented editing SDK, reference plugins, compatible legacy API,
+- [x] Stage 1: documented editing SDK, reference plugins, compatible legacy API,
   native/package validation, and recorded performance baseline.
-- [ ] Stage 2: language/event/presentation interfaces, safe service lifecycle,
+- [x] Stage 2: language/event/presentation interfaces, safe service lifecycle,
   bounded sustained workloads, and native service-policy validation.
 - [ ] Stage 3: scoped workspace/tool/network services, recoverable multi-file
   behavior, reference integrations, and native enforcement across supported OSes.
@@ -603,12 +603,11 @@ include editor process startup, confinement, transport, Lua, and exit. These are
 local synthetic measurements, not a GUI responsiveness or release-build claim.
 The probe records every sample and toolchain/build metadata for reproduction.
 
-The Stage 1 release gate remains open pending native Windows/Linux and universal
-macOS validation of this increment, longer sanitizer fuzz campaigns, separate
-consent/startup/execution/IPC/commit traces, and controlled GUI frame/input and
-allocation/copy measurements. Stages 2 and 3 remain planned and disabled. Do not
-reuse one-shot cumulative CPU limits for a persistent service or widen the
-sandbox to bypass a stage gate.
+Stage 1's native Windows/Linux, universal macOS, sanitizer, numeric tracing, and
+controlled egui CPU-frame/allocation gates have passed on the implementation
+stack. The measurements below state their practical scope. Stage 2 is implemented
+and validated as recorded in the follow-ups; Stage 3 remains unimplemented and
+unavailable. Do not widen isolation to bypass a gate.
 
 ### Stage 1 validation follow-up
 
@@ -625,7 +624,8 @@ stale-result cases over three trials; idle p95 CPU-frame overhead stayed below
 allocation traffic, not OS delivery, GPU presentation, or retained process heap.
 Raw samples, corpus/logs, and environment metadata are retained locally under
 `target/plugin-validation`; reproduction commands are in the SDK reference.
-The instrumentation follow-up must pass CI before closing the Stage 1 gate.
+The instrumentation follow-up and Windows UTF-8 package-test correction passed
+CI. Universal macOS validation of the provider stack also includes this SDK.
 
 ### Stage 2 service policy decision
 
@@ -634,7 +634,9 @@ serializes callbacks per package, coalesces one pending event per provider, and
 retains only explicitly returned scalar cache data scoped to that provider's
 grant and active document. Each callback gets a fresh native sandbox and Lua VM;
 no global Lua variables survive. Clear cache/results on document scope changes,
-revocation, disable, update, idle shutdown, and crash quarantine.
+revocation, disable, update, and crash quarantine. Idle expiry clears the service
+cache; independently validated host UI results have a separate 120-second lifetime
+and retain no duplicate copy of that cache.
 
 This deliberately avoids a resident untrusted VM and its cumulative CPU-limit
 problem. Keep the native one-shot ceiling and apply stricter service callback
@@ -643,3 +645,57 @@ and restart budgets. A worker cannot choose a weaker role or request another
 provider's cache. Validate this rotating service policy natively on each OS.
 A resident-VM optimization remains a separate policy change, not a prerequisite
 for provider semantics and not an excuse to remove the native CPU ceiling.
+
+### Stage 2 implementation follow-up
+
+Implemented on `v0.7.0/plugin-services` (review/validation pending): manifest API
+4 / SDK 2 with separate provider grants; diagnostics, completions, hover,
+symbols, formatting, code actions and presentation; a coalescing/rate-limited
+scheduler; rotated workers with distinct trusted launch role, bounded readiness
+handshake, lower priority and native limits; explicit per-provider/document cache;
+revision/selection-bound results and expiring typed actions; native results,
+quick lists, inputs, output/status, diagnostic gutter/underlines and annotations;
+and non-executable bounded language/theme packs. Formatting/quick fixes reuse the
+editing SDK validator, approval recheck, review policy and Undo. The manager
+cancels providers before policy mutations; policy watcher failures disable them.
+
+The `document-assist` and `demo-visuals` references use the ordinary public API.
+The macOS workspace suite passed 1,298 tests (62 intentionally ignored), and
+strict all-feature Clippy passed. Native macOS probes include service priority
+and unchanged file/network/descriptor/child restrictions. Reply/role confusion,
+request identity, truncation/duplicate fields, UTF-16, event storms, stale
+completion, cache invalidation, quarantine, revoked quick fixes and Undo have
+regressions. The native service-policy checks on Linux/Windows, controlled active
+provider CPU-frame/allocation evidence, sanitizer follow-up, extracted package
+smokes, and universal macOS validation remain required before closing Stage 2.
+Stage 3 is not implemented or enabled by this change.
+
+### Stage 2 security/performance follow-up
+
+The initial provider feature passed Linux, macOS, Windows x64/ARM64, and remote
+regressions in PR #112. A 601-second AddressSanitizer codec campaign completed
+1,867,776 inputs without a finding, including added service request/result seeds.
+Follow-up fixes bound native result rendering to visible rows for one selected
+provider, paginate long output, cache/deduplicate decorations, and avoid cloning
+transactions until clicked. Returned cache transfers into session state without
+retaining a second copy in UI results.
+
+Provider authorization allows concurrent read/disclosure guards while keeping
+revocation and storage commits exclusive. Publication checks share global worker
+admission. Unconsumed UI authorization receipts expire after 200 ms on the bounded
+authorization thread, covering inactive windows; consumed guards remain held for
+the authorized operation. The same handoff protects ordinary editing commands.
+The updated macOS workspace suite passed 1,302 tests (63 intentionally ignored),
+and strict all-feature Clippy passed. These follow-up changes require fresh CI.
+
+The controlled four-provider egui probe uses three alternating trials and 600
+samples per mode. With no concurrent builds/fuzzing, pooled typing-frame p95 was
+3,428 µs disabled, 3,448 µs installed/idle (+0.6%), and 3,879 µs while repeatedly
+dispatching/cancelling real native callbacks. Individual trials are noisy; this
+is a local CPU-frame/allocation probe, not a physical input/GPU latency guarantee.
+Raw exploratory and final samples are retained under `target/plugin-validation`.
+Final follow-up `9dd7f7c` passed Linux, macOS, Windows x64/ARM64, remote regressions,
+and universal macOS packaging/extracted-app validation (run `44859211258`). The
+Stage 2 implementation gate is closed; PR #112 remains a draft for review. This
+accepts the documented bounded provider API and measurement scope, not a claim of
+unrestricted editor compatibility. Stage 3 remains required to finish this plan.

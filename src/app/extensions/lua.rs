@@ -38,7 +38,12 @@ struct Authority {
     storage: Option<plugin_runtime::sdk::Storage>,
     elapsed: std::time::Duration,
 }
-type ApprovalReceiver = Receiver<Result<Option<Authority>, String>>;
+struct PendingAuthority {
+    file: super::authority::Receipt,
+    storage: Option<plugin_runtime::sdk::Storage>,
+    elapsed: std::time::Duration,
+}
+type ApprovalReceiver = Receiver<Result<Option<PendingAuthority>, String>>;
 
 enum Phase {
     Arguments,
@@ -131,8 +136,8 @@ struct Proposal {
     arguments: std::collections::BTreeMap<String, hedit::plugin_options::Value>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
-struct Target {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Target {
     document: u64,
     revision: u64,
     group: u64,
@@ -140,6 +145,24 @@ struct Target {
     language: &'static str,
     primary: Selection,
     extra: Vec<Selection>,
+}
+
+impl Target {
+    pub(super) fn document(&self) -> u64 {
+        self.document
+    }
+    pub(super) fn language(&self) -> &str {
+        self.language
+    }
+    pub(super) fn revision(&self) -> u64 {
+        self.revision
+    }
+    pub(super) fn same_document(&self, other: &Self) -> bool {
+        self.document == other.document
+            && self.group == other.group
+            && self.page_start == other.page_start
+            && self.language == other.language
+    }
 }
 
 #[derive(Debug)]
@@ -176,7 +199,7 @@ impl From<plugin_runtime::sdk::Failure> for TransformFailure {
 }
 
 impl HeditApp {
-    fn lua_target(&self) -> Option<Target> {
+    pub(super) fn lua_target(&self) -> Option<Target> {
         let editor = self.active();
         let info = &editor.page.info;
         let primary = Selection {
@@ -191,6 +214,7 @@ impl HeditApp {
             || self.workspace.remote.is_some()
             || editor.follow
             || info.paged
+            || editor.view.selections.len() >= plugin_runtime::MAX_SELECTIONS
         {
             return None;
         }
@@ -296,6 +320,46 @@ impl HeditApp {
         })
     }
 
+    pub(super) fn propose_provider_edit(
+        &mut self,
+        ctx: &egui::Context,
+        command: &str,
+        plugin: LuaPlugin,
+        document: &str,
+        transaction: plugin_runtime::sdk::Transaction,
+    ) -> Result<(), String> {
+        if self.lua_transform.is_some() {
+            return Err("An extension edit is already awaiting review.".into());
+        }
+        if !transaction.edits.is_empty()
+            && !plugin
+                .provider
+                .as_ref()
+                .is_some_and(|definition| definition.may_edit)
+        {
+            return Err("This provider has no document edit authority.".into());
+        }
+        let mut proposal = self.lua_proposal(command, plugin)?;
+        let snapshot = proposal
+            .snapshot
+            .as_mut()
+            .ok_or("Missing provider snapshot.")?;
+        snapshot.document = document.into();
+        let prepared = transaction
+            .prepare(snapshot)
+            .map_err(|error| error.to_string())?;
+        let output = Output {
+            selections: Some(byte_selections(&prepared.text, &prepared.selections)),
+            replacements: vec![prepared.text],
+            storage: None,
+        };
+        let phase = self
+            .review_lua_output(ctx, &proposal, output)
+            .map_err(|error| error.message)?;
+        self.lua_transform = Some(LuaTransform { proposal, phase });
+        Ok(())
+    }
+
     fn request_lua_approval(
         &self,
         ctx: &egui::Context,
@@ -313,6 +377,7 @@ impl HeditApp {
             .name("hedit-lua-approval".into())
             .spawn(move || {
                 let started = std::time::Instant::now();
+                let mut expiry = None;
                 let result = (|| {
                     let Some(file) = catalog::lua_authorization(&config, &plugin) else {
                         return Ok(None);
@@ -322,7 +387,9 @@ impl HeditApp {
                     } else {
                         None
                     };
-                    Ok(Some(Authority {
+                    let (file, timer) = super::authority::Receipt::new(file);
+                    expiry = Some(timer);
+                    Ok(Some(PendingAuthority {
                         file,
                         storage,
                         elapsed: started.elapsed(),
@@ -330,6 +397,9 @@ impl HeditApp {
                 })();
                 let _ = sender.send(result);
                 ctx.request_repaint();
+                if let Some(expiry) = expiry {
+                    expiry.wait();
+                }
             })
             .map_err(|_| "The extension approval check could not start.")?;
         Ok(receiver)
@@ -603,6 +673,13 @@ impl HeditApp {
                         self.apply_lua_replacements(&proposal.ranges, &output.replacements)
                     };
                     if result {
+                        if proposal.plugin.provider.is_some() {
+                            self.plugin_services.note_origin(
+                                self.active().page.info.id,
+                                self.active().page.info.revision,
+                                &proposal.plugin.plugin_id,
+                            );
+                        }
                         self.notice = "Extension command finished.".into();
                     }
                     proposal.invocation.trace.record(
@@ -673,7 +750,7 @@ impl HeditApp {
     }
 }
 
-fn snapshot_selections(
+pub(super) fn snapshot_selections(
     text: &str,
     selections: &[Selection],
 ) -> Vec<plugin_runtime::sdk::Selection> {
@@ -708,7 +785,10 @@ fn snapshot_selections(
         .collect()
 }
 
-fn byte_selections(text: &str, selections: &[plugin_runtime::sdk::Selection]) -> Vec<Selection> {
+pub(super) fn byte_selections(
+    text: &str,
+    selections: &[plugin_runtime::sdk::Selection],
+) -> Vec<Selection> {
     let mut positions: Vec<_> = selections.iter().flat_map(|s| [s.anchor, s.head]).collect();
     positions.sort_unstable();
     positions.dedup();
@@ -874,7 +954,14 @@ fn show_preview(ctx: &egui::Context, diff: &Diff) -> Option<bool> {
 // The returned lock serializes delivery or application with a revocation.
 fn receive_approval(approval: &ApprovalReceiver) -> Result<Option<Authority>, TransformFailure> {
     match approval.try_recv() {
-        Ok(Ok(Some(guard))) => Ok(Some(guard)),
+        Ok(Ok(Some(guard))) => {
+            let file=guard.file.take().ok_or_else(||TransformFailure {message:"Extension authorization expired while the editor was idle. Run the command again.".into(),outcome:InvocationOutcome::Cancelled})?;
+            Ok(Some(Authority {
+                file,
+                storage: guard.storage,
+                elapsed: guard.elapsed,
+            }))
+        }
         Ok(Err(_)) => Err(TransformFailure::failed(
             "Private command storage could not be read. Revoke approval to clear it.",
         )),

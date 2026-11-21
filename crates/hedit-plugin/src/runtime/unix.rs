@@ -70,7 +70,26 @@ pub(super) fn supervise_profiled(
         cancelled,
         timeout,
         approval,
-        crate::sandbox::verify_child,
+        (false, crate::sandbox::verify_child),
+        trace,
+    )
+}
+
+pub(super) fn supervise_service(
+    executable: &Path,
+    request: Vec<u8>,
+    cancelled: &AtomicBool,
+    timeout: Duration,
+    approval: Option<File>,
+    trace: &crate::telemetry::Recorder,
+) -> Result<Vec<u8>, Error> {
+    supervise_traced(
+        executable,
+        request,
+        cancelled,
+        timeout,
+        approval,
+        (true, crate::sandbox::verify_child),
         trace,
     )
 }
@@ -90,7 +109,7 @@ fn supervise_verified(
         cancelled,
         timeout,
         approval,
-        verify,
+        (false, verify),
         &Default::default(),
     )
 }
@@ -100,19 +119,30 @@ fn supervise_traced(
     cancelled: &AtomicBool,
     timeout: Duration,
     mut approval: Option<File>,
-    verify: impl FnOnce(&Child) -> io::Result<()>,
+    launch: (bool, impl FnOnce(&Child) -> io::Result<()>),
     trace: &crate::telemetry::Recorder,
 ) -> Result<Vec<u8>, Error> {
     use crate::telemetry::Phase;
+    let (service, verify) = launch;
     let started = Instant::now();
     let mut delivered = None;
     if cancelled.load(Ordering::Relaxed) {
         return Err(Error::Cancelled);
     }
-    let deadline = Instant::now() + timeout;
+    let mut ready = !service;
+    let mut deadline = Instant::now()
+        + if service {
+            Duration::from_millis(crate::service::STARTUP_MILLIS)
+        } else {
+            timeout
+        };
     let mut child = ReapChild(
         Command::new(executable)
-            .arg(HELPER_ARG)
+            .arg(if service {
+                super::SERVICE_HELPER_ARG
+            } else {
+                HELPER_ARG
+            })
             .env_clear()
             .current_dir("/")
             .stdin(Stdio::piped())
@@ -122,7 +152,9 @@ fn supervise_traced(
             .map_err(|_| Error::Worker)?,
     );
     verify(&child.0).map_err(|_| Error::Sandbox)?;
-    trace.record(Phase::Startup, started.elapsed());
+    if !service {
+        trace.record(Phase::Startup, started.elapsed());
+    }
     let transfer_started = Instant::now();
     let input = child.0.stdin.take().ok_or(Error::Worker)?;
     let output = child.0.stdout.take().ok_or(Error::Worker)?;
@@ -185,6 +217,17 @@ fn supervise_traced(
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => true,
             Err(_) => return Err(Error::Worker),
         };
+        if !ready && !reply.is_empty() {
+            if reply.remove(0) != crate::service::READY {
+                return Err(Error::Sandbox);
+            }
+            if Instant::now() >= deadline {
+                return Err(Error::Deadline);
+            }
+            ready = true;
+            deadline = Instant::now() + timeout;
+            trace.record(Phase::Startup, started.elapsed());
+        }
         if reply.len() > MAX_BATCH_REPLY_BYTES + 1 {
             return Err(Error::Worker);
         }
@@ -222,6 +265,9 @@ fn supervise_traced(
 
     if let Some(delivered) = delivered {
         trace.record(Phase::Transport, delivered.elapsed());
+    }
+    if !ready {
+        return Err(Error::Worker);
     }
     super::protocol::worker_reply(reply, sent == request.len())
 }

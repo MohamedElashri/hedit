@@ -313,6 +313,14 @@ pub(super) fn advance_one_time_epoch(mut lock: &File) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
+pub(super) fn disclosure_lock(config: &Path) -> Result<File, String> {
+    let file = open_leaf(&config.join(LOCK_FILE), OpenOptions::new().read(true))
+        .map_err(|_| "Cannot open extension policy.")?;
+    hedit_core::file_io::lock_shared_with_timeout(&file, Duration::from_millis(250))
+        .map_err(|_| "Extension policy is changing.")?;
+    Ok(file)
+}
+
 pub(super) fn change_lock(config: &Path) -> Result<File, String> {
     fs::create_dir_all(config).map_err(|error| error.to_string())?;
     let file = open_leaf(

@@ -195,3 +195,65 @@ Prefer host-mediated operations to broad filesystem, network, or shell access.
 Do not mix plugins or permission domains in one worker to reduce startup cost.
 Any worker prewarming must retain one invocation per worker and demonstrate that
 no document data, authority, or mutable plugin state survives reuse.
+
+## Provider role and presentation boundary
+
+API 4 providers add an explicit grant for current-document reads, reviewed event
+triggers, and host-rendered presentation. Editing is a separate declared grant.
+Selection commands never inherit these permissions. Provider source, modules,
+resources, trigger definitions, and capabilities are covered by the exact-copy
+approval. Private provider cache is bounded scalar data, scoped to a provider's
+grant and active document. It is not a persistent shared Lua VM or a filesystem
+namespace. Scope/policy changes and Stop discard cache, jobs, and results.
+
+The native service role is selected by trusted launch arguments before IPC is
+read. After isolation, it sends one fixed readiness byte. Startup has a two-second
+deadline; processing/EOF/exit then has a 750 ms deadline. The callback instruction
+budget is 200,000; native memory/CPU ceilings and file/network/child restrictions
+remain. Rotation prevents a long-lived VM from outliving cumulative CPU limits.
+Unix workers run at nice >=10; Linux denies priority changes and hard-limits
+RLIMIT_NICE. Windows jobs require below-normal priority and a 10% CPU-rate cap.
+The broker adds four global admission slots, per-package/window serialization,
+coalesced requests, rate/work budgets, idle expiry, backoff, and quarantine.
+These controls mitigate resource exhaustion; they do not make scheduling delays
+or native accounting overshoot impossible. Application Sandbox residual access
+and native-runtime-exploit limitations described above still apply.
+
+The parent validates role, framing/EOF/exit, protocol version, original request,
+opaque document handle, revision, coordinates, result kind, edit authority, and
+aggregate UI bounds independently. Revocation is serialized with disclosure;
+a fresh check guards result publication and another check guards edit effects.
+A watcher cancels stale registrations/cache/results; watcher failure disables
+providers. Revocation cannot retract text already delivered to a worker.
+
+The editor renders plain strings in native widgets under trusted owner captions.
+Result actions are typed edit/select/callback values with owner/request/snapshot
+lifetimes and a two-minute expiry. No plugin string names an internal command,
+loads markup, fetches images, or opens a URI. Editing actions reuse the SDK
+transaction validator, review policy, authorization recheck, and Undo. Stale
+results are dropped rather than rebased. Provider-origin changes/save events are
+suppressed for that package, and automatic callbacks cannot commit text.
+
+Declarative syntax/theme packs need no executable grants. They use the existing
+native color-role parser and a bounded linear keyword scanner, without untrusted
+regex execution. Large custom-syntax pages fall back to plain text. Malformed
+resources, unsafe names/associations, oversized definitions, and unknown fields
+are rejected during installation. A custom syntax cannot launch a language tool.
+
+Conformance coverage includes role confusion, reply truncation/duplicates,
+foreign requests/documents/revisions, Unicode/UTF-16/CRLF boundaries, malicious UI
+fields, bounded arrays/cache, event storms, late completion after Stop/Resume,
+failure quarantine, native confinement, and revoked/stale quick-fix effects.
+The roadmap gate also requires native checks on Linux/Windows and controlled
+active-provider frame/allocation measurements before claiming Stage 2 complete.
+
+Provider disclosure guards use shared locks, while revocation and persistent
+storage changes require exclusive locks. Computation and publication checks share
+the four-slot admission budget. A result waiting for the UI receives a 200 ms
+authorization receipt; the existing bounded authorization thread releases an
+unconsumed guard even if the window stops pumping frames. Dropping a receipt
+releases it immediately. The UI takes a live guard without blocking and consumes
+it in the authorized operation; expired receipts produce no effect. Prompt and
+preview dwell hold no authorization lock. The editing SDK's approval handoff uses
+the same receipt policy. Tests cover unpumped/expired/dropped receipts and the
+retention of a consumed guard through its authorized operation.

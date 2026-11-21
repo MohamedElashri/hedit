@@ -1,0 +1,44 @@
+{
+  "api_version": 1,
+  "id": "demo-visuals",
+  "commands": [
+    {
+      "id": "language",
+      "title": "Use Demo language syntax",
+      "action": {
+        "kind": "language",
+        "definition": {
+          "name": "Demo language",
+          "extensions": [
+            "demo"
+          ],
+          "keywords": [
+            "let",
+            "if",
+            "else",
+            "return"
+          ],
+          "line_comment": "//",
+          "quoted_strings": true
+        }
+      }
+    },
+    {
+      "id": "theme",
+      "title": "Use Violet Ink theme",
+      "action": {
+        "kind": "theme",
+        "definition": {
+          "version": 2,
+          "name": "Violet Ink",
+          "base": "Hedit Ink",
+          "accent": "#B4A0F5",
+          "selection": "#413657",
+          "selection_text": "#F2ECFF",
+          "cuda": "#B4A0F5",
+          "function": "#D4C6FA"
+        }
+      }
+    }
+  ]
+}

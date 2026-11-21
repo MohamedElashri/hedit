@@ -288,6 +288,8 @@ pub struct HeditApp {
     extensions: Vec<extensions::Contribution>,
     extension_manager: extensions::Manager,
     lua_transform: Option<extensions::LuaTransform>,
+    plugin_services: extensions::Services,
+    extension_syntax: std::collections::BTreeMap<u64, String>,
     /// Tab moves through the fields of the snippet inserted last.
     snippet: Option<snippet_fields::SnippetSession>,
     auto: auto_complete::AutoComplete,
@@ -518,6 +520,8 @@ impl HeditApp {
             extensions,
             extension_manager: extensions::Manager::default(),
             lua_transform: None,
+            plugin_services: extensions::Services::default(),
+            extension_syntax: Default::default(),
             snippet: None,
             auto: Default::default(),
             languages: Default::default(),
@@ -1439,6 +1443,8 @@ impl HeditApp {
                         buffer.page.info = info;
                         buffer.refresh_name();
                         buffer.external = false;
+                        self.plugin_services
+                            .note_save(buffer.page.info.id, buffer.page.info.revision);
                     }
                     self.refresh_folder();
                     if new_path && self.active().view.id == id {
@@ -1633,6 +1639,7 @@ impl HeditApp {
         let due = |since: Instant, every: Duration| every.saturating_sub(since.elapsed());
         [
             self.source_control.due(),
+            self.plugin_services.next_wake(),
             self.transient_error
                 .as_ref()
                 .map(|(_, shown)| due(*shown, FILE_ERROR_TIME)),
@@ -2400,6 +2407,12 @@ impl HeditApp {
             &mut self.extra_layouts[pane_id - 1]
         };
         layout_cache.activate((buffer.view.id, buffer.page.start));
+        layout_cache.custom = extensions::syntax_for(
+            &self.extensions,
+            self.extension_syntax.get(&buffer.page.info.id),
+            &buffer.page.info.name,
+            language,
+        );
         let row_height = ui.fonts(|f| f.row_height(&typography.id()));
         let line_height = typography.line_height;
         // Like Sublime, the last line can scroll up to the top: the editor is a
@@ -2565,6 +2578,7 @@ impl HeditApp {
                                     && !buffer.follow
                                     && !self.preferences_open
                                     && !self.palette
+                                    && !self.plugin_services.open
                                     && self.rename_target.is_none()
                                     && !self.shelf_open
                                     && !self.bookmarks_open
@@ -3205,6 +3219,79 @@ impl HeditApp {
                                 }
                                 points.push(egui::pos2(right, y));
                                 painter.add(egui::Shape::line(points, stroke));
+                            }
+                        }
+                        for (number, decoration) in self
+                            .plugin_services
+                            .decorations(buffer.page.info.id, buffer.page.info.revision)
+                            .enumerate()
+                        {
+                            let a = projection.display(decoration.start);
+                            let b = projection.display(decoration.finish);
+                            let start = bidi_view::caret_rect(&output.galley, &bidi_rows, a)
+                                .translate(output.galley_pos.to_vec2());
+                            if !ui.clip_rect().intersects(start) {
+                                continue;
+                            }
+                            let end = bidi_view::caret_rect(&output.galley, &bidi_rows, b)
+                                .translate(output.galley_pos.to_vec2());
+                            let color = match decoration.severity {
+                                Some(crate::plugin_runtime::service::Severity::Error) => {
+                                    theme.error.color()
+                                }
+                                Some(crate::plugin_runtime::service::Severity::Warning) => {
+                                    theme.warning.color()
+                                }
+                                _ => theme.accent.color(),
+                            };
+                            let right = if (start.center().y - end.center().y).abs() < 1.0 {
+                                start.left().max(end.left()).max(start.left() + 4.0)
+                            } else {
+                                start.left() + 12.0
+                            };
+                            let underline = egui::Rect::from_min_max(
+                                egui::pos2(start.left().min(end.left()), start.bottom() - 2.0),
+                                egui::pos2(right, start.bottom()),
+                            );
+                            ui.painter().hline(
+                                underline.x_range(),
+                                underline.bottom(),
+                                egui::Stroke::new(1.2_f32, color),
+                            );
+                            ui.interact(
+                                underline.expand(3.0),
+                                id.with(("plugin-decoration", number)),
+                                egui::Sense::hover(),
+                            )
+                            .on_hover_text(&decoration.text);
+                            if gutter > 0.0 {
+                                gutter_painter.circle_filled(
+                                    egui::pos2(gutter_rect.left() + 4.0, start.center().y),
+                                    2.5,
+                                    color,
+                                );
+                            }
+                            if decoration.severity.is_none() {
+                                let row = output
+                                    .galley
+                                    .cursor_from_pos(start.center() - output.galley_pos)
+                                    .rcursor
+                                    .row;
+                                if let Some(row) = output.galley.rows.get(row) {
+                                    let position = egui::pos2(
+                                        output.galley_pos.x + row.rect.right() + 12.0,
+                                        start.top(),
+                                    );
+                                    if position.x < ui.clip_rect().right() {
+                                        let galley = ui.painter().layout(
+                                            decoration.text.chars().take(160).collect(),
+                                            FontId::monospace((font_size - 2.0).max(8.0)),
+                                            theme.muted.color(),
+                                            (ui.clip_rect().right() - position.x).min(320.0),
+                                        );
+                                        ui.painter().galley(position, galley, theme.muted.color());
+                                    }
+                                }
                             }
                         }
                         // Right-clicking outside the selection moves the cursor there.
@@ -3945,6 +4032,7 @@ impl eframe::App for HeditApp {
         self.record_copies(ctx);
         self.close_dialog(ctx);
         self.poll_lua_transform(ctx);
+        self.poll_plugin_services(ctx);
         self.terminal_onboarding(ctx);
         self.notification_center(ctx);
         let paths: Vec<_> = ctx.input(|i| {
@@ -4027,6 +4115,7 @@ impl eframe::App for HeditApp {
 impl Drop for HeditApp {
     fn drop(&mut self) {
         self.lua_transform.take();
+        self.plugin_services.suspend();
         self.languages.service.take();
         if let Some(worker) = self.checkpoint_worker.take() {
             let _ = worker.join();
@@ -4096,6 +4185,7 @@ mod tests {
             app.record_copies(ctx);
             app.close_dialog(ctx);
             app.poll_lua_transform(ctx);
+            app.poll_plugin_services(ctx);
             app.notification_center(ctx);
         });
         assert!(!output.shapes.is_empty());
