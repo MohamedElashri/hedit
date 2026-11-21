@@ -706,21 +706,59 @@ impl Worker {
         let mut information = PROCESS_INFORMATION::default();
         // Console initialization can require a helper process and conflicts
         // with the child-process restriction. All worker I/O uses these pipes.
+        let write_token = if mode == native::Mode::Tool || {
+            #[cfg(test)]
+            {
+                mode == native::Mode::ToolProbe
+            }
+            #[cfg(not(test))]
+            {
+                false
+            }
+        } {
+            Some(native::WriteToken::create()?)
+        } else {
+            None
+        };
+        let flags = CREATE_SUSPENDED
+            | DETACHED_PROCESS
+            | CREATE_UNICODE_ENVIRONMENT
+            | EXTENDED_STARTUPINFO_PRESENT;
+        let application = wide(copied);
         check(unsafe {
-            CreateProcessW(
-                wide(copied).as_ptr(),
-                command.as_mut_ptr(),
-                ptr::null(),
-                ptr::null(),
-                1,
-                CREATE_SUSPENDED
-                    | DETACHED_PROCESS
-                    | CREATE_UNICODE_ENVIRONMENT
-                    | EXTENDED_STARTUPINFO_PRESENT,
-                environment.as_ptr().cast(),
-                current_directory.as_ptr(),
-                &startup.StartupInfo,
-                &mut information,
+            if let Some(token) = &write_token {
+                CreateProcessAsUserW(
+                    token.token.as_raw_handle(),
+                    application.as_ptr(),
+                    command.as_mut_ptr(),
+                    ptr::null(),
+                    ptr::null(),
+                    1,
+                    flags,
+                    environment.as_ptr().cast(),
+                    current_directory.as_ptr(),
+                    &startup.StartupInfo,
+                    &mut information,
+                )
+            } else {
+                CreateProcessW(
+                    application.as_ptr(),
+                    command.as_mut_ptr(),
+                    ptr::null(),
+                    ptr::null(),
+                    1,
+                    flags,
+                    environment.as_ptr().cast(),
+                    current_directory.as_ptr(),
+                    &startup.StartupInfo,
+                    &mut information,
+                )
+            }
+        })
+        .map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!("Confined process creation failed: {error}"),
             )
         })?;
         let process = unsafe { owned(information.hProcess) }?;
@@ -747,6 +785,9 @@ impl Worker {
                 }
             },
         )?;
+        if let Some(token) = &write_token {
+            token.verify(worker.process.as_raw_handle())?;
+        }
         if native {
             native::lower_integrity(worker.process.as_raw_handle(), mode)?;
             native::require_token(worker.process.as_raw_handle(), mode).map_err(|error| {

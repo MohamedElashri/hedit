@@ -461,7 +461,8 @@ fn confined_headless_worker_starts_without_a_console() {
 
 // The LPAC low-integrity control must be able to write the exact same kind of
 // low-labelled, explicitly granted object that the untrusted token cannot write.
-// This distinguishes mandatory integrity enforcement from a missing DACL grant.
+// This distinguishes the additional write restriction from a missing package
+// DACL grant; AppContainer grants can override ordinary integrity expectations.
 #[test]
 fn native_tool_integrity_cannot_be_raised_or_disabled() {
     for (mode, allowed) in [

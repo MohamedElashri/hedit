@@ -98,7 +98,7 @@ pub(super) fn require_lpac(process: HANDLE) -> io::Result<()> {
             )
         })?;
         let descriptor = LocalSid(descriptor);
-        let mut mapping = GENERIC_MAPPING {
+        let mapping = GENERIC_MAPPING {
             GenericRead: 1,
             GenericWrite: 2,
             GenericExecute: 4,
@@ -115,7 +115,7 @@ pub(super) fn require_lpac(process: HANDLE) -> io::Result<()> {
                 descriptor.0,
                 duplicate.as_raw_handle(),
                 1,
-                &mut mapping,
+                &mapping,
                 &mut privileges,
                 &mut length,
                 &mut granted,
@@ -131,6 +131,78 @@ pub(super) fn require_lpac(process: HANDLE) -> io::Result<()> {
     }
     Ok(())
 }
+/// A fresh restricting SID has no grants on any existing object. Restrict
+/// writes as well as applying the independent AppContainer package check.
+pub(super) struct WriteToken {
+    pub token: OwnedHandle,
+    sid: LocalSid,
+}
+impl WriteToken {
+    pub fn create() -> io::Result<Self> {
+        let mut handle = ptr::null_mut();
+        check(unsafe {
+            OpenProcessToken(
+                GetCurrentProcess(),
+                TOKEN_DUPLICATE | TOKEN_QUERY | TOKEN_ASSIGN_PRIMARY,
+                &mut handle,
+            )
+        })?;
+        let primary = unsafe { owned(handle) }?;
+        let mut random = [0u8; 16];
+        getrandom::fill(&mut random).map_err(io::Error::other)?;
+        let parts: Vec<_> = random
+            .chunks_exact(4)
+            .map(|bytes| u32::from_le_bytes(bytes.try_into().unwrap()))
+            .collect();
+        let mut sid = ptr::null_mut();
+        check(unsafe {
+            ConvertStringSidToSidW(
+                wide(format!(
+                    "S-1-5-21-{}-{}-{}-{}",
+                    parts[0], parts[1], parts[2], parts[3]
+                ))
+                .as_ptr(),
+                &mut sid,
+            )
+        })?;
+        let sid = LocalSid(sid);
+        let restriction = SID_AND_ATTRIBUTES {
+            Sid: sid.0,
+            Attributes: 0,
+        };
+        let mut restricted = ptr::null_mut();
+        check(unsafe {
+            CreateRestrictedToken(
+                primary.as_raw_handle(),
+                DISABLE_MAX_PRIVILEGE | WRITE_RESTRICTED,
+                0,
+                ptr::null(),
+                0,
+                ptr::null(),
+                1,
+                &restriction,
+                &mut restricted,
+            )
+        })?;
+        Ok(Self {
+            token: unsafe { owned(restricted) }?,
+            sid,
+        })
+    }
+    pub fn verify(&self, process: HANDLE) -> io::Result<()> {
+        let token = token(process)?;
+        let bytes = token_information(&token, TokenRestrictedSids)?;
+        let groups = unsafe { &*bytes.as_ptr().cast::<TOKEN_GROUPS>() };
+        if groups.GroupCount != 1 || unsafe { EqualSid(groups.Groups[0].Sid, self.sid.0) } == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "Native tool write restriction was not retained.",
+            ));
+        }
+        Ok(())
+    }
+}
+
 fn word(token: &OwnedHandle, class: TOKEN_INFORMATION_CLASS) -> io::Result<u32> {
     let mut value = 0u32;
     let mut length = mem::size_of_val(&value) as u32;

@@ -242,7 +242,7 @@ gone. No broker tool grants are enabled by this implementation.
 
 The Windows native-tool path uses the existing launcher with a distinct role:
 a capability-free less-privileged AppContainer (LPAC), an untrusted integrity
-label with no-write-up policy, Win32k lockdown, child-process restrictions,
+label with no-write-up policy, a separate write-restricted primary token, Win32k lockdown, child-process restrictions,
 explicit inherited handles and a kill-on-close single-process job. Parent-side
 checks run while the image is suspended; only after token, mitigation and job
 verification does it resume. The job limits private and job-wide committed
@@ -267,6 +267,14 @@ Everyone plus ALL_RESTRICTED_APPLICATION_PACKAGES must grant it. This uses the
 and [AccessCheck](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-accesscheck),
 with both positive and negative controls. The class-46 token query is rejected
 by the tested Windows kernels and is not used as an authority check.
+
+The host creates a restricted version of its own primary token with privileges
+removed and a fresh, ungranted restricting SID, then uses `CreateProcessAsUserW`
+with the LPAC attributes. The restricting SID must survive in the suspended
+child's token. This extra restriction is necessary: a native control demonstrated
+that lowering the AppContainer token label alone did not prevent writes through
+explicit package-SID grants. The integrity label is defense in depth, not the
+sole enforcement of read-only snapshots or profile storage.
 
 Native Windows validation is an activation gate. A low-integrity LPAC control
 receives write access to a synthetic low-labelled file; the untrusted tool token
