@@ -21,8 +21,13 @@ fn finish(app: &mut HeditApp, ctx: &egui::Context) {
     app.receive(ctx);
     frame(ctx, app, vec![]);
 }
-fn select(app: &mut HeditApp, scope: &SelectedScope, state: &State) {
-    let root = scope.resolve(state).unwrap();
+fn select(app: &mut HeditApp, scope: &SelectedScope) {
+    let state = State::open(
+        app.settings_files.dir.as_ref().unwrap(),
+        [app.workspace.store.directory().to_owned()],
+    )
+    .unwrap();
+    let root = scope.resolve(&state).unwrap();
     let record = state.recovery().records().unwrap().remove(0);
     let cancel = AtomicBool::new(false);
     let mut budget = Budget::new(&cancel, Duration::from_secs(10), 64 * 1024 * 1024);
@@ -88,6 +93,10 @@ fn settings_recovers_an_uninstalled_plugins_journal_and_keeps_actions_visible_fo
         },
     )
     .unwrap();
+    // Match the editor's per-operation State lifetime. Windows deliberately
+    // pins private stages against deletion until the owning scope is released.
+    drop(resources);
+    drop(state);
     let id = app.workspace.editor.id();
     let mut document = hedit::document::Document::open(id, &path).unwrap();
     let page = document.page(0).unwrap();
@@ -101,7 +110,7 @@ fn settings_recovers_an_uninstalled_plugins_journal_and_keeps_actions_visible_fo
     assert!(
         matches!(&app.extension_manager.recovery, Some(Review::List(records)) if records.len() == 1)
     );
-    select(&mut app, &scope, &state);
+    select(&mut app, &scope);
     let stale_view = match &app.extension_manager.recovery {
         Some(Review::Selected {
             view: Some(view), ..
@@ -110,10 +119,9 @@ fn settings_recovers_an_uninstalled_plugins_journal_and_keeps_actions_visible_fo
     };
     click_label(&ctx, &mut app, "Resume reviewed edit");
     finish(&mut app, &ctx);
-    assert!(!matches!(
-        app.extension_manager.feedback,
-        Some(Feedback::Error(_))
-    ));
+    if let Some(Feedback::Error(error)) = &app.extension_manager.feedback {
+        panic!("Recovery failed: {error}");
+    }
     assert_eq!(
         std::fs::read_to_string(&path).unwrap(),
         original.replacen("old", "new", 1)
@@ -123,7 +131,7 @@ fn settings_recovers_an_uninstalled_plugins_journal_and_keeps_actions_visible_fo
         .open
         .iter()
         .any(|b| b.page.info.id == id && b.page.text.starts_with("new")));
-    select(&mut app, &scope, &state);
+    select(&mut app, &scope);
     if let Some(Review::Selected { view, .. }) = &mut app.extension_manager.recovery {
         *view = Some(stale_view);
     }
@@ -136,28 +144,31 @@ fn settings_recovers_an_uninstalled_plugins_journal_and_keeps_actions_visible_fo
         std::fs::read_to_string(&path).unwrap(),
         original.replacen("old", "new", 1)
     );
-    select(&mut app, &scope, &state);
+    select(&mut app, &scope);
     app.extension_manager.feedback = None;
     click_label(&ctx, &mut app, "Restore originals");
     finish(&mut app, &ctx);
-    assert!(!matches!(
-        app.extension_manager.feedback,
-        Some(Feedback::Error(_))
-    ));
+    if let Some(Feedback::Error(error)) = &app.extension_manager.feedback {
+        panic!("Recovery failed: {error}");
+    }
     assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
     assert!(app
         .workspace
         .open
         .iter()
         .any(|b| b.page.info.id == id && b.page.text.starts_with("old")));
-    select(&mut app, &scope, &state);
+    select(&mut app, &scope);
     click_label(&ctx, &mut app, "Delete recovery history");
     finish(&mut app, &ctx);
-    assert!(!matches!(
-        app.extension_manager.feedback,
-        Some(Feedback::Error(_))
-    ));
-    assert!(state.recovery().records().unwrap().is_empty());
+    if let Some(Feedback::Error(error)) = &app.extension_manager.feedback {
+        panic!("Recovery failed: {error}");
+    }
+    assert!(State::open(&config, [])
+        .unwrap()
+        .recovery()
+        .records()
+        .unwrap()
+        .is_empty());
     assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
     assert!(!config.join("extensions-lua-grants.json").exists());
 }
