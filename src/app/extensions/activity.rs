@@ -23,6 +23,7 @@ enum Scope {
     DocumentAndStorage,
     Save,
     Provider,
+    ScopedProvider,
     Broker,
 }
 
@@ -34,12 +35,19 @@ impl Scope {
             Self::DocumentAndStorage => "Current document and private command storage",
             Self::Save => "Read and replace document on save",
             Self::Provider => "Current-document provider callback",
+            Self::ScopedProvider => "Scoped provider callback",
             Self::Broker => "Scoped workspace or integration command",
         }
     }
 }
 
 impl Invocation {
+    pub(super) fn scoped_provider(command_id: &str) -> Self {
+        Self {
+            scope: Scope::ScopedProvider,
+            ..Self::new(command_id)
+        }
+    }
     pub(in crate::app) fn broker(command_id: &str) -> Self {
         Self {
             scope: Scope::Broker,

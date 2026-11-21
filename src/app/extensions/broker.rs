@@ -1,6 +1,8 @@
 //! Installed SDK 3 commands use a scoped host, never the legacy document worker.
 pub(super) mod commit;
+mod context;
 mod deferred;
+pub(super) use context::Context;
 mod limit;
 use super::{
     activity::{Invocation, InvocationOutcome},
@@ -37,64 +39,14 @@ use std::{
 };
 static CHECKS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static NETWORK: OnceLock<Arc<hedit_broker::network::Network>> = OnceLock::new();
-struct Context {
-    config: PathBuf,
-    command: String,
-    plugin: LuaPlugin,
-    package: sdk::Input,
-    target: Option<lua::Target>,
-    editor: Arc<hedit::Editor>,
-    monitor: Monitor,
-    generation: OnceLock<(Vec<u8>, u64)>,
-    directory: OnceLock<PathBuf>,
-    live: AtomicBool,
-    commit: commit::Signals,
-}
+
 fn denied() -> io::Error {
     io::Error::new(
         io::ErrorKind::PermissionDenied,
         "Extension context or resource approval changed.",
     )
 }
-impl Context {
-    fn current(&self) -> bool {
-        self.live.load(Ordering::Acquire)
-            && self.generation.get().is_none_or(|(_, sequence)| {
-                self.monitor.sequence.load(Ordering::Acquire) == *sequence
-            })
-            && (self.commit.committing.load(Ordering::Acquire)
-                || self.target.as_ref().is_none_or(|target| {
-                    self.editor
-                        .get(target.document())
-                        .ok()
-                        .and_then(|doc| {
-                            doc.try_lock()
-                                .ok()
-                                .map(|doc| doc.info().revision == target.revision())
-                        })
-                        .unwrap_or(false)
-                }))
-    }
-    fn approved_plugin(&self) -> LuaPlugin {
-        let mut plugin = self.plugin.clone();
-        plugin.broker_epoch = self
-            .generation
-            .get()
-            .map(|(epoch, _)| Arc::new(epoch.clone()));
-        plugin
-    }
-    fn authorize(&self, cancelled: &AtomicBool) -> io::Result<File> {
-        if cancelled.load(Ordering::Acquire) || !self.current() {
-            return Err(denied());
-        }
-        let guard = catalog::broker_authorization(&self.config, &self.approved_plugin())
-            .ok_or_else(denied)?;
-        if cancelled.load(Ordering::Acquire) || !self.current() {
-            return Err(denied());
-        }
-        Ok(guard)
-    }
-}
+
 struct Finished {
     transaction: Option<sdk::Transaction>,
     result: Option<Box<service::ResultSet>>,
@@ -129,7 +81,7 @@ pub(in crate::app) struct BrokerCommand {
 }
 impl Drop for BrokerCommand {
     fn drop(&mut self) {
-        self.context.live.store(false, Ordering::Release);
+        self.context.close();
     }
 }
 impl BrokerCommand {
@@ -143,99 +95,10 @@ impl BrokerCommand {
         cache: sdk::Storage,
         request: Option<service::Request>,
     ) -> Result<(), String> {
-        self.context.commit.applied.store(false, Ordering::Release);
-        self.context
-            .commit
-            .committing
-            .store(false, Ordering::Release);
-        let setup = self.context.clone();
-        let authority = self.context.clone();
-        let editor = self.context.editor.clone();
-        let config = self.context.config.clone();
-        let private_directory = app.workspace.store.directory().to_owned();
-        let sender = app.tx.clone();
-        let wake = ctx.clone();
-        let commit_authority = self.context.clone();
-        let following: BTreeSet<_> = app
-            .workspace
-            .open
-            .iter()
-            .filter(|buffer| buffer.follow)
-            .map(|buffer| buffer.page.info.id)
-            .collect();
-        let arguments = self.arguments.clone();
-        let host = Host::start_scoped(
-            move |cancel| {
-                let state = State::open(&config, [private_directory])?;
-                let sequence = setup.monitor.register(&cancel)?;
-                let guard = setup.authorize(&AtomicBool::new(false))?;
-                let epoch = catalog::broker_epoch(&config, &guard).map_err(|_| denied())?;
-                if let Some((expected, known)) = setup.generation.get() {
-                    if expected != &epoch || *known != sequence {
-                        return Err(denied());
-                    }
-                } else {
-                    setup
-                        .generation
-                        .set((epoch, sequence))
-                        .map_err(|_| denied())?;
-                }
-                let definition = setup.plugin.broker.clone().ok_or_else(denied)?;
-                let token = serde_json::from_value(setup.plugin.grant.approval_id().into())
-                    .map_err(|_| denied())?;
-                let resolved = state.resolve(&setup.command, token, &definition)?;
-                if let Some(resources) = &resolved.resources {
-                    let path = resources.root(resources.scope())?.locator().to_owned();
-                    if setup.directory.get().is_some_and(|known| known != &path) {
-                        return Err(denied());
-                    }
-                    let _ = setup.directory.set(path);
-                }
-                let mut package = setup.package.clone();
-                package.arguments = arguments;
-                Ok(hedit_broker::session::Config {
-                    owner: Some(hedit_broker::journal::Owner {
-                        command: setup.command.clone(),
-                        digest: setup.plugin.grant.digest().into(),
-                    }),
-                    package,
-                    provider: request,
-                    cache,
-                    definition,
-                    resources: resolved.resources,
-                    endpoints: resolved.endpoints,
-                    network: NETWORK.get_or_init(|| Arc::new(Default::default())).clone(),
-                    recovery: state.recovery(),
-                    cancel,
-                    wake: Arc::new(|| {}),
-                })
-            },
-            Arc::new(move |cancel| authority.authorize(cancel)),
-            Arc::new(move |plan, cancel| {
-                let _guard = commit_authority.authorize(cancel)?;
-                let result = commit::prepare(
-                    &editor,
-                    plan,
-                    cancel,
-                    sender.clone(),
-                    wake.clone(),
-                    &following,
-                    commit_authority.commit.clone(),
-                );
-                if result.is_err() {
-                    commit_authority
-                        .commit
-                        .committing
-                        .store(false, Ordering::Release);
-                }
-                result
-            }),
-            {
-                let ctx = ctx.clone();
-                Arc::new(move || ctx.request_repaint())
-            },
-        )
-        .map_err(|_| "The scoped extension host could not start.")?;
+        let host = self
+            .context
+            .start(app, ctx, cache, request, self.arguments.clone())
+            .map_err(|e| e.to_string())?;
         self.phase = Phase::Running {
             host,
             review: None,
@@ -314,19 +177,15 @@ impl HeditApp {
                 None,
             );
             let mut command = BrokerCommand {
-                context: Arc::new(Context {
+                context: Context::new(
                     config,
-                    command: command.into(),
+                    command.into(),
                     plugin,
                     package,
                     target,
-                    editor: self.workspace.editor.clone(),
+                    self.workspace.editor.clone(),
                     monitor,
-                    generation: OnceLock::new(),
-                    directory: OnceLock::new(),
-                    live: AtomicBool::new(true),
-                    commit: Default::default(),
-                }),
+                ),
                 phase: Phase::Arguments,
                 invocation: Some(Invocation::broker(command)),
                 arguments,
@@ -397,7 +256,9 @@ impl HeditApp {
                                 );
                                 return Err(format!(
                                     "{}: {}.",
-                                    if applied {
+                                    if context.commit.incomplete.load(Ordering::Acquire) {
+                                        "Workspace edit interrupted; review Workspace recovery"
+                                    } else if applied {
                                         "Workspace edit applied; the extension then stopped"
                                     } else {
                                         "Extension command stopped"
@@ -410,32 +271,7 @@ impl HeditApp {
                                 result,
                                 cache,
                             } => {
-                                let permit = limit::Reservation::reserve(&CHECKS, 1, 4)
-                                    .map_err(|_| "Extension authorization is busy.")?;
-                                let (sender, receiver) = mpsc::sync_channel(1);
-                                let context = context.clone();
-                                let ctx = ctx.clone();
-                                std::thread::Builder::new()
-                                    .name("hedit-broker-result".into())
-                                    .spawn(move || {
-                                        let _permit = permit;
-                                        let authorized = context
-                                            .authorize(&AtomicBool::new(false))
-                                            .ok()
-                                            .map(Receipt::new);
-                                        match authorized {
-                                            Some((receipt, expiry)) => {
-                                                let _ = sender.send(Some(receipt));
-                                                ctx.request_repaint();
-                                                expiry.wait();
-                                            }
-                                            None => {
-                                                let _ = sender.send(None);
-                                                ctx.request_repaint();
-                                            }
-                                        }
-                                    })
-                                    .map_err(|_| "Result authorization could not start.")?;
+                                let receiver = context.result_authority(ctx)?;
                                 command.phase = Phase::Checking {
                                     finished: Finished {
                                         transaction,
@@ -616,7 +452,7 @@ impl HeditApp {
             self.broker_command = Some(command);
         }
     }
-    fn propose_broker_edit(
+    pub(in crate::app::extensions) fn propose_broker_edit(
         &mut self,
         ctx: &egui::Context,
         context: &Context,
@@ -643,6 +479,8 @@ impl HeditApp {
     }
     pub(in crate::app) fn refresh_broker_buffers(&mut self, refresh: Refresh) {
         let mut updated = false;
+        let active = self.active().page.info.id;
+        let mut origin = None;
         for page in refresh.pages {
             if let Some(buffer) = self.workspace.open.iter_mut().find(|buffer| {
                 buffer.page.info.id == page.info.id
@@ -662,6 +500,12 @@ impl HeditApp {
                         selection.head = selection.head.min(count);
                     }
                 }
+                if !refresh.conflicts && page.info.id == active {
+                    origin = refresh
+                        .origin
+                        .as_ref()
+                        .map(|owner| (page.info.id, page.info.revision, owner.clone()));
+                }
                 buffer.view.page_start = page.start;
                 buffer.page = page;
                 buffer.restore_cursor = true;
@@ -672,8 +516,13 @@ impl HeditApp {
         if updated {
             self.changed();
         }
+        if let Some((document, revision, owner)) = origin {
+            self.plugin_services.note_origin(document, revision, &owner);
+        }
         if refresh.conflicts {
             self.error = Some("Workspace commit encountered a changed file. Original buffer text was kept unsaved; review recovery before continuing.".into());
+        } else if refresh.incomplete {
+            self.error = Some("Workspace edit stopped before completion. Some files may have changed. Review Workspace recovery in Extensions.".into());
         } else if refresh.applied {
             self.notice = format!("Workspace edit applied to {} files.", refresh.files);
         } else if refresh.changed != 0 {
@@ -684,7 +533,7 @@ impl HeditApp {
         }
     }
 }
-fn failure(code: plugin_runtime::broker::FailureCode) -> &'static str {
+pub(super) fn failure(code: plugin_runtime::broker::FailureCode) -> &'static str {
     use plugin_runtime::broker::FailureCode::*;
     match code {
         Denied => "approval denied",

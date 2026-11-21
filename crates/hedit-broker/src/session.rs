@@ -20,7 +20,14 @@ use std::{
     time::{Duration, Instant},
 };
 static ADMISSION: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(16);
+static PROVIDERS: tokio::sync::Semaphore =
+    tokio::sync::Semaphore::const_new(crate::MAX_PROVIDER_CONTEXTS);
 static ACTIVE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+static BACKGROUND_WORK: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(3);
+pub(crate) struct Active {
+    _global: tokio::sync::SemaphorePermit<'static>,
+    _background: Option<tokio::sync::SemaphorePermit<'static>>,
+}
 const WORK: Duration = Duration::from_secs(10);
 const BYTES: usize = 64 * 1024 * 1024;
 enum Phase {
@@ -54,7 +61,8 @@ pub struct Session {
     wake: Arc<dyn Fn() + Send + Sync>,
     watch_wake: Arc<tokio::sync::Notify>,
     permit: Option<tokio::sync::SemaphorePermit<'static>>,
-    active: Option<tokio::sync::SemaphorePermit<'static>>,
+    background: Option<tokio::sync::SemaphorePermit<'static>>,
+    active: Option<Active>,
     owner: Option<crate::journal::Owner>,
 }
 fn denied() -> io::Error {
@@ -145,6 +153,15 @@ impl Session {
         {
             return Err(invalid());
         }
+        let background = provider
+            .then(|| PROVIDERS.try_acquire())
+            .transpose()
+            .map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "Broker provider context limit reached.",
+                )
+            })?;
         let permit = ADMISSION.try_acquire().map_err(|_| {
             io::Error::new(io::ErrorKind::WouldBlock, "Broker session limit reached.")
         })?;
@@ -186,6 +203,7 @@ impl Session {
             wake: config.wake,
             watch_wake: Arc::new(tokio::sync::Notify::new()),
             permit: Some(permit),
+            background,
             active: None,
             owner: config.owner,
         })
@@ -206,13 +224,21 @@ impl Session {
         Ok(())
     }
     pub fn begin_callback(&mut self) -> io::Result<broker::Input> {
+        let active = self.host_work()?;
+        self.begin_in_slot(active)
+    }
+    pub(crate) async fn begin_callback_when_ready(&mut self) -> io::Result<broker::Input> {
+        let active = self.host_work_when_ready().await?;
+        self.begin_in_slot(active)
+    }
+    fn begin_in_slot(&mut self, active: Active) -> io::Result<broker::Input> {
         self.live()?;
         if !matches!(self.phase, Phase::Ready)
             || usize::from(self.input.step) >= broker::MAX_CALLBACKS
         {
             return Err(invalid());
         }
-        self.active = Some(active()?);
+        self.active = Some(active);
         self.phase = Phase::Running(Instant::now());
         Ok(self.input.clone())
     }
@@ -226,9 +252,50 @@ impl Session {
         self.spent = self.spent.saturating_add(elapsed);
         self.live()
     }
-    pub(crate) fn host_work(&self) -> io::Result<tokio::sync::SemaphorePermit<'static>> {
+    pub(crate) fn work_duration(&self) -> Duration {
+        self.spent.saturating_add(match self.phase {
+            Phase::Running(started) => started.elapsed(),
+            _ => Duration::ZERO,
+        })
+    }
+    pub(crate) fn is_provider(&self) -> bool {
+        self.definition.has(crate::declaration::Capability::Observe)
+    }
+    pub(crate) fn callback_live(&self) -> io::Result<()> {
         self.live()?;
-        active()
+        if self.work_duration() >= WORK {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "Broker callback exhausted its work budget.",
+            ));
+        }
+        Ok(())
+    }
+    pub(crate) fn host_work(&self) -> io::Result<Active> {
+        self.live()?;
+        active(self.definition.has(crate::declaration::Capability::Observe))
+    }
+    pub(crate) async fn host_work_when_ready(&self) -> io::Result<Active> {
+        self.live()?;
+        let waiting = async {
+            let background = if self.definition.has(crate::declaration::Capability::Observe) {
+                Some(BACKGROUND_WORK.acquire().await.map_err(|_| denied())?)
+            } else {
+                None
+            };
+            let global = ACTIVE.acquire().await.map_err(|_| denied())?;
+            io::Result::Ok(Active {
+                _global: global,
+                _background: background,
+            })
+        };
+        let active = tokio::select! {
+            biased;
+            _ = self.cancel.cancelled() => return Err(io::Error::new(io::ErrorKind::Interrupted, "Broker work cancelled.")),
+            result = waiting => result?,
+        };
+        self.live()?;
+        Ok(active)
     }
     fn respond(&mut self, response: Response) -> io::Result<Effect> {
         response.validate().map_err(|_| invalid())?;
@@ -266,6 +333,7 @@ impl Session {
         self.input.cache.0.clear();
         self.input.package.snapshot.text.clear();
         self.permit.take();
+        self.background.take();
         self.active.take();
     }
     async fn accept_inner<G>(
@@ -595,7 +663,7 @@ impl Session {
             result = tokio::time::timeout(Duration::from_secs(30),waiting) => result.map_err(|_|io::Error::new(io::ErrorKind::TimedOut,"Workspace watch expired while idle."))??,
         }
         self.live()?;
-        self.active = Some(active()?);
+        self.active = Some(self.host_work_when_ready().await?);
         let _guard = authority()?;
         let started = Instant::now();
         let mut budget = Budget::new(
@@ -727,10 +795,16 @@ impl Session {
         result
     }
 }
-fn active() -> io::Result<tokio::sync::SemaphorePermit<'static>> {
-    ACTIVE
-        .try_acquire()
-        .map_err(|_| io::Error::new(io::ErrorKind::WouldBlock, "Extension broker is busy."))
+fn active(provider: bool) -> io::Result<Active> {
+    let busy = |_| io::Error::new(io::ErrorKind::WouldBlock, "Extension broker is busy.");
+    let background = provider
+        .then(|| BACKGROUND_WORK.try_acquire())
+        .transpose()
+        .map_err(busy)?;
+    Ok(Active {
+        _global: ACTIVE.try_acquire().map_err(busy)?,
+        _background: background,
+    })
 }
 impl Drop for Session {
     fn drop(&mut self) {

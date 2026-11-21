@@ -322,6 +322,36 @@ fn asynchronous_host() {
         assert!(host.try_event().is_none());
     }
 }
+fn foreground_callback_survives_full_background_admission() {
+    let background: Vec<_> = (0..3)
+        .map(|_| hedit_plugin::service_admission().unwrap())
+        .collect();
+    assert!(!hedit_plugin::service_available());
+    let input = broker::Input {
+        protocol_version: broker::VERSION,
+        request: Handle::fresh().unwrap(),
+        step: 0,
+        package: package("return function(ctx) return {intent={finish={}}} end", ""),
+        scope: None,
+        may_edit: false,
+        workspace_edit: false,
+        may_present: false,
+        provider: None,
+        response: None,
+        cache: Default::default(),
+    };
+    let result = hedit_plugin::run_broker_fixture(input).unwrap();
+    assert!(matches!(
+        result.intent,
+        Intent::Finish {
+            transaction: None,
+            result: None
+        }
+    ));
+    assert!(!hedit_plugin::service_available());
+    drop(background);
+    assert!(hedit_plugin::service_available());
+}
 fn main() {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     if let Some(completed) = hedit_plugin::run_if_requested(&args) {
@@ -367,5 +397,6 @@ fn main() {
     workspace_chain();
     synthetic_translation();
     asynchronous_host();
-    println!("PASS: confined workspace and synthetic HTTPS continuation fixtures");
+    foreground_callback_survives_full_background_admission();
+    println!("PASS: confined workspace, synthetic HTTPS and foreground admission fixtures");
 }

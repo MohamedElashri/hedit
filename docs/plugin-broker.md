@@ -1,7 +1,7 @@
 # Workspace and service broker
 
 SDK 3 is under implementation. This integration branch accepts experimental
-manifest API 5 / SDK 3 ordinary commands; APIs 1–4 retain their existing meanings.
+manifest API 5 / SDK 3 commands and providers; APIs 1–4 retain their existing meanings.
 The types in `hedit-plugin::broker` and `hedit-broker` are internal development
 interfaces, not a released author contract. See the [current SDK](plugin-sdk.md)
 and [security model](extension-security.md) for supported functionality.
@@ -26,8 +26,9 @@ Trusted editor: installed source, consent, document revisions, native UI
 
 The editor routes ordinary scoped commands through exact-source approval and
 separate directory/endpoint review, complete paged workspace previews, clean
-buffer preflight, and off-thread reconciliation. SDK 3 background-provider
-routing, recovery UI, author CLI and extracted-package references remain open.
+buffer preflight, and off-thread reconciliation. Providers share the same source,
+resource, revocation and commit checks. Explicit recovery is available in
+Extensions settings. Author CLI and extracted-package references remain open.
 Tool declarations are validated, but tool and language-server requests report
 unavailable. Native external-tool isolation remains a separate implementation
 and platform gate. None of these gaps is covered by an unsandboxed fallback.
@@ -80,7 +81,11 @@ SDK 3 uses an explicit private protocol version and a 2 MiB frame ceiling.
 
 Limits include 32 callbacks, 10 seconds of aggregate active work, 64 MiB of chain
 I/O, 16 bounded session/host contexts, four active broker operations, and four native
-worker slots. The worker retains the service role's readiness deadline, 750 ms
+worker slots. Providers may occupy at most 12 contexts and three active broker
+operations. Background native callbacks (including SDK 2 providers) leave one of
+the four service-worker slots available for an ordinary command. Admission is
+cancellable; a capacity retry preserves the exact callback input and never repeats
+a previously completed host operation. The worker retains the service role's readiness deadline, 750 ms
 processing deadline, 200,000 instructions, 16 MiB Lua allocation limit and native
 resource/confinement policy. A reply cannot select a weaker launch role.
 
@@ -140,6 +145,30 @@ has a 4,096-identity ceiling; corruption, partial records or exhaustion fail clo
 IDs remain excluded after cleanup, so inode reuse can conservatively deny an
 unrelated new file. Removing the registry while private stages survive is unsafe.
 
+## Installed providers
+
+API 5 provider declarations bind the provider kind, triggers, debounce, capabilities
+and source digest in the command approval. Automatic document events and typed
+document providers require `document.read`. A presentation provider without that
+capability starts only on an explicit manual action and receives a neutral empty
+snapshot, including when the active buffer cannot support document plugins.
+Resource grants remain separate; event approval supplies no directory or endpoint.
+
+The editor coalesces events, checks document/revision/selection lifetimes, bounds
+per-owner work, and preserves Stop, Resume, quarantine and idle-cache behavior.
+Close callbacks receive empty text/cache, have no edit authority, and may only
+finish with the closed result. Workspace proposals always use a complete trusted
+preview and explicit acceptance, including proposals from automatic callbacks.
+Successful edits carry their originating package so providers do not immediately
+react to their own changes.
+
+Only the selected provider draws details. Diagnostics use validated byte ranges
+converted to editor coordinates. Results expire after 120 seconds; callbacks
+recheck source policy and scope. Parked SDK 3 hosts wake the editor through native
+notifications rather than periodic 50 ms UI polls. Capacity contention uses a
+bounded off-UI retry; human preview dwell is excluded from work accounting.
+No Lua worker or document/policy lock is retained during the preview wait.
+
 ## Workspace edits and recovery
 
 Plans reuse the shared Unicode/CRLF edit validator: at most 32 existing files,
@@ -182,7 +211,9 @@ renames.** It is not a single atomic replacement or a globally atomic transactio
 Ordinary errors attempt a no-clobber restoration while authority is still held.
 Crashes, I/O errors or a competing creator can leave an absent destination or a
 partial plan; originals and replacements remain available for explicit recovery.
-Compensating recovery never overwrites a competing write.
+Compensating recovery never overwrites a competing write. An interrupted apply
+is reported separately from a fully completed edit, including when affected files
+were not open; the UI directs the user to retained workspace recovery.
 
 **Settings → Extensions → Workspace recovery…** lists retained journals.
 Choose the original physical directory to inspect complete original/replacement
@@ -265,7 +296,7 @@ on Windows. It uses disposable Unicode/CRLF files and a synthetic translation
 response. The transport tests separately exercise real loopback TLS; production
 endpoint policy cannot opt into that test route.
 
-Required gates still include SDK 3 provider routing and native recovery UI acceptance; fresh native
+Required gates still include native provider/recovery acceptance on all supported platforms; fresh native
 Windows x64/ARM64 and Linux editor-integration checks; external
 tool/LSP confinement and adversarial tests; author/reference/extracted-package
 coverage; final sanitizer and sustained performance evidence; and universal macOS

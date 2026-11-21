@@ -14,6 +14,8 @@ pub struct Pending {
 struct Flight {
     generation: u64,
     started_ms: u64,
+    paused_at: Option<u64>,
+    excluded_ms: u64,
 }
 #[derive(Default)]
 pub struct State {
@@ -87,14 +89,39 @@ impl State {
         self.flight = Some(Flight {
             generation: pending.generation,
             started_ms: now,
+            paused_at: None,
+            excluded_ms: 0,
         });
         Some(pending)
     }
+    pub fn pause_work(&mut self, now: u64) {
+        if let Some(flight) = &mut self.flight {
+            if flight.paused_at.is_none() {
+                flight.paused_at = Some(now);
+            }
+        }
+    }
+    pub fn resume_work(&mut self, now: u64) {
+        if let Some(flight) = &mut self.flight {
+            if let Some(paused) = flight.paused_at.take() {
+                flight.excluded_ms = flight
+                    .excluded_ms
+                    .saturating_add(now.saturating_sub(paused));
+            }
+        }
+    }
     fn charge(&mut self, now: u64) -> Option<Flight> {
+        self.charge_work(now, None)
+    }
+    fn charge_work(&mut self, now: u64, work: Option<u64>) -> Option<Flight> {
         let flight = self.flight.take()?;
-        self.spent_ms = self
-            .spent_ms
-            .saturating_add(now.saturating_sub(flight.started_ms));
+        self.spent_ms = self.spent_ms.saturating_add(work.unwrap_or_else(|| {
+            flight
+                .paused_at
+                .unwrap_or(now)
+                .saturating_sub(flight.started_ms)
+                .saturating_sub(flight.excluded_ms)
+        }));
         Some(flight)
     }
     pub fn finish(
@@ -104,13 +131,35 @@ impl State {
         success: bool,
         cache: Option<sdk::Storage>,
     ) -> bool {
+        self.finish_accounted(generation, now, None, success, cache)
+    }
+    /// The scoped host accounts aggregate work separately from human preview
+    /// dwell and parked I/O, so elapsed UI time is not charged as computation.
+    pub fn finish_with_work(
+        &mut self,
+        generation: u64,
+        now: u64,
+        work: u64,
+        success: bool,
+        cache: Option<sdk::Storage>,
+    ) -> bool {
+        self.finish_accounted(generation, now, Some(work), success, cache)
+    }
+    fn finish_accounted(
+        &mut self,
+        generation: u64,
+        now: u64,
+        work: Option<u64>,
+        success: bool,
+        cache: Option<sdk::Storage>,
+    ) -> bool {
         if self
             .flight
             .is_none_or(|flight| flight.generation != generation)
         {
             return false;
         }
-        let Some(flight) = self.charge(now) else {
+        let Some(flight) = self.charge_work(now, work) else {
             return false;
         };
         if flight.generation != generation || generation != self.generation {
@@ -270,6 +319,25 @@ mod tests {
         state.cache = sdk::Storage([("count".into(), crate::options::Value::Integer(1))].into());
         assert!(state.expire_idle(30_000));
         assert!(state.cache.0.is_empty());
+    }
+    #[test]
+    fn preview_dwell_is_not_work_even_when_cancelled_and_host_accounting_excludes_parked_time() {
+        let mut state = State::default();
+        state.queue(Trigger::Manual, 0, 0);
+        let first = state.begin(0).unwrap();
+        state.pause_work(30);
+        state.resume_work(20_030);
+        assert!(state.finish(first.generation, 20_060, true, None));
+        assert_eq!(state.spent_ms, 60);
+        state.queue(Trigger::Manual, 20_160, 0);
+        state.begin(20_160).unwrap();
+        state.pause_work(20_200);
+        state.cancel(29_000);
+        assert_eq!(state.spent_ms, 100);
+        state.queue(Trigger::Manual, 29_100, 0);
+        let next = state.begin(29_100).unwrap();
+        assert!(state.finish_with_work(next.generation, 40_000, 12, true, None));
+        assert_eq!(state.spent_ms, 112);
     }
     #[test]
     fn foreign_completion_cannot_consume_a_new_flight_or_restore_prior_cache() {

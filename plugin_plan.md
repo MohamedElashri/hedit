@@ -824,3 +824,38 @@ panes now scroll within a fixed height so newline-heavy output cannot displace
 recovery actions. The preceding command integration passed full Linux/macOS/
 Windows CI (`44911549599`) and x64/ARM64 sandbox CI (`44911549544`, with a retry
 of the existing Windows Lua deadline fixture).
+
+
+### Scoped provider integration
+
+API 5 / SDK 3 providers now share exact-source authority, resource resolution,
+native cancellation and workspace commit checks with ordinary commands. The
+installed provider scheduler supports typed results, coalesced document events,
+manual document-free presentation, callbacks/cache, Stop/Resume/quarantine and
+explicit workspace previews. Automatic document events require document.read;
+manual workspace providers receive an empty snapshot even without a Lua-eligible
+active buffer. Provider approval shows its exact kind, triggers and capabilities.
+
+Background hosts/sessions are capped at 12 of 16 contexts and three of four
+active broker operations. Shared SDK 2/3 native service admission preserves one
+foreground worker slot. Cancellable waits and retries preserve the current
+callback input, never restarting a chain after host effects. Native wakeups
+replace periodic SDK 3 UI polling; settled work accounting excludes human preview
+and parked-watch dwell. Workspace refreshes carry package origin to suppress
+self-triggered document events.
+
+The initial native macOS workspace sweep passed 1,382 tests with 62 intentional
+ignores. Additional foreground admission and queue regressions were added after
+that sweep and are being validated separately. Native provider fixtures cover
+neutral snapshots, callback cache, Stop/Resume/revoke, Unicode diagnostics, stale
+results, explicit two-file review and clean-buffer reconciliation. Windows/Linux
+provider-specific editor checks, final responsiveness/retention evidence, native
+tool/LSP backends, author/reference tooling and universal packaging remain open.
+
+Final provider follow-up checks passed 108 editor extension tests (two intentional
+ignores), including automatic open/change/close lifecycle and partial-apply
+reporting, plus the complete native broker/plugin suites after the priority
+changes. All-feature/all-target workspace Clippy passed. The recovery PR's final
+signed head `9ba28a0` passed Linux/macOS/Windows/remote CI (`44915873512`) and both
+Windows sandbox architectures (`44915873326`). Its Windows cleanup fixture now
+releases per-operation protected-directory pins, matching the real editor flow.

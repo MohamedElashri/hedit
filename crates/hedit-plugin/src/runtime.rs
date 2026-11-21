@@ -140,41 +140,80 @@ pub fn start_sdk(
     })
 }
 
-static ACTIVE_SERVICES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+struct ServiceBudget {
+    active: std::sync::atomic::AtomicUsize,
+    background: std::sync::atomic::AtomicUsize,
+}
+impl ServiceBudget {
+    const fn new() -> Self {
+        Self {
+            active: std::sync::atomic::AtomicUsize::new(0),
+            background: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+    fn available(&self, background: bool) -> bool {
+        self.active.load(Ordering::Acquire) < crate::service::MAX_ACTIVE
+            && (!background
+                || self.background.load(Ordering::Acquire) < crate::service::MAX_ACTIVE - 1)
+    }
+    fn reserve(&'static self, background: bool) -> Result<ServicePermit, Error> {
+        fn acquire(counter: &std::sync::atomic::AtomicUsize, maximum: usize) -> Result<(), Error> {
+            let mut old = counter.load(Ordering::Acquire);
+            loop {
+                if old >= maximum {
+                    return Err(Error::ServiceBusy);
+                }
+                match counter.compare_exchange_weak(
+                    old,
+                    old + 1,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                ) {
+                    Ok(_) => return Ok(()),
+                    Err(actual) => old = actual,
+                }
+            }
+        }
+        if background {
+            acquire(&self.background, crate::service::MAX_ACTIVE - 1)?;
+        }
+        if let Err(error) = acquire(&self.active, crate::service::MAX_ACTIVE) {
+            if background {
+                self.background.fetch_sub(1, Ordering::AcqRel);
+            }
+            return Err(error);
+        }
+        Ok(ServicePermit {
+            budget: self,
+            background,
+        })
+    }
+}
+static SERVICES: ServiceBudget = ServiceBudget::new();
 pub fn service_available() -> bool {
-    ACTIVE_SERVICES.load(Ordering::Acquire) < crate::service::MAX_ACTIVE
+    SERVICES.available(true)
+}
+pub fn broker_available(background: bool) -> bool {
+    SERVICES.available(background)
 }
 pub struct ServiceAdmission {
     _permit: ServicePermit,
 }
 pub fn service_admission() -> Result<ServiceAdmission, Error> {
     Ok(ServiceAdmission {
-        _permit: ServicePermit::reserve()?,
+        _permit: SERVICES.reserve(true)?,
     })
 }
-struct ServicePermit;
-impl ServicePermit {
-    fn reserve() -> Result<Self, Error> {
-        let mut old = ACTIVE_SERVICES.load(Ordering::Acquire);
-        loop {
-            if old >= crate::service::MAX_ACTIVE {
-                return Err(Error::ServiceBusy);
-            }
-            match ACTIVE_SERVICES.compare_exchange_weak(
-                old,
-                old + 1,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            ) {
-                Ok(_) => return Ok(Self),
-                Err(actual) => old = actual,
-            }
-        }
-    }
+struct ServicePermit {
+    budget: &'static ServiceBudget,
+    background: bool,
 }
 impl Drop for ServicePermit {
     fn drop(&mut self) {
-        ACTIVE_SERVICES.fetch_sub(1, Ordering::AcqRel);
+        self.budget.active.fetch_sub(1, Ordering::AcqRel);
+        if self.background {
+            self.budget.background.fetch_sub(1, Ordering::AcqRel);
+        }
     }
 }
 pub type RunningService = Running<crate::service::Output, crate::sdk::Failure>;
@@ -190,7 +229,7 @@ pub fn start_service_checked(
     authorize: impl FnOnce(&AtomicBool) -> Result<File, Error> + Send + 'static,
     wake: impl FnOnce() + Send + 'static,
 ) -> Result<RunningService, Error> {
-    let permit = ServicePermit::reserve()?;
+    let permit = SERVICES.reserve(true)?;
     spawn(wake, move |cancelled, trace| {
         let _permit = permit;
         if cancelled.load(Ordering::Acquire) {
@@ -206,7 +245,7 @@ pub fn start_service_checked(
 pub fn run_service_fixture(
     input: crate::service::Input,
 ) -> Result<crate::service::Output, crate::sdk::Failure> {
-    let _permit = ServicePermit::reserve()?;
+    let _permit = SERVICES.reserve(true)?;
     engine::run_service(input, None, &AtomicBool::new(false), &Default::default())
 }
 
@@ -215,7 +254,17 @@ pub fn start_broker_checked(
     authorize: impl FnOnce(&AtomicBool) -> Result<File, Error> + Send + 'static,
     wake: impl FnOnce() + Send + 'static,
 ) -> Result<RunningBroker, Error> {
-    let permit = ServicePermit::reserve()?;
+    start_broker_prioritized(input, false, authorize, wake)
+}
+/// `background` comes from the trusted broker declaration, never the Lua reply.
+/// Isolation is identical; background callbacks leave one worker slot available.
+pub fn start_broker_prioritized(
+    input: crate::broker::Input,
+    background: bool,
+    authorize: impl FnOnce(&AtomicBool) -> Result<File, Error> + Send + 'static,
+    wake: impl FnOnce() + Send + 'static,
+) -> Result<RunningBroker, Error> {
+    let permit = SERVICES.reserve(background)?;
     spawn(wake, move |cancelled, trace| {
         let _permit = permit;
         if cancelled.load(Ordering::Acquire) {
@@ -231,7 +280,7 @@ pub fn start_broker_checked(
 pub fn run_broker_fixture(
     input: crate::broker::Input,
 ) -> Result<crate::broker::Output, crate::sdk::Failure> {
-    let _permit = ServicePermit::reserve()?;
+    let _permit = SERVICES.reserve(false)?;
     engine::run_broker(input, None, &AtomicBool::new(false), &Default::default())
 }
 
@@ -446,6 +495,26 @@ pub(crate) fn fuzz_protocol(bytes: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn background_service_admission_preserves_foreground_capacity_without_increasing_the_total() {
+        static BUDGET: ServiceBudget = ServiceBudget::new();
+        let mut background = Vec::new();
+        for _ in 0..crate::service::MAX_ACTIVE - 1 {
+            background.push(BUDGET.reserve(true).unwrap());
+        }
+        assert!(matches!(BUDGET.reserve(true), Err(Error::ServiceBusy)));
+        let foreground = BUDGET.reserve(false).unwrap();
+        assert!(matches!(BUDGET.reserve(false), Err(Error::ServiceBusy)));
+        drop(foreground);
+        assert!(BUDGET.available(false));
+        assert!(!BUDGET.available(true));
+        drop(background.pop());
+        drop(BUDGET.reserve(true).unwrap());
+        drop(background);
+        assert_eq!(BUDGET.active.load(Ordering::Acquire), 0);
+        assert_eq!(BUDGET.background.load(Ordering::Acquire), 0);
+    }
 
     #[test]
     fn panicking_host_work_disconnects_before_waking_and_releases_admission() {

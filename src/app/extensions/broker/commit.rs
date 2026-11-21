@@ -21,7 +21,9 @@ pub(in crate::app) struct Refresh {
     pub conflicts: bool,
     pub changed: usize,
     pub applied: bool,
+    pub incomplete: bool,
     pub files: usize,
+    pub origin: Option<String>,
     _reservations: Vec<Reservation>,
 }
 struct Buffer {
@@ -80,14 +82,22 @@ struct Commit {
     wake: eframe::egui::Context,
     lease: u128,
     signals: Signals,
+    started: bool,
+    completed: bool,
 }
 #[derive(Clone, Default)]
 pub(super) struct Signals {
     pub committing: Arc<AtomicBool>,
     pub applied: Arc<AtomicBool>,
+    pub incomplete: Arc<AtomicBool>,
+    pub owner: Option<String>,
 }
 impl hedit_broker::host::WorkspaceCommit for Commit {
+    fn applying(&mut self) {
+        self.started = true;
+    }
     fn applied(&mut self) {
+        self.completed = true;
         self.signals.applied.store(true, Ordering::Release);
     }
 }
@@ -265,6 +275,8 @@ fn prepare_changes(
         wake,
         lease,
         signals,
+        started: false,
+        completed: false,
     }))
 }
 impl Drop for Commit {
@@ -345,12 +357,16 @@ impl Drop for Commit {
             }
         }
         self.freeze.take();
+        let incomplete = self.started && !self.completed;
+        self.signals.incomplete.store(incomplete, Ordering::Release);
         let refresh = Refresh {
             pages,
             conflicts,
             changed,
             applied: self.signals.applied.load(Ordering::Acquire),
+            incomplete,
             files: self.changes.len(),
+            origin: self.signals.owner.clone(),
             _reservations: std::mem::take(&mut self.reservations),
         };
         let _ = self.sender.send(Ok(Action::ExtensionWorkspace(refresh)));
@@ -414,6 +430,94 @@ mod tests {
         document.page(0).unwrap();
         editor.insert(document).unwrap();
         (directory, editor, resources, plan, state)
+    }
+    #[test]
+    fn interrupted_apply_reports_incomplete_effects_and_keeps_recovery_for_unopened_files() {
+        let (directory, editor, mut resources, _old_plan, state) = fixture();
+        std::fs::write(
+            directory.path().join("project/second.txt"),
+            "old café / 東京\r\n",
+        )
+        .unwrap();
+        let cancel = AtomicBool::new(false);
+        let mut budget = Budget::new(
+            &cancel,
+            std::time::Duration::from_secs(10),
+            64 * 1024 * 1024,
+        );
+        let mut changes = Vec::new();
+        for relative in ["text.txt", "second.txt"] {
+            let version = resources
+                .load(resources.scope(), relative, &mut budget)
+                .unwrap();
+            changes.push(hedit_broker::plan::Change {
+                resource: version.resource,
+                version: version.version,
+                edits: vec![sdk::Edit {
+                    start: 0,
+                    finish: 3,
+                    text: "new".into(),
+                }],
+            });
+        }
+        let plan =
+            Arc::new(Plan::prepare(&resources, resources.scope(), changes, &mut budget).unwrap());
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let signals = Signals::default();
+        let mut guard = prepare(
+            &editor,
+            &plan,
+            &cancel,
+            sender,
+            Default::default(),
+            &Default::default(),
+            signals.clone(),
+        )
+        .unwrap();
+        let journal = hedit_broker::journal::Journal::prepare(
+            &resources,
+            &plan,
+            &mut budget,
+            &state.recovery(),
+        )
+        .unwrap();
+        guard.applying();
+        let mut calls = 0;
+        assert!(journal
+            .apply(
+                resources.root(resources.scope()).unwrap(),
+                &mut budget,
+                || {
+                    calls += 1;
+                    if calls == 2 {
+                        Err(std::io::Error::new(
+                            std::io::ErrorKind::PermissionDenied,
+                            "revoked",
+                        ))
+                    } else {
+                        Ok(())
+                    }
+                }
+            )
+            .is_err());
+        drop(guard);
+        let Ok(Action::ExtensionWorkspace(refresh)) = receiver.try_recv().unwrap() else {
+            panic!("missing reconciliation")
+        };
+        assert!(refresh.incomplete);
+        assert!(!refresh.applied);
+        assert_eq!(refresh.changed, 1);
+        assert!(signals.incomplete.load(Ordering::Acquire));
+        assert!(!editor.workspace_document_frozen(1));
+        assert_eq!(
+            std::fs::read_to_string(directory.path().join("project/text.txt")).unwrap(),
+            "new café / 東京\r\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(directory.path().join("project/second.txt")).unwrap(),
+            "old café / 東京\r\n"
+        );
+        assert_eq!(state.recovery().records().unwrap().len(), 1);
     }
     #[test]
     fn explicit_recovery_freezes_stale_and_missing_file_buffers_then_reconciles_originals() {
