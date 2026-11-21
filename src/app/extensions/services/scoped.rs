@@ -258,7 +258,7 @@ impl Scoped {
         }
         entry.state.expire_idle(now);
         if self.ready.as_ref().is_some_and(|r| {
-            !r.context.current() || now.saturating_sub(r.created) >= ACTION_LIFETIME_MS
+            !r.context.retained() || now.saturating_sub(r.created) >= ACTION_LIFETIME_MS
         }) {
             self.ready = None;
             entry.input = None;
@@ -397,7 +397,7 @@ impl Scoped {
         };
         let context = run.context.as_ref().unwrap().clone();
         let result = (|| -> Result<bool, String> {
-            if !context.current() {
+            if !context.retained() {
                 return Err("Provider scope or approval changed.".into());
             }
             if let Some(host) = &run.host {

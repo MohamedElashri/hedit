@@ -1,10 +1,8 @@
 use super::*;
 use crate::app::extensions::manifest::{self, ExtensionAction};
+use crate::app::extensions::tests::app_with;
 #[cfg(target_os = "macos")]
-use crate::app::{
-    extensions::tests::{app_with, prepare_native},
-    tests::frame,
-};
+use crate::app::{extensions::tests::prepare_native, tests::frame};
 fn install(config: &std::path::Path, source: &str, capabilities: serde_json::Value) {
     let directory = config.join("extensions");
     std::fs::create_dir_all(&directory).unwrap();
@@ -43,6 +41,96 @@ fn install(config: &std::path::Path, source: &str, capabilities: serde_json::Val
         },
     )
     .unwrap();
+}
+
+#[test]
+fn document_contention_defers_authorization_without_invalidating_the_context() {
+    let config = tempfile::tempdir().unwrap();
+    install(
+        config.path(),
+        "return function(ctx) return {intent={finish={}}} end",
+        serde_json::json!(["document.read"]),
+    );
+    let (_session, ctx, mut app) = app_with("private text", Some(config.path()));
+    let ExtensionAction::Lua(plugin) = catalog::read_consistent(config.path())
+        .unwrap()
+        .contributions
+        .remove(0)
+        .action
+    else {
+        panic!()
+    };
+    let target = app.lua_target().unwrap();
+    let mut snapshot = options::sdk_snapshot(
+        "plain_text",
+        "private text".into(),
+        vec![sdk::Selection { anchor: 0, head: 0 }],
+        false,
+    )
+    .unwrap();
+    snapshot.revision = target.revision().to_string();
+    let monitor = app
+        .plugin_services
+        .policy_monitor(config.path(), &ctx)
+        .unwrap();
+    let package = options::sdk_input(
+        &app.settings.extensions,
+        &plugin,
+        snapshot,
+        BTreeMap::new(),
+        None,
+    );
+    let context = Context::new(
+        config.path().into(),
+        "scoped-test.run".into(),
+        plugin,
+        package,
+        Some(target),
+        app.workspace.editor.clone(),
+        monitor,
+    );
+    let document = app.workspace.editor.get(app.active().page.info.id).unwrap();
+    let held = document.lock().unwrap();
+    assert!(context.retained(), "A busy mutex is not a changed document");
+    assert!(
+        !context.current(),
+        "Pending state cannot authorize publication"
+    );
+    assert!(context.authorize(&AtomicBool::new(true)).is_err());
+    let (ready, started) = mpsc::channel();
+    let (sender, receiver) = mpsc::channel();
+    let checked = context.clone();
+    let thread = std::thread::spawn(move || {
+        ready.send(()).unwrap();
+        sender
+            .send(checked.authorize(&AtomicBool::new(false)))
+            .unwrap();
+    });
+    started.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert!(
+        matches!(
+            receiver.recv_timeout(Duration::from_millis(10)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ),
+        "Busy document granted or rejected without verification"
+    );
+    drop(held);
+    assert!(receiver
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap()
+        .is_ok());
+    thread.join().unwrap();
+    let held = document.lock().unwrap();
+    assert!(context.authorize(&AtomicBool::new(false)).is_err());
+    assert!(
+        context.retained(),
+        "A verification timeout must not change UI lifetime"
+    );
+    drop(held);
+    assert!(context.authorize(&AtomicBool::new(false)).is_ok());
+    app.workspace.edit(0, "changed").unwrap();
+    assert!(!context.retained());
+    assert!(context.authorize(&AtomicBool::new(false)).is_err());
 }
 #[cfg(target_os = "macos")]
 fn pump(app: &mut HeditApp, ctx: &egui::Context, ready: impl Fn(&HeditApp) -> bool) {
