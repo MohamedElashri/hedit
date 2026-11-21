@@ -28,7 +28,9 @@ pub mod windows;
 pub mod workspace;
 
 use hedit_core::file_io;
-pub use hedit_core::{build, document, folder, git, language_server, search, text_encoding};
+pub use hedit_core::{
+    build, document, folder, git, language_server, lifetime, search, text_encoding,
+};
 
 use document::Document;
 use std::{
@@ -47,6 +49,7 @@ pub struct Editor {
     next_id: AtomicU64,
     ephemeral: Mutex<std::collections::HashSet<u64>>,
     membership: Mutex<Membership>,
+    document_lifetimes: Mutex<HashMap<u64, hedit_core::lifetime::Lifetime>>,
 }
 
 #[derive(Default)]
@@ -76,6 +79,10 @@ impl Editor {
     pub fn insert(&self, doc: Document) -> Result<(), String> {
         let mut membership = self.membership.lock().map_err(|e| e.to_string())?;
         Self::membership_writable(&membership)?;
+        self.document_lifetimes
+            .lock()
+            .map_err(|e| e.to_string())?
+            .insert(doc.id, Default::default());
         if doc.is_ephemeral() {
             self.ephemeral
                 .lock()
@@ -92,11 +99,45 @@ impl Editor {
     pub fn remove(&self, id: u64) -> Result<(), String> {
         let mut membership = self.membership.lock().map_err(|e| e.to_string())?;
         Self::membership_writable(&membership)?;
+        self.document_lifetimes
+            .lock()
+            .map_err(|e| e.to_string())?
+            .remove(&id);
         self.documents
             .lock()
             .map_err(|e| e.to_string())?
             .remove(&id);
         membership.generation = membership.generation.wrapping_add(1);
+        Ok(())
+    }
+    pub fn document_lifetime(&self, id: u64) -> Result<hedit_core::lifetime::Lease, String> {
+        self.document_lifetimes
+            .lock()
+            .map_err(|e| e.to_string())?
+            .get(&id)
+            .map(|lifetime| lifetime.lease())
+            .filter(|lease| lease.current())
+            .ok_or_else(|| "The document scope is no longer open.".into())
+    }
+    pub fn close_document_lifetime(&self, id: u64) -> Result<(), String> {
+        if let Some(lifetime) = self
+            .document_lifetimes
+            .lock()
+            .map_err(|e| e.to_string())?
+            .get(&id)
+        {
+            lifetime.close();
+        }
+        Ok(())
+    }
+    pub fn open_document_lifetime(&self, id: u64) -> Result<(), String> {
+        let mut lifetimes = self.document_lifetimes.lock().map_err(|e| e.to_string())?;
+        let lifetime = lifetimes
+            .get_mut(&id)
+            .ok_or("The document is no longer open.")?;
+        if !lifetime.lease().current() {
+            *lifetime = Default::default();
+        }
         Ok(())
     }
     fn membership_writable(membership: &Membership) -> Result<(), String> {

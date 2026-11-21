@@ -236,6 +236,9 @@ impl Workspace {
                 .and_then(|id| open.iter().position(|b| b.view.id == *id))
                 .unwrap_or(0);
             workspace.open = open;
+            for view in &workspace.closed {
+                workspace.editor.close_document_lifetime(view.id)?;
+            }
         }
         if workspace.open.is_empty() {
             let mut document = remote.scratch(workspace.editor.id())?;
@@ -290,6 +293,9 @@ impl Workspace {
             }
             !blank
         });
+        for view in &closed {
+            editor.close_document_lifetime(view.id)?;
+        }
         let mut workspace = Self {
             remote: None,
             editor,
@@ -411,6 +417,8 @@ impl Workspace {
                 }
             }
         }
+        self.editor
+            .close_document_lifetime(self.open[index].view.id)?;
         let buffer = self.open.remove(index);
         self.closed.push(buffer.view);
         self.after_close(index)
@@ -459,6 +467,7 @@ impl Workspace {
             .lock()
             .map_err(|e| e.to_string())?
             .page(view.page_start)?;
+        self.editor.open_document_lifetime(view.id)?;
         self.closed.remove(index);
         self.open.push(Buffer::new(page, Some(view)));
         self.active = self.open.len() - 1;

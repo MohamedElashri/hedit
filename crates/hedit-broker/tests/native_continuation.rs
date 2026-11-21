@@ -107,6 +107,9 @@ fn workspace_config(outer: &Path, cancel: Arc<Cancel>) -> Config {
     )
     .unwrap();
     Config {
+        services: Default::default(),
+        scope_epoch: None,
+        document_relative: None,
         source_token: None,
         tools: Default::default(),
         owner: None,

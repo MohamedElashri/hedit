@@ -26,6 +26,73 @@ fn denied() -> io::Error {
     )
 }
 impl Grant {
+    pub(crate) fn is_server(&self) -> bool {
+        self.definition.protocol == ToolProtocol::LanguageServer
+    }
+    pub(crate) fn key(&self) -> (Binding, Handle) {
+        (self.binding.clone(), self.image)
+    }
+    pub(crate) fn workspace(&self) -> bool {
+        self.definition.workspace
+    }
+    pub(crate) fn workspace_identity(
+        &self,
+        resources: Option<&Resources>,
+    ) -> io::Result<Option<crate::workspace::Identity>> {
+        if self.definition.protocol != ToolProtocol::LanguageServer {
+            return Err(denied());
+        }
+        if !self.definition.workspace {
+            return Ok(None);
+        }
+        let resources = resources.ok_or_else(denied)?;
+        let root = resources.root(resources.scope())?;
+        root.require(crate::workspace::Right::Read)?;
+        root.require(crate::workspace::Right::Discover)?;
+        root.current()?;
+        Ok(Some(root.identity()))
+    }
+    pub(crate) fn prepare_server(
+        &self,
+        request: &crate::lsp::Request<'_>,
+        budget: &mut Budget<'_>,
+    ) -> io::Result<(super::Run, String)> {
+        if self.definition.protocol != ToolProtocol::LanguageServer {
+            return Err(denied());
+        }
+        let arguments = self
+            .definition
+            .argv(&Default::default())
+            .map_err(|_| denied())?;
+        budget.check()?;
+        let mut projection = if self.definition.workspace {
+            Projection::workspace(request.resources.ok_or_else(denied)?, budget)?
+        } else {
+            Projection::empty()
+        };
+        let relative = projection.document(
+            request.snapshot,
+            if self.definition.workspace {
+                request.relative
+            } else {
+                None
+            },
+            if self.definition.workspace {
+                request.resources
+            } else {
+                None
+            },
+        )?;
+        let image = self
+            .images
+            .resolve(self.image, &self.binding, request.cancel.flag())?;
+        budget.check()?;
+        let run = self
+            .runs
+            .prepare(image, projection, arguments, request.cancel.flag())?;
+        budget.check()?;
+        Ok((run, relative))
+    }
     pub(crate) fn resolve(
         image: Handle,
         binding: Binding,

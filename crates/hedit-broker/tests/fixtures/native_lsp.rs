@@ -62,6 +62,8 @@ fn main() {
         }
         let id = if mode == "foreign" { "999" } else { &id };
         let contents = document.as_deref().unwrap_or("café / 東京 / 😀");
+        let counted;
+        let contents = if mode == "counted" { counted = format!("{contents} #{requests}"); &counted } else { contents };
         emit(&mut output, &format!(r#"{{"jsonrpc":"2.0","id":{id},"result":{{"contents":"{contents}","requests":{requests}}}}}"#));
     }
 }

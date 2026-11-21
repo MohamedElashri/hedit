@@ -126,8 +126,8 @@ fn main() {
         .status()
         .unwrap()
         .success());
-    native_lsp::verify(&state, &peer);
     broker_chain(&state, id, token, definition);
+    native_lsp::verify(&state, &peer);
     images.remove(id, &owner).unwrap();
     println!("Imported native image: exact Unicode bytes, private run ownership, cancellation and cleanup passed.");
 }
@@ -366,6 +366,9 @@ end"#,
         "settings":{},"arguments":{}
     })).unwrap();
     let configuration = || Config {
+        services: Default::default(),
+        scope_epoch: None,
+        document_relative: None,
         source_token: Some(token),
         tools: resolved.tools.clone(),
         owner: Some(Owner {

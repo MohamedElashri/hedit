@@ -11,4 +11,5 @@ pub mod wire_path;
 
 pub mod language_server;
 
+pub mod lifetime;
 pub mod private_io;

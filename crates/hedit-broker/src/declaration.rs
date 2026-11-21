@@ -111,6 +111,9 @@ impl ToolDefinition {
         let invalid = || {
             "Declare at most 32 literal/finite-choice tool arguments, 16 choice sets, and 4 KiB of argument text.".to_string()
         };
+        if self.protocol == ToolProtocol::LanguageServer && !self.choices.is_empty() {
+            return Err("Language-server startup profiles use literal arguments.".into());
+        }
         if self.arguments.len() > 32 || self.choices.len() > 16 {
             return Err(invalid());
         }

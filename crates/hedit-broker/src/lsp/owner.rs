@@ -21,10 +21,15 @@ struct Native {
     close: Arc<Cancel>,
     scope: Arc<Cancel>,
     request: Option<Arc<Cancel>>,
+    lifetime: Option<hedit_core::lifetime::Lease>,
 }
 impl Native {
     fn check(&self) -> io::Result<()> {
-        if self.close.is_cancelled()
+        if self
+            .lifetime
+            .as_ref()
+            .is_some_and(|lifetime| !lifetime.current())
+            || self.close.is_cancelled()
             || self.scope.is_cancelled()
             || self
                 .request
@@ -68,6 +73,7 @@ pub struct Owner {
     scope: Arc<Cancel>,
     alive: Arc<AtomicBool>,
     document: String,
+    lifetime: Option<hedit_core::lifetime::Lease>,
 }
 fn cancelled() -> io::Error {
     io::Error::new(
@@ -100,6 +106,7 @@ impl Owner {
         workspace: bool,
         scope: Arc<Cancel>,
         deadline: Instant,
+        lifetime: Option<hedit_core::lifetime::Lease>,
     ) -> io::Result<Self> {
         let deadline = deadline.min(Instant::now() + Duration::from_secs(10));
         snapshot.validate().map_err(|_| failed())?;
@@ -116,10 +123,12 @@ impl Owner {
             scope,
             alive: Arc::new(AtomicBool::new(true)),
             document: snapshot.document.clone(),
+            lifetime,
         };
         let close = owner.close.clone();
         let scope = owner.scope.clone();
         let alive = owner.alive.clone();
+        let lifetime = owner.lifetime.clone();
         std::thread::Builder::new()
             .name("hedit-plugin-lsp".into())
             .spawn(move || {
@@ -131,15 +140,21 @@ impl Owner {
                 }
                 let _end = End(alive);
                 let initialize = || {
-                    if scope.is_cancelled() || close.is_cancelled() {
+                    if scope.is_cancelled()
+                        || close.is_cancelled()
+                        || lifetime
+                            .as_ref()
+                            .is_some_and(|lifetime| !lifetime.current())
+                    {
                         return Err(cancelled());
                     }
-                    let service = run.service(scope.flag(), deadline)?;
+                    let service = run.service(close.flag(), deadline)?;
                     let native = Native {
                         service,
                         close: close.clone(),
                         scope: scope.clone(),
                         request: None,
+                        lifetime: lifetime.clone(),
                     };
                     peer::Peer::start(
                         Connection::new(native),
@@ -163,7 +178,12 @@ impl Owner {
                     }
                 };
                 loop {
-                    if close.is_cancelled() || scope.is_cancelled() {
+                    if close.is_cancelled()
+                        || scope.is_cancelled()
+                        || lifetime
+                            .as_ref()
+                            .is_some_and(|lifetime| !lifetime.current())
+                    {
                         return;
                     }
                     match receiver.recv_timeout(Duration::from_millis(50)) {
@@ -212,16 +232,27 @@ impl Owner {
                     }
                 }
             })?;
-        wait(&incoming, &owner.close, &owner.scope, None, deadline)??;
+        wait(
+            &incoming,
+            &owner.close,
+            &owner.scope,
+            None,
+            deadline,
+            owner.lifetime.as_ref(),
+        )??;
         Ok(owner)
     }
     pub fn running(&self) -> bool {
         self.alive.load(Ordering::Acquire)
             && !self.close.is_cancelled()
             && !self.scope.is_cancelled()
+            && self
+                .lifetime
+                .as_ref()
+                .is_none_or(hedit_core::lifetime::Lease::current)
     }
-    /// True only after the I/O thread has dropped/reaped the native transport
-    /// and retired its private bundle. UI code must never wait for this flag.
+    /// True after the I/O thread has dropped/reaped the native transport and
+    /// released its bundle lease for cleanup. UI code must never wait here.
     pub fn settled(&self) -> bool {
         !self.alive.load(Ordering::Acquire)
     }
@@ -259,7 +290,14 @@ impl Owner {
                     "Scoped language-server owner is busy.",
                 )
             })?;
-        match wait(&receiver, &self.close, &self.scope, Some(&cancel), deadline) {
+        match wait(
+            &receiver,
+            &self.close,
+            &self.scope,
+            Some(&cancel),
+            deadline,
+            self.lifetime.as_ref(),
+        ) {
             Ok(result) => {
                 if result.as_ref().is_err_and(|error| {
                     !matches!(
@@ -284,9 +322,13 @@ fn wait<T>(
     scope: &Cancel,
     request: Option<&Cancel>,
     deadline: Instant,
+    lifetime: Option<&hedit_core::lifetime::Lease>,
 ) -> io::Result<T> {
     loop {
-        if close.is_cancelled() || scope.is_cancelled() || request.is_some_and(Cancel::is_cancelled)
+        if lifetime.is_some_and(|lifetime| !lifetime.current())
+            || close.is_cancelled()
+            || scope.is_cancelled()
+            || request.is_some_and(Cancel::is_cancelled)
         {
             return Err(cancelled());
         }
@@ -296,7 +338,8 @@ fn wait<T>(
             .ok_or_else(timeout)?;
         match receiver.recv_timeout(remaining.min(Duration::from_millis(50))) {
             Ok(value) => {
-                if close.is_cancelled()
+                if lifetime.is_some_and(|lifetime| !lifetime.current())
+                    || close.is_cancelled()
                     || scope.is_cancelled()
                     || request.is_some_and(Cancel::is_cancelled)
                 {
