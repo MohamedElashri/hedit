@@ -743,13 +743,13 @@ with `scripts/profile-plugin-broker.py` after stopping other builds/fuzzing.
 
 Required next work:
 
-- Run the broker/driver and filesystem boundary tests natively on Linux and
-  Windows x64/ARM64; validate universal macOS packaging after integration.
+- Repeat native platform and universal macOS gates after editor integration.
 - Integrate manifest/SDK compatibility, exact-source resource grants, trusted
   scope/endpoint review, manager disclosure/activity and immediate Stop.
 - Implement complete workspace previews, affected-buffer conflict/freeze/reload
   handling, and explicit recovery/cleanup UI without blocking unrelated buffers.
-- Finish separately confined external-tool and typed LSP backends using the selected native macOS sandbox with monitored memory
+- Finish separately confined external-tool and typed LSP backends using the
+  selected native macOS sandbox with monitored memory
   limits and documented overshoot. A native prototype is not a production tool
   policy. Tool/LSP intents currently report unavailable; no fallback runs them.
 - Finish the author CLI, annotations/schema, installed reference integrations,
@@ -759,3 +759,12 @@ Required next work:
 
 The Stage 3 gate remains open until the editor integration and supported-platform
 checks pass. Local backend checks do not establish completion of the whole plan.
+
+The broker foundation passed Linux, macOS, Windows and remote CI at `a83dd1b`
+(run `44900256772`) and the dedicated Windows x64/ARM64 sandbox/broker/package
+workflow (run `44900256769`). That workflow passed after retrying a save-hook
+deadline failure. Universal macOS packaging, extracted-helper checks and the
+protocol-security workflow passed at `74bb601` (run `44899794017`), before the
+Windows-only rename correction. Native CI found and fixed Linux O_PATH directory
+flushes and Windows handle-relative no-clobber recovery renames. These close the
+foundation's native test gap; the editor integration and tool/LSP gates stay open.
