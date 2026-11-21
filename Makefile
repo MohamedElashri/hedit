@@ -107,6 +107,7 @@ smoke-linux-packages: ## Verify Linux formats and distro installation (requires 
 install: build ## Install the Linux build under PREFIX; supports DESTDIR staging
 	install -Dm755 target/release/hedit "$(DESTDIR)$(PREFIX)/bin/hedit"
 	install -Dm755 target/release/hedit-remote "$(DESTDIR)$(PREFIX)/bin/hedit-remote"
+	install -Dm755 target/release/hedit-json-tools "$(DESTDIR)$(PREFIX)/bin/hedit-json-tools"
 	install -Dm644 assets/hedit.svg "$(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/hedit.svg"
 	install -Dm644 packaging/linux/hedit.desktop "$(DESTDIR)$(PREFIX)/share/applications/hedit.desktop"
 	install -d "$(DESTDIR)$(PREFIX)/share/hedit/themes"
