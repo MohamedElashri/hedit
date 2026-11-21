@@ -295,13 +295,16 @@ pub(super) fn enter(launch: &Launch) -> io::Result<()> {
         libc::SYS_sched_getaffinity,
         &[Check::Equal(0, 0)],
     );
-    for syscall in [
-        libc::SYS_clock_gettime,
-        libc::SYS_clock_getres,
-        libc::SYS_clock_nanosleep,
-    ] {
-        allow_if(&mut instructions, syscall, &[Check::NoBits(0, !1)]);
+    // Read only realtime, monotonic and the current process/thread CPU clocks.
+    // Negative encoded clocks can address other processes or file descriptors.
+    for syscall in [libc::SYS_clock_gettime, libc::SYS_clock_getres] {
+        values(&mut instructions, syscall, 0, &[0, 1, 2, 3]);
     }
+    allow_if(
+        &mut instructions,
+        libc::SYS_clock_nanosleep,
+        &[Check::NoBits(0, !1)],
+    );
     for syscall in [
         libc::SYS_read,
         libc::SYS_readv,
