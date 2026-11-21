@@ -245,6 +245,14 @@ impl State {
         )
         .map(Arc::new)
     }
+    pub fn tool_runs(&self) -> io::Result<Arc<crate::tool::Runs>> {
+        crate::tool::Runs::open(
+            private_child(&self.directory, "tool-runs")?,
+            &self.path.join("tool-runs"),
+            &self.protected,
+        )
+        .map(Arc::new)
+    }
     pub fn recovery(&self) -> Arc<RecoveryStore> {
         self.recovery.clone()
     }

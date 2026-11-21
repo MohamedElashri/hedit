@@ -10,6 +10,10 @@ publish = false
 name = "native_continuation"
 harness = false
 
+[[test]]
+name = "native_tools"
+harness = false
+
 [dependencies]
 hedit-plugin = { path = "../hedit-plugin" }
 hedit-core = { path = "../hedit-core" }

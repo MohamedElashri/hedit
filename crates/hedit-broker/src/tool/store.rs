@@ -84,15 +84,35 @@ struct Receipt {
     mark_digest: Option<String>,
 }
 pub struct Image {
-    file: File,
-    pub bytes: u64,
-    pub sha256: String,
-    pub header: Header,
+    source: Source,
+    bytes: u64,
+    sha256: String,
+    header: Header,
 }
 impl Image {
+    pub fn bytes(&self) -> u64 {
+        self.bytes
+    }
+    pub fn sha256(&self) -> &str {
+        &self.sha256
+    }
+    pub fn header(&self) -> &Header {
+        &self.header
+    }
+
     /// Transfer a verified descriptor, never a path or worker-supplied authority.
     pub fn into_file(self) -> File {
-        self.file
+        self.source.into_file()
+    }
+    /// Copy into an admitted per-invocation bundle, preserving trust marks and
+    /// rechecking the pinned immutable image before any launch.
+    pub fn copy_to(
+        self,
+        file: &mut File,
+        path: &Path,
+        cancel: &AtomicBool,
+    ) -> io::Result<super::Copied> {
+        self.source.copy_to(file, path, cancel)
     }
 }
 pub struct Store {
@@ -127,7 +147,7 @@ fn digest(value: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
-fn read(directory: &Dir, name: &str) -> io::Result<File> {
+pub(super) fn read(directory: &Dir, name: &str) -> io::Result<File> {
     let file = directory.open_with(
         name,
         OpenOptions::new()
@@ -140,7 +160,7 @@ fn read(directory: &Dir, name: &str) -> io::Result<File> {
     hedit_core::private_io::verify(&file)?;
     Ok(file)
 }
-fn new_file(directory: &Dir, name: &str) -> io::Result<File> {
+pub(super) fn new_file(directory: &Dir, name: &str) -> io::Result<File> {
     let mut options = OpenOptions::new();
     options
         .read(true)
@@ -375,8 +395,9 @@ impl Store {
         }
         let mut file = read(&directory, "image")?;
         let path = self.path.join(id.to_string()).join("image");
+        let marks = super::trust::Marks::read(&file, &path)?;
         if identity::regular_descriptor(&file)?.0 != receipt.stamp
-            || super::trust::Marks::read(&file, &path)?.fingerprint() != receipt.mark_digest
+            || marks.fingerprint() != receipt.mark_digest
         {
             return Err(invalid());
         }
@@ -412,7 +433,7 @@ impl Store {
         }
         file.seek(SeekFrom::Start(0))?;
         Ok(Image {
-            file,
+            source: Source::verified(file, path, receipt.stamp, receipt.header.clone(), marks),
             bytes,
             sha256: receipt.sha256,
             header: receipt.header,
