@@ -361,15 +361,16 @@ impl Runs {
         }
         self.contents(&directory, record)
             .map_err(|error| context("validate retirement payload", error))?;
-        // cap-std deliberately pins Windows directories against rename. Release
-        // that pin after validation; the global lock and live lease stay held.
+        // Windows refuses directory retirement with open descendants. We have
+        // proved that no live Run owns this lease; release both handles while
+        // retaining the global lock. Existing bundles cannot be resumed.
         drop(directory);
+        drop(lease);
         let removed = format!(".removed-{}", record.id);
         self.directory
             .rename(record.id.to_string(), &self.directory, &removed)
             .map_err(|error| context("rename retired bundle", error))?;
         native::sync_dir(&self.directory)?;
-        drop(lease);
         self.cleanup_retired(&removed)
             .map_err(|error| context("remove retired payload", error))
     }
