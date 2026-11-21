@@ -107,6 +107,8 @@ fn workspace_config(outer: &Path, cancel: Arc<Cancel>) -> Config {
     )
     .unwrap();
     Config {
+        source_token: None,
+        tools: Default::default(),
         owner: None,
         package: input,
         provider: None,

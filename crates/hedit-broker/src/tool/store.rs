@@ -82,6 +82,20 @@ struct Receipt {
     header: Header,
     stamp: Stamp,
     mark_digest: Option<String>,
+    origin: String,
+}
+#[derive(Clone, Debug)]
+pub struct Info {
+    pub origin: String,
+    pub bytes: u64,
+    pub sha256: String,
+    pub header: Header,
+}
+struct Pinned {
+    receipt: Receipt,
+    file: File,
+    path: PathBuf,
+    marks: super::trust::Marks,
 }
 pub struct Image {
     source: Source,
@@ -223,8 +237,8 @@ impl Store {
         identity::regular(&file)?;
         hedit_core::private_io::verify(&file.into_std())?;
         native::sync_dir(&store.directory)?;
-        let _lock = store.lock()?;
-        store.records_unlocked()?;
+        // Import/list/removal validate global admission. Opening a store for
+        // one bound execution must not walk every unrelated image.
         Ok(store)
     }
     fn current(&self) -> io::Result<()> {
@@ -329,6 +343,15 @@ impl Store {
         cancel: &AtomicBool,
     ) -> io::Result<Handle> {
         binding.validate()?;
+        let origin = source
+            .selected_path()
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| {
+                !name.is_empty() && name.len() <= 1024 && !name.chars().any(char::is_control)
+            })
+            .ok_or_else(invalid)?
+            .to_owned();
         let _lock = self.lock()?;
         let records = self.records_unlocked()?;
         let reserved = source.bytes().checked_add(OVERHEAD).ok_or_else(full)?;
@@ -368,32 +391,41 @@ impl Store {
             header: copied.header,
             stamp: identity::regular_descriptor(&file)?.0,
             mark_digest: super::trust::Marks::read(&file, &path)?.fingerprint(),
+            origin,
         };
         write(&directory, "receipt.json", &receipt)?;
         Ok(id)
     }
     /// Revalidate bytes and ownership for each execution; a handle is no grant
     /// for a different command, source approval, profile or argument recipe.
-    pub fn resolve(&self, id: Handle, binding: &Binding, cancel: &AtomicBool) -> io::Result<Image> {
+    fn pin(&self, id: Handle, binding: &Binding) -> io::Result<Pinned> {
         binding.validate()?;
-        let _lock = self.lock()?;
-        let records = self.records_unlocked()?;
-        let record = records
-            .into_iter()
-            .find(|record| record.id == id && &record.binding == binding)
-            .ok_or_else(invalid)?;
         let directory = self.child(id)?;
+        let record: Record = decode(&directory, "reservation.json")?;
+        record.binding.validate()?;
+        if record.version != 1
+            || record.id != id
+            || &record.binding != binding
+            || !(OVERHEAD..=super::format::MAX_IMAGE_BYTES + OVERHEAD).contains(&record.reserved)
+        {
+            return Err(invalid());
+        }
         let receipt: Receipt = decode(&directory, "receipt.json")?;
         if receipt.version != 1
             || receipt.id != id
             || &receipt.binding != binding
             || receipt.bytes.checked_add(OVERHEAD) != Some(record.reserved)
+            || !(32..=super::format::MAX_IMAGE_BYTES).contains(&receipt.bytes)
+            || receipt.stamp.bytes != receipt.bytes
             || !digest(&receipt.sha256)
             || !receipt.header.supports_host()
+            || receipt.origin.is_empty()
+            || receipt.origin.len() > 1024
+            || receipt.origin.chars().any(char::is_control)
         {
             return Err(invalid());
         }
-        let mut file = read(&directory, "image")?;
+        let file = read(&directory, "image")?;
         let path = self.path.join(id.to_string()).join("image");
         let marks = super::trust::Marks::read(&file, &path)?;
         if identity::regular_descriptor(&file)?.0 != receipt.stamp
@@ -401,6 +433,33 @@ impl Store {
         {
             return Err(invalid());
         }
+        Ok(Pinned {
+            receipt,
+            file,
+            path,
+            marks,
+        })
+    }
+    /// Metadata-only setup avoids hashing every image on every rotated callback.
+    /// Executions still verify the full content digest immediately before use.
+    pub fn info(&self, id: Handle, binding: &Binding) -> io::Result<Info> {
+        let _lock = self.lock()?;
+        let receipt = self.pin(id, binding)?.receipt;
+        Ok(Info {
+            origin: receipt.origin,
+            bytes: receipt.bytes,
+            sha256: receipt.sha256,
+            header: receipt.header,
+        })
+    }
+    pub fn resolve(&self, id: Handle, binding: &Binding, cancel: &AtomicBool) -> io::Result<Image> {
+        let _lock = self.lock()?;
+        let Pinned {
+            receipt,
+            mut file,
+            path,
+            marks,
+        } = self.pin(id, binding)?;
         let mut hash = Sha256::new();
         let mut bytes = 0u64;
         let mut buffer = [0; 64 * 1024];
@@ -438,6 +497,22 @@ impl Store {
             sha256: receipt.sha256,
             header: receipt.header,
         })
+    }
+    /// Explicit host cleanup of imports not referenced by any current approval.
+    /// Caller holds the policy writer and has cancelled active hosts first.
+    pub fn remove_unused(
+        &self,
+        referenced: &std::collections::BTreeSet<Handle>,
+    ) -> io::Result<usize> {
+        let candidates = self.records()?;
+        let mut removed = 0;
+        for record in candidates {
+            if !referenced.contains(&record.id) {
+                self.remove(record.id, &record.binding)?;
+                removed += 1;
+            }
+        }
+        Ok(removed)
     }
     /// Explicit host cleanup for this exact owner's imported image. Revoke its
     /// grants and terminate users before calling under the policy writer.

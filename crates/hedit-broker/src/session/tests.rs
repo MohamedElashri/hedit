@@ -19,6 +19,8 @@ fn fixture_config() -> (tempfile::TempDir, Config) {
     .unwrap();
     let package=serde_json::from_value(serde_json::json!({"sdk_version":1,"source":"return function(ctx) return {intent={release={resource='ffffffffffffffffffffffffffffffff'}}} end","snapshot":{"document":"0123456789abcdef0123456789abcdef","revision":"0","language":"plain_text","text":"","selections":[{"anchor":0,"head":0}],"crlf":false},"settings":{},"arguments":{}})).unwrap();
     let config = Config {
+        source_token: None,
+        tools: Default::default(),
         owner: None,
         package,
         provider: None,

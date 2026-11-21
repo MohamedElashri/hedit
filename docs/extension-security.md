@@ -171,12 +171,14 @@ Parent-polled limits can overshoot between checks, and per-invocation limits do
 not bound aggregate usage across multiple editor processes. Kernel exploits,
 side channels, and correctness of permitted output remain residual risks.
 
-### Native tool boundary under development
+### Native tool process boundary
 
-The host-only macOS filter launcher is separate from the Lua helper. Broker tool
-and language-server requests still return unavailable: executable import, grants,
-snapshot construction and the other OS adapters must be completed before those
-capabilities can use this primitive.
+Experimental API 5 / SDK 3 filter requests use separately imported and reviewed
+native images on macOS, Linux and Windows. Source approval alone does not grant a
+tool. The broker binds an approved image to the exact command/source token,
+profile and argument recipe, then constructs an admitted private invocation.
+Language-server requests remain unavailable until their protocol and lifetime
+implementation is complete.
 
 Treat the selected native image as hostile code. The trusted host supplies a
 private read-only executable copy and private project snapshot, never a live
@@ -238,7 +240,7 @@ cleanup. The editor observes exit without reaping, terminates the group, then
 reaps its direct child; after editor death, the system reaper collects orphaned
 processes. No untrusted tool holds a guardian control descriptor. Native tests
 kill the simulated editor and guardian separately and verify both processes are
-gone. No broker tool grants are enabled by this implementation.
+gone. Broker disclosure guards remain held through native execution and cleanup.
 
 The Windows native-tool path uses the existing launcher with a distinct role:
 a capability-free less-privileged AppContainer (LPAC), an untrusted integrity
@@ -285,7 +287,7 @@ must fail the same write and must fail attempts to raise its integrity or disabl
 mandatory policy. Dedicated x64/ARM64 probes additionally check token identity,
 read-only snapshots, private-file denial, network/child restrictions, memory,
 output, thread/CPU limits, Unicode arguments, full-size overlapped transport and
-cancellation. These checks must pass before the broker enables any tool grants.
+cancellation. Native platform checks are required before enabling a tool profile.
 See Microsoft's [AppContainer launch guidance](https://learn.microsoft.com/en-us/windows/win32/secauthz/implementing-an-appcontainer)
 and [mandatory integrity model](https://learn.microsoft.com/en-us/windows/win32/secauthz/mandatory-integrity-control).
 
@@ -399,9 +401,9 @@ Its [broker threat model](plugin-broker.md) describes the scoped file, recovery,
 watch, HTTPS and host-thread boundaries, current limits and remaining gates.
 Explicit workspace recovery is available through Extensions settings, including
 for journals whose source has since been uninstalled. It requires fresh user
-review and preserves ambiguous data. Native tool declarations currently fail
-unavailable. Tool/LSP enforcement, author tooling and fresh platform acceptance
-remain implementation gates. The scoped command path is not a declaration that
+review and preserves ambiguous data. Native filters use separate executable
+selection and final resource approval. Persistent LSP, author tooling and final
+platform/performance acceptance remain implementation gates. The scoped command path is not a declaration that
 Stage 3 or the complete roadmap is finished.
 
 ### Native image preflight and trust marks
@@ -410,8 +412,9 @@ Host file selection pins a regular native executable and classifies bounded ELF,
 PE or Mach-O headers, including macOS universal slices. Classification reads at
 most 64 KiB of headers from an image capped at 64 MiB; it does not load code,
 validate signatures or run a version command. The native OS loader performs
-complete validation only inside the tool boundary. Scripts, shared libraries,
-unsupported architectures and inconsistent universal slice tables are rejected.
+complete executable validation only inside the tool boundary. Scripts, DLLs,
+non-executable headers, unsupported architectures and inconsistent universal
+slice tables are rejected.
 
 Import streams bytes into a newly created, owner-only, single-link destination,
 hashes the copy and rejects source identity, timestamp, length or trust metadata
@@ -420,7 +423,7 @@ Windows `Zone.Identifier` are preserved byte for byte, capped at 64 KiB. Source
 ACLs and positive sandbox grants are not copied. Destination pathname identity is
 checked before named-stream operations. These primitives require a host-owned,
 excluded parent and prior storage admission; they do not grant execution authority
-or yet enable broker tool/LSP requests.
+by themselves. Execution additionally requires an exact-source resource approval.
 
 Imported images use a durable private store with at most 64 records and 256 MiB
 of reserved payload plus metadata allowance. Each image reserves its declared
@@ -437,8 +440,10 @@ Only known regular, owner-only, single-link files are removed. The stable store
 root is excluded before image bytes arrive; importing and retiring images does
 not append per-image entries to the permanent workspace exclusion registry.
 Tool storage is opened separately from ordinary broker state, so damaged tool
-storage does not disable unrelated document/workspace features. Broker tool/LSP
-activation and per-invocation snapshot admission remain separate requirements.
+storage does not disable unrelated document/workspace features. Callback setup
+checks only the selected image's bounded metadata; each execution hashes and
+copies it again. Global admission scans run when imports are added or removed,
+rather than on every rotated callback.
 
 
 Per-invocation bundles reserve disk admission separately from imported images:
@@ -465,3 +470,21 @@ filesystem block quota. OS metadata allocation and filesystem/kernel pressure
 remain availability risks. Tool grants and persistent LSP activation require
 the broker's exact-source policy and lifetime integration in addition to these
 primitives.
+
+
+The resource UI presents the selected filename, digest, data scope and complete
+literal/finite-choice argument recipe before final approval. Importing an image
+creates no execution grant. Revocation/reapproval changes the source token, so a
+replacement approval cannot reuse the old image's authority. Unused private
+imports can be explicitly removed; the original selected files are untouched.
+Native output must be UTF-8 and satisfy the independent broker reply limits;
+nonzero exit, malformed/flooded output or failed confinement cannot produce edits.
+The session charges image verification/copy work against a 256 MiB aggregate
+budget as well as the ten-second active-work budget.
+
+Trust-mark preservation is not signature or reputation verification. Approved
+native programs can observe their private image/snapshot locations and minimal
+system environment; opaque document handles do not conceal those OS paths.
+OS-managed objects and AppContainer profile cleanup after abnormal host exit
+remain availability/housekeeping concerns, distinct from protected document
+copies and kill-on-parent-exit enforcement.

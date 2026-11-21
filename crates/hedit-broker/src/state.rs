@@ -145,6 +145,7 @@ pub struct Approval {
     pub token: Handle,
     pub scope: Option<SelectedScope>,
     pub endpoints: Vec<String>,
+    #[serde(deserialize_with = "crate::declaration::unique_map")]
     pub tools: BTreeMap<String, Handle>,
 }
 impl Approval {
@@ -199,7 +200,7 @@ struct Document {
 pub struct Resolved {
     pub resources: Option<Resources>,
     pub endpoints: BTreeMap<String, Arc<Endpoint>>,
-    pub tools: BTreeMap<String, Handle>,
+    pub tools: BTreeMap<String, Arc<crate::tool::Grant>>,
 }
 pub struct State {
     directory: Dir,
@@ -319,10 +320,27 @@ impl State {
                 ))
             })
             .collect::<io::Result<_>>()?;
+        let mut tools = BTreeMap::new();
+        if !approval.tools.is_empty() {
+            let images = self.tool_store()?;
+            let runs = self.tool_runs()?;
+            for (profile, image) in approval.tools {
+                let recipe = definition.tools.get(&profile).ok_or_else(denied)?;
+                let binding = crate::tool::Binding::new(command, token, &profile, recipe)?;
+                let grant = crate::tool::Grant::resolve(
+                    image,
+                    binding,
+                    recipe.clone(),
+                    images.clone(),
+                    runs.clone(),
+                )?;
+                tools.insert(profile, Arc::new(grant));
+            }
+        }
         Ok(Resolved {
             resources,
             endpoints,
-            tools: approval.tools,
+            tools,
         })
     }
     fn write(&self, approvals: BTreeMap<String, Approval>) -> io::Result<()> {
@@ -367,6 +385,18 @@ impl State {
     }
     pub fn approve(&self, approval: Approval, definition: &Definition) -> io::Result<()> {
         approval.validate_definition(definition)?;
+        if !approval.tools.is_empty() {
+            let images = self.tool_store()?;
+            for (profile, id) in &approval.tools {
+                let binding = crate::tool::Binding::new(
+                    &approval.command,
+                    approval.token,
+                    profile,
+                    definition.tools.get(profile).ok_or_else(denied)?,
+                )?;
+                images.resolve(*id, &binding, &std::sync::atomic::AtomicBool::new(false))?;
+            }
+        }
         let mut approvals = self.approvals()?;
         approvals.insert(approval.command.clone(), approval);
         self.write(approvals)

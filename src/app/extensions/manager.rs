@@ -29,6 +29,7 @@ pub(in crate::app) struct Manager {
     activity: Activity,
     recovery: Option<recovery::Review>,
     recovery_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    tool_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 enum Feedback {
@@ -37,6 +38,12 @@ enum Feedback {
 }
 
 enum Update {
+    Tool {
+        command: String,
+        token: hedit_broker::Handle,
+        profile: String,
+        selected: Option<(hedit_broker::Handle, hedit_broker::tool::Info)>,
+    },
     Recovery(recovery::Review),
     Catalog {
         catalog: Catalog,
@@ -54,6 +61,7 @@ enum Update {
 }
 
 enum Request {
+    Tool(resources::ToolAction),
     Recovery(recovery::Request),
     Reload,
     OpenFolder,
@@ -74,9 +82,10 @@ enum Review {
     Uninstall(InstalledManifest),
     ResetApprovals,
     ResetResourceApprovals,
-    Resources(resources::ResourceReview),
+    Resources(Box<resources::ResourceReview>),
 }
 
+#[derive(Clone)]
 struct Approval {
     sdk: bool,
     storage: bool,
@@ -116,6 +125,9 @@ impl Manager {
 
     fn hide(&mut self) {
         self.recovery = None;
+        if let Some(cancel) = self.tool_cancel.take() {
+            cancel.store(true, std::sync::atomic::Ordering::Release);
+        }
         if let Some(cancel) = self.recovery_cancel.take() {
             cancel.store(true, std::sync::atomic::Ordering::Release);
         }
@@ -293,6 +305,7 @@ impl Manager {
                     Some(ReviewChoice::Confirm) => return Some(Request::Confirm),
                     Some(ReviewChoice::Once) => return Some(Request::AllowOnce),
                     Some(ReviewChoice::ChooseScope) => return Some(Request::ChooseScope),
+                    Some(ReviewChoice::Tool(action)) => return Some(Request::Tool(action)),
                     Some(ReviewChoice::Cancel) | None => {}
                 }
             }
@@ -418,7 +431,7 @@ fn installed_row(
                                 .add_enabled(can_act, egui::Button::new("Review resources…"))
                                 .clicked()
                             {
-                                request = Some(Request::Review(Review::Resources(
+                                request = Some(Request::Review(Review::Resources(Box::new(
                                     resources::ResourceReview::new(
                                         Approval::for_command(
                                             &entry.path,
@@ -429,7 +442,7 @@ fn installed_row(
                                         token,
                                         command.resources.as_ref(),
                                     ),
-                                )));
+                                ))));
                             }
                             if command.resources.is_some()
                                 && ui
@@ -454,6 +467,7 @@ fn installed_row(
 
 #[derive(PartialEq)]
 enum ReviewChoice {
+    Tool(resources::ToolAction),
     Confirm,
     Cancel,
     Once,
@@ -516,7 +530,10 @@ impl Review {
             }
             None
         })
-        .inner.or_else(||match self { Self::Resources(review) if review.choose_scope=>{review.choose_scope=false;Some(ReviewChoice::ChooseScope)},_=>None })
+        .inner.or_else(|| match self {
+            Self::Resources(review) => if review.choose_scope { review.choose_scope = false; Some(ReviewChoice::ChooseScope) } else { review.tool_action.take().map(ReviewChoice::Tool) },
+            _ => None
+        })
     }
     fn details(&mut self, ui: &mut egui::Ui) -> Option<&'static str> {
         match self {
@@ -745,7 +762,25 @@ impl HeditApp {
         };
         manager.pending = None;
         manager.recovery_cancel = None;
+        manager.tool_cancel = None;
         match result {
+            Ok(Update::Tool {
+                command,
+                token,
+                profile,
+                selected,
+            }) => {
+                if showing {
+                    if let Some(Review::Resources(review)) = &mut manager.review {
+                        if review.source.command == command && review.token == token {
+                            if let Some((image, info)) = selected {
+                                review.tools.insert(profile.clone(), image);
+                                review.tool_info.insert(profile, info);
+                            }
+                        }
+                    }
+                }
+            }
             Ok(Update::Recovery(review)) => {
                 self.plugin_services.invalidate();
                 if showing {
@@ -826,12 +861,36 @@ impl HeditApp {
                     | Request::Revoke(_)
                     | Request::Confirm
                     | Request::RevokeResources(_)
+                    | Request::Tool(resources::ToolAction::ClearUnused)
             )
         ) {
             self.broker_command.take();
             self.plugin_services.suspend();
         }
         match request {
+            Some(Request::Tool(action)) => {
+                if action == resources::ToolAction::ClearUnused {
+                    manager.review = None;
+                    manager.mutate(ctx, config, "Unused tool imports removed.", catalog::clear_unused_tools);
+                } else if let Some(Review::Resources(review)) = &manager.review {
+                    let source = review.source.clone();
+                    let token = review.token;
+                    let (profile, pick) = match action { resources::ToolAction::Pick(profile) => (profile, true), resources::ToolAction::Inspect(profile) => (profile, false), _ => unreachable!() };
+                    let current = review.tools.get(&profile).copied();
+                    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                    manager.tool_cancel = Some(cancel.clone());
+                    manager.work(ctx, move || {
+                        let selection = catalog::ToolSelection { config: &config, path: &source.path, extension: &source.extension, command: &source.command, digest: &source.digest, token, profile: &profile };
+                        let selected = if pick {
+                            rfd::FileDialog::new().set_title("Choose a standalone native executable").pick_file().map(|path| catalog::import_tool(selection, &path, &cancel)).transpose()?
+                        } else {
+                            let image = current.ok_or("No tool image is selected.")?;
+                            Some((image, catalog::tool_info(selection, image)?))
+                        };
+                        Ok(Update::Tool { command: source.command, token, profile, selected })
+                    });
+                }
+            }
             Some(Request::Recovery(request)) => {
                 let context = recovery::Context {
                     editor: self.workspace.editor.clone(),

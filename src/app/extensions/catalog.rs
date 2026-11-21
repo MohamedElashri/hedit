@@ -2,6 +2,8 @@
 mod lifecycle;
 mod permissions;
 mod resources;
+mod tools;
+pub(super) use tools::{clear_unused_tools, import_tool, tool_info, Selection as ToolSelection};
 mod state;
 pub(super) use resources::{
     approve_resources, broker_authorization, broker_epoch, reset_resource_approvals,
