@@ -369,6 +369,7 @@ impl Workspace {
     }
     /// Close keeps the document, including untitled text, on a recoverable shelf.
     pub fn close(&mut self, index: usize) -> Result<(), String> {
+        self.editor.check_membership_writable()?;
         if !self.can_close(index) {
             return Ok(());
         }
@@ -401,8 +402,8 @@ impl Workspace {
                     .unwrap_or(false)
             });
             if let Some(clean) = clean {
-                let removed = self.closed.remove(clean);
-                self.editor.remove(removed.id)?;
+                self.editor.remove(self.closed[clean].id)?;
+                self.closed.remove(clean);
             } else {
                 let buffer = &self.open[index];
                 if !buffer.page.info.dirty && buffer.page.info.path.is_some() {
@@ -446,6 +447,7 @@ impl Workspace {
         self.reopen_at(index)
     }
     pub fn reopen_at(&mut self, index: usize) -> Result<(), String> {
+        self.editor.check_membership_writable()?;
         let view = self
             .closed
             .get(index)
@@ -556,6 +558,10 @@ impl Workspace {
         let (start, end, replacement) = splice(old, &buffer.page.text);
         let editor = self.editor.get(buffer.page.info.id)?;
         let mut document = editor.lock().map_err(|e| e.to_string())?;
+        if document.workspace_frozen() {
+            buffer.page.text = old.to_owned();
+            return Err("This buffer is awaiting a workspace commit.".into());
+        }
         let info = if let Some(crlf) = crlf {
             document.replace_with_line_ending(
                 buffer.page.start + start as u64,

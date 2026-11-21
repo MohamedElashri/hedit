@@ -1,5 +1,5 @@
 //! Lazy, revision-bound providers. Lua is always in a rotated native worker.
-mod policy;
+pub(super) mod policy;
 mod presentation;
 use super::{
     activity::{Invocation, InvocationOutcome},
@@ -139,6 +139,17 @@ fn decorations(output: &service::Output, text: &str) -> Vec<Decoration> {
 }
 
 impl Services {
+    pub(super) fn policy_monitor(
+        &mut self,
+        config: &std::path::Path,
+        ctx: &egui::Context,
+    ) -> Result<policy::Monitor, String> {
+        self.suspended = false;
+        if self.controller.is_none() {
+            self.controller = Some(policy::Controller::start(config.to_owned(), ctx.clone())?);
+        }
+        Ok(self.controller.as_ref().unwrap().monitor.clone())
+    }
     pub(in crate::app) fn decorations(
         &self,
         document: u64,
@@ -198,9 +209,9 @@ impl Services {
         self.entries.clear();
         self.rebuild_decorations(None);
         self.sequence = None;
-        if let Some(controller) = &self.controller {
-            controller.reload();
-        }
+        // Recreate failed native watchers too. Dropping the controller cancels
+        // subscriptions; watcher teardown remains on its owner thread.
+        self.controller = None;
     }
     pub(in crate::app) fn request(&mut self, id: &str) {
         self.manual = Some(id.to_owned());
@@ -251,7 +262,7 @@ impl Services {
         let mut contributions: Vec<_> = contributions
             .into_iter()
             .filter(
-                |c| matches!(&c.action,ExtensionAction::Lua(plugin) if plugin.provider.is_some()),
+                |c| matches!(&c.action,ExtensionAction::Lua(plugin) if plugin.provider.is_some() && plugin.broker.is_none()),
             )
             .collect();
         contributions.sort_by(|a, b| {

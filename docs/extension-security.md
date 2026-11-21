@@ -260,11 +260,13 @@ retention of a consumed guard through its authorized operation.
 
 ## Workspace and external-service implementation
 
-The experimental host crate and continuation protocol do not expand installed
-extension authority. Manifest APIs 1–4 still use the contracts above; SDK 3 is
-not available through installation or ordinary command/provider approval.
+Manifest APIs 1–4 retain the contracts above. The integration branch also accepts
+experimental API 5 / SDK 3 ordinary commands with separate, exact-source resource
+review. A document grant never supplies a workspace directory or HTTPS endpoint;
+commands without document.read receive an empty neutral snapshot.
 Its [broker threat model](plugin-broker.md) describes the scoped file, recovery,
 watch, HTTPS and host-thread boundaries, current limits and remaining gates.
-Native tool declarations currently fail unavailable. Editor grants, buffer and
-recovery UI, tool/LSP enforcement and platform acceptance remain required before
-enabling the corresponding capabilities.
+Native tool declarations currently fail unavailable. SDK 3 background providers,
+recovery UI, tool/LSP enforcement, author tooling and fresh platform acceptance
+remain implementation gates. The scoped command path is not a declaration that
+Stage 3 or the complete roadmap is finished.

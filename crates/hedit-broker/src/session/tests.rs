@@ -21,6 +21,7 @@ fn fixture_config() -> (tempfile::TempDir, Config) {
     let config = Config {
         package,
         provider: None,
+        cache: Default::default(),
         definition: Arc::new(
             serde_json::from_str(
                 r#"{"capabilities":["workspace.discover","workspace.read","workspace.edit"]}"#,
@@ -274,6 +275,158 @@ async fn batch_read_and_review_use_bounded_callbacks_for_multiple_files() {
         std::fs::read_to_string(outer.path().join("text.txt")).unwrap(),
         "old café / 東京\r\n"
     );
+}
+
+#[tokio::test]
+async fn parked_previews_do_not_exhaust_active_callback_capacity() {
+    let _suite = SERIAL.lock().await;
+    let mut parked = Vec::new();
+    for _ in 0..4 {
+        let (outer, mut session) = fixture();
+        let scope = session.input.scope.unwrap();
+        send(
+            &mut session,
+            Intent::Open {
+                scope,
+                relative: "text.txt".into(),
+            },
+        )
+        .await
+        .unwrap();
+        let Some(Response::Opened(resource)) = session.input.response.clone() else {
+            panic!()
+        };
+        let effect = send(
+            &mut session,
+            Intent::ReviewEdits {
+                scope,
+                changes: Some(vec![broker::Change {
+                    resource: resource.resource,
+                    version: resource.version,
+                    edits: vec![sdk::Edit {
+                        start: 0,
+                        finish: 3,
+                        text: "new".into(),
+                    }],
+                }]),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(matches!(effect, Effect::Review(_)));
+        assert!(session.active.is_none());
+        parked.push((outer, session));
+    }
+    let mut running = Vec::new();
+    for _ in 0..4 {
+        let (outer, mut session) = fixture();
+        session.begin_callback().unwrap();
+        running.push((outer, session));
+    }
+    let (_outer, mut next) = fixture();
+    assert_eq!(
+        next.begin_callback().err().unwrap().kind(),
+        io::ErrorKind::WouldBlock
+    );
+    running.pop();
+    next.begin_callback().unwrap();
+}
+
+#[tokio::test]
+async fn last_callback_rejects_effects_before_authorization_and_returns_final_cache() {
+    let _suite = SERIAL.lock().await;
+    let (_outer, mut session) = fixture();
+    session.input.step = (broker::MAX_CALLBACKS - 1) as u8;
+    let input = session.begin_callback().unwrap();
+    let mut checked = false;
+    assert!(session
+        .accept(
+            broker::Output {
+                request: input.request,
+                step: input.step,
+                intent: Intent::Open {
+                    scope: input.scope.unwrap(),
+                    relative: "text.txt".into()
+                },
+                cache: Default::default(),
+            },
+            || {
+                checked = true;
+                Ok(())
+            }
+        )
+        .await
+        .is_err());
+    assert!(!checked);
+    let (_outer, mut session) = fixture();
+    session.input.step = (broker::MAX_CALLBACKS - 1) as u8;
+    let input = session.begin_callback().unwrap();
+    let cache: sdk::Storage = serde_json::from_str(r#"{"counter":7}"#).unwrap();
+    let Effect::Finished { cache: result, .. } = session
+        .accept(
+            broker::Output {
+                request: input.request,
+                step: input.step,
+                intent: Intent::Finish {
+                    transaction: None,
+                    result: None,
+                },
+                cache,
+            },
+            || Ok(()),
+        )
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(
+        result.0["counter"],
+        hedit_plugin::options::Value::Integer(7)
+    );
+    assert!(session.input.cache.0.is_empty());
+    assert!(session.active.is_none());
+}
+
+#[tokio::test]
+async fn workspace_only_commands_cannot_return_document_navigation_or_annotations() {
+    let _suite = SERIAL.lock().await;
+    for result in [
+        service::ResultSet::Diagnostics(vec![]),
+        service::ResultSet::Presentation(service::Presentation {
+            annotations: vec![service::Annotation {
+                range: service::Range {
+                    start: 0,
+                    finish: 0,
+                },
+                text: "annotation".into(),
+            }],
+            ..Default::default()
+        }),
+        service::ResultSet::Presentation(service::Presentation {
+            quick_list: Some(service::QuickList {
+                title: "Navigation".into(),
+                items: vec![service::ActionItem {
+                    title: "Select".into(),
+                    action: service::Action::Select(sdk::Selection { anchor: 0, head: 0 }),
+                }],
+            }),
+            ..Default::default()
+        }),
+    ] {
+        let (_outer, mut config) = fixture_config();
+        config.definition = Arc::new(serde_json::from_str(r#"{"capabilities":["workspace.discover","workspace.read","workspace.edit","ui.present"]}"#).unwrap());
+        let mut session = Session::new(config).unwrap();
+        assert!(send(
+            &mut session,
+            Intent::Finish {
+                transaction: None,
+                result: Some(Box::new(result))
+            }
+        )
+        .await
+        .is_err());
+    }
 }
 
 #[tokio::test]

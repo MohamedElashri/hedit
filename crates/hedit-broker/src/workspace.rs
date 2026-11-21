@@ -14,6 +14,14 @@ use std::{
 };
 pub(crate) mod identity;
 pub use identity::{Identity, Stamp};
+/// Host preflight uses physical identities to find aliases among open buffers.
+/// These Rust helpers confer no worker authority or resource handles.
+pub fn local_file_identity(file: &std::fs::File) -> io::Result<Identity> {
+    identity::regular(&File::from_std(file.try_clone()?)).map(|stamp| stamp.identity)
+}
+pub fn local_path_identity(path: &Path) -> io::Result<Identity> {
+    local_file_identity(&std::fs::File::open(path)?)
+}
 pub const MAX_FILE_BYTES: usize = 1024 * 1024;
 pub const MAX_SCAN_ENTRIES: usize = 20_000;
 pub const MAX_RESULTS: usize = 512;
@@ -30,7 +38,10 @@ fn limit() -> io::Error {
         "Workspace operation exceeds its budget.",
     )
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Deserialize, serde::Serialize,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum Right {
     Discover,
     Read,
@@ -220,7 +231,7 @@ impl Root {
     pub(crate) fn directory(&self) -> &Dir {
         &self.directory
     }
-    pub(crate) fn locator(&self) -> &Path {
+    pub fn locator(&self) -> &Path {
         &self.locator
     }
     pub(crate) fn require(&self, right: Right) -> io::Result<()> {

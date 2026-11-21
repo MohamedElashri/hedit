@@ -113,6 +113,7 @@ pub struct Document {
     pub id: u64,
     ephemeral: bool,
     remote_sequence: u64,
+    workspace_lease: Option<u128>,
     path: Option<PathBuf>,
     stamp: Option<Stamp>,
     pieces: Vec<Piece>,
@@ -456,6 +457,112 @@ fn validate_buffer_path(path: &Path) -> Result<(), String> {
 }
 
 impl Document {
+    /// A workspace commit freezes only affected clean buffers. No document mutex
+    /// is retained while the broker performs filesystem or journal I/O.
+    pub fn freeze_workspace(&mut self, revision: u64, lease: u128) -> Result<(), String> {
+        self.ensure_workspace_writable()?;
+        if self.revision != revision
+            || self.dirty
+            || self.paged
+            || self.ephemeral
+            || self.encoding != "UTF-8"
+        {
+            return Err("Workspace edits require matching clean, local UTF-8 buffers.".into());
+        }
+        self.workspace_lease = Some(lease);
+        Ok(())
+    }
+    pub fn workspace_frozen(&self) -> bool {
+        self.workspace_lease.is_some()
+    }
+    pub fn source_file(&self) -> Option<&File> {
+        self.pieces.iter().find_map(|piece| match &piece.source {
+            Source::Disk(file, _) => Some(file.as_ref()),
+            Source::Edit(_) => None,
+        })
+    }
+    pub fn local_path(&self) -> Option<&Path> {
+        self.path.as_deref().filter(|_| !self.ephemeral)
+    }
+    /// Read-only workspace preflight shares the current pieces, without cloning
+    /// potentially large Undo/Redo metadata that the preflight never uses.
+    pub fn workspace_snapshot(&self) -> Self {
+        Self {
+            id: self.id,
+            ephemeral: self.ephemeral,
+            remote_sequence: self.remote_sequence,
+            workspace_lease: self.workspace_lease,
+            path: self.path.clone(),
+            stamp: self.stamp.clone(),
+            pieces: self.pieces.clone(),
+            size: self.size,
+            revision: self.revision,
+            dirty: self.dirty,
+            paged: self.paged,
+            bom: self.bom,
+            eol: self.eol,
+            encoding: self.encoding.clone(),
+            recovered: self.recovered,
+            undo: Vec::new(),
+            redo: Vec::new(),
+            version: self.version,
+            saved_version: self.saved_version,
+        }
+    }
+    pub fn same_workspace_source(&self, other: &Self) -> bool {
+        self.stamp == other.stamp && self.bom == other.bom && self.encoding == other.encoding
+    }
+    /// Make a bounded, independent recovery copy off the document mutex. The
+    /// original buffer/history is retained if a preview or commit is cancelled
+    /// without changing disk contents. This backup is used only on conflicts.
+    pub fn workspace_backup(&self, limit: u64) -> Result<Self, String> {
+        let text = self.text(limit)?;
+        let mut backup = self.workspace_snapshot();
+        backup.workspace_lease = None;
+        backup.pieces = vec![Piece {
+            start: 0,
+            len: text.len() as u64,
+            source: Source::Edit(Arc::new(text.into_bytes())),
+        }];
+        backup.undo.clear();
+        backup.redo.clear();
+        backup.preserve_as_unsaved()?;
+        Ok(backup)
+    }
+    fn ensure_workspace_writable(&self) -> Result<(), String> {
+        if self.workspace_frozen() {
+            Err("This buffer is awaiting a workspace commit.".into())
+        } else {
+            Ok(())
+        }
+    }
+    pub fn thaw_workspace(&mut self, lease: u128) {
+        if self.workspace_lease == Some(lease) {
+            self.workspace_lease = None;
+        }
+    }
+    /// The caller prepared this disk copy off the document lock, then verified
+    /// its complete contents against the accepted before/after plan. Revisions
+    /// never restart at zero when replacing a live buffer.
+    pub fn accept_workspace_copy(
+        &mut self,
+        lease: u128,
+        mut replacement: Self,
+    ) -> Result<(), String> {
+        if self.workspace_lease != Some(lease)
+            || replacement.id != self.id
+            || replacement.path != self.path
+            || replacement.workspace_frozen()
+        {
+            return Err("The workspace buffer lease changed.".into());
+        }
+        replacement.revision = self
+            .revision
+            .checked_add(1)
+            .ok_or("Document revision exhausted.")?;
+        *self = replacement;
+        Ok(())
+    }
     fn remote_reload(
         &mut self,
         offset: u64,
@@ -525,6 +632,7 @@ impl Document {
             id,
             ephemeral: false,
             remote_sequence: 0,
+            workspace_lease: None,
             path: None,
             stamp: None,
             pieces: vec![],
@@ -609,12 +717,15 @@ impl Document {
         String::from_utf8(self.read_range(0, self.size)?).map_err(err)
     }
     /// Preserve text before deliberately removing its disk source.
-    pub fn preserve_as_unsaved(&mut self) {
+    pub fn preserve_as_unsaved(&mut self) -> Result<(), String> {
+        self.ensure_workspace_writable()?;
         self.dirty = true;
         self.saved_version = None;
         self.revision += 1;
+        Ok(())
     }
     pub fn set_encoding(&mut self, label: &str) -> Result<(), String> {
+        self.ensure_workspace_writable()?;
         let label = crate::text_encoding::canonical(label)?;
         let text = self.text(crate::text_encoding::DECODE_LIMIT)?;
         crate::text_encoding::encode(&text, label, self.bom)?;
@@ -652,6 +763,7 @@ impl Document {
         Ok(())
     }
     pub fn set_bom(&mut self, bom: bool) -> Result<(), String> {
+        self.ensure_workspace_writable()?;
         if self.bom != bom {
             if self.ephemeral {
                 let path = self.path.as_ref().ok_or("Remote location missing.")?;
@@ -674,6 +786,7 @@ impl Document {
         Ok(())
     }
     pub fn accept_disk_version(&mut self, expected: &str) -> Result<(), String> {
+        self.ensure_workspace_writable()?;
         if self.ephemeral {
             self.remote_reload(0, true, Some(expected))?;
             return Ok(());
@@ -691,6 +804,7 @@ impl Document {
         Ok(())
     }
     pub fn take_disk_version(&mut self, expected: &str, revision: u64) -> Result<Page, String> {
+        self.ensure_workspace_writable()?;
         if self.ephemeral {
             return self.remote_reload(0, true, Some(expected));
         }
@@ -717,6 +831,7 @@ impl Document {
     /// Drop edits and undo history without writing to disk. Keep revisions
     /// increasing so recovery checkpoints cannot reuse an older buffer/history.
     pub fn discard_changes(&mut self) -> Result<Page, String> {
+        self.ensure_workspace_writable()?;
         if self.ephemeral {
             return self.remote_reload(0, true, None);
         }
@@ -726,6 +841,7 @@ impl Document {
     /// Read a fresh disk copy and its requested page before replacing the
     /// current buffer. A failed read leaves the original text and history intact.
     pub fn reload(&mut self, offset: u64) -> Result<Page, String> {
+        self.ensure_workspace_writable()?;
         if self.ephemeral {
             return self.remote_reload(offset, false, None);
         }
@@ -989,6 +1105,7 @@ impl Document {
             id,
             ephemeral: false,
             remote_sequence: 0,
+            workspace_lease: None,
             path,
             stamp: if unsaved {
                 None
@@ -1140,6 +1257,7 @@ impl Document {
     /// Point an open document at a renamed path. Content, history, and revision
     /// are untouched; only the save target and external-change guard move.
     pub fn retarget(&mut self, path: PathBuf) -> Result<Info, String> {
+        self.ensure_workspace_writable()?;
         if self.ephemeral {
             let from = self.path.as_ref().ok_or("Missing remote path.")?;
             crate::backend::lookup(from)?
@@ -1187,6 +1305,7 @@ impl Document {
         self.dirty = true;
     }
     pub fn history(&mut self, redo: bool, offset: u64, revision: u64) -> Result<Page, String> {
+        self.ensure_workspace_writable()?;
         if self.ephemeral {
             if revision != self.revision {
                 return Err("The document changed before undo could be applied.".into());
@@ -1435,6 +1554,7 @@ impl Document {
         text: String,
         revision: u64,
     ) -> Result<Info, String> {
+        self.ensure_workspace_writable()?;
         if revision != self.revision {
             return Err("The document changed before this edit could be applied.".into());
         }
@@ -1529,6 +1649,7 @@ impl Document {
         revision: u64,
         crlf: bool,
     ) -> Result<Info, String> {
+        self.ensure_workspace_writable()?;
         if self.paged {
             return Err("Line-ending conversion requires a fully loaded file.".into());
         }
@@ -1665,6 +1786,7 @@ impl Document {
                 id,
                 ephemeral: false,
                 remote_sequence: 0,
+                workspace_lease: None,
                 path: saved.path.clone(),
                 stamp: saved.stamp.clone(),
                 pieces,
@@ -1712,6 +1834,7 @@ impl Document {
             id,
             ephemeral: false,
             remote_sequence: 0,
+            workspace_lease: None,
             path: saved.path.clone(),
             stamp: saved.stamp.clone(),
             pieces: vec![Piece {
@@ -1738,6 +1861,7 @@ impl Document {
         })
     }
     pub fn save(&mut self, target: Option<PathBuf>) -> Result<Info, String> {
+        self.ensure_workspace_writable()?;
         if self.ephemeral {
             let path = self.path.clone().ok_or("Remote location missing.")?;
             let backend = crate::backend::lookup(&path)?.ok_or("Remote workspace unavailable.")?;
@@ -1862,6 +1986,7 @@ impl Document {
         revision: u64,
         progress: impl Fn(u64, u64),
     ) -> Result<(Page, u64), String> {
+        self.ensure_workspace_writable()?;
         if self.ephemeral {
             if revision != self.revision {
                 return Err("The document changed before replacement.".into());

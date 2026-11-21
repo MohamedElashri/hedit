@@ -36,7 +36,7 @@ fn thread_admission_is_reserved_before_setup_and_slow_consumers_have_one_mailbox
     let mut hosts = Vec::new();
     let mut release = Vec::new();
     let mut completed = Vec::new();
-    for _ in 0..4 {
+    for _ in 0..16 {
         let (sender, receiver) = mpsc::sync_channel(1);
         let (finish, finished) = mpsc::sync_channel(1);
         hosts.push(

@@ -24,6 +24,7 @@ terminal = ["dep:libghostty-vt", "dep:portable-pty", "dep:rustybuzz"]
 getrandom = "0.4"
 hedit-core = { path = "crates/hedit-core" }
 hedit-plugin = { path = "crates/hedit-plugin" }
+hedit-broker = { path = "crates/hedit-broker" }
 hedit-remote = { path = "crates/hedit-remote" }
 libghostty-vt = { version = "=0.2.2", default-features = false, optional = true }
 portable-pty = { version = "0.9", optional = true }
