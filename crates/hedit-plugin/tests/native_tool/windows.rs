@@ -236,14 +236,7 @@ fn probe(args: Vec<std::ffi::OsString>) {
             .kind(),
         io::ErrorKind::PermissionDenied
     );
-    let address = args[3].to_str().unwrap().parse().unwrap();
-    let error = TcpStream::connect_timeout(&address, Duration::from_millis(200)).unwrap_err();
-    assert!(
-        matches!(
-            error.kind(),
-            io::ErrorKind::PermissionDenied | io::ErrorKind::TimedOut
-        ) || error.raw_os_error() == Some(10013)
-    );
+    network_denied(args[3].to_str().unwrap());
     let allocation = unsafe {
         VirtualAlloc(
             std::ptr::null(),
@@ -260,4 +253,54 @@ fn probe(args: Vec<std::ffi::OsString>) {
     let mut input = Vec::new();
     io::stdin().read_to_end(&mut input).unwrap();
     io::stdout().write_all(&input).unwrap();
+}
+
+fn network_denied(address: &str) {
+    use windows_sys::Win32::Networking::WinSock::*;
+    let mut data = WSADATA::default();
+    let startup = unsafe { WSAStartup(0x0202, &mut data) };
+    let socket = unsafe { socket(AF_INET as i32, SOCK_STREAM, IPPROTO_TCP) };
+    if startup != 0 {
+        assert!(
+            startup == WSAEACCES || startup == WSASYSNOTREADY || startup == WSASYSCALLFAILURE,
+            "unexpected Winsock startup failure: {startup}"
+        );
+        assert_eq!(socket, INVALID_SOCKET);
+        assert_eq!(unsafe { WSAGetLastError() }, WSANOTINITIALISED);
+        return;
+    }
+    if socket == INVALID_SOCKET {
+        let error = unsafe { WSAGetLastError() };
+        unsafe { WSACleanup() };
+        assert_eq!(error, WSAEACCES);
+        return;
+    }
+    let target: std::net::SocketAddrV4 = address.parse().unwrap();
+    let address = SOCKADDR_IN {
+        sin_family: AF_INET,
+        sin_port: target.port().to_be(),
+        sin_addr: IN_ADDR {
+            S_un: IN_ADDR_0 {
+                S_addr: u32::from_ne_bytes(target.ip().octets()),
+            },
+        },
+        sin_zero: [0; 8],
+    };
+    let result = unsafe {
+        connect(
+            socket,
+            (&address as *const SOCKADDR_IN).cast(),
+            std::mem::size_of_val(&address) as i32,
+        )
+    };
+    let error = unsafe { WSAGetLastError() };
+    unsafe {
+        closesocket(socket);
+        WSACleanup();
+    }
+    assert_eq!(
+        result, SOCKET_ERROR,
+        "native image reached the listening host socket"
+    );
+    assert_eq!(error, WSAEACCES);
 }
