@@ -50,12 +50,14 @@ pub(super) fn new_file(parent: &Dir, name: &str) -> io::Result<File> {
     parent.open_with(name, &options)
 }
 pub(crate) fn private_directory(parent: &Dir, name: &str) -> io::Result<Dir> {
-    let mut builder = cap_std::fs::DirBuilder::new();
+    let builder = cap_std::fs::DirBuilder::new();
     #[cfg(unix)]
-    {
+    let builder = {
         use cap_std::fs::DirBuilderExt;
+        let mut builder = builder;
         builder.mode(0o700);
-    }
+        builder
+    };
     parent.create_dir_with(name, &builder)?;
     let directory = cap_fs_ext::DirExt::open_dir_nofollow(parent, name)?;
     #[cfg(unix)]
@@ -241,7 +243,7 @@ pub(super) fn rename(
         // SAFETY: aligned storage covers the flexible UTF-16 member; both handles
         // are live, target is a validated single component, replacement is false.
         unsafe {
-            (*info).Anonymous.ReplaceIfExists = 0;
+            (*info).Anonymous.ReplaceIfExists = false;
             (*info).RootDirectory = to.as_raw_handle();
             (*info).FileNameLength = ((name.len() - 1) * 2) as u32;
             std::ptr::copy_nonoverlapping(

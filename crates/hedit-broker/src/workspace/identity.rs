@@ -121,7 +121,7 @@ fn windows(file: &std::fs::File) -> io::Result<(Stamp, u32, u32)> {
         }
     }
     if basic.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
-        || standard.DeletePending != 0
+        || standard.DeletePending
         || standard.EndOfFile < 0
     {
         return Err(denied());

@@ -19,12 +19,14 @@ use std::{collections::BTreeMap, path::Path, sync::Arc, time::Instant};
 
 fn private(parent: &Path, name: &str) -> Dir {
     let path = parent.join(name);
-    let mut builder = std::fs::DirBuilder::new();
+    let builder = std::fs::DirBuilder::new();
     #[cfg(unix)]
-    {
+    let builder = {
         use std::os::unix::fs::DirBuilderExt;
+        let mut builder = builder;
         builder.mode(0o700);
-    }
+        builder
+    };
     builder.create(&path).unwrap();
     #[cfg(unix)]
     let file = std::fs::File::open(&path).unwrap();
