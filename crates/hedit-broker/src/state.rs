@@ -101,7 +101,8 @@ impl SelectedScope {
         result.validate()?;
         Ok(result)
     }
-    fn resolve(&self, state: &State) -> io::Result<Root> {
+    /// Reopen a host-selected scope without broadening its physical identity or rights.
+    pub fn resolve(&self, state: &State) -> io::Result<Root> {
         self.validate()?;
         let root = Root::open_selected(
             &self.path,

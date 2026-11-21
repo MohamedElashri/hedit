@@ -55,6 +55,7 @@ pub struct Session {
     watch_wake: Arc<tokio::sync::Notify>,
     permit: Option<tokio::sync::SemaphorePermit<'static>>,
     active: Option<tokio::sync::SemaphorePermit<'static>>,
+    owner: Option<crate::journal::Owner>,
 }
 fn denied() -> io::Error {
     io::Error::new(
@@ -66,6 +67,7 @@ fn invalid() -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, "Invalid broker continuation.")
 }
 pub struct Config {
+    pub owner: Option<crate::journal::Owner>,
     pub package: sdk::Input,
     pub provider: Option<service::Request>,
     pub cache: sdk::Storage,
@@ -80,6 +82,9 @@ pub struct Config {
 impl Session {
     /// `Config` is built only after host policy resolution; none is deserialized.
     pub fn new(config: Config) -> io::Result<Self> {
+        if let Some(owner) = &config.owner {
+            owner.validate()?;
+        }
         use crate::declaration::Capability;
         config
             .definition
@@ -182,6 +187,7 @@ impl Session {
             watch_wake: Arc::new(tokio::sync::Notify::new()),
             permit: Some(permit),
             active: None,
+            owner: config.owner,
         })
     }
     fn live(&self) -> io::Result<()> {
@@ -654,12 +660,18 @@ impl Session {
             WORK.saturating_sub(self.spent),
             self.bytes,
         );
-        let journal = crate::journal::Journal::prepare(
-            self.resources.as_ref().ok_or_else(denied)?,
-            plan,
-            &mut budget,
-            &self.recovery,
-        );
+        let resources = self.resources.as_ref().ok_or_else(denied)?;
+        let journal = if let Some(owner) = &self.owner {
+            crate::journal::Journal::prepare_owned(
+                resources,
+                plan,
+                &mut budget,
+                &self.recovery,
+                owner,
+            )
+        } else {
+            crate::journal::Journal::prepare(resources, plan, &mut budget, &self.recovery)
+        };
         self.bytes = budget.remaining_bytes();
         self.spent += started.elapsed();
         journal

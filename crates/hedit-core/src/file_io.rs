@@ -181,6 +181,9 @@ mod tests {
             next.try_lock(),
             Err(std::fs::TryLockError::WouldBlock)
         ));
+        // Release explicitly before testing a zero-wait retry. Parallel native
+        // tests may temporarily inherit the open description while spawning.
+        held.unlock().unwrap();
         drop(held);
         lock_with_timeout(&next, Duration::ZERO).unwrap();
     }

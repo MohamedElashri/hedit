@@ -184,8 +184,27 @@ Crashes, I/O errors or a competing creator can leave an absent destination or a
 partial plan; originals and replacements remain available for explicit recovery.
 Compensating recovery never overwrites a competing write.
 
-Recovery rechecks current scope authority, recorded stage identity, file identity
-and hashes. Startup never resumes plugin source or silently applies an old plan.
+**Settings → Extensions → Workspace recovery…** lists retained journals.
+Choose the original physical directory to inspect complete original/replacement
+text and current file state. New journals record the command and exact approved
+source digest; legacy journals explicitly lack attribution. Inspection does not
+run Lua, make network requests, or resume edits. Views expire after 120 seconds.
+They reserve at most 16 MiB each from the same global 64 MiB snapshot budget.
+
+Explicit resume, restore and history deletion reopen the selected directory,
+recheck its identity and birth time, authenticate the journal and compare a fresh
+view with the reviewed one. The exclusive policy mutation guard cancels plugin
+sessions before recovery, and the same per-window buffer lease protects clean
+buffers during effects and reconciliation. At most two recovery jobs run globally;
+I/O and hashing run off the UI thread. Closing the review cancels pending work.
+No plugin/source approval is needed to recover an uninstalled plugin's journal:
+this is a new, trusted user action rather than reused plugin authority.
+
+Unavailable original/replacement bytes, damaged metadata, unknown stage entries
+or conflicting writes are preserved. An in-place external write can destroy a
+version that was only present in the live file; recovery cannot reconstruct it.
+The incomplete-preparation action only removes verified replacement-only stages.
+There is no automatic repair, quota reset or deletion of ambiguous records. Startup never resumes plugin source or silently applies an old plan.
 History discard refuses missing destinations, competing contents and unknown or
 tampered private entries. Interrupted-preparation cleanup accepts only recorded
 private stages with bounded known replacement files and no ledger, receipts or
@@ -246,7 +265,7 @@ on Windows. It uses disposable Unicode/CRLF files and a synthetic translation
 response. The transport tests separately exercise real loopback TLS; production
 endpoint policy cannot opt into that test route.
 
-Required gates still include SDK 3 provider routing and recovery UI; fresh native
+Required gates still include SDK 3 provider routing and native recovery UI acceptance; fresh native
 Windows x64/ARM64 and Linux editor-integration checks; external
 tool/LSP confinement and adversarial tests; author/reference/extracted-package
 coverage; final sanitizer and sustained performance evidence; and universal macOS

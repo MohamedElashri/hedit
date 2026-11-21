@@ -266,7 +266,10 @@ review. A document grant never supplies a workspace directory or HTTPS endpoint;
 commands without document.read receive an empty neutral snapshot.
 Its [broker threat model](plugin-broker.md) describes the scoped file, recovery,
 watch, HTTPS and host-thread boundaries, current limits and remaining gates.
-Native tool declarations currently fail unavailable. SDK 3 background providers,
-recovery UI, tool/LSP enforcement, author tooling and fresh platform acceptance
+Explicit workspace recovery is available through Extensions settings, including
+for journals whose source has since been uninstalled. It requires fresh user
+review and preserves ambiguous data. Native tool declarations currently fail
+unavailable. SDK 3 background providers, tool/LSP enforcement, author tooling
+and fresh platform acceptance
 remain implementation gates. The scoped command path is not a declaration that
 Stage 3 or the complete roadmap is finished.
