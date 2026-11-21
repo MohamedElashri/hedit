@@ -45,9 +45,8 @@ def main():
                '-rss_limit_mb=1024', f'-max_total_time={args.seconds}']
     sources = [ROOT / 'fuzz/Cargo.toml', ROOT / 'fuzz/Cargo.lock', ROOT / 'crates/hedit-plugin/Cargo.toml']
     sources += sorted((ROOT / 'crates/hedit-plugin/src').rglob('*.rs'))
-    if args.target == 'lsp_wire':
-        sources.append(ROOT / 'crates/hedit-core/Cargo.toml')
-        sources += sorted((ROOT / 'crates/hedit-core/src').rglob('*.rs'))
+    sources.append(ROOT / 'crates/hedit-protocol/Cargo.toml')
+    sources += sorted((ROOT / 'crates/hedit-protocol/src').rglob('*.rs'))
     sources += sorted((ROOT / 'fuzz/fuzz_targets').glob('*.rs'))
     sources.append(ROOT / 'LICENSE')
     source_hashes = {}

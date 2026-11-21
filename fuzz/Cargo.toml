@@ -12,7 +12,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 hedit-plugin = { path = "../crates/hedit-plugin", features = ["fuzzing"] }
-hedit-core = { path = "../crates/hedit-core" }
+hedit-protocol = { path = "../crates/hedit-protocol" }
 
 [[bin]]
 name = "sdk_protocol"
