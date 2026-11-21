@@ -85,7 +85,7 @@ jobs:
       - name: Editor approval, preview, settings, and save-hook regressions
         run: cargo test --locked --no-default-features --bin hedit app::extensions -- --nocapture
       - name: Build the editor
-        run: cargo build --locked --no-default-features --bin hedit
+        run: cargo build --locked --no-default-features --workspace
       - name: Shared editing, CLI, settings, distribution, and save security
         run: cargo test --locked --no-default-features --test advanced --test lua_plugin_runtime --test plugin_distribution --test plugin_sdk --test save_security --test settings -- --nocapture
       - name: Test the extracted portable package
