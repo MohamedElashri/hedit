@@ -1,4 +1,5 @@
 //! Settings for installing local extensions and approving individual Lua commands.
+mod recovery;
 mod resources;
 use super::{
     activity::{Activity, Invocation, InvocationOutcome},
@@ -26,6 +27,8 @@ pub(in crate::app) struct Manager {
     discard_file_review: bool,
     one_time: Option<Contribution>,
     activity: Activity,
+    recovery: Option<recovery::Review>,
+    recovery_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 enum Feedback {
@@ -34,6 +37,7 @@ enum Feedback {
 }
 
 enum Update {
+    Recovery(recovery::Review),
     Catalog {
         catalog: Catalog,
         feedback: Option<Feedback>,
@@ -50,6 +54,7 @@ enum Update {
 }
 
 enum Request {
+    Recovery(recovery::Request),
     Reload,
     OpenFolder,
     ChooseFile(Option<String>),
@@ -110,6 +115,10 @@ impl Manager {
     }
 
     fn hide(&mut self) {
+        self.recovery = None;
+        if let Some(cancel) = self.recovery_cancel.take() {
+            cancel.store(true, std::sync::atomic::Ordering::Release);
+        }
         self.view = None;
         self.review = None;
         self.feedback = None;
@@ -185,7 +194,7 @@ impl Manager {
         }
 
         let pending = self.pending.is_some();
-        let can_act = !pending && self.review.is_none();
+        let can_act = !pending && self.review.is_none() && self.recovery.is_none();
         let mut request = None;
         ui.horizontal_wrapped(|ui| {
             if ui
@@ -209,6 +218,12 @@ impl Manager {
                     .clicked()
             {
                 request = Some(Request::OpenFolder);
+            }
+            if ui
+                .add_enabled(can_act, egui::Button::new("Workspace recovery…"))
+                .clicked()
+            {
+                request = Some(Request::Recovery(recovery::Request::List));
             }
             if pending {
                 ui.spinner();
@@ -259,6 +274,15 @@ impl Manager {
         }
 
         self.activity.show(ui);
+        if let Some(review) = &mut self.recovery {
+            let error = match &self.feedback {
+                Some(Feedback::Error(error)) => Some(error.as_str()),
+                _ => None,
+            };
+            if let Some(action) = review.show(ui, !pending, error) {
+                return Some(Request::Recovery(action));
+            }
+        }
         if let Some(review) = &mut self.review {
             let shown = egui::Modal::new(egui::Id::new(("review-extension", review.label())))
                 .show(ui.ctx(), |ui| review.show(ui, !pending));
@@ -709,7 +733,14 @@ impl HeditApp {
             Err(TryRecvError::Disconnected) => Err("The extension operation stopped.".into()),
         };
         manager.pending = None;
+        manager.recovery_cancel = None;
         match result {
+            Ok(Update::Recovery(review)) => {
+                self.plugin_services.invalidate();
+                if showing {
+                    manager.recovery = Some(review);
+                }
+            }
             Ok(Update::Catalog {
                 catalog,
                 feedback,
@@ -790,6 +821,15 @@ impl HeditApp {
             self.plugin_services.suspend();
         }
         match request {
+            Some(Request::Recovery(request)) => {
+                let context = recovery::Context {
+                    editor: self.workspace.editor.clone(),
+                    session: self.workspace.store.directory().to_owned(),
+                    following: self.workspace.open.iter().filter(|b| b.follow).map(|b| b.page.info.id).collect(),
+                    sender: self.tx.clone(),
+                };
+                recovery::start(manager, request, ctx, config, context);
+            }
             Some(Request::Reload) => manager.reload(ctx, config, true),
             Some(Request::OpenFolder) => manager.work(ctx, move || {
                 let folder = config.join("extensions");

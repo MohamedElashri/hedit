@@ -21,6 +21,10 @@ use permissions::{
     GRANTS_FILE,
 };
 pub(super) use permissions::{Grant, OneTimeApproval};
+
+pub(super) fn recovery_lock(config: &Path) -> Result<impl Drop, String> {
+    permissions::mutation_lock(config)
+}
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::File,

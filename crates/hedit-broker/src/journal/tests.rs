@@ -50,6 +50,164 @@ fn fixture() -> tempfile::TempDir {
     dir
 }
 #[test]
+fn inspection_authenticates_complete_versions_through_capture_apply_restore_and_conflict() {
+    let directory = fixture();
+    let (mut resources, store) = session(directory.path());
+    let cancel = AtomicBool::new(false);
+    let plan = prepare(&mut resources, &cancel);
+    let root = resources.root(plan.scope()).unwrap();
+    let owner = Owner {
+        command: "fixture.rename".into(),
+        digest: "a".repeat(64),
+    };
+    let journal =
+        Journal::prepare_owned(&resources, &plan, &mut budget(&cancel), &store, &owner).unwrap();
+    let reopened = Journal::open(root, journal.name(), &store).unwrap();
+    let view = reopened.inspect(root, &mut budget(&cancel)).unwrap();
+    assert_eq!(view.owner.as_ref().unwrap().command, owner.command);
+    assert!(view.files.iter().all(|f| f.current == Current::Original));
+    assert_eq!(view.files[0].before(), "old café / 東京\r\n");
+    assert_eq!(view.files[0].after(), "new café / 東京\r\n");
+    drop(view);
+    let (parent, name) = root.parent("first.txt").unwrap();
+    let original = native::writable(&parent, &name).unwrap();
+    native::rename(&parent, &name, Some(&original), &journal.directory, "0.old").unwrap();
+    drop(original);
+    assert_eq!(
+        journal.inspect(root, &mut budget(&cancel)).unwrap().files[0].current,
+        Current::Missing
+    );
+    std::fs::write(directory.path().join("first.txt"), "external writer").unwrap();
+    let view = journal.inspect(root, &mut budget(&cancel)).unwrap();
+    assert_eq!(view.files[0].current, Current::Conflict);
+    assert_eq!(view.files[0].before(), "old café / 東京\r\n");
+    assert_eq!(view.files[0].after(), "new café / 東京\r\n");
+    assert!(journal
+        .restore(root, &mut budget(&cancel), || Ok(()))
+        .is_err());
+    assert_eq!(
+        std::fs::read_to_string(directory.path().join("first.txt")).unwrap(),
+        "external writer"
+    );
+    std::fs::remove_file(directory.path().join("first.txt")).unwrap();
+    journal
+        .apply(root, &mut budget(&cancel), || Ok(()))
+        .unwrap();
+    assert!(journal
+        .inspect(root, &mut budget(&cancel))
+        .unwrap()
+        .files
+        .iter()
+        .all(|f| f.current == Current::Replacement));
+}
+#[test]
+fn inspection_of_restored_and_legacy_journals_preserves_all_preview_bytes() {
+    let directory = fixture();
+    let text = format!("old {}", "café / 東京\r\n".repeat(2000));
+    std::fs::write(directory.path().join("first.txt"), &text).unwrap();
+    let (mut resources, store) = session(directory.path());
+    let cancel = AtomicBool::new(false);
+    let plan = prepare(&mut resources, &cancel);
+    let root = resources.root(plan.scope()).unwrap();
+    let journal = Journal::prepare(&resources, &plan, &mut budget(&cancel), &store).unwrap();
+    journal
+        .apply(root, &mut budget(&cancel), || Ok(()))
+        .unwrap();
+    journal
+        .restore(root, &mut budget(&cancel), || Ok(()))
+        .unwrap();
+    let journal = Journal::open(root, journal.name(), &store).unwrap();
+    let view = journal.inspect(root, &mut budget(&cancel)).unwrap();
+    assert!(view.owner.is_none());
+    assert!(view.files.iter().all(|f| f.current == Current::Original));
+    let file = &view.files[0];
+    let mut joined = String::new();
+    for page in 0..file.before_page(0).1 {
+        joined.push_str(file.before_page(page).0);
+    }
+    assert_eq!(joined, text);
+    joined.clear();
+    for page in 0..file.after_page(0).1 {
+        joined.push_str(file.after_page(page).0);
+    }
+    assert_eq!(joined, text.replacen("old", "new", 1));
+    cancel.store(true, std::sync::atomic::Ordering::Release);
+    assert!(journal.inspect(root, &mut budget(&cancel)).is_err());
+    assert!(directory.path().join(journal.name()).exists());
+}
+#[test]
+fn inspection_refuses_changed_private_versions_and_missing_originals() {
+    for applied in [false, true] {
+        let directory = fixture();
+        let (mut resources, store) = session(directory.path());
+        let cancel = AtomicBool::new(false);
+        let plan = prepare(&mut resources, &cancel);
+        let root = resources.root(plan.scope()).unwrap();
+        let journal = Journal::prepare(&resources, &plan, &mut budget(&cancel), &store).unwrap();
+        if applied {
+            journal
+                .apply(root, &mut budget(&cancel), || Ok(()))
+                .unwrap();
+            std::fs::write(
+                directory.path().join(journal.name()).join("0.old"),
+                "tampered",
+            )
+            .unwrap();
+        } else {
+            std::fs::write(directory.path().join("first.txt"), "external writer").unwrap();
+        }
+        assert!(journal.inspect(root, &mut budget(&cancel)).is_err());
+        assert_eq!(store.records().unwrap().len(), 1);
+    }
+}
+#[test]
+fn journal_owner_versions_are_strict_and_source_digests_are_not_lua_authority() {
+    let directory = fixture();
+    let (mut resources, store) = session(directory.path());
+    let cancel = AtomicBool::new(false);
+    let plan = prepare(&mut resources, &cancel);
+    let root = resources.root(plan.scope()).unwrap();
+    for (command, digest) in [
+        ("bad command", "a".repeat(64)),
+        ("fixture.run", "A".repeat(64)),
+        ("fixture.run", "a".repeat(63)),
+    ] {
+        assert!(Journal::prepare_owned(
+            &resources,
+            &plan,
+            &mut budget(&cancel),
+            &store,
+            &Owner {
+                command: command.into(),
+                digest
+            }
+        )
+        .is_err());
+    }
+    assert!(store.records().unwrap().is_empty());
+    let journal = Journal::prepare(&resources, &plan, &mut budget(&cancel), &store).unwrap();
+    let path = directory.path().join(journal.name()).join("prepared.json");
+    let original: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    for (version, owner) in [
+        (
+            1,
+            Some(serde_json::json!({"command":"fixture.run", "digest":"a".repeat(64)})),
+        ),
+        (2, None),
+        (3, None),
+    ] {
+        let mut value = original.clone();
+        value["version"] = version.into();
+        if let Some(owner) = owner {
+            value["owner"] = owner;
+        }
+        std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+        assert!(Journal::open(root, journal.name(), &store).is_err());
+    }
+    assert_eq!(store.records().unwrap().len(), 1);
+}
+#[test]
 fn reviewed_plan_commits_and_explicitly_restores_without_losing_unicode_or_permissions() {
     let directory = fixture();
     let (mut resources, store) = session(directory.path());

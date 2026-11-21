@@ -107,6 +107,7 @@ fn workspace_config(outer: &Path, cancel: Arc<Cancel>) -> Config {
     )
     .unwrap();
     Config {
+        owner: None,
         package: input,
         provider: None,
         cache: Default::default(),
