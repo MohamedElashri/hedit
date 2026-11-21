@@ -58,6 +58,9 @@ jobs:
       - name: Verify throttled native CPU time independently of the wall deadline
         if: ${{ !cancelled() && runner.os == 'Windows' }}
         run: cargo test --locked -p hedit-plugin --lib native_tool_cpu_rate_and_time_limits -- --nocapture
+      - name: Verify process-specific native thread accounting
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        run: cargo test --locked -p hedit-plugin --lib native_thread_accounting -- --nocapture
       - name: Verify imported images and private broker run lifecycle
         if: ${{ !cancelled() }}
         run: cargo test --locked -p hedit-broker --test native_tools

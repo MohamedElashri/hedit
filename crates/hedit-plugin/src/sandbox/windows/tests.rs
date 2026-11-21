@@ -617,3 +617,27 @@ fn native_tool_cpu_rate_and_time_limits() {
         "probe did not enter the native loop: {output}"
     );
 }
+
+#[test]
+fn native_thread_accounting_captures_the_target_without_thread_contexts() {
+    let gate = std::sync::Arc::new(std::sync::Barrier::new(9));
+    let threads: Vec<_> = (0..8)
+        .map(|_| {
+            let gate = gate.clone();
+            std::thread::spawn(move || {
+                gate.wait();
+                gate.wait();
+            })
+        })
+        .collect();
+    gate.wait();
+    let process = unsafe { GetCurrentProcess() };
+    let counts: Vec<_> = (0..64).map(|_| thread_count(process)).collect();
+    gate.wait();
+    for thread in threads {
+        thread.join().unwrap();
+    }
+    assert!(counts
+        .into_iter()
+        .all(|count| count.is_ok_and(|count| count >= 9)));
+}

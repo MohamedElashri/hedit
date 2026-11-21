@@ -249,7 +249,9 @@ explicit inherited handles and a kill-on-close single-process job. Parent-side
 checks run while the image is suspended; only after token, mitigation and job
 verification does it resume. The job limits private and job-wide committed
 memory to 256 MiB, user CPU time to two seconds and CPU rate to 10%. Thread count
-is monitored with a bounded host-side scan. The host also samples user CPU time
+is monitored using a process-specific PSS thread-ID snapshot without capturing
+thread contexts or cloning address space. No system-wide thread walk runs on each
+poll. The host also samples user and kernel CPU time
 every 50 ms because Windows enforces job CPU-time limits periodically; the
 configured two seconds is not a promise of zero overshoot. The finite ten-second
 wall deadline is independent of CPU throttling. Kernel objects, system services and
