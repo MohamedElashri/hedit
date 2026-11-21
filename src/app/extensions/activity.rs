@@ -12,6 +12,8 @@ pub(in crate::app) struct Invocation {
     command: String,
     started: Instant,
     scope: Scope,
+    wait_started: std::cell::Cell<Option<Instant>>,
+    pub(super) trace: crate::plugin_runtime::telemetry::Recorder,
 }
 
 #[derive(Clone, Copy)]
@@ -34,11 +36,21 @@ impl Scope {
 }
 
 impl Invocation {
+    pub(super) fn begin_wait(&self) {
+        self.wait_started.set(Some(Instant::now()));
+    }
+    pub(super) fn end_wait(&self, phase: crate::plugin_runtime::telemetry::Phase) {
+        if let Some(started) = self.wait_started.take() {
+            self.trace.record(phase, started.elapsed());
+        }
+    }
     pub(in crate::app) fn new(command_id: &str) -> Self {
         Self {
             command: command_id.to_owned(),
             started: Instant::now(),
             scope: Scope::Selection,
+            trace: Default::default(),
+            wait_started: std::cell::Cell::new(None),
         }
     }
 
@@ -141,6 +153,17 @@ impl Activity {
                                 run.invocation.scope.label(),
                             ));
                         });
+                        let samples = run.invocation.trace.snapshot();
+                        if !samples.is_empty() {
+                            ui.collapsing("Phase timings", |ui| {
+                                for sample in samples {
+                                    ui.weak(format!(
+                                        "{:?}: {} µs ({} samples)",
+                                        sample.phase, sample.total_us, sample.count
+                                    ));
+                                }
+                            });
+                        }
                     }
                 });
         });

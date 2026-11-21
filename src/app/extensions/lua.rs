@@ -36,6 +36,7 @@ impl LuaTransform {
 struct Authority {
     file: File,
     storage: Option<plugin_runtime::sdk::Storage>,
+    elapsed: std::time::Duration,
 }
 type ApprovalReceiver = Receiver<Result<Option<Authority>, String>>;
 
@@ -213,6 +214,7 @@ impl HeditApp {
         let proposal = self.lua_proposal(command, plugin);
         match proposal {
             Ok(proposal) if !proposal.plugin.arguments.is_empty() => {
+                proposal.invocation.begin_wait();
                 self.lua_transform = Some(LuaTransform {
                     proposal,
                     phase: Phase::Arguments,
@@ -242,6 +244,7 @@ impl HeditApp {
     }
 
     fn lua_proposal(&self, command: &str, plugin: LuaPlugin) -> Result<Proposal, String> {
+        let started = std::time::Instant::now();
         let target = self
             .lua_target()
             .ok_or("Select text in a local editable buffer.")?;
@@ -278,6 +281,10 @@ impl HeditApp {
         } else {
             Invocation::new(command)
         };
+        invocation.trace.record(
+            plugin_runtime::telemetry::Phase::Proposal,
+            started.elapsed(),
+        );
         Ok(Proposal {
             target,
             ranges,
@@ -305,6 +312,7 @@ impl HeditApp {
         thread::Builder::new()
             .name("hedit-lua-approval".into())
             .spawn(move || {
+                let started = std::time::Instant::now();
                 let result = (|| {
                     let Some(file) = catalog::lua_authorization(&config, &plugin) else {
                         return Ok(None);
@@ -314,7 +322,11 @@ impl HeditApp {
                     } else {
                         None
                     };
-                    Ok(Some(Authority { file, storage }))
+                    Ok(Some(Authority {
+                        file,
+                        storage,
+                        elapsed: started.elapsed(),
+                    }))
                 })();
                 let _ = sender.send(result);
                 ctx.request_repaint();
@@ -330,6 +342,17 @@ impl HeditApp {
         if !matches!(job.phase, Phase::Persisting(_))
             && self.lua_target().as_ref() != Some(&job.proposal.target)
         {
+            match job.phase {
+                Phase::Arguments => job
+                    .proposal
+                    .invocation
+                    .end_wait(plugin_runtime::telemetry::Phase::Prompt),
+                Phase::Preview { .. } => job
+                    .proposal
+                    .invocation
+                    .end_wait(plugin_runtime::telemetry::Phase::Preview),
+                _ => {}
+            }
             self.extension_manager
                 .record(job.proposal.invocation, InvocationOutcome::Cancelled);
             self.notice = "Extension command canceled because the editor context changed.".into();
@@ -374,17 +397,29 @@ impl HeditApp {
             Phase::Arguments => {
                 match show_arguments(ctx, &proposal.plugin, &mut proposal.arguments) {
                     Some(true) => {
+                        proposal
+                            .invocation
+                            .end_wait(plugin_runtime::telemetry::Phase::Prompt);
                         job.phase = Phase::Checking(
                             self.request_lua_approval(ctx, &proposal.plugin)
                                 .map_err(TransformFailure::failed)?,
                         )
                     }
-                    Some(false) => return Ok(Some(InvocationOutcome::Discarded)),
+                    Some(false) => {
+                        proposal
+                            .invocation
+                            .end_wait(plugin_runtime::telemetry::Phase::Prompt);
+                        return Ok(Some(InvocationOutcome::Discarded));
+                    }
                     None => {}
                 }
             }
             Phase::Checking(approval) => {
                 if let Some(approval) = receive_approval(approval)? {
+                    proposal.invocation.trace.record(
+                        plugin_runtime::telemetry::Phase::Authorization,
+                        approval.elapsed,
+                    );
                     let wake = ctx.clone();
                     proposal.storage = approval.storage.clone();
                     job.phase = if let Some(snapshot) = &proposal.snapshot {
@@ -444,6 +479,12 @@ impl HeditApp {
                         .snapshot
                         .as_ref()
                         .ok_or_else(|| TransformFailure::failed("Missing document snapshot."))?;
+                    for sample in worker.timings().snapshot() {
+                        proposal.invocation.trace.record(
+                            sample.phase,
+                            std::time::Duration::from_micros(sample.total_us),
+                        );
+                    }
                     let transaction = transaction?;
                     if transaction.storage.is_some() && !proposal.plugin.storage {
                         return Err(plugin_runtime::Error::Worker.into());
@@ -470,6 +511,9 @@ impl HeditApp {
             }
             Phase::Preview { diff, output } => match show_preview(ctx, diff) {
                 Some(true) => {
+                    proposal
+                        .invocation
+                        .end_wait(plugin_runtime::telemetry::Phase::Preview);
                     job.phase = Phase::Committing {
                         output: Output {
                             replacements: std::mem::take(&mut output.replacements),
@@ -482,6 +526,9 @@ impl HeditApp {
                     }
                 }
                 Some(false) => {
+                    proposal
+                        .invocation
+                        .end_wait(plugin_runtime::telemetry::Phase::Preview);
                     self.notice = "Extension changes discarded.".into();
                     self.focus_editor = true;
                     return Ok(Some(InvocationOutcome::Discarded));
@@ -490,6 +537,11 @@ impl HeditApp {
             },
             Phase::Committing { approval, output } => {
                 if let Some(authority) = receive_approval(approval)? {
+                    proposal.invocation.trace.record(
+                        plugin_runtime::telemetry::Phase::Authorization,
+                        authority.elapsed,
+                    );
+                    let commit_started = std::time::Instant::now();
                     if authority.storage != proposal.storage {
                         return Err(TransformFailure::failed(
                             "Private command storage changed; run the command again.",
@@ -503,14 +555,18 @@ impl HeditApp {
                             TransformFailure::failed("Missing extension configuration.")
                         })?;
                         let plugin = proposal.plugin.clone();
+                        let trace = proposal.invocation.trace.clone();
                         let wake = ctx.clone();
                         let (sender, receiver) = mpsc::channel();
                         thread::Builder::new()
                             .name("hedit-plugin-storage".into())
                             .spawn(move || {
                                 let _authority = authority;
-                                let _ =
-                                    sender.send(catalog::write_state(&config, &plugin, &storage));
+                                let _ = sender.send(
+                                    trace.measure(plugin_runtime::telemetry::Phase::Commit, || {
+                                        catalog::write_state(&config, &plugin, &storage)
+                                    }),
+                                );
                                 wake.request_repaint();
                             })
                             .map_err(|_| {
@@ -549,6 +605,10 @@ impl HeditApp {
                     if result {
                         self.notice = "Extension command finished.".into();
                     }
+                    proposal.invocation.trace.record(
+                        plugin_runtime::telemetry::Phase::Commit,
+                        commit_started.elapsed(),
+                    );
                     return Ok(Some(if result {
                         InvocationOutcome::Applied
                     } else {
@@ -575,6 +635,7 @@ impl HeditApp {
                 diff.push(true, "Update editor selections".into());
             }
             ctx.request_repaint();
+            proposal.invocation.begin_wait();
             Ok(Phase::Preview { diff, output })
         } else {
             Ok(Phase::Committing {
@@ -1503,4 +1564,5 @@ mod tests {
         assert_eq!(large.blocks.len(), 1);
         assert_eq!(large.row(large.rows - 1).unwrap(), (true, "+ ".into()));
     }
+    include!("lua/performance.rs");
 }

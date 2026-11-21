@@ -139,6 +139,8 @@ impl Failure {
 #[serde(deny_unknown_fields)]
 pub(crate) struct Reply {
     pub protocol_version: u32,
+    #[serde(default)]
+    pub worker_time_us: u64,
     pub outcome: Outcome,
 }
 #[derive(Deserialize, Serialize)]
@@ -381,7 +383,7 @@ impl Transaction {
     }
 }
 
-fn bounded<'de, D, T, const N: usize>(decoder: D) -> Result<Vec<T>, D::Error>
+pub(crate) fn bounded<'de, D, T, const N: usize>(decoder: D) -> Result<Vec<T>, D::Error>
 where
     D: de::Deserializer<'de>,
     T: Deserialize<'de>,

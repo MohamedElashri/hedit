@@ -209,3 +209,40 @@ The fuzz command retains its log, metadata, corpus, and crash artifacts under
 campaign is smoke evidence, not a completed security or performance gate. GUI
 frame/input latency, consent timing, native platform parity, and longer sanitizer
 campaigns require separate validation before expanding to persistent services.
+
+Phase profiling is available with `hedit plugin test MANIFEST FIXTURES --timings`
+and under Recent Lua activity in the extension manager. Samples contain only a
+fixed phase name, elapsed microseconds, and count. Host authorization, request
+encoding, process launch, request delivery, response transport, validation,
+proposal preparation, commit, and prompt/preview dwell are recorded separately.
+The worker's evaluation time is explicitly a worker-reported measurement; it is
+bounded and never used to establish authority, enforce a deadline, or accept a
+result. Transport includes worker execution and process exit, so phases are not
+an additive wall-time partition. Collection uses fixed atomic counters and does
+not write files or acquire a lock on the UI thread.
+
+For CPU frame and allocation evidence from the actual egui frame path:
+
+```sh
+HEDIT_PLUGIN_UI_PROBE_OUT=/tmp/plugin-ui.json cargo test --locked --no-default-features --bin hedit profile_plugin_frames -- --ignored --test-threads=1
+```
+
+This opt-in test alternates three warmed workloads over three trials: extensions
+disabled, installed idle, and stale-result rejection during typing. It records
+per-frame CPU time, allocation count, and requested allocation bytes using a
+test-only allocator. It does not measure other-thread allocation, retained heap,
+OS event delivery, GPU rendering, or display latency. Normal builds do not
+install that allocator.
+
+A nightly Rust compiler and a compatible native Clang runtime are needed for the
+sanitizer campaign. Choose `CC`/`CXX` explicitly when Apple Clang and Rust's LLVM
+sanitizer runtimes differ:
+
+```sh
+python3 scripts/fuzz-plugin-codec.py --sanitizer address --seconds 600 --out-dir target/plugin-fuzz-asan
+```
+
+The runner records its Rust and native build settings. Keep the metadata, full
+log, generated corpus, and any failure artifacts together. Sanitizer campaigns
+complement the native confinement tests; they do not execute Lua or prove OS
+sandbox policy.

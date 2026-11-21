@@ -44,8 +44,22 @@ pub(super) fn run_sdk(
     cancelled: &AtomicBool,
     save: bool,
 ) -> Result<crate::sdk::Transaction, crate::sdk::Failure> {
-    let request = protocol::encode_sdk(&input)?;
-    let reply = super::supervisor::supervise(
+    run_sdk_profiled(input, approval, cancelled, save, &Default::default())
+}
+
+pub(super) fn run_sdk_profiled(
+    input: crate::sdk::Input,
+    approval: Option<File>,
+    cancelled: &AtomicBool,
+    save: bool,
+    trace: &crate::telemetry::Recorder,
+) -> Result<crate::sdk::Transaction, crate::sdk::Failure> {
+    use crate::telemetry::Phase;
+    if !super::SUPPORTED {
+        return Err(Error::Unavailable.into());
+    }
+    let request = trace.measure(Phase::Encode, || protocol::encode_sdk(&input))?;
+    let reply = super::supervisor::supervise_profiled(
         &super::supervisor::executable()?,
         request,
         cancelled,
@@ -55,20 +69,35 @@ pub(super) fn run_sdk(
             DEADLINE
         },
         approval,
+        trace,
     )?;
-    decode_sdk_reply(&input, &reply)
+    trace.measure(Phase::Decode, || {
+        decode_sdk_reply_traced(&input, &reply, trace)
+    })
 }
+#[cfg(any(test, feature = "fuzzing"))]
 pub(super) fn decode_sdk_reply(
     input: &crate::sdk::Input,
     reply: &[u8],
+) -> Result<crate::sdk::Transaction, crate::sdk::Failure> {
+    decode_sdk_reply_traced(input, reply, &Default::default())
+}
+fn decode_sdk_reply_traced(
+    input: &crate::sdk::Input,
+    reply: &[u8],
+    trace: &crate::telemetry::Recorder,
 ) -> Result<crate::sdk::Transaction, crate::sdk::Failure> {
     if reply.len() > protocol::MAX_BATCH_REPLY_BYTES {
         return Err(Error::Worker.into());
     }
     let reply: crate::sdk::Reply = serde_json::from_slice(reply).map_err(|_| Error::Worker)?;
-    if reply.protocol_version != 1 {
+    if reply.protocol_version != 1 || reply.worker_time_us > 2_000_000 {
         return Err(Error::Worker.into());
     }
+    trace.record(
+        crate::telemetry::Phase::Worker,
+        std::time::Duration::from_micros(reply.worker_time_us),
+    );
     match reply.outcome {
         crate::sdk::Outcome::Success(transaction) => {
             if transaction.storage.is_some() && input.storage.is_none() {
@@ -97,6 +126,7 @@ fn run_helper_io(isolated: bool, input: impl Read, mut output: impl Write) -> bo
                 serde_json::to_vec(&evaluate(input)?).map_err(|_| Error::Worker)
             }
             protocol::Invocation::Sdk(input) => {
+                let worker_started = std::time::Instant::now();
                 let location = Rc::new(std::cell::RefCell::new(None));
                 let result = with_lua(|lua, environment| {
                     crate::sdk::lua::evaluate_detailed(lua, environment, input, location.clone())
@@ -110,6 +140,7 @@ fn run_helper_io(isolated: bool, input: impl Read, mut output: impl Write) -> bo
                 };
                 serde_json::to_vec(&crate::sdk::Reply {
                     protocol_version: 1,
+                    worker_time_us: worker_started.elapsed().as_micros().min(2_000_000) as u64,
                     outcome,
                 })
                 .map_err(|_| Error::Worker)
@@ -134,6 +165,12 @@ fn evaluate(request: Input) -> Result<Vec<String>, Error> {
 }
 
 pub(crate) fn with_lua<T>(call: impl FnOnce(&Lua, Table) -> Result<T, Error>) -> Result<T, Error> {
+    with_lua_budget(INSTRUCTION_BUDGET, call)
+}
+pub(crate) fn with_lua_budget<T>(
+    budget: u32,
+    call: impl FnOnce(&Lua, Table) -> Result<T, Error>,
+) -> Result<T, Error> {
     let lua = Lua::new_with(
         StdLib::TABLE | StdLib::STRING | StdLib::UTF8 | StdLib::MATH,
         LuaOptions::default(),
@@ -143,7 +180,7 @@ pub(crate) fn with_lua<T>(call: impl FnOnce(&Lua, Table) -> Result<T, Error>) ->
         .map_err(|_| Error::Initialization)?;
     let environment = environment(&lua).map_err(|_| Error::Initialization)?;
 
-    let remaining = Rc::new(Cell::new(INSTRUCTION_BUDGET));
+    let remaining = Rc::new(Cell::new(budget));
     let hook_remaining = remaining.clone();
     lua.set_hook(
         HookTriggers::new().every_nth_instruction(INSTRUCTION_INTERVAL),

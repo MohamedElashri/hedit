@@ -127,6 +127,107 @@ pub(crate) fn evaluate_detailed(
     input: Input,
     location: std::rc::Rc<std::cell::RefCell<Option<super::Location>>>,
 ) -> Result<Transaction, Error> {
+    let (result, snapshot, storage_allowed) =
+        invoke(lua, environment, input, location, |_, _, _| Ok(()))?;
+    let Value::Table(table) = result else {
+        return Err(Error::ReturnType);
+    };
+    fields(
+        &table,
+        &["document", "revision", "edits", "selections", "storage"],
+    )?;
+    let edits = array(
+        &table
+            .raw_get::<Table>("edits")
+            .map_err(|_| Error::ReturnType)?,
+        MAX_EDITS,
+    )?;
+    let mut output = Vec::with_capacity(edits.len());
+    let mut bytes = 0usize;
+    for edit in edits {
+        fields(&edit, &["start", "finish", "text"])?;
+        let replacement = text(&edit, "text", super::MAX_OUTPUT_BYTES)?;
+        bytes = bytes
+            .checked_add(replacement.len())
+            .ok_or(Error::ReturnSize)?;
+        if bytes > super::MAX_OUTPUT_BYTES {
+            return Err(Error::ReturnSize);
+        }
+        output.push(Edit {
+            start: index(&edit, "start")?,
+            finish: index(&edit, "finish")?,
+            text: replacement,
+        });
+    }
+    let selections = match table.raw_get::<Value>("selections").map_err(failure)? {
+        Value::Nil => None,
+        Value::Table(selections) => Some(
+            array(&selections, MAX_SELECTIONS)?
+                .into_iter()
+                .map(|selection| {
+                    fields(&selection, &["anchor", "head"])?;
+                    Ok(Selection {
+                        anchor: index(&selection, "anchor")?,
+                        head: index(&selection, "head")?,
+                    })
+                })
+                .collect::<Result<Vec<_>, Error>>()?,
+        ),
+        _ => return Err(Error::ReturnType),
+    };
+    let storage = match table.raw_get::<Value>("storage").map_err(failure)? {
+        Value::Nil => None,
+        Value::Table(values) if storage_allowed => {
+            let mut output = std::collections::BTreeMap::new();
+            for pair in values.pairs::<String, Value>() {
+                let (key, value) = pair.map_err(failure)?;
+                if output.len() == crate::options::MAX_SETTINGS || !crate::options::valid_id(&key) {
+                    return Err(Error::ReturnSize);
+                }
+                let value = match value {
+                    Value::Boolean(value) => crate::options::Value::Boolean(value),
+                    Value::Integer(value) => crate::options::Value::Integer(
+                        i32::try_from(value).map_err(|_| Error::ReturnType)?,
+                    ),
+                    Value::String(value)
+                        if value.as_bytes().len() <= crate::options::MAX_VALUE_BYTES =>
+                    {
+                        crate::options::Value::Text(
+                            value
+                                .to_str()
+                                .map_err(|_| Error::ReturnEncoding)?
+                                .to_owned(),
+                        )
+                    }
+                    _ => return Err(Error::ReturnType),
+                };
+                if !value.valid() {
+                    return Err(Error::ReturnEncoding);
+                }
+                output.insert(key, value);
+            }
+            Some(super::Storage(output))
+        }
+        _ => return Err(Error::Worker),
+    };
+    let transaction = Transaction {
+        document: text(&table, "document", 32)?,
+        revision: text(&table, "revision", 20)?,
+        edits: output,
+        selections,
+        storage,
+    };
+    transaction.prepare(&snapshot)?;
+    Ok(transaction)
+}
+
+pub(crate) fn invoke(
+    lua: &Lua,
+    environment: Table,
+    input: Input,
+    location: std::rc::Rc<std::cell::RefCell<Option<super::Location>>>,
+    decorate: impl FnOnce(&Lua, &Table, &Table) -> Result<(), Error>,
+) -> Result<(Value, super::Snapshot, bool), Error> {
     input.validate()?;
     let document = lua.create_table().map_err(failure)?;
     document
@@ -309,6 +410,7 @@ pub(crate) fn evaluate_detailed(
         .map_err(failure)?,
     )
     .map_err(failure)?;
+    decorate(lua, &context, &api)?;
     environment.raw_set("hedit", api).map_err(failure)?;
     let entry = lua
         .load(input.source.as_bytes())
@@ -328,94 +430,5 @@ pub(crate) fn evaluate_detailed(
     let result = entry
         .call::<Value>(context)
         .map_err(super::super::runtime::engine::lua_error)?;
-    let Value::Table(table) = result else {
-        return Err(Error::ReturnType);
-    };
-    fields(
-        &table,
-        &["document", "revision", "edits", "selections", "storage"],
-    )?;
-    let edits = array(
-        &table
-            .raw_get::<Table>("edits")
-            .map_err(|_| Error::ReturnType)?,
-        MAX_EDITS,
-    )?;
-    let mut output = Vec::with_capacity(edits.len());
-    let mut bytes = 0usize;
-    for edit in edits {
-        fields(&edit, &["start", "finish", "text"])?;
-        let replacement = text(&edit, "text", super::MAX_OUTPUT_BYTES)?;
-        bytes = bytes
-            .checked_add(replacement.len())
-            .ok_or(Error::ReturnSize)?;
-        if bytes > super::MAX_OUTPUT_BYTES {
-            return Err(Error::ReturnSize);
-        }
-        output.push(Edit {
-            start: index(&edit, "start")?,
-            finish: index(&edit, "finish")?,
-            text: replacement,
-        });
-    }
-    let selections = match table.raw_get::<Value>("selections").map_err(failure)? {
-        Value::Nil => None,
-        Value::Table(selections) => Some(
-            array(&selections, MAX_SELECTIONS)?
-                .into_iter()
-                .map(|selection| {
-                    fields(&selection, &["anchor", "head"])?;
-                    Ok(Selection {
-                        anchor: index(&selection, "anchor")?,
-                        head: index(&selection, "head")?,
-                    })
-                })
-                .collect::<Result<Vec<_>, Error>>()?,
-        ),
-        _ => return Err(Error::ReturnType),
-    };
-    let storage = match table.raw_get::<Value>("storage").map_err(failure)? {
-        Value::Nil => None,
-        Value::Table(values) if storage_allowed => {
-            let mut output = std::collections::BTreeMap::new();
-            for pair in values.pairs::<String, Value>() {
-                let (key, value) = pair.map_err(failure)?;
-                if output.len() == crate::options::MAX_SETTINGS || !crate::options::valid_id(&key) {
-                    return Err(Error::ReturnSize);
-                }
-                let value = match value {
-                    Value::Boolean(value) => crate::options::Value::Boolean(value),
-                    Value::Integer(value) => crate::options::Value::Integer(
-                        i32::try_from(value).map_err(|_| Error::ReturnType)?,
-                    ),
-                    Value::String(value)
-                        if value.as_bytes().len() <= crate::options::MAX_VALUE_BYTES =>
-                    {
-                        crate::options::Value::Text(
-                            value
-                                .to_str()
-                                .map_err(|_| Error::ReturnEncoding)?
-                                .to_owned(),
-                        )
-                    }
-                    _ => return Err(Error::ReturnType),
-                };
-                if !value.valid() {
-                    return Err(Error::ReturnEncoding);
-                }
-                output.insert(key, value);
-            }
-            Some(super::Storage(output))
-        }
-        _ => return Err(Error::Worker),
-    };
-    let transaction = Transaction {
-        document: text(&table, "document", 32)?,
-        revision: text(&table, "revision", 20)?,
-        edits: output,
-        selections,
-        storage,
-    };
-    transaction.prepare(&input.snapshot)?;
-    Ok(transaction)
+    Ok((result, input.snapshot, storage_allowed))
 }

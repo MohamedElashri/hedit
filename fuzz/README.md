@@ -29,3 +29,14 @@ This runner instruments the explicit host target to avoid instrumenting Cargo
 build scripts. It does **not** enable AddressSanitizer. Its output directory keeps
 raw logs, build metadata, generated corpus, and crash artifacts. Use the nightly
 workflow for sanitizer campaigns; both workflows exercise the same target.
+
+For an AddressSanitizer campaign with nightly Rust and a matching Clang runtime:
+
+```sh
+python3 scripts/fuzz-plugin-codec.py --sanitizer address --seconds 600 --out-dir target/plugin-fuzz-asan
+```
+
+This also instruments vendored native code through `CFLAGS`/`CXXFLAGS`. On macOS,
+select compatible `CC`/`CXX` explicitly if the platform's Apple Clang has a
+different sanitizer ABI from Rust. A sanitizer link failure is a failed campaign,
+not a reason to suppress ABI guards or report coverage-only evidence as sanitized.

@@ -29,6 +29,17 @@ mod supervisor {
         Err(Error::Sandbox)
     }
 
+    pub(super) fn supervise_profiled(
+        _: &Path,
+        _: Vec<u8>,
+        _: &AtomicBool,
+        _: Duration,
+        _: Option<File>,
+        _: &crate::telemetry::Recorder,
+    ) -> Result<Vec<u8>, Error> {
+        Err(Error::Unavailable)
+    }
+
     pub(super) fn supervise(
         _: &Path,
         _: Vec<u8>,
@@ -62,9 +73,13 @@ pub type RunningSdk = Running<crate::sdk::Transaction, crate::sdk::Failure>;
 pub struct Running<T, E = Error> {
     receiver: mpsc::Receiver<Result<T, E>>,
     cancelled: Arc<AtomicBool>,
+    trace: crate::telemetry::Recorder,
 }
 
 impl<T, E: From<Error>> Running<T, E> {
+    pub fn timings(&self) -> crate::telemetry::Recorder {
+        self.trace.clone()
+    }
     pub fn try_result(&mut self) -> Option<Result<T, E>> {
         match self.receiver.try_recv() {
             Ok(result) => Some(result),
@@ -81,6 +96,7 @@ impl<T, E: From<Error>> Running<T, E> {
         Self {
             receiver,
             cancelled: Arc::new(AtomicBool::new(false)),
+            trace: Default::default(),
         }
     }
 }
@@ -97,7 +113,7 @@ pub fn start(
     approval: File,
     wake: impl FnOnce() + Send + 'static,
 ) -> Result<RunningPlugin, Error> {
-    launch(approval, wake, move |approval, cancelled| {
+    launch(approval, wake, move |approval, cancelled, _trace| {
         run(input, Some(approval), cancelled, false)
     })
 }
@@ -107,23 +123,25 @@ pub fn start_sdk(
     approval: File,
     wake: impl FnOnce() + Send + 'static,
 ) -> Result<RunningSdk, Error> {
-    launch(approval, wake, move |approval, cancelled| {
-        run_sdk(input, Some(approval), cancelled, false)
+    launch(approval, wake, move |approval, cancelled, trace| {
+        engine::run_sdk_profiled(input, Some(approval), cancelled, false, trace)
     })
 }
 
 fn launch<T: Send + 'static, E: Send + 'static>(
     approval: File,
     wake: impl FnOnce() + Send + 'static,
-    run: impl FnOnce(File, &AtomicBool) -> Result<T, E> + Send + 'static,
+    run: impl FnOnce(File, &AtomicBool, &crate::telemetry::Recorder) -> Result<T, E> + Send + 'static,
 ) -> Result<Running<T, E>, Error> {
     let (sender, receiver) = mpsc::channel();
     let cancelled = Arc::new(AtomicBool::new(false));
     let thread_cancelled = cancelled.clone();
+    let trace = crate::telemetry::Recorder::default();
+    let thread_trace = trace.clone();
     std::thread::Builder::new()
         .name("hedit-lua-worker".into())
         .spawn(move || {
-            let result = run(approval, &thread_cancelled);
+            let result = run(approval, &thread_cancelled, &thread_trace);
             let _ = sender.send(result);
             wake();
         })
@@ -131,6 +149,7 @@ fn launch<T: Send + 'static, E: Send + 'static>(
     Ok(Running {
         receiver,
         cancelled,
+        trace,
     })
 }
 
@@ -149,8 +168,17 @@ fn run_sdk(
 pub fn run_sdk_fixture(
     input: crate::sdk::Input,
 ) -> Result<crate::sdk::Prepared, crate::sdk::Failure> {
+    run_sdk_fixture_traced(input, &Default::default())
+}
+pub fn run_sdk_fixture_traced(
+    input: crate::sdk::Input,
+    trace: &crate::telemetry::Recorder,
+) -> Result<crate::sdk::Prepared, crate::sdk::Failure> {
     let snapshot = input.snapshot.clone();
-    Ok(run_sdk(input, None, &AtomicBool::new(false), false)?.prepare(&snapshot)?)
+    Ok(
+        engine::run_sdk_profiled(input, None, &AtomicBool::new(false), false, trace)?
+            .prepare(&snapshot)?,
+    )
 }
 
 pub fn run_sdk_save(

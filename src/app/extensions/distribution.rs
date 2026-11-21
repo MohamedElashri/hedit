@@ -506,6 +506,9 @@ fn plain_text() -> String {
 }
 
 fn test(path: &Path, fixtures: &Path) -> Result<(), String> {
+    test_traced(path, fixtures, false)
+}
+fn test_traced(path: &Path, fixtures: &Path, timings: bool) -> Result<(), String> {
     let (manifest, _) = load_cli_manifest(path)?;
     let bytes = read_cli_file(fixtures, MAX_FIXTURE_BYTES)?;
     let fixtures: Vec<Fixture> =
@@ -515,6 +518,7 @@ fn test(path: &Path, fixtures: &Path) -> Result<(), String> {
     }
     let mut failures = 0;
     for (index, case) in fixtures.into_iter().enumerate() {
+        let trace = crate::plugin_runtime::telemetry::Recorder::default();
         let result: Result<(), String> = (|| {
             let source = manifest
                 .lua_source(&case.command)
@@ -544,20 +548,23 @@ fn test(path: &Path, fixtures: &Path) -> Result<(), String> {
                     return Err("This command has no private storage permission.".into());
                 }
                 let initial_storage = storage_allowed.then(|| case.storage.unwrap_or_default());
-                crate::plugin_runtime::run_sdk_fixture(crate::plugin_runtime::sdk::Input {
-                    sdk_version: crate::plugin_runtime::sdk::VERSION,
-                    modules: manifest
-                        .modules
-                        .iter()
-                        .map(|(k, v)| (k.clone(), v.to_string()))
-                        .collect(),
-                    resources: manifest.resources.as_ref().clone(),
-                    source: source.to_owned(),
-                    snapshot,
-                    settings,
-                    arguments,
-                    storage: initial_storage,
-                })
+                crate::plugin_runtime::run_sdk_fixture_traced(
+                    crate::plugin_runtime::sdk::Input {
+                        sdk_version: crate::plugin_runtime::sdk::VERSION,
+                        modules: manifest
+                            .modules
+                            .iter()
+                            .map(|(k, v)| (k.clone(), v.to_string()))
+                            .collect(),
+                        resources: manifest.resources.as_ref().clone(),
+                        source: source.to_owned(),
+                        snapshot,
+                        settings,
+                        arguments,
+                        storage: initial_storage,
+                    },
+                    &trace,
+                )
                 .and_then(|prepared| {
                     if prepared.storage != case.expected_storage {
                         return Err(crate::plugin_runtime::Error::Worker.into());
@@ -586,6 +593,13 @@ fn test(path: &Path, fixtures: &Path) -> Result<(), String> {
             }
             Ok(())
         })();
+        if timings {
+            println!(
+                "TIMING {}",
+                serde_json::to_string(&trace.snapshot())
+                    .map_err(|_| "Cannot encode numeric timings.")?
+            );
+        }
         match result {
             Ok(()) => println!("PASS {} {}", index + 1, case.command),
             Err(error) => {
@@ -601,7 +615,7 @@ fn test(path: &Path, fixtures: &Path) -> Result<(), String> {
 }
 
 const USAGE: &str = "Usage: hedit plugin check MANIFEST_OR_BUNDLE
-       hedit plugin test MANIFEST_OR_BUNDLE FIXTURES.json
+       hedit plugin test MANIFEST_OR_BUNDLE FIXTURES.json [--timings]
        hedit plugin pack MANIFEST OUTPUT.hedit-plugin --version VERSION [--publisher NAME --sign-key FILE]
        hedit plugin keygen PRIVATE_KEY_FILE";
 
@@ -633,6 +647,9 @@ pub(crate) fn run_cli(args: &[OsString]) -> Result<(), String> {
             Ok(())
         }
         [verb, path, fixtures] if verb == "test" => test(Path::new(path), Path::new(fixtures)),
+        [verb, path, fixtures, flag] if verb == "test" && flag == "--timings" => {
+            test_traced(Path::new(path), Path::new(fixtures), true)
+        }
         [verb, path] if verb == "keygen" => keygen(Path::new(path)),
         [verb, path, output, flag, release, options @ ..]
             if verb == "pack" && flag == "--version" =>

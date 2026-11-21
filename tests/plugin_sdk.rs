@@ -221,3 +221,58 @@ fn sdk_reports_verified_syntax_locations_without_exposing_runtime_text() {
         assert!(!error.contains('@'));
     }
 }
+
+#[test]
+fn opt_in_phase_samples_have_only_fixed_names_and_numeric_counters() {
+    let result = Command::new(prepare())
+        .args([
+            "plugin",
+            "test",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/examples/extensions/sdk-markdown.json"
+            ),
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/examples/extensions/sdk-markdown.fixtures.json"
+            ),
+            "--timings",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let stdout = String::from_utf8(result.stdout).unwrap();
+    let mut batches = 0;
+    for line in stdout
+        .lines()
+        .filter_map(|line| line.strip_prefix("TIMING "))
+    {
+        let samples: Vec<serde_json::Value> = serde_json::from_str(line).unwrap();
+        let phases: std::collections::BTreeSet<_> = samples
+            .iter()
+            .map(|sample| sample["phase"].as_str().unwrap())
+            .collect();
+        for phase in [
+            "startup",
+            "delivery",
+            "transport",
+            "worker",
+            "decode",
+            "encode",
+        ] {
+            assert!(phases.contains(phase));
+        }
+        for sample in samples {
+            assert_eq!(sample.as_object().unwrap().len(), 3);
+            assert!(sample["total_us"].is_u64());
+            assert_eq!(sample["count"], 1);
+        }
+        batches += 1;
+    }
+    assert_eq!(batches, 2);
+    assert!(!stdout.contains("café") && !stdout.contains("東京"));
+}

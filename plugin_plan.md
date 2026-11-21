@@ -609,3 +609,37 @@ consent/startup/execution/IPC/commit traces, and controlled GUI frame/input and
 allocation/copy measurements. Stages 2 and 3 remain planned and disabled. Do not
 reuse one-shot cumulative CPU limits for a persistent service or widen the
 sandbox to bypass a stage gate.
+
+### Stage 1 validation follow-up
+
+Linux and native Windows x64/ARM64 validation and universal macOS packaging passed
+for the editing SDK baseline. The phase/measurement follow-up adds fixed numeric
+atomic counters, CLI `--timings`, and a test-only per-thread allocator probe.
+Prompt/preview dwell is separate from computation. Worker-reported evaluation
+time is not used for authority or deadline enforcement.
+
+A 601-second LLVM/AddressSanitizer campaign completed 2,435,033 inputs without a
+finding. The controlled egui typing probe alternated disabled/installed-idle/
+stale-result cases over three trials; idle p95 CPU-frame overhead stayed below
+5% (largest observed increase about 2.1%). It measures CPU input/layout work and
+allocation traffic, not OS delivery, GPU presentation, or retained process heap.
+Raw samples, corpus/logs, and environment metadata are retained locally under
+`target/plugin-validation`; reproduction commands are in the SDK reference.
+The instrumentation follow-up must pass CI before closing the Stage 1 gate.
+
+### Stage 2 service policy decision
+
+Use broker-managed sessions with **worker rotation per callback**. The host
+serializes callbacks per package, coalesces one pending event per provider, and
+retains only explicitly returned scalar cache data scoped to that provider's
+grant and active document. Each callback gets a fresh native sandbox and Lua VM;
+no global Lua variables survive. Clear cache/results on document scope changes,
+revocation, disable, update, idle shutdown, and crash quarantine.
+
+This deliberately avoids a resident untrusted VM and its cumulative CPU-limit
+problem. Keep the native one-shot ceiling and apply stricter service callback
+instruction/deadline limits plus host aggregate concurrency, rate, cache, idle,
+and restart budgets. A worker cannot choose a weaker role or request another
+provider's cache. Validate this rotating service policy natively on each OS.
+A resident-VM optimization remains a separate policy change, not a prerequisite
+for provider semantics and not an excuse to remove the native CPU ceiling.
