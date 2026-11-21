@@ -14,8 +14,9 @@ use std::{
 };
 use zeroize::Zeroizing;
 
-pub(super) const MAX_INSTALL_BYTES: u64 = 96 * 1024;
+pub(super) const MAX_INSTALL_BYTES: u64 = 256 * 1024;
 const BUNDLE_VERSION: u32 = 1;
+const LEGACY_INSTALL_BYTES: u64 = 96 * 1024;
 const MAX_FIXTURE_BYTES: u64 = 512 * 1024;
 const MAX_FIXTURES: usize = 32;
 const SIGNATURE_DOMAIN: &[u8] = b"hedit extension bundle v1\0";
@@ -175,6 +176,9 @@ pub(super) fn parse_installable(text: &str) -> Result<(Manifest, Option<Release>
     }
     let bundle: Bundle = serde_json::from_str(text).map_err(|error| error.to_string())?;
     let (mut manifest, release) = bundle.parse()?;
+    if !manifest.sdk && text.len() as u64 > LEGACY_INSTALL_BYTES {
+        return Err("The extension bundle exceeds the legacy size limit.".into());
+    }
     if manifest.lua_digest.is_some() {
         manifest.lua_digest = Some(manifest::digest(text));
     }
@@ -210,53 +214,103 @@ impl<'de> Deserialize<'de> for ManifestFields {
 /// An author may refer to ordinary sibling Lua files. The portable form uses
 /// the same inline manifest parser and bounds as local manifests.
 fn authoring_manifest(path: &Path, original: &str) -> Result<String, String> {
-    if original.len() as u64 > MAX_MANIFEST_BYTES {
+    if original.len() as u64 > manifest::MAX_SDK_MANIFEST_BYTES {
+        return Err("Manifest exceeds the SDK byte limit.".into());
+    }
+    let ManifestFields(mut fields) =
+        serde_json::from_str(original).map_err(|error| error.to_string())?;
+    let sdk = fields
+        .get("api_version")
+        .is_some_and(|v| serde_json::from_str::<u32>(v.get()).ok() == Some(3));
+    if !sdk && original.len() as u64 > MAX_MANIFEST_BYTES {
         return Err(format!(
             "Manifest exceeds the {MAX_MANIFEST_BYTES}-byte limit."
         ));
     }
-    let ManifestFields(mut fields) =
-        serde_json::from_str(original).map_err(|error| error.to_string())?;
-    let Some(files) = fields.remove("script_files") else {
-        manifest::parse_manifest(original)?;
-        return Ok(original.to_owned());
-    };
-    if fields.contains_key("scripts") {
-        return Err("Declare either script_files or inline scripts.".into());
-    }
-    let filenames: Vec<String> =
-        serde_json::from_str(files.get()).map_err(|error| error.to_string())?;
-    if !(1..=MAX_COMMANDS).contains(&filenames.len()) {
-        return Err(format!(
-            "Declare between 1 and {MAX_COMMANDS} script files."
-        ));
-    }
     let directory = path
         .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
+        .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
-    let mut scripts = BTreeMap::new();
-    for filename in filenames {
-        if !filename
-            .strip_suffix(".lua")
-            .is_some_and(manifest::valid_id)
-        {
+    let mut changed = false;
+    for (file_field, inline_field) in [("script_files", "scripts"), ("module_files", "modules")] {
+        let Some(files) = fields.remove(file_field) else {
+            continue;
+        };
+        if file_field == "module_files" && !sdk {
+            return Err("Module files require API version 3.".into());
+        }
+        if fields.contains_key(inline_field) {
             return Err(format!(
-                "Use a simple sibling Lua filename for {filename:?}."
+                "Declare either {file_field} or inline {inline_field}."
             ));
         }
-        let bytes = read_sibling(directory, &filename, MAX_SOURCE_BYTES as u64)?;
-        let source = String::from_utf8(bytes)
-            .map_err(|_| format!("{filename} must contain UTF-8 Lua source."))?;
-        if scripts.insert(filename, source).is_some() {
-            return Err("Duplicate Lua source filename.".into());
+        let filenames: Vec<String> =
+            serde_json::from_str(files.get()).map_err(|error| error.to_string())?;
+        if !(1..=MAX_COMMANDS).contains(&filenames.len()) {
+            return Err(format!(
+                "Declare between 1 and {MAX_COMMANDS} source files."
+            ));
         }
+        let mut sources = BTreeMap::new();
+        for filename in filenames {
+            if !filename
+                .strip_suffix(".lua")
+                .is_some_and(manifest::valid_id)
+            {
+                return Err(format!(
+                    "Use a simple sibling Lua filename for {filename:?}."
+                ));
+            }
+            let bytes = read_sibling(directory, &filename, MAX_SOURCE_BYTES as u64)?;
+            let source =
+                String::from_utf8(bytes).map_err(|_| "Lua files must contain UTF-8 source.")?;
+            if sources.insert(filename, source).is_some() {
+                return Err("Duplicate Lua source filename.".into());
+            }
+        }
+        fields.insert(
+            inline_field.into(),
+            value::to_raw_value(&sources).map_err(|e| e.to_string())?,
+        );
+        changed = true;
     }
-    fields.insert(
-        "scripts".into(),
-        value::to_raw_value(&scripts).map_err(|error| error.to_string())?,
-    );
-    let manifest = serde_json::to_string(&fields).map_err(|error| error.to_string())?;
+    if let Some(files) = fields.remove("resource_files") {
+        if !sdk || fields.contains_key("resources") {
+            return Err(
+                "Resource files require API version 3 and cannot accompany inline resources."
+                    .into(),
+            );
+        }
+        let filenames: BTreeMap<String, String> =
+            serde_json::from_str(files.get()).map_err(|e| e.to_string())?;
+        if filenames.len() > crate::plugin_runtime::sdk::MAX_RESOURCES {
+            return Err("Too many text resources.".into());
+        }
+        let mut resources = BTreeMap::new();
+        for (name, filename) in filenames {
+            let simple = filename.rsplit_once('.').is_some_and(|(stem, extension)| {
+                manifest::valid_id(stem) && ["txt", "md", "json", "csv"].contains(&extension)
+            });
+            if !manifest::valid_id(&name) || !simple {
+                return Err("Use a resource ID and a simple sibling text filename.".into());
+            }
+            let bytes = read_sibling(directory, &filename, MAX_SOURCE_BYTES as u64)?;
+            resources.insert(
+                name,
+                String::from_utf8(bytes).map_err(|_| "Resources must be UTF-8 text.")?,
+            );
+        }
+        fields.insert(
+            "resources".into(),
+            value::to_raw_value(&resources).map_err(|e| e.to_string())?,
+        );
+        changed = true;
+    }
+    if !changed {
+        manifest::parse_manifest(original)?;
+        return Ok(original.into());
+    }
+    let manifest = serde_json::to_string(&fields).map_err(|e| e.to_string())?;
     manifest::parse_manifest(&manifest)?;
     Ok(manifest)
 }
@@ -342,7 +396,8 @@ fn load_cli_manifest(path: &Path) -> Result<(Manifest, Option<Release>), String>
     let authored = serde_json::from_str::<ManifestFields>(&text)
         .map_err(|error| error.to_string())?
         .0
-        .contains_key("script_files");
+        .keys()
+        .any(|key| ["script_files", "module_files", "resource_files"].contains(&key.as_str()));
     if authored {
         let manifest = authoring_manifest(path, &text)?;
         parse_installable(&manifest)
@@ -386,6 +441,7 @@ fn pack(
     version(release)?;
     let original = open_source(path)?;
     let manifest = authoring_manifest(path, &original)?;
+    let sdk = manifest::parse_manifest(&manifest)?.sdk;
     let publisher = if let Some((name, keyfile)) = sign {
         validate_name(name)?;
         let secret = Zeroizing::new(read_cli_file(keyfile, 32)?);
@@ -411,7 +467,13 @@ fn pack(
         publisher,
     };
     let bytes = serde_json::to_vec(&bundle).map_err(|error| error.to_string())?;
-    if bytes.len() as u64 > MAX_INSTALL_BYTES {
+    if bytes.len() as u64
+        > if sdk {
+            MAX_INSTALL_BYTES
+        } else {
+            LEGACY_INSTALL_BYTES
+        }
+    {
         return Err("The extension bundle exceeds the size limit.".into());
     }
     write_new_file(output, &bytes)?;
@@ -429,6 +491,14 @@ struct Fixture {
     expected: String,
     #[serde(default)]
     settings: BTreeMap<String, hedit::plugin_options::Value>,
+    #[serde(default)]
+    arguments: BTreeMap<String, hedit::plugin_options::Value>,
+    #[serde(default)]
+    selections: Option<Vec<crate::plugin_runtime::sdk::Selection>>,
+    #[serde(default)]
+    storage: Option<crate::plugin_runtime::sdk::Storage>,
+    #[serde(default)]
+    expected_storage: Option<crate::plugin_runtime::sdk::Storage>,
 }
 
 fn plain_text() -> String {
@@ -453,13 +523,64 @@ fn test(path: &Path, fixtures: &Path) -> Result<(), String> {
                 return Err("Unknown fixture language.".into());
             }
             let settings = manifest.fixture_settings(&case.settings)?;
-            let result = crate::plugin_runtime::run_fixture(crate::plugin_runtime::Input {
-                source: source.to_owned(),
-                selections: vec![case.input],
-                language: case.language,
-                settings,
-            })
-            .map_err(|error| error.to_string())?;
+            let result = if manifest.sdk {
+                let len = case.input.len();
+                let crlf = case.input.contains("\r\n");
+                let snapshot = super::options::sdk_snapshot(
+                    &case.language,
+                    case.input,
+                    case.selections.unwrap_or_else(|| {
+                        vec![crate::plugin_runtime::sdk::Selection {
+                            anchor: 0,
+                            head: len,
+                        }]
+                    }),
+                    crlf,
+                )
+                .map_err(|e| e.to_string())?;
+                let arguments = manifest.fixture_arguments(&case.command, &case.arguments)?;
+                let storage_allowed = manifest.uses_storage(&case.command);
+                if !storage_allowed && (case.storage.is_some() || case.expected_storage.is_some()) {
+                    return Err("This command has no private storage permission.".into());
+                }
+                let initial_storage = storage_allowed.then(|| case.storage.unwrap_or_default());
+                crate::plugin_runtime::run_sdk_fixture(crate::plugin_runtime::sdk::Input {
+                    sdk_version: crate::plugin_runtime::sdk::VERSION,
+                    modules: manifest
+                        .modules
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.to_string()))
+                        .collect(),
+                    resources: manifest.resources.as_ref().clone(),
+                    source: source.to_owned(),
+                    snapshot,
+                    settings,
+                    arguments,
+                    storage: initial_storage,
+                })
+                .and_then(|prepared| {
+                    if prepared.storage != case.expected_storage {
+                        return Err(crate::plugin_runtime::Error::Worker.into());
+                    }
+                    Ok(prepared.text)
+                })
+                .map_err(|error| error.to_string())
+            } else {
+                if !case.arguments.is_empty()
+                    || case.selections.is_some()
+                    || case.storage.is_some()
+                    || case.expected_storage.is_some()
+                {
+                    return Err("Structured fixture fields require API version 3.".into());
+                }
+                crate::plugin_runtime::run_fixture(crate::plugin_runtime::Input {
+                    source: source.to_owned(),
+                    selections: vec![case.input],
+                    language: case.language,
+                    settings,
+                })
+                .map_err(|error| error.to_string())
+            }?;
             if result != case.expected {
                 return Err("Output differs from expected text.".into());
             }

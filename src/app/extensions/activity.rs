@@ -17,6 +17,8 @@ pub(in crate::app) struct Invocation {
 #[derive(Clone, Copy)]
 enum Scope {
     Selection,
+    Document,
+    DocumentAndStorage,
     Save,
 }
 
@@ -24,6 +26,8 @@ impl Scope {
     fn label(self) -> &'static str {
         match self {
             Self::Selection => "Read and replace selection",
+            Self::Document => "Read and edit current document",
+            Self::DocumentAndStorage => "Current document and private command storage",
             Self::Save => "Read and replace document on save",
         }
     }
@@ -35,6 +39,17 @@ impl Invocation {
             command: command_id.to_owned(),
             started: Instant::now(),
             scope: Scope::Selection,
+        }
+    }
+
+    pub(in crate::app) fn document(command_id: &str, private_storage: bool) -> Self {
+        Self {
+            scope: if private_storage {
+                Scope::DocumentAndStorage
+            } else {
+                Scope::Document
+            },
+            ..Self::new(command_id)
         }
     }
 

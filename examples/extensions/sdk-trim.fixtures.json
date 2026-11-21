@@ -1,0 +1,15 @@
+[
+  {
+    "command": "sdk-trim.trim",
+    "input": "café  \n東京 \t",
+    "expected": "café\n東京\n"
+  },
+  {
+    "command": "sdk-trim.trim",
+    "input": "café  \r\n東京  ",
+    "settings": {
+      "final-newline": false
+    },
+    "expected": "café\r\n東京"
+  }
+]

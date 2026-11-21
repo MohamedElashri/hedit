@@ -18,6 +18,7 @@ on:
       - 'src/app/extensions.rs'
       - 'src/app/extensions/**'
       - 'tests/*plugin*'
+      - 'schemas/**'
       - 'tests/save_security.rs'
       - 'tests/settings.rs'
       - 'tests/advanced.rs'
@@ -79,7 +80,7 @@ jobs:
       - name: Build the editor
         run: cargo build --locked --no-default-features --bin hedit
       - name: Shared editing, CLI, settings, distribution, and save security
-        run: cargo test --locked --no-default-features --test advanced --test lua_plugin_runtime --test plugin_distribution --test save_security --test settings -- --nocapture
+        run: cargo test --locked --no-default-features --test advanced --test lua_plugin_runtime --test plugin_distribution --test plugin_sdk --test save_security --test settings -- --nocapture
       - name: Test the extracted portable package
         if: runner.arch == 'X64'
         run: python scripts/package-windows.py --binary target/debug/hedit.exe --out-dir target/windows-package --smoke

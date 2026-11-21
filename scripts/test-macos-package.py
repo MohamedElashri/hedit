@@ -45,7 +45,12 @@ class MacPackage(unittest.TestCase):
             for directory in ['assets', 'themes', 'docs/images', 'examples/cuda']:
                 shutil.copytree(packager.ROOT / directory, project / directory)
             documents = ['vendor/egui_commonmark/PATCH.md', 'vendor/libghostty-vt-sys/PATCH.md',
-                         'docs/extensions.md', 'docs/extension-security.md', 'examples/extensions/markdown-task.json',
+                         'docs/extensions.md', 'docs/extension-security.md', 'docs/plugin-sdk.md',
+                         'schemas/plugin-manifest.schema.json', 'schemas/hedit-sdk.lua',
+                         'examples/extensions/sdk-markdown.json', 'examples/extensions/sdk-markdown.fixtures.json',
+                         'examples/extensions/sdk-table.json', 'examples/extensions/sdk-table.fixtures.json',
+                         'examples/extensions/sdk-trim.json', 'examples/extensions/sdk-trim.fixtures.json',
+                         'examples/extensions/markdown-task.json',
                          'examples/extensions/markdown-quote.json']
             for relative in documents:
                 (project / relative).parent.mkdir(parents=True, exist_ok=True)

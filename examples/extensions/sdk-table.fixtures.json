@@ -1,0 +1,18 @@
+[
+  {
+    "command": "sdk-table.convert",
+    "input": "name\tcity\ncafé\t東京",
+    "expected": "| name | city |\n| --- | --- |\n| café | 東京 |"
+  },
+  {
+    "command": "sdk-table.convert",
+    "input": "head\na\tb\ntail",
+    "selections": [
+      {
+        "anchor": 5,
+        "head": 8
+      }
+    ],
+    "expected": "head\n| a | b |\n| --- | --- |\ntail"
+  }
+]

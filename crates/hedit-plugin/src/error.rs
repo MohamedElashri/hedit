@@ -1,7 +1,8 @@
 //! Fixed failures shared by the worker protocol and editor integration.
 use std::fmt;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 #[repr(u8)]
 pub enum Error {
@@ -23,13 +24,21 @@ pub enum Error {
     Startup,
     Stopped,
     EditCount,
+    SdkTransaction,
+    SdkType,
+    SdkLimit,
 }
 
 impl Error {
     pub fn is_limit(self) -> bool {
         matches!(
             self,
-            Self::Request | Self::Instructions | Self::Memory | Self::ReturnSize | Self::Deadline
+            Self::Request
+                | Self::Instructions
+                | Self::Memory
+                | Self::ReturnSize
+                | Self::Deadline
+                | Self::SdkLimit
         )
     }
 
@@ -73,6 +82,11 @@ impl fmt::Display for Error {
             Self::Startup => "The Lua worker could not start.",
             Self::Stopped => "The Lua worker stopped.",
             Self::EditCount => "The Lua worker returned the wrong number of edits.",
+            Self::SdkTransaction => {
+                "The editing SDK proposed an invalid or unauthorized transaction."
+            }
+            Self::SdkType => "The editing SDK must return a valid transaction table.",
+            Self::SdkLimit => "The editing SDK exceeded its documented result or resource limits.",
         })
     }
 }

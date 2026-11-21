@@ -23,6 +23,7 @@ pub(in crate::app::extensions) struct InstalledManifest {
     pub(in crate::app::extensions) release: Option<Release>,
     pub(super) digest: String,
     pub(super) identity: FileIdentity,
+    pub(super) capabilities: BTreeMap<String, Vec<manifest::Permission>>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -159,6 +160,11 @@ pub(super) fn inspect_manifest<T>(
             .as_ref()
             .ok()
             .and_then(|(_, release)| release.clone()),
+        capabilities: manifest
+            .as_ref()
+            .ok()
+            .map(|(manifest, _)| manifest.permission_map())
+            .unwrap_or_default(),
         digest,
         identity,
     };
@@ -174,6 +180,8 @@ pub(in crate::app::extensions) struct ImportPreview {
     pub(in crate::app::extensions) id: String,
     pub(in crate::app::extensions) commands: Vec<(String, String)>,
     pub(in crate::app::extensions) lua: bool,
+    pub(in crate::app::extensions) sdk: bool,
+    pub(in crate::app::extensions) storage: bool,
     pub(in crate::app::extensions) digest: String,
     pub(in crate::app::extensions) release: Option<Release>,
     script_digests: BTreeMap<String, String>,
@@ -208,6 +216,11 @@ impl ImportPreview {
             source,
             commands: manifest.command_labels(),
             lua: manifest.lua_digest.is_some(),
+            sdk: manifest.sdk,
+            storage: manifest
+                .capabilities
+                .as_ref()
+                .is_some_and(|c| c.contains(&manifest::Permission::PrivateStorage)),
             digest: manifest::digest(&text),
             release,
             script_digests: manifest.script_digests(),

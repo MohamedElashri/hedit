@@ -93,6 +93,11 @@ def smoke(archive):
         subprocess.run([str(binary), 'plugin', 'test',
                         str(root / 'examples/extensions/markdown-quote.json'), str(fixture)],
                        check=True, capture_output=True, timeout=30)
+        for name in ['sdk-markdown', 'sdk-table', 'sdk-trim']:
+            subprocess.run([str(binary), 'plugin', 'test',
+                            str(root / f'examples/extensions/{name}.json'),
+                            str(root / f'examples/extensions/{name}.fixtures.json')],
+                           check=True, capture_output=True, timeout=30)
 
 
 def main():

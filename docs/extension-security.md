@@ -65,19 +65,30 @@ and continue the ordinary save path.
 
 The protocol in `crates/hedit-plugin/src/runtime/protocol.rs` is internal to a
 matching editor/worker build, not a public extension API. There is one request and
-one reply per process, with no callback messages or requests for host operations.
+one reply per process, with no callback messages. SDK replies may propose only
+bounded document edits or a separately approved private-storage update.
+The editing SDK uses distinct request magic `0xfffffffd` and an independently
+checked `sdk_version`. Selection-transform requests retain their existing magic
+and payload. No fallback translates document authority into selection authority.
 
 - Request: little-endian `u32` magic `0xfffffffe`, little-endian `u32` JSON byte
   length, that exact payload, and EOF. Reject unknown/duplicate top-level fields,
   wrong types, invalid encodings, oversized lengths, truncation, and trailing
   bytes. The payload cap is 1 MiB; source, selections, language, and settings also
   have independent semantic limits checked by both encoder and worker decoder.
-- Reply: one status byte followed by a JSON array of strings on success (`0`).
+- Legacy reply: one status byte followed by a JSON array of strings on success (`0`).
   Worker errors (`1` through `11`) have no body; unknown statuses and error bodies
   are rejected. Diagnostics use fixed host messages, not worker-supplied error
   text that might contain document contents.
+- SDK reply: status `0` followed by a strict versioned success/failure envelope.
+  A successful transaction is bound to the original document and revision and is
+  revalidated by the parent. Failures carry only fixed categories and an optional
+  syntax location verified against the original script/module and line count.
+  Arbitrary runtime messages and tracebacks are never displayed. Transport or
+  confinement failures continue to use bodyless fixed status codes.
 - The parent caps reply bodies at 2 MiB to accommodate JSON escaping. Parsing
-  allocates a vector only for the expected 1–16 edits, rejects additional elements
+  allocates bounded vectors (the expected 1–16 legacy replacements or up to 64
+  SDK edits), rejects additional elements
   before deserializing them, and enforces the 256 KiB combined decoded UTF-8 limit
   as strings arrive. NUL, missing edits, non-string values, and trailing JSON are
   rejected. A bounded frame still permits parser/string scratch allocations
@@ -87,9 +98,40 @@ one reply per process, with no callback messages or requests for host operations
   a worker that leaves output open must also terminate within the supervisor's
   budget. Cancellation and failure kill and reap the child.
 
-No worker response can name a document, request an operation, grant permissions,
-or supply executable code to the editor. Validate future message types in the
-broker rather than trusting a sandboxed sender.
+Legacy responses cannot name resources or request host operations. SDK responses
+can echo only their invocation's opaque target and propose typed effects within
+that command's grants. Neither response grants permissions, supplies native code,
+or chooses arbitrary files. Validate each effect in the broker rather than
+trusting a sandboxed sender.
+
+## Document editing SDK boundary
+
+Manifest API 3 requires fresh command-specific `document.read` and `document.edit`
+approval. It receives only the current eligible local snapshot, up to 64 KiB;
+its random document handle reveals no host document ID or filesystem path. The
+revision is an opaque string token. Existing selection grants cannot authorize
+this snapshot. Host-owned argument forms run before worker launch.
+
+The worker proposes at most 64 ordered non-overlapping edits and 16 resulting
+selections. Parent and worker independently validate target handle/revision,
+UTF-8 and CRLF boundaries, normalized replacement limits, and final selection
+positions. Parent application also checks live editor context and current grants.
+A forged worker cannot select another document. No SDK helper exposes filesystem
+paths, networking, subprocesses, or editor objects. The Lua core and native
+sandbox policy are shared with legacy transforms. Verified package-local imports
+and text resources use only bounded reviewed bytes; no runtime paths are resolved. See the [SDK contract](plugin-sdk.md).
+
+Private command storage requires `storage.private` plus an explicit per-command
+request and persistent approval. Only that command's quota-limited scalar snapshot
+is delivered. Its reply may propose a storage update only when storage authority
+was supplied; both parent and worker check this. The host chooses the bucket from
+the approval token, holds authorization through its atomic write, and compares
+current state with the original snapshot to reject conflicts. Storage updates
+cannot be combined with document edits or selection effects. They never enter
+text Undo history. Revocation/update/disable/uninstall prune revoked buckets;
+reapproval does not inherit the previous bucket. Symlink/reparse control files,
+unsafe permissions/ACLs, invalid contents, and quota violations fail closed.
+Administrative access and user-configured backup/sync remain outside this boundary.
 
 ## Confinement and resource limits
 
