@@ -10,10 +10,15 @@ use hedit_plugin::{broker::FailureCode, sdk, service};
 use std::{
     fs::File,
     io,
-    sync::{atomic::AtomicBool, Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Mutex,
+    },
     time::Duration,
 };
 static ADMISSION: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(16);
+static PROVIDERS: tokio::sync::Semaphore =
+    tokio::sync::Semaphore::const_new(crate::MAX_PROVIDER_CONTEXTS);
 /// Resolve the exact installed source, scope and policy generation under a
 /// shared disclosure lock. The returned file retains that lock. Cancellation
 /// must precede exclusive policy mutation. Never build this callback from Lua.
@@ -22,6 +27,7 @@ pub type Authority = dyn Fn(&AtomicBool) -> io::Result<File> + Send + Sync;
 /// The returned owner performs reconciliation and unfreezes on Drop, including
 /// errors after a partial journal effect. It is never transferred to the UI.
 pub trait WorkspaceCommit: Send {
+    fn applying(&mut self) {}
     fn applied(&mut self) {}
 }
 pub type PrepareCommit =
@@ -64,6 +70,7 @@ pub struct Host {
     decisions: tokio::sync::mpsc::Sender<Decision>,
     cancel: Arc<Cancel>,
     thread: Option<std::thread::JoinHandle<()>>,
+    work_us: Arc<AtomicU64>,
 }
 impl Host {
     /// `setup` performs resource/grant resolution on the new bounded I/O thread.
@@ -74,7 +81,7 @@ impl Host {
         authority: Arc<Authority>,
         wake: Arc<dyn Fn() + Send + Sync>,
     ) -> io::Result<Self> {
-        Self::start_inner(setup, authority, None, wake)
+        Self::start_inner(setup, authority, None, wake, false)
     }
     pub fn start_scoped(
         setup: impl FnOnce(Arc<Cancel>) -> io::Result<Config> + Send + 'static,
@@ -82,14 +89,34 @@ impl Host {
         prepare: Arc<PrepareCommit>,
         wake: Arc<dyn Fn() + Send + Sync>,
     ) -> io::Result<Self> {
-        Self::start_inner(setup, authority, Some(prepare), wake)
+        Self::start_inner(setup, authority, Some(prepare), wake, false)
+    }
+    /// Reserve background admission before creating a setup thread. Slow scope
+    /// resolution and parked providers cannot consume the foreground reserve.
+    pub fn start_provider(
+        setup: impl FnOnce(Arc<Cancel>) -> io::Result<Config> + Send + 'static,
+        authority: Arc<Authority>,
+        prepare: Arc<PrepareCommit>,
+        wake: Arc<dyn Fn() + Send + Sync>,
+    ) -> io::Result<Self> {
+        Self::start_inner(setup, authority, Some(prepare), wake, true)
     }
     fn start_inner(
         setup: impl FnOnce(Arc<Cancel>) -> io::Result<Config> + Send + 'static,
         authority: Arc<Authority>,
         prepare: Option<Arc<PrepareCommit>>,
         wake: Arc<dyn Fn() + Send + Sync>,
+        provider: bool,
     ) -> io::Result<Self> {
+        let background = provider
+            .then(|| PROVIDERS.try_acquire())
+            .transpose()
+            .map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "Extension provider host limit reached.",
+                )
+            })?;
         let permit = ADMISSION.try_acquire().map_err(|_| {
             io::Error::new(io::ErrorKind::WouldBlock, "Extension host limit reached.")
         })?;
@@ -101,10 +128,13 @@ impl Host {
         let (sender, receiver) = tokio::sync::mpsc::channel(1);
         let thread_cancel = cancel.clone();
         let thread_mailbox = mailbox.clone();
+        let work_us = Arc::new(AtomicU64::new(0));
+        let thread_work = work_us.clone();
         let thread = std::thread::Builder::new()
             .name("hedit-capability-host".into())
             .spawn(move || {
                 let _permit = permit;
+                let _background = background;
                 struct Completion {
                     mailbox: Arc<Mailbox>,
                     cancel: Arc<Cancel>,
@@ -131,6 +161,16 @@ impl Host {
                         ));
                     }
                     let config = setup(thread_cancel.clone())?;
+                    if provider
+                        && !config
+                            .definition
+                            .has(crate::declaration::Capability::Observe)
+                    {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "Provider event authority is missing.",
+                        ));
+                    }
                     if !Arc::ptr_eq(&config.cancel, &thread_cancel) {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidInput,
@@ -141,14 +181,19 @@ impl Host {
                     let runtime = tokio::runtime::Builder::new_current_thread()
                         .enable_all()
                         .build()?;
-                    runtime.block_on(run(
+                    let result = runtime.block_on(run(
                         &mut session,
                         &thread_cancel,
                         authority,
                         prepare,
                         receiver,
                         &thread_mailbox,
-                    ))
+                    ));
+                    thread_work.store(
+                        session.work_duration().as_micros().min(u64::MAX as u128) as u64,
+                        Ordering::Release,
+                    );
+                    result
                 })();
                 let event = match result {
                     Ok(event) => event,
@@ -162,6 +207,7 @@ impl Host {
             decisions: sender,
             cancel,
             thread: Some(thread),
+            work_us,
         })
     }
     pub fn try_event(&self) -> Option<Event> {
@@ -170,6 +216,11 @@ impl Host {
             return None;
         }
         Some(event)
+    }
+    /// Settled chain work excludes preview dwell and parked watch time. Read
+    /// after a terminal event to account provider rate limits independently of UI.
+    pub fn work_duration(&self) -> Duration {
+        Duration::from_micros(self.work_us.load(Ordering::Acquire))
     }
     pub fn decide(&self, decision: Decision) -> io::Result<()> {
         if self.cancel.is_cancelled() {
@@ -220,6 +271,66 @@ fn worker_error(error: hedit_plugin::Error) -> io::Error {
     };
     io::Error::new(kind, error)
 }
+async fn invoke(
+    session: &Session,
+    input: hedit_plugin::broker::Input,
+    cancel: &Arc<Cancel>,
+    authority: &Arc<Authority>,
+) -> io::Result<hedit_plugin::broker::Output> {
+    loop {
+        session.callback_live()?;
+        if !hedit_plugin::broker_available(session.is_provider()) {
+            wait_capacity(cancel).await?;
+            continue;
+        }
+        let completed = Arc::new(tokio::sync::Notify::new());
+        let wake = completed.clone();
+        let authorize = authority.clone();
+        let session_cancel = cancel.clone();
+        let worker = hedit_plugin::start_broker_prioritized(
+            input.clone(),
+            session.is_provider(),
+            move |flag| {
+                if flag.load(Ordering::Acquire) || session_cancel.is_cancelled() {
+                    return Err(hedit_plugin::Error::Cancelled);
+                }
+                authorize(flag).map_err(|_| hedit_plugin::Error::Cancelled)
+            },
+            move || wake.notify_one(),
+        );
+        let mut worker = match worker {
+            Ok(worker) => worker,
+            Err(hedit_plugin::Error::ServiceBusy) => {
+                wait_capacity(cancel).await?;
+                continue;
+            }
+            Err(error) => return Err(worker_error(error)),
+        };
+        let result = loop {
+            if let Some(result) = worker.try_result() {
+                break result;
+            }
+            tokio::select! { biased; _ = cancel.cancelled() => return Err(cancelled()), _ = completed.notified() => {} }
+        };
+        match result {
+            Ok(output) => return Ok(output),
+            // Retry only a callback with no accepted intent, preserving its exact input.
+            // Never restart a chain that may already have completed host I/O.
+            Err(failure) if failure.kind == hedit_plugin::Error::ServiceBusy => {
+                wait_capacity(cancel).await?;
+            }
+            Err(failure) => return Err(worker_error(failure.kind)),
+        }
+    }
+}
+async fn wait_capacity(cancel: &Cancel) -> io::Result<()> {
+    tokio::select! {
+        biased;
+        _ = cancel.cancelled() => Err(cancelled()),
+        _ = tokio::time::sleep(Duration::from_millis(10)) => Ok(()),
+    }
+}
+
 async fn run(
     session: &mut Session,
     cancel: &Arc<Cancel>,
@@ -229,32 +340,8 @@ async fn run(
     mailbox: &Mailbox,
 ) -> io::Result<Event> {
     loop {
-        let input = session.begin_callback()?;
-        let completed = Arc::new(tokio::sync::Notify::new());
-        let wake = completed.clone();
-        let authorize = authority.clone();
-        let session_cancel = cancel.clone();
-        let mut worker = hedit_plugin::start_broker_checked(
-            input,
-            move |flag| {
-                if flag.load(std::sync::atomic::Ordering::Acquire) || session_cancel.is_cancelled()
-                {
-                    return Err(hedit_plugin::Error::Cancelled);
-                }
-                authorize(flag).map_err(|_| hedit_plugin::Error::Cancelled)
-            },
-            move || {
-                wake.notify_one();
-            },
-        )
-        .map_err(worker_error)?;
-        let output = loop {
-            if let Some(result) = worker.try_result() {
-                break result.map_err(|failure| worker_error(failure.kind))?;
-            }
-            tokio::select! { biased; _ = cancel.cancelled() => return Err(cancelled()), _ = completed.notified() => {} }
-        };
-        drop(worker);
+        let input = session.begin_callback_when_ready().await?;
+        let output = invoke(session, input, cancel, &authority).await?;
         match session.accept(output, || authority(cancel.flag())).await? {
             Effect::Continue => {}
             Effect::Finished {
@@ -283,7 +370,7 @@ async fn run(
                     ));
                 }
                 if decision.accept {
-                    let _active = session.host_work()?;
+                    let _active = session.host_work_when_ready().await?;
                     let started = std::time::Instant::now();
                     let mut buffers = prepare
                         .as_ref()
@@ -292,6 +379,9 @@ async fn run(
                     session.charge_host_work(started.elapsed())?;
                     let journal =
                         session.prepare_review_in_slot(&plan, || authority(cancel.flag()))?;
+                    if let Some(buffers) = &mut buffers {
+                        buffers.applying();
+                    }
                     session.apply_review_in_slot(&plan, &journal, || authority(cancel.flag()))?;
                     if let Some(buffers) = &mut buffers {
                         buffers.applied();

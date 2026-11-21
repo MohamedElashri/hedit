@@ -2,6 +2,57 @@ use super::*;
 use std::sync::mpsc;
 static SERIAL: Mutex<()> = Mutex::new(());
 #[test]
+fn blocked_provider_setup_preserves_four_foreground_threads_and_releases_reservations() {
+    let _suite = SERIAL.lock().unwrap();
+    let mut hosts = Vec::new();
+    let mut release = Vec::new();
+    for provider in std::iter::repeat_n(true, crate::MAX_PROVIDER_CONTEXTS).chain([false; 4]) {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let setup = move |_| {
+            receiver.recv().unwrap();
+            Err(cancelled())
+        };
+        let authority: Arc<Authority> = Arc::new(|_| unreachable!());
+        let wake: Arc<dyn Fn() + Send + Sync> = Arc::new(|| {});
+        let host = if provider {
+            Host::start_provider(setup, authority, Arc::new(|_, _| unreachable!()), wake)
+        } else {
+            Host::start(setup, authority, wake)
+        }
+        .unwrap();
+        hosts.push(host);
+        release.push(sender);
+        if hosts.len() == crate::MAX_PROVIDER_CONTEXTS {
+            let denied = Host::start_provider(
+                |_| unreachable!(),
+                Arc::new(|_| unreachable!()),
+                Arc::new(|_, _| unreachable!()),
+                Arc::new(|| {}),
+            );
+            assert_eq!(denied.err().unwrap().kind(), io::ErrorKind::WouldBlock);
+        }
+    }
+    assert_eq!(
+        Host::start(
+            |_| unreachable!(),
+            Arc::new(|_| unreachable!()),
+            Arc::new(|| {})
+        )
+        .err()
+        .unwrap()
+        .kind(),
+        io::ErrorKind::WouldBlock
+    );
+    for sender in release {
+        sender.send(()).unwrap();
+    }
+    for mut host in hosts {
+        host.thread.take().unwrap().join().unwrap();
+    }
+    assert_eq!(ADMISSION.available_permits(), 16);
+    assert_eq!(PROVIDERS.available_permits(), crate::MAX_PROVIDER_CONTEXTS);
+}
+#[test]
 fn setup_errors_and_panics_publish_fixed_failures_from_a_background_thread() {
     let _suite = SERIAL.lock().unwrap();
     for panic in [false, true] {

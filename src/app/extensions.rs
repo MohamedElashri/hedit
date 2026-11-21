@@ -243,6 +243,32 @@ mod tests {
     use hedit::{advanced::Selection, editing::Operation, workspace::Workspace};
     use std::path::Path;
 
+    #[cfg(target_os = "macos")]
+    pub(super) fn prepare_native() {
+        static PREPARED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+        PREPARED.get_or_init(|| {
+            let executable = std::env::current_exe().unwrap();
+            let directory = executable.parent().unwrap();
+            let editor = directory
+                .ancestors()
+                .map(|parent| parent.join("hedit"))
+                .find(|path| path.is_file())
+                .expect("Build the editor first with make test-macos.");
+            let status = std::process::Command::new("python3")
+                .arg(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/scripts/macos_plugin_helper.py"
+                ))
+                .arg("--editor")
+                .arg(editor)
+                .arg("--output")
+                .arg(directory.join("hedit-plugin.app"))
+                .status()
+                .unwrap();
+            assert!(status.success());
+        });
+    }
+
     pub(super) fn app_with(
         text: &str,
         config: Option<&Path>,

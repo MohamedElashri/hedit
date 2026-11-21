@@ -261,7 +261,7 @@ retention of a consumed guard through its authorized operation.
 ## Workspace and external-service implementation
 
 Manifest APIs 1–4 retain the contracts above. The integration branch also accepts
-experimental API 5 / SDK 3 ordinary commands with separate, exact-source resource
+experimental API 5 / SDK 3 commands and providers with separate, exact-source resource
 review. A document grant never supplies a workspace directory or HTTPS endpoint;
 commands without document.read receive an empty neutral snapshot.
 Its [broker threat model](plugin-broker.md) describes the scoped file, recovery,
@@ -269,7 +269,6 @@ watch, HTTPS and host-thread boundaries, current limits and remaining gates.
 Explicit workspace recovery is available through Extensions settings, including
 for journals whose source has since been uninstalled. It requires fresh user
 review and preserves ambiguous data. Native tool declarations currently fail
-unavailable. SDK 3 background providers, tool/LSP enforcement, author tooling
-and fresh platform acceptance
+unavailable. Tool/LSP enforcement, author tooling and fresh platform acceptance
 remain implementation gates. The scoped command path is not a declaration that
 Stage 3 or the complete roadmap is finished.

@@ -42,6 +42,85 @@ fn fixture() -> (tempfile::TempDir, Session) {
     let (outer, config) = fixture_config();
     (outer, Session::new(config).unwrap())
 }
+fn provider_config() -> (tempfile::TempDir, Config) {
+    let (directory, mut config) = fixture_config();
+    config.definition = Arc::new(serde_json::from_value(serde_json::json!({"capabilities":["workspace.discover","workspace.read","workspace.edit","events.observe","ui.present"]})).unwrap());
+    config.provider = Some(service::Request {
+        id: Handle::fresh().unwrap().to_string(),
+        kind: service::Kind::Presentation,
+        trigger: service::Trigger::Manual,
+        position: 0,
+        action: None,
+        choice: None,
+    });
+    (directory, config)
+}
+#[tokio::test]
+async fn active_background_work_leaves_a_foreground_slot_and_queued_work_cancels_without_ui_frames()
+{
+    let _suite = SERIAL.lock().await;
+    let mut providers = Vec::new();
+    for _ in 0..3 {
+        let (directory, config) = provider_config();
+        let mut session = Session::new(config).unwrap();
+        session.begin_callback().unwrap();
+        providers.push((directory, session));
+    }
+    let (_directory, config) = provider_config();
+    let mut waiting = Session::new(config).unwrap();
+    assert_eq!(
+        waiting.begin_callback().err().unwrap().kind(),
+        io::ErrorKind::WouldBlock
+    );
+    let (_directory, mut foreground) = fixture();
+    foreground.begin_callback().unwrap();
+    assert_eq!(ACTIVE.available_permits(), 0);
+    let cancel = waiting.cancel.clone();
+    let (result, ()) = tokio::join!(waiting.begin_callback_when_ready(), async {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        cancel.cancel();
+    });
+    assert_eq!(result.err().unwrap().kind(), io::ErrorKind::Interrupted);
+    assert!(waiting.active.is_none());
+    drop(foreground);
+    drop(providers);
+    assert_eq!(ACTIVE.available_permits(), 4);
+    assert_eq!(BACKGROUND_WORK.available_permits(), 3);
+}
+#[tokio::test]
+async fn provider_contexts_leave_foreground_capacity_and_finish_releases_background_admission() {
+    let _suite = SERIAL.lock().await;
+    let mut directories = Vec::new();
+    let mut providers = Vec::new();
+    for _ in 0..crate::MAX_PROVIDER_CONTEXTS {
+        let (directory, config) = provider_config();
+        directories.push(directory);
+        providers.push(Session::new(config).unwrap());
+    }
+    let (_directory, config) = provider_config();
+    assert_eq!(
+        Session::new(config).err().unwrap().kind(),
+        io::ErrorKind::WouldBlock
+    );
+    let mut foreground = Vec::new();
+    for _ in 0..4 {
+        foreground.push(fixture());
+    }
+    let (_directory, config) = fixture_config();
+    assert_eq!(
+        Session::new(config).err().unwrap().kind(),
+        io::ErrorKind::WouldBlock
+    );
+    providers[0].finish(false);
+    assert!(providers[0].background.is_none());
+    let (_directory, config) = provider_config();
+    let resumed = Session::new(config).unwrap();
+    drop(resumed);
+    drop(providers);
+    drop(foreground);
+    assert_eq!(ADMISSION.available_permits(), 16);
+    assert_eq!(PROVIDERS.available_permits(), crate::MAX_PROVIDER_CONTEXTS);
+}
 async fn send(session: &mut Session, intent: Intent) -> io::Result<Effect> {
     let input = session.begin_callback()?;
     session

@@ -1,6 +1,7 @@
 //! Lazy, revision-bound providers. Lua is always in a rotated native worker.
 pub(super) mod policy;
 mod presentation;
+mod scoped;
 use super::{
     activity::{Invocation, InvocationOutcome},
     catalog,
@@ -60,6 +61,7 @@ struct Entry {
     input: Option<hedit::plugin_options::Value>,
     error: Option<String>,
     output_page: usize,
+    scoped: Option<scoped::Scoped>,
 }
 pub(in crate::app) struct Services {
     pub(in crate::app) open: bool,
@@ -107,7 +109,10 @@ fn token() -> Result<String, String> {
     Ok(hex::encode(bytes))
 }
 fn decorations(output: &service::Output, text: &str) -> Vec<Decoration> {
-    let items: Vec<_> = match &output.result {
+    decorations_result(&output.result, text)
+}
+fn decorations_result(result: &ResultSet, text: &str) -> Vec<Decoration> {
+    let items: Vec<_> = match result {
         ResultSet::Diagnostics(items) => items
             .iter()
             .map(|item| (&item.range, item.message.as_str(), Some(item.severity)))
@@ -162,6 +167,9 @@ impl Services {
     fn rebuild_decorations(&mut self, document: Option<(u64, u64)>) {
         let mut sources = [None; MAX_PROVIDERS];
         for (index, entry) in self.entries.iter().enumerate() {
+            if let Some(scoped) = &entry.scoped {
+                sources[index] = scoped.source(document);
+            }
             if let Some(ready) = &entry.ready {
                 if document == Some((ready.target.document(), ready.target.revision())) {
                     sources[index] = u128::from_str_radix(&ready.output.request, 16).ok();
@@ -176,6 +184,21 @@ impl Services {
         self.paint.clear();
         let mut seen = BTreeSet::new();
         for entry in &self.entries {
+            if let Some(scoped) = &entry.scoped {
+                for item in scoped.decorations(document) {
+                    if self.paint.len() >= 256 {
+                        return;
+                    }
+                    if seen.insert((
+                        item.start,
+                        item.finish,
+                        item.severity.map(|s| s as u8),
+                        item.text.as_str(),
+                    )) {
+                        self.paint.push(item.clone());
+                    }
+                }
+            }
             let Some(ready) = &entry.ready else {
                 continue;
             };
@@ -233,7 +256,13 @@ impl Services {
                     ResultSet::Diagnostics(items) => items.len(),
                     _ => 0,
                 })
-                .sum()
+                .sum::<usize>()
+                + self
+                    .entries
+                    .iter()
+                    .filter_map(|entry| entry.scoped.as_ref())
+                    .map(|data| data.diagnostic_count())
+                    .sum::<usize>()
         })
     }
     pub(in crate::app) fn next_wake(&self) -> Option<Duration> {
@@ -251,6 +280,7 @@ impl Services {
                         .ready
                         .as_ref()
                         .map(|ready| ready.created.saturating_add(ACTION_LIFETIME_MS)),
+                    entry.scoped.as_ref().and_then(|data| data.expires()),
                 ]
             })
             .flatten()
@@ -262,7 +292,7 @@ impl Services {
         let mut contributions: Vec<_> = contributions
             .into_iter()
             .filter(
-                |c| matches!(&c.action,ExtensionAction::Lua(plugin) if plugin.provider.is_some() && plugin.broker.is_none()),
+                |c| matches!(&c.action,ExtensionAction::Lua(plugin) if plugin.provider.is_some()),
             )
             .collect();
         contributions.sort_by(|a, b| {
@@ -287,6 +317,7 @@ impl Services {
                 .approval_id()
                 .is_some_and(|token| self.quarantined.contains(&(contribution.id.clone(), token)));
             self.entries.push(Entry {
+                scoped: plugin.broker.as_ref().map(|_| scoped::Scoped::default()),
                 contribution,
                 plugin,
                 definition,
@@ -374,7 +405,11 @@ impl Services {
         let language = app.active().language();
         let filename = info.path.as_ref().map(|_| info.name.as_str());
         let manual = self.manual.take();
-        for entry in &mut self.entries {
+        for entry in self
+            .entries
+            .iter_mut()
+            .filter(|entry| entry.scoped.is_none())
+        {
             let eligible = entry
                 .contribution
                 .when
@@ -492,14 +527,65 @@ impl Services {
                 entry.input = None;
             }
         }
-        if let Some(id) = manual {
-            if !self.entries.iter().any(|entry| entry.contribution.id == id) {
+        if let Some(id) = &manual {
+            if !self
+                .entries
+                .iter()
+                .any(|entry| entry.contribution.id == *id)
+            {
                 self.error =
                     Some("This provider is unapproved, unavailable, or still loading.".into());
             }
         }
+        if let Some(controller) = &self.controller {
+            let mut busy: BTreeSet<_> = self
+                .entries
+                .iter()
+                .filter(|entry| {
+                    entry.job.is_some() || entry.scoped.as_ref().is_some_and(|data| data.running())
+                })
+                .map(|entry| entry.plugin.plugin_id.clone())
+                .collect();
+            for entry in self
+                .entries
+                .iter_mut()
+                .filter(|entry| entry.scoped.is_some())
+            {
+                let tick = scoped::Tick {
+                    config: &config,
+                    monitor: &controller.monitor,
+                    target: target.as_ref(),
+                    manual: manual.as_deref(),
+                    saved,
+                    origin: self.origin.as_ref(),
+                    now,
+                    allow_start: busy.len() < service::MAX_ACTIVE
+                        && !busy.contains(&entry.plugin.plugin_id),
+                };
+                scoped::poll(entry, app, ctx, &tick);
+                if !self.open && entry.scoped.as_ref().is_some_and(|data| data.reviewing()) {
+                    self.open = true;
+                    self.selected = Some(entry.contribution.id.clone());
+                }
+                if entry.scoped.as_ref().is_some_and(|data| data.running()) {
+                    busy.insert(entry.plugin.plugin_id.clone());
+                } else {
+                    busy.remove(&entry.plugin.plugin_id);
+                }
+                if entry.state.quarantined {
+                    if let Some(token) = entry.plugin.approval_id() {
+                        self.quarantined
+                            .insert((entry.contribution.id.clone(), token));
+                    }
+                }
+            }
+        }
         let mut effect = None;
-        for entry in &mut self.entries {
+        for entry in self
+            .entries
+            .iter_mut()
+            .filter(|entry| entry.scoped.is_none())
+        {
             let Some(job) = entry.job.as_mut() else {
                 continue;
             };
@@ -663,10 +749,14 @@ impl Services {
         let mut busy: BTreeSet<_> = self
             .entries
             .iter()
-            .filter(|e| e.job.is_some())
+            .filter(|e| e.job.is_some() || e.scoped.as_ref().is_some_and(|data| data.running()))
             .map(|e| e.plugin.plugin_id.clone())
             .collect();
-        for entry in &mut self.entries {
+        for entry in self
+            .entries
+            .iter_mut()
+            .filter(|entry| entry.scoped.is_none())
+        {
             if busy.len() >= service::MAX_ACTIVE {
                 break;
             }

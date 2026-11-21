@@ -581,6 +581,17 @@ impl Review {
                 path_label(ui, "Manifest", &approval.path);
                 ui.label("Approval applies to this command and these exact manifest contents.");
                 if let Some(broker) = &approval.broker {
+                    if let Some(provider) = &approval.provider {
+                        ui.label(format!(
+                            "Provider: {:?}; triggers: {:?}; debounce: {} ms",
+                            provider.kind, provider.events, provider.debounce_ms
+                        ));
+                        ui.label(if broker.has(hedit_broker::declaration::Capability::DocumentRead) {
+                            "Reads the eligible active local document. Automatic triggers are covered by this separate provider approval."
+                        } else {
+                            "Receives an empty document snapshot. Starts only on an explicit user action."
+                        });
+                    }
                     resources::capabilities(ui, broker);
                     ui.label("Source approval alone grants no folder, executable or endpoint. Review those resources separately.");
                 } else if let Some(provider) = &approval.provider {

@@ -940,9 +940,6 @@ pub(super) fn parse_manifest(text: &str) -> Result<Manifest, String> {
             return Err("Every SDK 3 command requires an explicit broker declaration.".into());
         }
         if let Some(provider) = &command.provider {
-            if version.api_version == BROKER_API_VERSION {
-                return Err("Manifest API 5 currently supports ordinary Lua commands; use API 4 for installed providers.".into());
-            }
             if !matches!(
                 version.api_version,
                 SERVICE_API_VERSION | BROKER_API_VERSION
@@ -951,19 +948,16 @@ pub(super) fn parse_manifest(text: &str) -> Result<Manifest, String> {
                 || command.private_storage.unwrap_or(false)
                 || command.arguments.is_some()
             {
-                return Err("Providers require API 4 Lua actions with separately reviewed triggers and no save hook, command inputs, or persistent storage.".into());
+                return Err("Providers require API 4/5 Lua actions with separately reviewed triggers and no save hook, command inputs, or persistent storage.".into());
             }
             provider.validate().map_err(|e| e.to_string())?;
             if command.broker.as_ref().is_some_and(|broker| {
                 !broker.has(hedit_broker::declaration::Capability::DocumentRead)
             }) && (provider.kind != crate::plugin_runtime::service::Kind::Presentation
-                || provider.events.iter().any(|event| {
-                    !matches!(
-                        event,
-                        crate::plugin_runtime::service::Trigger::Manual
-                            | crate::plugin_runtime::service::Trigger::Close
-                    )
-                }))
+                || provider
+                    .events
+                    .iter()
+                    .any(|event| !matches!(event, crate::plugin_runtime::service::Trigger::Manual)))
             {
                 return Err(
                     "Document providers and document events require explicit document.read.".into(),
