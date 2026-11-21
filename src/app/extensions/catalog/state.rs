@@ -58,12 +58,21 @@ fn directory(config: &Path, create: bool) -> Result<PathBuf, String> {
     if path.exists() {
         #[cfg(unix)]
         {
-            use std::os::unix::fs::MetadataExt;
-            let metadata = fs::metadata(&path).map_err(|e| e.to_string())?;
+            use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+            let directory = OpenOptions::new()
+                .read(true)
+                .custom_flags(
+                    (rustix::fs::OFlags::DIRECTORY | rustix::fs::OFlags::NOFOLLOW).bits() as i32,
+                )
+                .open(&path)
+                .map_err(|e| e.to_string())?;
+            let metadata = directory.metadata().map_err(|e| e.to_string())?;
             if metadata.uid() != rustix::process::geteuid().as_raw() || metadata.mode() & 0o077 != 0
             {
                 return Err("Private storage requires an owner-only directory.".into());
             }
+            hedit_core::file_io::reject_extended_acl_grants(&directory)
+                .map_err(|e| e.to_string())?;
         }
         #[cfg(windows)]
         windows::protect_directory(&path).map_err(|e| e.to_string())?;
@@ -80,6 +89,7 @@ fn owner(plugin: &LuaPlugin) -> Result<String, String> {
 }
 fn private(file: &File) -> Result<(), String> {
     verify_grant_owner(file)?;
+    hedit_core::file_io::reject_extended_acl_grants(file).map_err(|e| e.to_string())?;
     #[cfg(windows)]
     windows::verify_file(file).map_err(|e| e.to_string())?;
     #[cfg(unix)]

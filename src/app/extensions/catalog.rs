@@ -687,6 +687,34 @@ mod tests {
         )
         .unwrap();
         assert!(read_state(config.path(), &first).is_err());
+        #[cfg(target_os = "macos")]
+        {
+            write_state(config.path(), &first, &values).unwrap();
+            use std::os::unix::fs::PermissionsExt;
+            for target in [&bucket, &config.path().join("extensions-state")] {
+                assert!(std::process::Command::new("/bin/chmod")
+                    .args([
+                        "+a",
+                        "everyone allow read,readattr,readextattr,readsecurity"
+                    ])
+                    .arg(target)
+                    .status()
+                    .unwrap()
+                    .success());
+                assert_eq!(
+                    fs::metadata(target).unwrap().permissions().mode() & 0o077,
+                    0
+                );
+                assert!(read_state(config.path(), &first).is_err());
+                assert!(write_state(config.path(), &first, &values).is_err());
+                assert!(std::process::Command::new("/bin/chmod")
+                    .arg("-N")
+                    .arg(target)
+                    .status()
+                    .unwrap()
+                    .success());
+            }
+        }
         #[cfg(unix)]
         {
             use std::os::unix::fs::{symlink, PermissionsExt};

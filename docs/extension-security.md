@@ -33,11 +33,14 @@ fixtures use the same engine and native isolation path. There is no shared host
 containing multiple plugins, persistent Lua state, or in-process fallback.
 
 The broker is currently the editor's catalog/consent code, command/save routing,
-and runtime supervisor. It is not a general RPC service. The worker receives only
+and runtime supervisor. It is not a general RPC service. Legacy workers receive
 the selected strings (the whole eligible local buffer for a save hook), language
-ID, declared scalar settings, and source for that invocation. It receives no
-editor object, document path, approval file handle, or authority to choose a
-different buffer. It returns replacement strings; the editor owns applying them.
+ID, declared scalar settings, and source. SDK workers instead receive a bounded
+current-document snapshot, declared arguments, reviewed package resources, and
+private command values only when explicitly approved. Neither contract supplies
+an editor object, document path, approval file handle, or authority to choose a
+different buffer. Workers return replacement strings or typed SDK proposals;
+the editor owns resource selection, authorization, and committing effects.
 
 | Boundary | Required behavior |
 | --- | --- |
@@ -132,6 +135,8 @@ cannot be combined with document edits or selection effects. They never enter
 text Undo history. Revocation/update/disable/uninstall prune revoked buckets;
 reapproval does not inherit the previous bucket. Symlink/reparse control files,
 unsafe permissions/ACLs, invalid contents, and quota violations fail closed.
+macOS extended ACL grants are rejected on both the storage directory and files,
+even when their mode bits are owner-only; harmless deny entries remain allowed.
 Administrative access and user-configured backup/sync remain outside this boundary.
 
 ## Confinement and resource limits

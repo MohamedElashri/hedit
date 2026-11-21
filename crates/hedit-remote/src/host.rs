@@ -50,63 +50,8 @@ pub fn absolute_directory(path: &Path) -> Result<File> {
     Ok(dir)
 }
 
-// macOS extended ACL grants can bypass Unix mode bits. Deny entries are
-// harmless; reject grants on private storage and its mutable ancestors.
 fn private_acl(file: &File) -> Result<()> {
-    #[cfg(target_os = "macos")]
-    {
-        use std::{ffi::c_void, os::fd::AsRawFd};
-        unsafe extern "C" {
-            fn acl_get_fd(fd: libc::c_int) -> *mut c_void;
-            fn acl_get_entry(
-                acl: *mut c_void,
-                index: libc::c_int,
-                entry: *mut *mut c_void,
-            ) -> libc::c_int;
-            fn acl_get_tag_type(entry: *mut c_void, tag: *mut libc::c_int) -> libc::c_int;
-            fn acl_free(acl: *mut c_void) -> libc::c_int;
-        }
-        struct Acl(*mut c_void);
-        impl Drop for Acl {
-            fn drop(&mut self) {
-                /* SAFETY: allocated by acl_get_fd, freed exactly once. */
-                unsafe {
-                    acl_free(self.0);
-                }
-            }
-        }
-        // SAFETY: the file descriptor is live; the returned ACL is independently owned.
-        let raw = unsafe { acl_get_fd(file.as_raw_fd()) };
-        if raw.is_null() {
-            return if std::io::Error::last_os_error().kind() == std::io::ErrorKind::NotFound {
-                Ok(())
-            } else {
-                Err(Error::Permission)
-            };
-        }
-        let acl = Acl(raw);
-        let mut index = 0; // ACL_FIRST_ENTRY, then ACL_NEXT_ENTRY (-1).
-        loop {
-            let mut entry = std::ptr::null_mut();
-            // SAFETY: the ACL and output pointer remain valid during this call.
-            let found = unsafe { acl_get_entry(acl.0, index, &mut entry) };
-            if found == -1 {
-                break;
-            }
-            if found != 0 || entry.is_null() {
-                return Err(Error::Permission);
-            }
-            let mut tag = 0;
-            // SAFETY: entry belongs to the live ACL; tag points to writable storage.
-            if unsafe { acl_get_tag_type(entry, &mut tag) } != 0 || tag != 2 {
-                return Err(Error::Permission);
-            } // ACL_EXTENDED_DENY.
-            index = -1;
-        }
-    }
-    #[cfg(not(target_os = "macos"))]
-    let _ = file;
-    Ok(())
+    hedit_core::file_io::reject_extended_acl_grants(file).map_err(|_| Error::Permission)
 }
 pub fn private_directory(path: &Path) -> Result<File> {
     private_directory_mode(path, true)

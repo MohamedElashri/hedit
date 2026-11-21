@@ -145,7 +145,8 @@ or an update that removes that approval clears its bucket. Reapproval starts wit
 empty storage; it does not transfer private data to a replacement package.
 Corrupt or unsafe storage fails closed. Revoke approval to clear its bucket before
 reviewing it again. Quotas apply to keys, values, serialized files, and active
-buckets. Unix owner-only permissions and Windows owner-only inherited ACLs protect
+buckets. Unix owner-only permissions (with extended ACL grants rejected on macOS)
+and Windows owner-only inherited ACLs protect
 these host-managed files; no path or handle is exposed to Lua.
 
 Fixtures may provide `storage` and `expected_storage` for storage-capable commands.

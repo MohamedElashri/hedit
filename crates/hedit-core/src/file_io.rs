@@ -62,6 +62,75 @@ pub fn lock_with_timeout(
     }
 }
 
+/// Reject macOS extended ACL grants that can bypass private Unix mode bits.
+/// Deny entries are harmless. Other platforms must separately enforce their
+/// mode/ACL policy; this check alone never establishes ownership or privacy.
+pub fn reject_extended_acl_grants(file: &File) -> std::io::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::{ffi::c_void, os::fd::AsRawFd};
+        unsafe extern "C" {
+            fn acl_get_fd(fd: std::ffi::c_int) -> *mut c_void;
+            fn acl_get_entry(
+                acl: *mut c_void,
+                index: std::ffi::c_int,
+                entry: *mut *mut c_void,
+            ) -> std::ffi::c_int;
+            fn acl_get_tag_type(entry: *mut c_void, tag: *mut std::ffi::c_int) -> std::ffi::c_int;
+            fn acl_free(acl: *mut c_void) -> std::ffi::c_int;
+        }
+        struct Acl(*mut c_void);
+        impl Drop for Acl {
+            fn drop(&mut self) {
+                /* SAFETY: allocated by acl_get_fd, freed exactly once. */
+                unsafe {
+                    acl_free(self.0);
+                }
+            }
+        }
+        // SAFETY: the file descriptor is live; the returned ACL is independently owned.
+        let raw = unsafe { acl_get_fd(file.as_raw_fd()) };
+        if raw.is_null() {
+            return if std::io::Error::last_os_error().kind() == std::io::ErrorKind::NotFound {
+                Ok(())
+            } else {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "Private files cannot have extended ACL grants.",
+                ))
+            };
+        }
+        let acl = Acl(raw);
+        let mut index = 0; // ACL_FIRST_ENTRY, then ACL_NEXT_ENTRY (-1).
+        loop {
+            let mut entry = std::ptr::null_mut();
+            // SAFETY: the ACL and output pointer remain valid during this call.
+            let found = unsafe { acl_get_entry(acl.0, index, &mut entry) };
+            if found == -1 {
+                break;
+            }
+            if found != 0 || entry.is_null() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "Private files cannot have extended ACL grants.",
+                ));
+            }
+            let mut tag = 0;
+            // SAFETY: entry belongs to the live ACL; tag points to writable storage.
+            if unsafe { acl_get_tag_type(entry, &mut tag) } != 0 || tag != 2 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "Private files cannot have extended ACL grants.",
+                ));
+            } // ACL_EXTENDED_DENY.
+            index = -1;
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = file;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -99,5 +168,34 @@ mod tests {
         ));
         drop(held);
         lock_with_timeout(&next, Duration::ZERO).unwrap();
+    }
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn private_acl_rejects_grants_even_with_private_modes_and_allows_denies() {
+        use std::os::unix::fs::PermissionsExt;
+        let file = tempfile::NamedTempFile::new().unwrap();
+        assert!(reject_extended_acl_grants(file.as_file()).is_ok());
+        for (entry, permitted) in [
+            ("everyone deny write", true),
+            (
+                "everyone allow read,readattr,readextattr,readsecurity",
+                false,
+            ),
+        ] {
+            assert!(std::process::Command::new("/bin/chmod")
+                .args(["+a", entry])
+                .arg(file.path())
+                .status()
+                .unwrap()
+                .success());
+            assert_eq!(
+                file.as_file().metadata().unwrap().permissions().mode() & 0o077,
+                0
+            );
+            assert_eq!(
+                reject_extended_acl_grants(file.as_file()).is_ok(),
+                permitted
+            );
+        }
     }
 }
