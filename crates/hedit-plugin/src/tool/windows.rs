@@ -181,10 +181,14 @@ pub(super) fn run(
                 }
             }
             if child.finished(0)? {
-                if !child.success()? {
-                    return Err(io::Error::other("Isolated tool failed."));
-                }
                 if out_eof && err_eof {
+                    if !child.success()? {
+                        return Err(io::Error::other(format!(
+                            "Isolated tool exited with status {:#010x}: {:?}",
+                            child.exit_code()?,
+                            String::from_utf8_lossy(&err)
+                        )));
+                    }
                     if sent != input.len() {
                         return Err(io::Error::other("Tool input was not delivered."));
                     }

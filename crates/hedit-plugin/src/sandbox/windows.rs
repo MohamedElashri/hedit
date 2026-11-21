@@ -865,9 +865,12 @@ impl Worker {
         }
     }
     pub(crate) fn success(&self) -> io::Result<bool> {
+        Ok(self.exit_code()? == 0)
+    }
+    pub(crate) fn exit_code(&self) -> io::Result<u32> {
         let mut code = 0;
         check(unsafe { GetExitCodeProcess(self.process.as_raw_handle(), &mut code) })?;
-        Ok(code == 0)
+        Ok(code)
     }
     pub(crate) fn terminate(&self) {
         unsafe {
