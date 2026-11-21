@@ -55,6 +55,24 @@ pub(super) fn supervise_profiled(
         trace,
     )
 }
+pub(super) fn supervise_service(
+    executable: &Path,
+    request: Vec<u8>,
+    cancelled: &AtomicBool,
+    timeout: Duration,
+    approval: Option<File>,
+    trace: &crate::telemetry::Recorder,
+) -> Result<Vec<u8>, Error> {
+    supervise_traced(
+        executable,
+        &[super::SERVICE_HELPER_ARG],
+        request,
+        cancelled,
+        timeout,
+        approval,
+        trace,
+    )
+}
 fn supervise_arguments(
     executable: &Path,
     arguments: &[&str],
@@ -87,9 +105,18 @@ fn supervise_traced(
     if cancelled.load(Ordering::Relaxed) {
         return Err(Error::Cancelled);
     }
-    let deadline = Instant::now() + timeout;
+    let service = arguments == [super::SERVICE_HELPER_ARG];
+    let mut ready = !service;
+    let mut deadline = Instant::now()
+        + if service {
+            Duration::from_millis(crate::service::STARTUP_MILLIS)
+        } else {
+            timeout
+        };
     let mut child = Worker::spawn(executable, arguments).map_err(|_| Error::Sandbox)?;
-    trace.record(Phase::Startup, started.elapsed());
+    if !service {
+        trace.record(Phase::Startup, started.elapsed());
+    }
     let transfer_started = Instant::now();
     let mut input = child.input.take().ok_or(Error::Worker)?;
     let output = child.output.take().ok_or(Error::Worker)?;
@@ -104,13 +131,30 @@ fn supervise_traced(
             trace.record(Phase::Delivery, transfer_started.elapsed());
             (delivered, Instant::now())
         });
+        enum ReadEvent {
+            Ready(Instant),
+            Complete(std::io::Result<Vec<u8>>),
+        }
         let (sender, receiver) = mpsc::channel();
         let reader = scope.spawn(move || {
+            let mut output = output;
+            if service {
+                let mut byte = [0];
+                if output.read_exact(&mut byte).is_err() || byte[0] != crate::service::READY {
+                    let _ = sender.send(ReadEvent::Complete(Err(std::io::Error::other(
+                        "Invalid worker readiness.",
+                    ))));
+                    return;
+                }
+                if sender.send(ReadEvent::Ready(Instant::now())).is_err() {
+                    return;
+                }
+            }
             let mut reply = Vec::new();
             let read = output
                 .take(MAX_BATCH_REPLY_BYTES as u64 + 2)
                 .read_to_end(&mut reply);
-            let _ = sender.send(read.map(|_| reply));
+            let _ = sender.send(ReadEvent::Complete(read.map(|_| reply)));
         });
         let result = (|| {
             let mut received = None;
@@ -121,26 +165,35 @@ fn supervise_traced(
                 if Instant::now() >= deadline {
                     return Err(Error::Deadline);
                 }
-                if let Ok(reply) = receiver.try_recv() {
-                    let reply = reply.map_err(|_| Error::Worker)?;
-                    if reply.len() > MAX_BATCH_REPLY_BYTES + 1 {
-                        return Err(Error::Worker);
+                while let Ok(event) = receiver.try_recv() {
+                    match event {
+                        ReadEvent::Ready(at) => {
+                            if ready || at >= deadline {
+                                return Err(Error::Deadline);
+                            }
+                            ready = true;
+                            deadline = at + timeout;
+                            trace.record(Phase::Startup, started.elapsed());
+                        }
+                        ReadEvent::Complete(reply) => {
+                            let reply = reply.map_err(|_| Error::Worker)?;
+                            if !ready
+                                || received.is_some()
+                                || reply.len() > MAX_BATCH_REPLY_BYTES + 1
+                            {
+                                return Err(Error::Worker);
+                            }
+                            received = Some(reply);
+                        }
                     }
-                    received = Some(reply);
                 }
                 if child.finished(5).map_err(|_| Error::Worker)? {
                     if !child.success().map_err(|_| Error::Worker)? {
                         return Err(Error::Worker);
                     }
-                    return received.map_or_else(
-                        || {
-                            receiver
-                                .recv()
-                                .map_err(|_| Error::Worker)?
-                                .map_err(|_| Error::Worker)
-                        },
-                        Ok,
-                    );
+                    if let Some(reply) = received.take() {
+                        return Ok(reply);
+                    }
                 }
             }
         })();

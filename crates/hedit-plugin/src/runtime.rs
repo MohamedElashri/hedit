@@ -29,6 +29,16 @@ mod supervisor {
         Err(Error::Sandbox)
     }
 
+    pub(super) fn supervise_service(
+        _: &Path,
+        _: Vec<u8>,
+        _: &AtomicBool,
+        _: Duration,
+        _: Option<File>,
+        _: &crate::telemetry::Recorder,
+    ) -> Result<Vec<u8>, Error> {
+        Err(Error::Unavailable)
+    }
     pub(super) fn supervise_profiled(
         _: &Path,
         _: Vec<u8>,
@@ -66,6 +76,7 @@ pub struct Input {
 }
 
 pub const HELPER_ARG: &str = "--hedit-plugin-worker";
+pub const SERVICE_HELPER_ARG: &str = "--hedit-plugin-service-worker";
 
 pub type RunningPlugin = Running<Vec<String>>;
 pub type RunningSdk = Running<crate::sdk::Transaction, crate::sdk::Failure>;
@@ -128,10 +139,80 @@ pub fn start_sdk(
     })
 }
 
+static ACTIVE_SERVICES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+pub fn service_available() -> bool {
+    ACTIVE_SERVICES.load(Ordering::Acquire) < crate::service::MAX_ACTIVE
+}
+struct ServicePermit;
+impl ServicePermit {
+    fn reserve() -> Result<Self, Error> {
+        let mut old = ACTIVE_SERVICES.load(Ordering::Acquire);
+        loop {
+            if old >= crate::service::MAX_ACTIVE {
+                return Err(Error::ServiceBusy);
+            }
+            match ACTIVE_SERVICES.compare_exchange_weak(
+                old,
+                old + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return Ok(Self),
+                Err(actual) => old = actual,
+            }
+        }
+    }
+}
+impl Drop for ServicePermit {
+    fn drop(&mut self) {
+        ACTIVE_SERVICES.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+pub type RunningService = Running<crate::service::Output, crate::sdk::Failure>;
+pub fn start_service(
+    input: crate::service::Input,
+    approval: File,
+    wake: impl FnOnce() + Send + 'static,
+) -> Result<RunningService, Error> {
+    start_service_checked(input, move |_| Ok(approval), wake)
+}
+pub fn start_service_checked(
+    input: crate::service::Input,
+    authorize: impl FnOnce(&AtomicBool) -> Result<File, Error> + Send + 'static,
+    wake: impl FnOnce() + Send + 'static,
+) -> Result<RunningService, Error> {
+    let permit = ServicePermit::reserve()?;
+    spawn(wake, move |cancelled, trace| {
+        let _permit = permit;
+        if cancelled.load(Ordering::Acquire) {
+            return Err(Error::Cancelled.into());
+        }
+        let approval = authorize(cancelled)?;
+        if cancelled.load(Ordering::Acquire) {
+            return Err(Error::Cancelled.into());
+        }
+        engine::run_service(input, Some(approval), cancelled, trace)
+    })
+}
+pub fn run_service_fixture(
+    input: crate::service::Input,
+) -> Result<crate::service::Output, crate::sdk::Failure> {
+    let _permit = ServicePermit::reserve()?;
+    engine::run_service(input, None, &AtomicBool::new(false), &Default::default())
+}
+
 fn launch<T: Send + 'static, E: Send + 'static>(
     approval: File,
     wake: impl FnOnce() + Send + 'static,
     run: impl FnOnce(File, &AtomicBool, &crate::telemetry::Recorder) -> Result<T, E> + Send + 'static,
+) -> Result<Running<T, E>, Error> {
+    spawn(wake, move |cancelled, trace| {
+        run(approval, cancelled, trace)
+    })
+}
+fn spawn<T: Send + 'static, E: Send + 'static>(
+    wake: impl FnOnce() + Send + 'static,
+    run: impl FnOnce(&AtomicBool, &crate::telemetry::Recorder) -> Result<T, E> + Send + 'static,
 ) -> Result<Running<T, E>, Error> {
     let (sender, receiver) = mpsc::channel();
     let cancelled = Arc::new(AtomicBool::new(false));
@@ -141,9 +222,24 @@ fn launch<T: Send + 'static, E: Send + 'static>(
     std::thread::Builder::new()
         .name("hedit-lua-worker".into())
         .spawn(move || {
-            let result = run(approval, &thread_cancelled, &thread_trace);
-            let _ = sender.send(result);
-            wake();
+            struct Completion<T, F: FnOnce()> {
+                sender: Option<mpsc::Sender<T>>,
+                wake: Option<F>,
+            }
+            impl<T, F: FnOnce()> Drop for Completion<T, F> {
+                fn drop(&mut self) {
+                    self.sender.take();
+                    if let Some(wake) = self.wake.take() {
+                        wake();
+                    }
+                }
+            }
+            let completion = Completion {
+                sender: Some(sender),
+                wake: Some(wake),
+            };
+            let result = run(&thread_cancelled, &thread_trace);
+            let _ = completion.sender.as_ref().unwrap().send(result);
         })
         .map_err(|_| Error::Startup)?;
     Ok(Running {
@@ -221,15 +317,24 @@ fn run(
 }
 
 pub fn run_if_requested(args: &[OsString]) -> Option<bool> {
-    if args != [OsStr::new(HELPER_ARG)] {
+    let service = args == [OsStr::new(SERVICE_HELPER_ARG)];
+    if args != [OsStr::new(HELPER_ARG)] && !service {
         return None;
     }
     if !SUPPORTED {
         return Some(false);
     }
     // Install the OS boundary before the worker touches its request pipes.
-    let isolated = crate::sandbox::enter().is_ok();
-    Some(engine::run_helper(isolated))
+    let isolated = if service {
+        crate::sandbox::enter_service().is_ok()
+    } else {
+        crate::sandbox::enter().is_ok()
+    };
+    Some(if service {
+        engine::run_service_helper(isolated)
+    } else {
+        engine::run_helper(isolated)
+    })
 }
 
 #[cfg(feature = "fuzzing")]
@@ -261,12 +366,40 @@ pub(crate) fn fuzz_protocol(bytes: &[u8]) {
         storage: None,
     };
     let _ = engine::decode_sdk_reply(&input, bytes);
+    let input = crate::service::Input {
+        protocol_version: crate::service::VERSION,
+        request: crate::service::Request {
+            id: "f".repeat(32),
+            kind: crate::service::Kind::Diagnostics,
+            trigger: crate::service::Trigger::Change,
+            position: 0,
+            action: None,
+            choice: None,
+        },
+        package: input,
+        cache: Default::default(),
+        may_edit: false,
+    };
+    let _ = engine::decode_service_reply(&input, bytes);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[test]
+    fn panicking_host_work_disconnects_before_waking_and_releases_admission() {
+        let (sender, receiver) = mpsc::channel();
+        let mut worker: Running<(), Error> = spawn(
+            move || sender.send(()).unwrap(),
+            |_, _| panic!("synthetic host failure"),
+        )
+        .unwrap();
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        assert_eq!(worker.try_result(), Some(Err(Error::Stopped)));
+    }
     #[test]
     fn async_failure_wakes_the_host_after_the_result_is_queued() {
         let (sender, receiver) = mpsc::channel();

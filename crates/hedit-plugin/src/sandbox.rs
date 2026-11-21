@@ -64,3 +64,22 @@ mod linux;
 pub(crate) mod windows;
 #[cfg(windows)]
 pub(crate) use windows::{enter, worker_executable};
+
+pub(crate) fn enter_service() -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        // Raising the nice value is irreversible without privilege. Do this
+        // before the syscall filter, then retain the ordinary confinement.
+        let current = unsafe { libc::getpriority(libc::PRIO_PROCESS, 0) };
+        if unsafe { libc::setpriority(libc::PRIO_PROCESS, 0, current.max(10)) } != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        if unsafe { libc::getpriority(libc::PRIO_PROCESS, 0) } < 10 {
+            return Err(std::io::Error::other("Service priority is unavailable."));
+        }
+    }
+    enter()?;
+    #[cfg(windows)]
+    windows::require_service_priority()?;
+    Ok(())
+}

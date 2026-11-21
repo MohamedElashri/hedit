@@ -40,6 +40,7 @@ pub(crate) fn enter() -> io::Result<()> {
 
     for (resource, maximum) in [
         (libc::RLIMIT_CORE, 0),
+        (libc::RLIMIT_NICE, 0),
         (libc::RLIMIT_AS, ADDRESS_SPACE_BYTES),
         (libc::RLIMIT_CPU, CPU_SECONDS),
     ] {
@@ -253,27 +254,29 @@ mod tests {
         if std::env::var_os(PROBE).is_some() {
             native_probe();
         }
-        let mut child = Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "sandbox::linux::tests::confines_native_operations",
-                "--nocapture",
-            ])
-            .env_clear()
-            .env(PROBE, "1")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
-        child.stdin.take().unwrap().write_all(b"x").unwrap();
-        let output = child.wait_with_output().unwrap();
-        assert!(
-            output.status.success(),
-            "probe exited with {:?}",
-            output.status
-        );
-        assert!(output.stdout.ends_with(b"native probe passed\n"));
+        for role in ["command", "service"] {
+            let mut child = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "sandbox::linux::tests::confines_native_operations",
+                    "--nocapture",
+                ])
+                .env_clear()
+                .env(PROBE, role)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap();
+            child.stdin.take().unwrap().write_all(b"x").unwrap();
+            let output = child.wait_with_output().unwrap();
+            assert!(
+                output.status.success(),
+                "probe exited with {:?}",
+                output.status
+            );
+            assert!(output.stdout.ends_with(b"native probe passed\n"));
+        }
     }
 
     fn native_probe() -> ! {
@@ -283,7 +286,13 @@ mod tests {
         assert_eq!(unsafe { libc::fcntl(fd, libc::F_GETFD) }, -1);
         assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::EBADF));
 
-        if enter().is_err() {
+        let service = std::env::var("HEDIT_SANDBOX_NATIVE_PROBE").as_deref() == Ok("service");
+        let entered = if service {
+            super::super::enter_service()
+        } else {
+            enter()
+        };
+        if entered.is_err() {
             std::process::exit(11);
         }
 
@@ -302,6 +311,10 @@ mod tests {
             14,
         );
         verify(denied(unsafe { libc::fork() }), 15);
+        verify(
+            denied(unsafe { libc::setpriority(libc::PRIO_PROCESS, 0, 0) }),
+            40,
+        );
         verify(
             denied(unsafe { libc::read(fd, byte.as_mut_ptr().cast(), 1) as i32 }),
             16,
