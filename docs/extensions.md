@@ -147,12 +147,13 @@ must use the installed publisher’s key and increase the version. Lua permissio
 remain a separate approval.
 
 Provider API 4 / SDK 2 and declarative language/theme packs are described in the
-[provider reference](plugin-services.md). Their native and load-test stage gates
-remain explicit in `plugin_plan.md`.
+[provider reference](plugin-services.md). The
+[implementation plan](../plugin_plan.md#implementation-status) records validation
+evidence and deliberate capability limits.
 
 ## Native filter approval
 
-Experimental API 5 / SDK 3 commands can request native filter profiles. In
+API 5 / SDK 3 commands and providers can request native filter or LSP profiles. In
 **Review resources…**, select a standalone executable and inspect its filename,
 SHA-256 digest, argument choices and data scope before approving the review.
 Selection imports a private copy; it grants no execution access until approval.
@@ -163,11 +164,15 @@ Native filters receive command-supplied text and, only with separate workspace
 discover/read approval, an immutable copy of eligible project files. They receive
 no live workspace mount or writable scratch. Bounds, OS enforcement and residual
 risks are described in the [security model](extension-security.md).
-Language servers and the SDK 3 author/release gates remain under implementation.
+Language-server profiles retain one source/document-bound process under finite
+CPU, traffic and lifetime limits. They use the same private project-copy model,
+exact host-issued document URI and separately reviewed image; they do not inherit
+built-in server permissions. See the [scoped broker contract](plugin-broker.md)
+for supported results, grants and reference integrations.
 
 ## Workspace recovery
 
-On the experimental API 5 branch, **Settings → Extensions → Workspace recovery…**
+For API 5 workspace edit plans, **Settings → Extensions → Workspace recovery…**
 shows retained workspace edits. Select the original directory, inspect each file's
 complete original and replacement text, then choose **Resume reviewed edit**,
 **Restore originals**, or **Delete recovery history**. Deleting history keeps the

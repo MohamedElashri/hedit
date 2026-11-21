@@ -152,15 +152,16 @@ custom syntax. Themes use the existing bounded native theme JSON as `definition`
 and are applied only when selected. Unknown fields and external resources are
 rejected. See the [visual pack](../examples/extensions/demo-visuals.json).
 
-These interfaces remain gated by the roadmap's native, sustained-load, and
-package checks. Workspace, tool execution, HTTPS, credentials, multi-file edits,
-and remote documents are separate capabilities; this API grants none of them.
+SDK 2 grants no workspace, tool, HTTPS, credential, multi-file edit or remote
+document authority. Those operations require separately declared SDK 3
+capabilities and resource review; credentials and remote documents remain
+unsupported.
 
-## Experimental scoped providers
+## Scoped providers
 
-The Stage 3 branch also routes API 5 / SDK 3 providers through the scoped broker.
+API 5 / SDK 3 providers use the scoped broker.
 They reuse these typed provider results and scheduling semantics while declaring
 capabilities per command. Workspace and HTTPS access require separate resource
 review. Document-free presentation providers are manual-only and receive an
 empty snapshot. See the [broker contract](plugin-broker.md#installed-providers)
-for the authority boundary, foreground reserves, and remaining release gates.
+for the authority boundary, foreground reserves and native service limits.

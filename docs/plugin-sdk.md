@@ -217,9 +217,12 @@ python3 scripts/fuzz-plugin-codec.py --seconds 300
 The fuzz command retains its log, metadata, corpus, and crash artifacts under
 `target/plugin-fuzz`. It uses LLVM coverage on the host target without AddressSanitizer;
 `fuzz/README.md` also documents the nightly `cargo-fuzz` workflow. A short clean
-campaign is smoke evidence, not a completed security or performance gate. GUI
-frame/input latency, consent timing, native platform parity, and longer sanitizer
-campaigns require separate validation before expanding to persistent services.
+campaign is smoke evidence, not a completed security or performance gate.
+Native platform enforcement, provider lifetimes, consent timing and sustained
+egui CPU-frame measurements have separate tests. See the
+[broker validation guide](plugin-broker.md#external-tools-and-validation) and
+[implementation status](../plugin_plan.md#implementation-status) for scope and
+acceptance evidence.
 
 Phase profiling is available with `hedit plugin test MANIFEST FIXTURES --timings`
 and under Recent Lua activity in the extension manager. Samples contain only a

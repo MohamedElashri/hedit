@@ -2,8 +2,10 @@
 
 Manifest API 5 / SDK 3 adds scoped workspace operations, HTTPS and supervised
 native tools to the shared Lua engine. Commands and providers use the same
-continuation contract. APIs 1–4 retain their existing meanings. The manager supports exact-image filter/LSP selection. Final package and sustained
-performance gates remain under validation on this branch.
+continuation contract. APIs 1–4 retain their existing meanings. The manager
+supports exact-image filter/LSP selection and separate workspace/endpoint review.
+See the [implementation status](../plugin_plan.md#implementation-status) for
+acceptance evidence.
 See the [security model](extension-security.md) for enforcement and residuals.
 
 ## Author contract
@@ -195,7 +197,8 @@ The editor routes ordinary scoped commands through exact-source approval and
 separate directory/endpoint review, complete paged workspace previews, clean
 buffer preflight, and off-thread reconciliation. Providers share the same source,
 resource, revocation and commit checks. Explicit recovery is available in
-Extensions settings. The CLI supports offline continuation transcripts; extracted-package references remain open.
+Extensions settings. The CLI validates offline continuation transcripts and all
+shipped references are included in extracted-package smoke tests.
 Native filters require separate image selection and final exact-source resource
 approval. Language-server requests use persistent source/document-bound owners in the host;
 the manager exposes separate exact-image review for these profiles. There is no unsandboxed fallback.
@@ -433,7 +436,7 @@ Cancellation drops the transport and its disclosure guard. Failed requests count
 against rate limits. Credential references are not implemented; no plaintext or
 ambient-secret fallback exists.
 
-## External tools and remaining release gates
+## External tools and validation
 
 Native filters use separately reviewed images, finite literal/choice arguments,
 a fixed minimal environment and direct launch. The broker's sealed Rust grant
@@ -468,8 +471,10 @@ finite filters: 60 cumulative CPU seconds, a 30-minute wall lifetime, two CPU
 seconds and 8 MiB in each direction per ten-second interval, and no automatic
 restarts. The rolling implementation conservatively retains ten to fifteen
 seconds of charges. See the threat model for platform enforcement and overshoot.
-Installed native editor acceptance exercises the formatter and project LSP;
-final extracted-package and sustained UI/load gates remain open.
+Installed native editor acceptance exercises the shipped formatter and project
+LSP through real source/resource grants, unsaved document updates and revocation
+without UI polling. Extracted-package smoke tests use the packaged image and
+editor bootstrap rather than a development-only launcher.
 
 Run the shared and native continuation tests with:
 
@@ -484,11 +489,24 @@ on Windows. It uses disposable Unicode/CRLF files and a synthetic translation
 response. The transport tests separately exercise real loopback TLS; production
 endpoint policy cannot opt into that test route.
 
-Required gates still include native provider/recovery acceptance on all supported platforms; fresh native
-Windows x64/ARM64 and Linux editor-integration checks; external
-persistent LSP and final tool adversarial acceptance; author/reference/extracted-package
-coverage; final sanitizer and sustained performance evidence; and universal macOS
-packaging. Startup samples from debug fixtures are exploratory, not whole-editor
-latency claims. Scheduled codec-only AddressSanitizer campaigns retain source
-hashes, source snapshots, logs, corpus and failure artifacts; they complement
-native sandbox and real-editor tests rather than replacing them.
+Native tool probes run on macOS, Linux x86-64/ARM64 and Windows x64/ARM64.
+Author conformance, editor integration, recovery and extracted-package checks
+complement those adversarial policy probes. Scheduled codec-only AddressSanitizer
+campaigns retain source hashes, snapshots, logs, corpus and failure artifacts.
+
+Reproduce optimized scoped-provider and broker measurements on macOS with:
+
+```sh
+python3 scripts/profile-plugin-ui.py --frames 1200 --out-dir target/plugin-validation/scoped-ui
+python3 scripts/profile-plugin-broker.py --trials 25 --out-dir target/plugin-validation/broker
+```
+
+The UI probe alternates disabled/native-idle and disabled-typing/native-typing
+workloads over three trials using a near-64-KiB Unicode/CRLF JSON document. It
+records actual egui CPU-frame work, UI-thread allocations, numeric activity
+phases, host physical footprint, published results and Stop cleanup. It does not
+measure GPU presentation, physical input latency, other-thread allocations or
+aggregate child-process memory. The broker probe separates reply validation,
+bookkeeping, data copies and recoverable edit preparation/application using
+real confined callbacks and disposable files. Keep sources fixed while either
+script runs; both retain samples, source hashes and environment metadata.
