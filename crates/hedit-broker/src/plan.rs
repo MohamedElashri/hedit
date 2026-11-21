@@ -1,4 +1,5 @@
 //! Immutable multi-file proposals. Preparing a preview never mutates files.
+mod pages;
 use crate::{
     resources::{Resource, Resources},
     workspace::{Budget, Right, MAX_FILE_BYTES},
@@ -18,6 +19,8 @@ pub struct Proposed {
     resource: Arc<Resource>,
     text: String,
     _memory: crate::resources::Reservation,
+    before_pages: pages::Pages,
+    after_pages: pages::Pages,
 }
 impl Proposed {
     pub fn relative(&self) -> &str {
@@ -28,6 +31,15 @@ impl Proposed {
     }
     pub fn after(&self) -> &str {
         &self.text
+    }
+    pub fn identity(&self) -> crate::workspace::Identity {
+        self.resource.snapshot().stamp.identity
+    }
+    pub fn before_page(&self, page: usize) -> (&str, usize) {
+        self.before_pages.get(self.before(), page)
+    }
+    pub fn after_page(&self, page: usize) -> (&str, usize) {
+        self.after_pages.get(self.after(), page)
     }
     pub(crate) fn snapshot(&self) -> &crate::workspace::Snapshot {
         self.resource.snapshot()
@@ -96,13 +108,17 @@ impl Plan {
                 return Err(conflict());
             }
             let memory = resources.reserve(
-                snapshot.text.len().saturating_add(
-                    change
-                        .edits
-                        .iter()
-                        .map(|edit| edit.text.len() * 2)
-                        .sum::<usize>(),
-                ),
+                snapshot
+                    .text
+                    .len()
+                    .saturating_add(
+                        change
+                            .edits
+                            .iter()
+                            .map(|edit| edit.text.len() * 2)
+                            .sum::<usize>(),
+                    )
+                    .saturating_add(pages::INDEX_BYTES),
             )?;
             let (text, _) = sdk::prepare_text_edits(&snapshot.text, crlf, &change.edits)
                 .map_err(|_| invalid())?;
@@ -111,6 +127,8 @@ impl Plan {
             }
             if text != snapshot.text {
                 files.push(Proposed {
+                    before_pages: pages::Pages::new(&snapshot.text),
+                    after_pages: pages::Pages::new(&text),
                     resource,
                     text,
                     _memory: memory,

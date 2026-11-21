@@ -466,21 +466,24 @@ printf '\000'
     #[test]
     fn supervisor_enforces_wall_clock_deadline_and_reaps() {
         let dir = tempfile::tempdir().unwrap();
-        let worker = fixture(
-            dir.path(),
-            r#"printf '%s' "$$" > "$0.pid"
-while :; do :; done"#,
-        );
-        let result = supervise(
+        let worker = fixture(dir.path(), "while :; do :; done");
+        // Capture the launched process identity directly. A correct deadline may
+        // kill it before the shell gets CPU to write a readiness/PID file.
+        let pid = std::cell::Cell::new(0);
+        let result = super::supervise_verified(
             &worker,
             Vec::new(),
             &AtomicBool::new(false),
             Duration::from_millis(250),
             None,
+            |child| {
+                pid.set(child.id());
+                Ok(())
+            },
         );
         assert_eq!(result, Err(Error::Deadline));
-        let pid = fs::read_to_string(worker.with_extension("pid")).unwrap();
-        assert_eq!(unsafe { libc::kill(pid.trim().parse().unwrap(), 0) }, -1);
+        assert_ne!(pid.get(), 0);
+        assert_eq!(unsafe { libc::kill(pid.get() as i32, 0) }, -1);
         assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
     }
 

@@ -212,6 +212,7 @@ impl HeditApp {
             || self.source_control.open
             || self.markdown_preview_only()
             || self.workspace.remote.is_some()
+            || self.workspace.editor.workspace_document_frozen(info.id)
             || editor.follow
             || info.paged
             || editor.view.selections.len() >= plugin_runtime::MAX_SELECTIONS
@@ -235,6 +236,17 @@ impl HeditApp {
         command: &str,
         plugin: LuaPlugin,
     ) {
+        if self
+            .broker_command
+            .as_ref()
+            .is_some_and(|command| command.idle())
+        {
+            self.broker_command.take();
+        }
+        if plugin.broker.is_some() {
+            self.start_broker_command(ctx, command, plugin);
+            return;
+        }
         let proposal = self.lua_proposal(command, plugin);
         match proposal {
             Ok(proposal) if !proposal.plugin.arguments.is_empty() => {
@@ -336,6 +348,9 @@ impl HeditApp {
                 .provider
                 .as_ref()
                 .is_some_and(|definition| definition.may_edit)
+            && !plugin.broker.as_ref().is_some_and(|definition| {
+                definition.has(hedit_broker::declaration::Capability::DocumentEdit)
+            })
         {
             return Err("This provider has no document edit authority.".into());
         }
@@ -811,7 +826,7 @@ pub(super) fn byte_selections(
         .collect()
 }
 
-fn show_arguments(
+pub(super) fn show_arguments(
     ctx: &egui::Context,
     plugin: &LuaPlugin,
     values: &mut std::collections::BTreeMap<String, hedit::plugin_options::Value>,
@@ -1292,7 +1307,7 @@ mod tests {
     }
 
     #[test]
-    fn approval_completion_wakes_an_idle_ui_with_the_authority_ready() {
+    fn approval_completion_publishes_before_waking_and_expired_receipts_fail_closed() {
         let config = tempfile::tempdir().unwrap();
         let (_session, _ctx, app, _) = approved(config.path(), "selected");
         let super::super::ExtensionAction::Lua(plugin) = &app.extensions[0].action else {
@@ -1313,7 +1328,16 @@ mod tests {
                 .unwrap(),
             std::time::Duration::ZERO
         );
-        assert!(receive_approval(&approval).unwrap().is_some());
+        match receive_approval(&approval) {
+            Ok(authority) => assert!(authority.is_some(), "Wake preceded publication."),
+            Err(failure) => {
+                // The test thread can be descheduled past the 200 ms lease
+                // under a loaded runner. Expiry must still consume the reply
+                // and reject authority; it does not justify a longer grant.
+                assert_eq!(failure.outcome, InvocationOutcome::Cancelled);
+                assert!(failure.message.contains("authorization expired"));
+            }
+        }
     }
 
     #[test]

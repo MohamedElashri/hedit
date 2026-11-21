@@ -466,7 +466,7 @@ fn preserving_a_clean_source_before_removal_retains_its_text_after_restart() {
     std::fs::write(&path, "keep this clean file").unwrap();
     let (mut ws, _) = Workspace::restore(directory.path().join("session")).unwrap();
     let mut doc = Document::open(ws.editor.id(), &path).unwrap();
-    doc.preserve_as_unsaved();
+    doc.preserve_as_unsaved().unwrap();
     let page = doc.page(0).unwrap();
     ws.add(doc, page).unwrap();
     ws.checkpoint().unwrap();

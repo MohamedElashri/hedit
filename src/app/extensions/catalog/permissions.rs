@@ -1,5 +1,7 @@
 //! Command-scoped consent records and the lock that serializes extension changes.
+mod cancellation;
 use super::{manifest, FileIdentity, InstalledManifest};
+pub(super) use cancellation::{broker_epoch, mutation_lock, repair_orphan};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -144,12 +146,12 @@ impl PermissionState {
     }
 }
 
-fn read_epoch(mut lock: &File) -> Result<Vec<u8>, String> {
+pub(super) fn read_epoch(mut lock: &File) -> Result<Vec<u8>, String> {
     let mut epoch = Vec::new();
     lock.rewind()
         .and_then(|()| lock.take(17).read_to_end(&mut epoch))
         .map_err(|error| error.to_string())?;
-    if epoch.len() > 16 {
+    if !matches!(epoch.len(), 0 | 16) {
         return Err("Invalid extension policy epoch.".into());
     }
     Ok(epoch)
@@ -211,6 +213,11 @@ impl Grants {
     }
 
     pub(super) fn write(self, config: &Path) -> Result<(), String> {
+        let resources = self
+            .commands
+            .values()
+            .filter_map(super::resources::grant_token)
+            .collect();
         let active = self
             .commands
             .values()
@@ -225,6 +232,11 @@ impl Grants {
             grants: self.commands.into_values().collect(),
         };
         hedit::projects::atomic_json(&config.join(GRANTS_FILE), &document)?;
+        if hedit_broker::state::State::exists(config) {
+            hedit_broker::state::State::open(config, [])
+                .and_then(|state| state.prune(&resources))
+                .map_err(|error| error.to_string())?;
+        }
         super::state::prune(config, &active)?;
         #[cfg(target_os = "linux")]
         File::open(config)
@@ -295,6 +307,7 @@ pub(super) fn verify_grant_owner(file: &File) -> Result<(), String> {
                 "Lua approval storage must be owned by you and writable only by you.".into(),
             );
         }
+        hedit_core::file_io::reject_extended_acl_grants(file).map_err(|error| error.to_string())?;
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     let _ = file;

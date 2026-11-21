@@ -19,7 +19,8 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-static ADMISSION: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+static ADMISSION: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(16);
+static ACTIVE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
 const WORK: Duration = Duration::from_secs(10);
 const BYTES: usize = 64 * 1024 * 1024;
 enum Phase {
@@ -34,6 +35,7 @@ pub enum Effect {
     Finished {
         transaction: Option<sdk::Transaction>,
         result: Option<Box<service::ResultSet>>,
+        cache: sdk::Storage,
     },
 }
 pub struct Session {
@@ -52,6 +54,7 @@ pub struct Session {
     wake: Arc<dyn Fn() + Send + Sync>,
     watch_wake: Arc<tokio::sync::Notify>,
     permit: Option<tokio::sync::SemaphorePermit<'static>>,
+    active: Option<tokio::sync::SemaphorePermit<'static>>,
 }
 fn denied() -> io::Error {
     io::Error::new(
@@ -65,6 +68,7 @@ fn invalid() -> io::Error {
 pub struct Config {
     pub package: sdk::Input,
     pub provider: Option<service::Request>,
+    pub cache: sdk::Storage,
     pub definition: Arc<crate::declaration::Definition>,
     pub resources: Option<Resources>,
     pub endpoints: BTreeMap<String, Arc<Endpoint>>,
@@ -79,8 +83,18 @@ impl Session {
         use crate::declaration::Capability;
         config
             .definition
-            .validate(config.provider.is_some())
+            .validate(config.definition.has(Capability::Observe))
             .map_err(|_| invalid())?;
+        let provider = config.definition.has(Capability::Observe);
+        if (provider && config.provider.is_none())
+            || (!provider
+                && config.provider.as_ref().is_some_and(|request| {
+                    request.kind != service::Kind::Presentation
+                        || request.trigger != service::Trigger::Interaction
+                }))
+        {
+            return Err(invalid());
+        }
         if !config.definition.has(Capability::DocumentRead)
             && (!config.package.snapshot.text.is_empty()
                 || config.package.snapshot.crlf
@@ -148,7 +162,7 @@ impl Session {
             }),
             provider: config.provider,
             response: None,
-            cache: Default::default(),
+            cache: config.cache,
         };
         input.validate().map_err(|_| invalid())?;
         Ok(Self {
@@ -167,6 +181,7 @@ impl Session {
             wake: config.wake,
             watch_wake: Arc::new(tokio::sync::Notify::new()),
             permit: Some(permit),
+            active: None,
         })
     }
     fn live(&self) -> io::Result<()> {
@@ -191,6 +206,7 @@ impl Session {
         {
             return Err(invalid());
         }
+        self.active = Some(active()?);
         self.phase = Phase::Running(Instant::now());
         Ok(self.input.clone())
     }
@@ -200,11 +216,20 @@ impl Session {
     pub fn request(&self) -> Handle {
         self.input.request
     }
+    pub(crate) fn charge_host_work(&mut self, elapsed: Duration) -> io::Result<()> {
+        self.spent = self.spent.saturating_add(elapsed);
+        self.live()
+    }
+    pub(crate) fn host_work(&self) -> io::Result<tokio::sync::SemaphorePermit<'static>> {
+        self.live()?;
+        active()
+    }
     fn respond(&mut self, response: Response) -> io::Result<Effect> {
         response.validate().map_err(|_| invalid())?;
         self.input.response = Some(response);
         self.input.step = self.input.step.checked_add(1).ok_or_else(invalid)?;
         self.phase = Phase::Ready;
+        self.active.take();
         self.live()?;
         Ok(Effect::Continue)
     }
@@ -235,6 +260,7 @@ impl Session {
         self.input.cache.0.clear();
         self.input.package.snapshot.text.clear();
         self.permit.take();
+        self.active.take();
     }
     async fn accept_inner<G>(
         &mut self,
@@ -248,6 +274,30 @@ impl Session {
         self.phase = Phase::Finished;
         self.live()?;
         output.validate(&self.input).map_err(|_| invalid())?;
+        if !self
+            .definition
+            .has(crate::declaration::Capability::DocumentRead)
+        {
+            if let Intent::Finish {
+                result: Some(result),
+                ..
+            } = &output.intent
+            {
+                if !matches!(result.as_ref(), service::ResultSet::Closed)
+                    && !matches!(result.as_ref(),service::ResultSet::Presentation(presentation) if presentation.annotations.is_empty() && presentation.quick_list.as_ref().is_none_or(|list|list.items.iter().all(|item|matches!(item.action,service::Action::Callback{..}))))
+                {
+                    return Err(denied());
+                }
+            }
+        }
+        if usize::from(self.input.step) + 1 >= broker::MAX_CALLBACKS
+            && !matches!(output.intent, Intent::Finish { .. })
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::OutOfMemory,
+                "Broker continuation limit reached.",
+            ));
+        }
         self.input.cache = output.cache;
         let intent = match output.intent {
             Intent::WaitChanges { watch } => return self.wait_changes(watch, authority).await,
@@ -265,6 +315,7 @@ impl Session {
                 return Ok(Effect::Finished {
                     transaction,
                     result,
+                    cache: std::mem::take(&mut self.input.cache),
                 })
             }
             Intent::Discover { scope, query } => {
@@ -441,6 +492,7 @@ impl Session {
                 self.bytes = budget.remaining_bytes();
                 self.spent += started.elapsed();
                 self.phase = Phase::Review(plan.id());
+                self.active.take();
                 return Ok(Effect::Review(plan));
             }
             Intent::Watch { scope } => {
@@ -517,6 +569,7 @@ impl Session {
         id: Handle,
         mut authority: impl FnMut() -> io::Result<G>,
     ) -> io::Result<Effect> {
+        self.active.take();
         let waiting = async {
             loop {
                 let watch = self.watches.get(&id).ok_or_else(denied)?;
@@ -536,6 +589,7 @@ impl Session {
             result = tokio::time::timeout(Duration::from_secs(30),waiting) => result.map_err(|_|io::Error::new(io::ErrorKind::TimedOut,"Workspace watch expired while idle."))??,
         }
         self.live()?;
+        self.active = Some(active()?);
         let _guard = authority()?;
         let started = Instant::now();
         let mut budget = Budget::new(
@@ -579,6 +633,14 @@ impl Session {
     pub fn prepare_review<G>(
         &mut self,
         plan: &Plan,
+        authority: impl FnMut() -> io::Result<G>,
+    ) -> io::Result<crate::journal::Journal> {
+        let _active = self.host_work()?;
+        self.prepare_review_in_slot(plan, authority)
+    }
+    pub(crate) fn prepare_review_in_slot<G>(
+        &mut self,
+        plan: &Plan,
         mut authority: impl FnMut() -> io::Result<G>,
     ) -> io::Result<crate::journal::Journal> {
         self.live()?;
@@ -603,6 +665,15 @@ impl Session {
         journal
     }
     pub fn apply_review<G>(
+        &mut self,
+        plan: &Plan,
+        journal: &crate::journal::Journal,
+        authority: impl FnMut() -> io::Result<G>,
+    ) -> io::Result<Effect> {
+        let _active = self.host_work()?;
+        self.apply_review_in_slot(plan, journal, authority)
+    }
+    pub(crate) fn apply_review_in_slot<G>(
         &mut self,
         plan: &Plan,
         journal: &crate::journal::Journal,
@@ -643,6 +714,11 @@ impl Session {
         }
         result
     }
+}
+fn active() -> io::Result<tokio::sync::SemaphorePermit<'static>> {
+    ACTIVE
+        .try_acquire()
+        .map_err(|_| io::Error::new(io::ErrorKind::WouldBlock, "Extension broker is busy."))
 }
 impl Drop for Session {
     fn drop(&mut self) {

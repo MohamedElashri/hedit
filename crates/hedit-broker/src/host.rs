@@ -13,16 +13,25 @@ use std::{
     sync::{atomic::AtomicBool, Arc, Mutex},
     time::Duration,
 };
-static ADMISSION: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+static ADMISSION: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(16);
 /// Resolve the exact installed source, scope and policy generation under a
 /// shared disclosure lock. The returned file retains that lock. Cancellation
 /// must precede exclusive policy mutation. Never build this callback from Lua.
 pub type Authority = dyn Fn(&AtomicBool) -> io::Result<File> + Send + Sync;
+/// The editor validates and freezes affected buffers on this host's I/O thread.
+/// The returned owner performs reconciliation and unfreezes on Drop, including
+/// errors after a partial journal effect. It is never transferred to the UI.
+pub trait WorkspaceCommit: Send {
+    fn applied(&mut self) {}
+}
+pub type PrepareCommit =
+    dyn Fn(&Arc<Plan>, &AtomicBool) -> io::Result<Box<dyn WorkspaceCommit>> + Send + Sync;
 pub enum Event {
     Review(Arc<Plan>),
     Finished {
         transaction: Option<sdk::Transaction>,
         result: Option<Box<service::ResultSet>>,
+        cache: sdk::Storage,
     },
     Failed(FailureCode),
 }
@@ -63,6 +72,22 @@ impl Host {
     pub fn start(
         setup: impl FnOnce(Arc<Cancel>) -> io::Result<Config> + Send + 'static,
         authority: Arc<Authority>,
+        wake: Arc<dyn Fn() + Send + Sync>,
+    ) -> io::Result<Self> {
+        Self::start_inner(setup, authority, None, wake)
+    }
+    pub fn start_scoped(
+        setup: impl FnOnce(Arc<Cancel>) -> io::Result<Config> + Send + 'static,
+        authority: Arc<Authority>,
+        prepare: Arc<PrepareCommit>,
+        wake: Arc<dyn Fn() + Send + Sync>,
+    ) -> io::Result<Self> {
+        Self::start_inner(setup, authority, Some(prepare), wake)
+    }
+    fn start_inner(
+        setup: impl FnOnce(Arc<Cancel>) -> io::Result<Config> + Send + 'static,
+        authority: Arc<Authority>,
+        prepare: Option<Arc<PrepareCommit>>,
         wake: Arc<dyn Fn() + Send + Sync>,
     ) -> io::Result<Self> {
         let permit = ADMISSION.try_acquire().map_err(|_| {
@@ -120,6 +145,7 @@ impl Host {
                         &mut session,
                         &thread_cancel,
                         authority,
+                        prepare,
                         receiver,
                         &thread_mailbox,
                     ))
@@ -198,6 +224,7 @@ async fn run(
     session: &mut Session,
     cancel: &Arc<Cancel>,
     authority: Arc<Authority>,
+    prepare: Option<Arc<PrepareCommit>>,
     mut decisions: tokio::sync::mpsc::Receiver<Decision>,
     mailbox: &Mailbox,
 ) -> io::Result<Event> {
@@ -233,10 +260,12 @@ async fn run(
             Effect::Finished {
                 transaction,
                 result,
+                cache,
             } => {
                 return Ok(Event::Finished {
                     transaction,
                     result,
+                    cache,
                 })
             }
             Effect::Review(plan) => {
@@ -254,8 +283,19 @@ async fn run(
                     ));
                 }
                 if decision.accept {
-                    let journal = session.prepare_review(&plan, || authority(cancel.flag()))?;
-                    session.apply_review(&plan, &journal, || authority(cancel.flag()))?;
+                    let _active = session.host_work()?;
+                    let started = std::time::Instant::now();
+                    let mut buffers = prepare
+                        .as_ref()
+                        .map(|prepare| prepare(&plan, cancel.flag()))
+                        .transpose()?;
+                    session.charge_host_work(started.elapsed())?;
+                    let journal =
+                        session.prepare_review_in_slot(&plan, || authority(cancel.flag()))?;
+                    session.apply_review_in_slot(&plan, &journal, || authority(cancel.flag()))?;
+                    if let Some(buffers) = &mut buffers {
+                        buffers.applied();
+                    }
                 } else {
                     session.discard_review(&plan)?;
                 }

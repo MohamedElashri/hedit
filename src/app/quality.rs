@@ -1435,6 +1435,10 @@ impl HeditApp {
         self.quality.file_action = Some((path, operation));
     }
     pub(super) fn perform_file_action(&mut self, ctx: &egui::Context) {
+        if let Err(error) = self.workspace.editor.check_membership_writable() {
+            self.error = Some(error);
+            return;
+        }
         let Some((path, operation)) = self.quality.file_action.take() else {
             return;
         };
@@ -1497,7 +1501,10 @@ impl HeditApp {
                         .as_ref()
                         .is_some_and(|p| Path::new(p).starts_with(&path))
                     {
-                        doc.preserve_as_unsaved();
+                        if let Err(error) = doc.preserve_as_unsaved() {
+                            self.error = Some(error);
+                            return;
+                        }
                     }
                 }
             }

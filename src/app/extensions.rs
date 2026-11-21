@@ -1,12 +1,14 @@
 //! Local extension manifests contribute commands to the Command Palette.
 mod activity;
 mod authority;
+mod broker;
 mod catalog;
 mod distribution;
 mod lua;
 mod manager;
 mod manifest;
 mod options;
+mod presentation;
 mod services;
 mod templates;
 
@@ -16,6 +18,7 @@ use hedit::intelligence;
 pub(super) use hedit::plugin_options::valid_command_id;
 use std::path::Path;
 
+pub(super) use broker::{BrokerCommand, Deferred as DeferredEvent, Refresh as WorkspaceRefresh};
 pub(crate) use distribution::run_cli as run_plugin_cli;
 pub(super) use lua::LuaTransform;
 pub(super) use manager::Manager;
@@ -100,14 +103,21 @@ impl HeditApp {
                     ExtensionAction::NewFile { .. } | ExtensionAction::Theme(_) => available,
                     ExtensionAction::Language(_) => editable,
                     ExtensionAction::Lua(ref plugin) => {
-                        editable
-                            && plugin.provider.as_ref().is_none_or(|p| {
-                                p.events
-                                    .contains(&crate::plugin_runtime::service::Trigger::Manual)
-                            })
-                            && (selection || plugin.sdk)
-                            && self.workspace.remote.is_none()
+                        (if plugin.broker.as_ref().is_some_and(|broker| {
+                            !broker.has(hedit_broker::declaration::Capability::DocumentRead)
+                        }) {
+                            available
+                        } else {
+                            editable && self.workspace.remote.is_none()
+                        }) && plugin.provider.as_ref().is_none_or(|p| {
+                            p.events
+                                .contains(&crate::plugin_runtime::service::Trigger::Manual)
+                        }) && (selection || plugin.sdk)
                             && self.lua_transform.is_none()
+                            && self
+                                .broker_command
+                                .as_ref()
+                                .is_none_or(|command| command.idle())
                             && crate::plugin_runtime::SUPPORTED
                     }
                 };

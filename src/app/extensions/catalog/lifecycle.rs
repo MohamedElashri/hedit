@@ -1,6 +1,6 @@
 //! Review a snapshot before changing files in the user's extension directory.
 use super::{
-    advance_one_time_epoch, change_lock, disabled, invalidate_lua_grants, read, Catalog, Grants,
+    advance_one_time_epoch, disabled, invalidate_lua_grants, permissions, read, Catalog, Grants,
     DISABLED_FILE, GRANTS_FILE,
 };
 use crate::app::extensions::{
@@ -182,6 +182,7 @@ pub(in crate::app::extensions) struct ImportPreview {
     pub(in crate::app::extensions) lua: bool,
     pub(in crate::app::extensions) sdk: bool,
     pub(in crate::app::extensions) storage: bool,
+    pub(in crate::app::extensions) brokers: BTreeMap<String, hedit_broker::declaration::Definition>,
     pub(in crate::app::extensions) digest: String,
     pub(in crate::app::extensions) release: Option<Release>,
     script_digests: BTreeMap<String, String>,
@@ -221,6 +222,15 @@ impl ImportPreview {
                 .capabilities
                 .as_ref()
                 .is_some_and(|c| c.contains(&manifest::Permission::PrivateStorage)),
+            brokers: manifest
+                .lua_command_labels()
+                .filter_map(|(id, _)| {
+                    manifest
+                        .broker(&id)
+                        .cloned()
+                        .map(|definition| (id, definition))
+                })
+                .collect(),
             digest: manifest::digest(&text),
             release,
             script_digests: manifest.script_digests(),
@@ -322,7 +332,7 @@ impl InstallReview {
         if self.requires_publisher_confirmation() && !self.publisher_confirmed {
             return Err("Confirm the publisher key before installing this bundle.".into());
         }
-        let _lock = change_lock(config)?;
+        let _lock = permissions::mutation_lock(config)?;
         if self.preview.change(config)? != self.change {
             return Err(
                 "The installed extension changed. Choose the file again to review it.".into(),
@@ -375,7 +385,7 @@ pub(in crate::app::extensions) fn uninstall(
     config: &Path,
     installed: &InstalledManifest,
 ) -> Result<Catalog, String> {
-    let _lock = change_lock(config)?;
+    let _lock = permissions::mutation_lock(config)?;
     let directory = extensions_dir(config)?;
     if installed.path.parent() != Some(directory.as_path())
         || installed
@@ -396,7 +406,7 @@ pub(in crate::app::extensions) fn uninstall(
 pub(in crate::app::extensions) fn reset_unreadable_approvals(
     config: &Path,
 ) -> Result<Catalog, String> {
-    let lock = change_lock(config)?;
+    let lock = permissions::mutation_lock(config)?;
     if Grants::read(config).is_ok() {
         return Err("Lua approvals changed. Reload extensions before resetting them.".into());
     }
@@ -432,7 +442,7 @@ fn verify_installed(reviewed: &InstalledManifest) -> Result<(), String> {
     Ok(())
 }
 
-fn sync_directory(path: &Path) -> Result<(), String> {
+pub(super) fn sync_directory(path: &Path) -> Result<(), String> {
     #[cfg(unix)]
     fs::File::open(path)
         .and_then(|directory| directory.sync_all())

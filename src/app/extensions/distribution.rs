@@ -221,7 +221,7 @@ fn authoring_manifest(path: &Path, original: &str) -> Result<String, String> {
         serde_json::from_str(original).map_err(|error| error.to_string())?;
     let sdk = fields
         .get("api_version")
-        .is_some_and(|v| matches!(serde_json::from_str::<u32>(v.get()).ok(), Some(3 | 4)));
+        .is_some_and(|v| matches!(serde_json::from_str::<u32>(v.get()).ok(), Some(3..=5)));
     if !sdk && original.len() as u64 > MAX_MANIFEST_BYTES {
         return Err(format!(
             "Manifest exceeds the {MAX_MANIFEST_BYTES}-byte limit."

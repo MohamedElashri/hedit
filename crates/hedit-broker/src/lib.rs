@@ -15,3 +15,4 @@ pub mod session;
 pub mod declaration;
 pub mod host;
 pub mod recovery_store;
+pub mod state;

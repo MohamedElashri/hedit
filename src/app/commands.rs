@@ -2011,7 +2011,16 @@ impl HeditApp {
             Command::Bookmarks => self.bookmarks_open = true,
             Command::Follow => {
                 let index = self.workspace.active;
-                self.workspace.open[index].follow = !self.workspace.open[index].follow;
+                let followed = !self.workspace.open[index].follow;
+                if let Err(error) = self
+                    .workspace
+                    .editor
+                    .set_followed(self.workspace.open[index].page.info.id, followed)
+                {
+                    self.error = Some(error);
+                    return;
+                }
+                self.workspace.open[index].follow = followed;
                 if self.active().follow {
                     self.load_page(ctx, u64::MAX, true);
                 }
