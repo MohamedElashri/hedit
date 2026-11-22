@@ -1002,7 +1002,6 @@ impl HeditApp {
                 if self.workspace_header(ui, false) == Some(true) {
                     self.show_git_sidebar(ctx);
                 }
-                self.remote_sidebar_button(ui);
                 ui.add_space(8.0);
                 ui.spacing_mut().item_spacing.y = 0.0;
                 if ui

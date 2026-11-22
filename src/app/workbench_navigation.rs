@@ -178,7 +178,7 @@ impl HeditApp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::tests::{click_at, frame_size};
+    use crate::app::tests::{click_at, frame_size, text_rect};
     fn app() -> (tempfile::TempDir, egui::Context, HeditApp) {
         let dir = tempfile::tempdir().unwrap();
         let (workspace, _) = Workspace::restore(dir.path().join("session")).unwrap();
@@ -209,6 +209,10 @@ mod tests {
             frame_size(&ctx, &mut app, vec![], size);
         }
         let out = frame_size(&ctx, &mut app, vec![], size);
+        assert!(!out
+            .shapes
+            .iter()
+            .any(|s| text_rect(&s.shape, "Remote Explorer").is_some()));
         let files = icon(&out, &ctx, Icon::Files);
         click_at(&ctx, &mut app, files.center(), size);
         assert!(!app.settings.show_sidebar);
@@ -225,6 +229,10 @@ mod tests {
         assert_eq!(app.sidebar, Sidebar::SourceControl);
         assert!(!app.source_control.open);
         let out = frame_size(&ctx, &mut app, vec![], size);
+        assert!(!out
+            .shapes
+            .iter()
+            .any(|s| text_rect(&s.shape, "Remote Explorer").is_some()));
         click_at(&ctx, &mut app, icon(&out, &ctx, Icon::Files).center(), size);
         assert!(!app.source_control.open);
         assert_eq!(app.active().page.text, "Keep this unsaved note");

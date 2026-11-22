@@ -1818,8 +1818,9 @@ mod tests {
     }
 
     #[test]
-    fn remote_explorer_is_available_from_the_sidebar_and_filters_hosts() {
+    fn remote_explorer_is_available_from_the_activity_bar_and_filters_hosts() {
         use crate::app::tests::text_rect;
+        use hedit::icons::Icon;
         let (_dir, ctx, mut app) = app();
         let size = egui::vec2(720.0, 480.0);
         for _ in 0..3 {
@@ -1829,8 +1830,13 @@ mod tests {
         let rect = output
             .shapes
             .iter()
-            .find_map(|s| text_rect(&s.shape, "Remote Explorer"))
-            .unwrap();
+            .find_map(|s| match &s.shape {
+                egui::Shape::Mesh(mesh) if Icon::Remote.matches_texture(&ctx, mesh.texture_id) => {
+                    Some(mesh.calc_bounds())
+                }
+                _ => None,
+            })
+            .expect("visible Remote Explorer activity icon");
         for pressed in [true, false] {
             frame(
                 &ctx,
