@@ -100,6 +100,15 @@ egui_commonmark = { path = "vendor/egui_commonmark" }
 # Select Ghostty's required Zig compiler for normal Cargo and Make builds.
 libghostty-vt-sys = { path = "vendor/libghostty-vt-sys" }
 
+[profile.dev]
+# Keep file/line backtraces without retaining full type data or incremental IR.
+debug = "line-tables-only"
+incremental = false
+
+[profile.debugging]
+inherits = "dev"
+debug = 2
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

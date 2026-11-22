@@ -28,6 +28,51 @@ Launches detach after window readiness; later errors go to the session's
 `hedit.log`. Isolate GUI tests with a fresh session and temporary XDG
 config/data/cache/state roots.
 
+## Build storage and cleanup
+
+Development and test builds keep file/line backtraces and disable incremental
+compilation to limit disk growth. Full variable/type debugging is opt-in:
+
+```sh
+make dev
+make run PROFILE=debugging
+make dev SHARED_BUILD=1
+```
+
+`SHARED_BUILD=1` shares Cargo intermediates in the primary checkout's
+`target/cargo-build/` across worktrees. Final executables, signed helpers, test
+fixtures and reports stay in each worktree. Cargo serializes builds that use the
+same cache. Use the same toolchain, profile and feature set to maximize reuse.
+For direct Cargo commands, set `CARGO_BUILD_BUILD_DIR` to the path printed by
+`python3 scripts/build-storage.py shared-dir`; avoid sharing the entire target
+directory, which also contains worktree-specific fixtures and reports.
+
+```sh
+make build-space                              # All registered worktrees
+make clean-incremental                        # Keep compiled dependencies
+make clean-dev                                # Discard dev/test compiler output
+make clean-release                            # Discard release/universal slices
+make clean                                    # Both, in the current worktree
+make clean-worktrees                          # Preview all compiler output
+make clean-worktrees CLEAN_KIND=incremental APPLY=1
+make clean-worktrees APPLY=1                   # Discard all worktree compiler output
+make clean-shared APPLY=1                      # Discard shared intermediates
+```
+
+Cleanup retains downloaded toolchains, diagnostics/fuzz/recovery evidence, release
+validation downloads, source and installed files. It refuses busy Cargo profiles
+and symlinked cleanup directories. Broad cleanup defaults to a preview. Explicit
+external caches can be inspected/cleaned with `scripts/build-storage.py --target-dir`.
+Plain `cargo clean` still removes the entire target tree, including those retained
+tools and reports. Review retained validation directories separately when retiring
+an investigation; they are not automatically deleted.
+
+Disabling incremental compilation trades some edit/rebuild speed for disk space.
+Use `CARGO_INCREMENTAL=1 make dev` when that cache is worthwhile, then clear it
+afterwards. Routine development builds only the host architecture; `make macos`
+remains the universal release build. Prefer focused crate tests while iterating,
+and run the full platform checks before submitting application changes.
+
 ## Checks
 
 Run `make static`, `make clippy`, and the test target for your platform before
@@ -527,7 +572,7 @@ dark/light names describe their intended background.
 ## Documentation website
 
 The [documentation site](https://melashri.net/hedit/) uses Nida with a local minimal
-theme. The build splits this guide, the user guide, and plugin references into web
+theme. The build splits the user guide and plugin references into web
 pages without maintaining duplicate prose. Edit the original Markdown for shared
 content, or `website/content/` for web tutorials. **Edit this page** links to the
 canonical source. Release versions come from `Cargo.toml`.
