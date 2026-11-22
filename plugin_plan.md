@@ -490,6 +490,14 @@ Initial acceptance targets, to calibrate and lock on documented reference machin
 | Idle behavior | No active plugin worker for an unused command; idle services stop or wait without a periodic UI polling requirement attributable to the plugin. |
 | Failure behavior | Every operation has a cancellation/deadline policy; repeated failures trigger bounded backoff or disablement instead of retry storms. |
 
+Reference calibration on the M1 Mac scopes the 5% CPU-frame comparison to
+interleaved disabled/native views under common background load, with balanced
+order and separate A/A controls. Unpaired long-block runs showed contradictory
+percentage changes without production changes, so they remain process-cost
+evidence rather than a reliable UI-overhead estimate. This refines the controlled
+workload, not the numerical target or security/resource policy. It does not
+promise 5% whole-system CPU, physical input or GPU latency overhead.
+
 Do not claim these numeric targets are current measurements or cross-editor
 benchmarks. If calibration changes a target, record the workload, evidence, and
 reason before accepting the feature. Keep benchmarks reproducible and store raw
@@ -569,13 +577,13 @@ stage gates, with explicit remaining limitations.
   native/package validation, and recorded performance baseline.
 - [x] Stage 2: language/event/presentation interfaces, safe service lifecycle,
   bounded sustained workloads, and native service-policy validation.
-- [ ] Stage 3: scoped workspace/tool/network services, recoverable multi-file
+- [x] Stage 3: scoped workspace/tool/network services, recoverable multi-file
   behavior, reference integrations, and native enforcement across supported OSes.
-- [ ] Public SDK/version/deprecation policy and author tooling are maintained.
-- [ ] Capability review, revocation, stop controls, and activity reporting are clear.
-- [ ] Threat model, conformance tests, fuzzing, performance evidence, and package
+- [x] Public SDK/version/deprecation policy and author tooling are maintained.
+- [x] Capability review, revocation, stop controls, and activity reporting are clear.
+- [x] Threat model, conformance tests, fuzzing, performance evidence, and package
   smoke tests cover every shipped capability and worker role.
-- [ ] Remaining gaps are documented by capability; there is no claim of Sublime
+- [x] Remaining gaps are documented by capability; there is no claim of Sublime
   package compatibility or unrestricted access.
 
 ## Implementation status
@@ -626,49 +634,87 @@ server compatibility.
 | Broker and effects | Strict malformed/duplicate/truncated/foreign replies; grant/revision/root identity changes; source and document lease closure; recoverable partial failure; policy recheck around disclosure and effects; no implicit failure restart. |
 | Author/API | Independent manifest schema validation, legacy/SDK 1–3 conformance, exact offline SDK 3 intent/response transcripts, installed source/resource grants and real JSON filter/project-LSP requests. |
 | Shared codecs | Final shared-codec AddressSanitizer campaign: 2,571,791 LSP/data JSON inputs and 1,092,470 SDK inputs without a finding (run 44957425023). Source archives, hashes, logs and corpus retained. This complements native policy tests. |
-| Performance | Optimized M1 macOS run at `8d0ff5b`: 3,600 frames per mode over three alternating trials, near-64-KiB Unicode/CRLF JSON and three native LSP profiles. Idle p95 1,188 → 1,223 µs (+2.9%); typing p95 1,158 → 1,188 µs (+2.6%), both below the 5% target. 178 results published, no provider failures or retained native run payloads after Stop; UI Stop ≤86 µs, cleanup ≤95 ms. Broker phase results below. |
-| Distribution | Native image/import/runtime checks pass on the five supported native CI runners. The corrected macOS updater package fixture passes locally; final universal and full platform package runs are in progress. |
+| Performance | Optimized M1 macOS run at `be28619`: 3,600 frames per mode over three alternating trials, real Unicode/CRLF edits and three native LSP profiles. Paired incremental UI costs under common background load: idle p95 1,292 → 1,340 µs (+3.7%); typing p95 1,450 → 1,494 µs (+3.0%). Both satisfy the calibrated 5% incremental-UI target; A/A controls stay within ±5%. 132 results published; no provider failures or retained native run payloads after Stop. |
+| Distribution | Native confinement on all five runners, full macOS/Linux/Windows package CI and universal macOS assembly/extracted execution passed on production head `d8cec46`. The universal archive/signatures/slices and all shipped SDK/scoped fixtures are also checked on this Mac. |
 
-The earlier editing/provider baseline also passed universal macOS packaging and
-native CI. Its controlled egui probe recorded at most about 2.1% idle p95
-CPU-frame overhead across the measured workloads. The final scoped-service
-campaign above measures the later native owner/broker path separately.
 Reproduction commands and measurement limitations are in the
 [validation guide](docs/plugin-broker.md#external-tools-and-validation).
 
 ### Measurement details
 
-On this Apple M1 / 16-GiB Mac, the release workload measured 60-KiB-class JSON
-with three approved native LSP profiles. Across 14,400 CPU-frame samples, native
-idle p99 was 1,656 µs versus 1,936 µs disabled, and active typing p99 was 1,503 µs
-versus 1,722 µs disabled. UI allocation p95 was 746 versus 718 at idle, and 760
-versus 722 while typing. Requested bytes p95 were 199,001 versus 198,056 at idle,
-and 205,659 versus 198,170 while typing. These are allocation traffic, not retained
-heap measurements.
+The final run used an Apple M1 / 16-GiB Mac, the production release optimization
+profile with default features disabled, a near-64-KiB Unicode/CRLF JSON document
+and three approved native LSP profiles. Foreground QoS is explicit and recorded.
+Two independent editor views alternate within each 16-ms pair, with order
+balanced for ordinary, edit and native-request frames and separate
+disabled/disabled A/A controls. The native/disabled pair shares native
+background load: its percentages measure incremental UI costs, not whole-process
+contention. Each typing workload committed 120 real edits; text length and
+document revision assertions verify every input event. There are 14,400
+native/control CPU-frame samples plus 14,400 A/A samples. A/A p95 differences
+were −3.1% idle and +1.6% typing; all controls and UI comparisons are within 5%.
 
-Host physical footprint at the end of each active typing workload was
-17.7–19.4 MiB; one trial grew about 0.20 MiB, the other two decreased. The
-twenty-second-class trials and Stop checks are bounded-load evidence, not a
-proof of indefinite leak freedom. Host CPU and footprint exclude child usage.
-Native child limits have their separate adversarial enforcement tests. No
-physical input, GPU, display-latency or cross-editor benchmark claim is made.
+| Workload | Disabled p95 | Native p95 | Difference |
+| --- | --- | --- | --- |
+| Idle | 1,292 µs | 1,340 µs | +3.7% |
+| Typing | 1,450 µs | 1,494 µs | +3.0% |
 
-The 25-trial optimized broker campaign used two small Unicode/CRLF files and
-100 actual confined callbacks. At p95, input copies took 3 µs, reply validation
-1 µs and broker I/O 640 µs, below the one-millisecond bookkeeping target. Complete
-callbacks were 31.3 ms p95; the first cold callback was 383 ms. Recoverable journal
-preparation was 32.2 ms p95 and application 58.1 ms p95. Those off-UI filesystem
-phases include durable flushes and are reported separately from bookkeeping and
-callback transport. This is not a large-workspace or network-latency benchmark.
+Idle UI allocation p95 was 731 versus 724 disabled; requested bytes were 379,086
+versus 378,747. These are UI-thread allocation traffic, not retained heap.
+Snapshot capture now checks the borrowed document length before copying and
+avoids a redundant copy. A 1-MiB rejection regression previously allocated
+1,048,941 bytes; it now remains below 64 KiB. The idle optimization removes
+per-provider whole-document selection scans, repeated language detection and
+metadata-string allocation from revision checks.
 
-Raw samples, numeric phase activity, source archives/hashes, compiler/build/
-hardware metadata and the UI test executable hash are retained under
+The native workloads observed UI Stop at most 85 µs and full native cleanup at
+most 122.0 ms. No run payloads remained after Stop. Initial approved-provider
+results after image import had a median of 208.0 ms and a maximum of 1,429.3 ms
+(n=9, including native startup and fresh Lua callbacks). The cold outlier is
+retained as startup-tail evidence outside the steady-state frame population;
+these nine observations are not a latency guarantee. Host physical footprint at
+the end of active typing pairs was 29.7–34.6 MiB for both views together.
+
+The 25-trial optimized broker campaign used two small Unicode/CRLF files and 100
+confined callbacks. Input copies were 3 µs p95, reply validation 1 µs and broker
+I/O 653 µs, below the one-millisecond bookkeeping target. Broker I/O p99/max
+were 679/683 µs; these off-UI filesystem tails are retained. Complete callbacks
+were 27.6 ms p95; the first cold callback was 390.8 ms. Recoverable journal
+preparation was 30.1 ms p95 and application 50.8 ms p95. Those off-UI filesystem
+phases include durable flushes and are separate from bookkeeping.
+
+Measurements are elapsed time in the egui CPU path. Process CPU/footprint are
+shared by each pair and exclude children; they cannot be attributed to one view.
+They do not cover physical input, GPU/terminal/display latency,
+large-workspace/network latency or total process-tree memory. OS scheduling and
+CPU-frequency changes affect comparisons; a lower native typing time is not
+evidence that plugins accelerate the editor. Twenty-second-class trials and
+bounded Stop checks do not prove indefinite leak freedom.
+
+Raw samples, source archives/hashes, build/toolchain/hardware metadata, activity
+and the UI test executable hash are retained under
 `target/plugin-validation/final-ui` and `target/plugin-validation/final-broker`.
-The measured source was clean at `8d0ff5b`. Subsequent documentation and
-install/updater-fixture corrections do not change the measured runtime path.
+The measured source was clean at `be28619`. The superseded probe without typing
+assertions is not acceptance evidence. Long-block runs are retained, including
+the +5.05% idle result that triggered the scan/allocation fix. Subsequent
+unchanged-runtime long-block baselines varied from 1.1 to 2.9 ms p95 and yielded
+contradictory relative timings even with foreground QoS. A first paired run at
+the final production head reported +0.45% idle and −0.61% typing, but its typing
+A/A control differed by −7.8%. Investigation found that even edit/request
+cadences always measured the same view first on edit frames. The final probe
+balances those events too and retains that failed control campaign. Paired/A-A
+calibration isolates UI overhead; it does not establish a universal 5%
+whole-system bound. Unpaired process CPU/footprint and all timing distributions
+remain available alongside the paired report. Sanitizer source/corpus/logs and
+native/CI records are in `target/plugin-validation/final-asan` and
+`target/plugin-validation/final-checks`.
 
 ### Deliberate limits
 
+- Host UI uses bounded native widgets and typed actions. Arbitrary HTML panels,
+  embedded browser runtimes and unrestricted internal commands are unsupported.
+- Language packs use a bounded keyword/comment/string scanner; complex regex or
+  TextMate grammar engines require separate designs.
 - No Sublime package compatibility, editor-internal object API, arbitrary shell,
   environment, sockets, credentials or unrestricted native code loading.
 - Workspace plans edit existing eligible text files only. Create/delete/rename
@@ -686,10 +732,21 @@ install/updater-fixture corrections do not change the measured runtime path.
 
 ### Final validation status
 
-Implementation is complete. A deterministic contention regression found and
-fixed transient document-lock cancellations without granting unverified
-authority. The final sustained measurement is being repeated with explicit
-typing/revision assertions. Full-feature macOS regression, documentation
-verification and corrected universal/full platform package CI are being checked. The unchecked completion items above
-remain open until those results are reviewed. No capability uses a weaker
-sandbox or fallback to pass a gate.
+All three planned stages are implemented and validated within the documented
+bounds. Production head `d8cec46` passed full-feature native macOS regression,
+strict lint, all five native-tool runners, Windows x64/ARM64 Lua confinement,
+Linux/macOS/Windows package CI, SSH/crash-recovery and universal macOS
+assembly/extracted acceptance. The clean source at `be28619` passed the local
+paired/A-A workload. Production source also passed 113 local extension tests and
+strict all-target lint. The final memory regression proves oversized provider
+snapshots are rejected before allocating a document copy; valid snapshots make
+one copy. The prior contention regression verifies bounded authorization
+waiting, cancellation and stale-revision denial. The benchmark-only follow-up
+changes its order calibration and public measurement guide. A source comparison
+confirms no production code changed after the universal build. The final
+plan-only commit records this evidence; it does not change runtime or packaged
+resources.
+
+The work remains in focused draft PRs for review. No PR was merged and no
+release was published. Future capabilities listed above require their own
+authority, native enforcement and acceptance review.
