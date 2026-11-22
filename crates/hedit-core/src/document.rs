@@ -1151,6 +1151,9 @@ impl Document {
         doc.check_original()?;
         Ok(doc)
     }
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
     pub fn info(&self) -> Info {
         Info {
             id: self.id,

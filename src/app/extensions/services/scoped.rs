@@ -58,6 +58,8 @@ pub(super) struct Tick<'a> {
     pub config: &'a std::path::Path,
     pub monitor: &'a policy::Monitor,
     pub target: Option<&'a lua::Target>,
+    pub language: hedit::syntax::Language,
+    pub selection: bool,
     pub manual: Option<&'a str>,
     pub saved: Option<(u64, u64)>,
     pub origin: Option<&'a (u64, u64, String)>,
@@ -151,11 +153,10 @@ impl Scoped {
                 .ok()
         });
         let info = &app.active().page.info;
-        let selection = app.selections().iter().any(|s| s.anchor != s.head);
         let eligible = entry.contribution.when.matches(
-            app.active().language(),
+            tick.language,
             info.path.as_ref().map(|_| info.name.as_str()),
-            selection,
+            tick.selection,
         ) && (!reads || lifetime.is_some());
         if self
             .run

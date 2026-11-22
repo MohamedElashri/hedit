@@ -110,7 +110,7 @@ impl Context {
             return Some(false);
         };
         let result = match document.try_lock() {
-            Ok(document) => Some(document.info().revision == target.revision()),
+            Ok(document) => Some(document.revision() == target.revision()),
             Err(std::sync::TryLockError::WouldBlock) => None,
             Err(std::sync::TryLockError::Poisoned(_)) => Some(false),
         };

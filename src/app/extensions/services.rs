@@ -555,6 +555,8 @@ impl Services {
                     config: &config,
                     monitor: &controller.monitor,
                     target: target.as_ref(),
+                    language,
+                    selection,
                     manual: manual.as_deref(),
                     saved,
                     origin: self.origin.as_ref(),
