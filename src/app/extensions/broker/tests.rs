@@ -1,7 +1,10 @@
 use super::*;
 use crate::app::extensions::manifest::{self, ExtensionAction};
 #[cfg(target_os = "macos")]
-use crate::app::{extensions::tests::app_with, tests::frame};
+use crate::app::{
+    extensions::tests::{app_with, prepare_native},
+    tests::frame,
+};
 fn install(config: &std::path::Path, source: &str, capabilities: serde_json::Value) {
     let directory = config.join("extensions");
     std::fs::create_dir_all(&directory).unwrap();
@@ -55,31 +58,7 @@ fn pump(app: &mut HeditApp, ctx: &egui::Context, ready: impl Fn(&HeditApp) -> bo
         std::thread::sleep(Duration::from_millis(3));
     }
 }
-#[cfg(target_os = "macos")]
-fn prepare_native() {
-    static PREPARED: OnceLock<()> = OnceLock::new();
-    PREPARED.get_or_init(|| {
-        let executable = std::env::current_exe().unwrap();
-        let directory = executable.parent().unwrap();
-        let editor = directory
-            .ancestors()
-            .map(|parent| parent.join("hedit"))
-            .find(|path| path.is_file())
-            .expect("Build the editor first with make test-macos.");
-        let status = std::process::Command::new("python3")
-            .arg(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/scripts/macos_plugin_helper.py"
-            ))
-            .arg("--editor")
-            .arg(editor)
-            .arg("--output")
-            .arg(directory.join("hedit-plugin.app"))
-            .status()
-            .unwrap();
-        assert!(status.success());
-    });
-}
+
 #[test]
 fn api_five_rejects_legacy_authority_and_requires_exact_resource_approval() {
     let config = tempfile::tempdir().unwrap();

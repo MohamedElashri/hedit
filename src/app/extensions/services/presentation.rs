@@ -20,7 +20,7 @@ impl Services {
                     .max_height(520.0)
                     .show(ui, |ui| {
                         for entry in &mut self.entries {
-                            ui.push_id(&entry.contribution.id, |ui| {
+                            ui.push_id(entry.contribution.id.clone(), |ui| {
                                 ui.horizontal(|ui| {
                                     if ui
                                         .selectable_label(
@@ -43,6 +43,9 @@ impl Services {
                                             }
                                             entry.state.resume();
                                             entry.scope = None;
+                                            if let Some(scoped) = &mut entry.scoped {
+                                                scoped.reset();
+                                            }
                                             entry.error = None;
                                         }
                                     } else if ui.button("Stop").clicked() {
@@ -52,6 +55,9 @@ impl Services {
                                                 InvocationOutcome::Cancelled,
                                             );
                                         }
+                                        if let Some(scoped) = &mut entry.scoped {
+                                            scoped.stop(app);
+                                        }
                                         entry.close = None;
                                         entry.ready = None;
                                         entry.choice = None;
@@ -59,7 +65,12 @@ impl Services {
                                         entry.state.stop(now);
                                         self.stopped.insert(entry.contribution.id.clone());
                                     }
-                                    if entry.job.is_some() {
+                                    if entry.job.is_some()
+                                        || entry
+                                            .scoped
+                                            .as_ref()
+                                            .is_some_and(|s| s.running() && !s.reviewing())
+                                    {
                                         ui.spinner();
                                     }
                                 });
@@ -71,6 +82,11 @@ impl Services {
                                     ui.label(error);
                                 }
                                 if selected.as_deref() != Some(entry.contribution.id.as_str()) {
+                                    ui.separator();
+                                    return;
+                                }
+                                if entry.scoped.is_some() {
+                                    scoped::show(entry, app, ctx, ui, now);
                                     ui.separator();
                                     return;
                                 }

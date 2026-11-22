@@ -155,3 +155,12 @@ rejected. See the [visual pack](../examples/extensions/demo-visuals.json).
 These interfaces remain gated by the roadmap's native, sustained-load, and
 package checks. Workspace, tool execution, HTTPS, credentials, multi-file edits,
 and remote documents are separate capabilities; this API grants none of them.
+
+## Experimental scoped providers
+
+The Stage 3 branch also routes API 5 / SDK 3 providers through the scoped broker.
+They reuse these typed provider results and scheduling semantics while declaring
+capabilities per command. Workspace and HTTPS access require separate resource
+review. Document-free presentation providers are manual-only and receive an
+empty snapshot. See the [broker contract](plugin-broker.md#installed-providers)
+for the authority boundary, foreground reserves, and remaining release gates.

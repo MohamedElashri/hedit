@@ -1,6 +1,9 @@
 //! Host-owned extension capabilities. No broker authority is deserialized from Lua.
 mod handle;
 pub mod workspace;
+
+/// Parked watches and previews must leave four contexts for foreground commands.
+pub const MAX_PROVIDER_CONTEXTS: usize = 12;
 pub use handle::Handle;
 pub mod cancel;
 pub mod journal;
