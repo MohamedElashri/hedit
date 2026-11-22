@@ -321,3 +321,26 @@ fn reply_decoder_rejects_excess_edits_before_buffering_or_parsing_their_payload(
     let error = serde_json::from_str::<Reply>(&reply).err().unwrap();
     assert!(error.to_string().contains("too many entries"), "{error}");
 }
+#[test]
+fn newline_normalization_preserves_lone_carriage_returns_and_exact_byte_limits() {
+    for text in [
+        "plain 東京",
+        "a\nb\n",
+        "a\r\nb\r\n",
+        "\r\r\n\r\n\n\r",
+        "🦀\n東京\r\n",
+    ] {
+        for crlf in [false, true] {
+            let lf = text.replace("\r\n", "\n");
+            let expected = if crlf { lf.replace('\n', "\r\n") } else { lf };
+            let edit = Edit {
+                start: 0,
+                finish: 0,
+                text: text.into(),
+            };
+            let (actual, _) = prepare_text_edits("", crlf, &[edit]).unwrap();
+            assert_eq!(actual, expected);
+            assert_eq!(normalized_replacement_bytes(text, crlf), expected.len());
+        }
+    }
+}

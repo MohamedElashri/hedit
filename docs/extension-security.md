@@ -257,3 +257,14 @@ it in the authorized operation; expired receipts produce no effect. Prompt and
 preview dwell hold no authorization lock. The editing SDK's approval handoff uses
 the same receipt policy. Tests cover unpumped/expired/dropped receipts and the
 retention of a consumed guard through its authorized operation.
+
+## Workspace and external-service implementation
+
+The experimental host crate and continuation protocol do not expand installed
+extension authority. Manifest APIs 1–4 still use the contracts above; SDK 3 is
+not available through installation or ordinary command/provider approval.
+Its [broker threat model](plugin-broker.md) describes the scoped file, recovery,
+watch, HTTPS and host-thread boundaries, current limits and remaining gates.
+Native tool declarations currently fail unavailable. Editor grants, buffer and
+recovery UI, tool/LSP enforcement and platform acceptance remain required before
+enabling the corresponding capabilities.

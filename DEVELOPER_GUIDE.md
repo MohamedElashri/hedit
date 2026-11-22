@@ -98,6 +98,7 @@ and display latency. Keep collection/file I/O off the UI thread.
 | Shared document/filesystem/search/Git/build engine | `crates/hedit-core/` |
 | SSH transport, worker, journal, path isolation | `crates/hedit-remote/` |
 | Shared Lua runtime and native sandbox adapters | `crates/hedit-plugin/` |
+| Experimental scoped workspace/service host; not enabled for installed plugins | `crates/hedit-broker/` and [broker design](docs/plugin-broker.md) |
 | Sessions, settings, syntax, editing, updates | `src/` |
 | Native frame loop and feature panels | `src/app.rs`, `src/app/` |
 | Integration tests and SSH workspace driver | `tests/`, `tests/support/` |

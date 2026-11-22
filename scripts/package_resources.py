@@ -11,7 +11,7 @@ DOCUMENTATION_FILES = ['README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md', 'CHAN
                      'examples/extensions/sdk-markdown.json', 'examples/extensions/sdk-markdown.fixtures.json',
                      'examples/extensions/sdk-table.json', 'examples/extensions/sdk-table.fixtures.json',
                      'examples/extensions/document-assist.json', 'examples/extensions/document-assist.fixtures.json',
-                     'docs/plugin-services.md', 'examples/extensions/demo-visuals.json',
+                     'docs/plugin-services.md', 'docs/plugin-broker.md', 'examples/extensions/demo-visuals.json',
                      'examples/extensions/sdk-trim.json', 'examples/extensions/sdk-trim.fixtures.json',
                      'examples/extensions/markdown-task.json',
                      'examples/extensions/markdown-quote.json']

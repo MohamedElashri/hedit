@@ -1,0 +1,1 @@
+{"protocol_version":1,"outcome":{"success":{"request":"ffffffffffffffffffffffffffffffff","step":0,"intent":{"stage_edits":{"scope":"ffffffffffffffffffffffffffffffff","change":{"resource":"ffffffffffffffffffffffffffffffff","version":"ffffffffffffffffffffffffffffffff","edits":[{"start":0,"finish":0,"text":"→ "}]}}},"cache":{}}}}
