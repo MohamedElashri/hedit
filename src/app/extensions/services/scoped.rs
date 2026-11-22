@@ -307,9 +307,9 @@ impl Scoped {
             entry.scope.as_ref()
         };
         let text = if reads && !closing {
-            app.active().page.text.clone()
+            app.active().page.text.as_str()
         } else {
-            String::new()
+            ""
         };
         if text.len() > plugin_runtime::MAX_SELECTION_BYTES {
             return Err("Document exceeds the provider snapshot limit.".into());
@@ -322,9 +322,9 @@ impl Scoped {
             } else {
                 "plain_text"
             },
-            text.clone(),
+            text.to_owned(),
             if reads && !closing {
-                lua::snapshot_selections(&text, &app.selections())
+                lua::snapshot_selections(text, &app.selections())
             } else {
                 vec![plugin_runtime::sdk::Selection { anchor: 0, head: 0 }]
             },
