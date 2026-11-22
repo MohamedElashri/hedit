@@ -38,6 +38,7 @@ class MacPackage(unittest.TestCase):
             arm.write_bytes(b'arm fixture')
             intel.write_bytes(b'intel fixture')
             (root / 'hedit-remote').write_bytes(b'helper fixture')
+            (root / 'hedit-json-tools').write_bytes(b'json fixture')
             project = root / 'source'
             project.mkdir()
             for filename in ['Cargo.toml', 'README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md', 'CHANGELOG.md', 'LICENSE']:
@@ -69,7 +70,7 @@ class MacPackage(unittest.TestCase):
                             if path.is_file():
                                 output.write(path, path.relative_to(app.parent))
                 version = tomllib.loads((packager.ROOT / 'Cargo.toml').read_text())['package']['version']
-                return subprocess.CompletedProcess(arguments, 0, stdout=f'{"hedit-remote" if str(arguments[0]).endswith("/hedit-remote") else "hedit"} {version}\n')
+                return subprocess.CompletedProcess(arguments, 0, stdout=f'{Path(arguments[0]).name if Path(arguments[0]).name in {"hedit-remote", "hedit-json-tools"} else "hedit"} {version}\n')
             with patch.object(packager, 'ROOT', project), patch.object(packager.sys, 'platform', 'darwin'), patch.object(packager.subprocess, 'run', side_effect=run):
                 archive = packager.package(arm, intel, root / 'out')
             with zipfile.ZipFile(archive) as bundle:
@@ -78,6 +79,7 @@ class MacPackage(unittest.TestCase):
                 self.assertIn(info['CFBundleShortVersionString'], archive.name)
                 self.assertEqual(bundle.read('hedit.app/Contents/MacOS/hedit'), b'universal fixture')
                 self.assertEqual(bundle.read('hedit.app/Contents/MacOS/hedit-remote'), b'universal fixture')
+                self.assertEqual(bundle.read('hedit.app/Contents/MacOS/hedit-json-tools'), b'universal fixture')
                 worker = 'hedit.app/Contents/Helpers/hedit-plugin.app/Contents/'
                 self.assertEqual(bundle.read(worker + 'MacOS/hedit'), b'universal fixture')
                 worker_info = plistlib.loads(bundle.read(worker + 'Info.plist'))
@@ -118,6 +120,7 @@ class MacPackage(unittest.TestCase):
             arm.touch()
             intel.touch()
             (root / 'hedit-remote').touch()
+            (root / 'hedit-json-tools').touch()
             output = root / 'out'
             output.mkdir()
             version = tomllib.loads((packager.ROOT / 'Cargo.toml').read_text())['package']['version']

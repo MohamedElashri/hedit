@@ -29,7 +29,15 @@ fn main() {
     let state = State::open(directory.path(), []).unwrap();
     let images = state.tool_store().unwrap();
     let runs = state.tool_runs().unwrap();
-    let binary = Path::new(env!("CARGO_BIN_EXE_hedit-json-tools"));
+    let selected = std::env::var_os("HEDIT_REFERENCE_TOOL");
+    let binary = selected
+        .as_deref()
+        .map(Path::new)
+        .unwrap_or_else(|| Path::new(env!("CARGO_BIN_EXE_hedit-json-tools")));
+    #[cfg(unix)]
+    if let Some(editor) = std::env::var_os("HEDIT_REFERENCE_EDITOR") {
+        hedit_plugin::tool::fixture_launcher(Path::new(&editor)).unwrap();
+    }
     let cancel = AtomicBool::new(false);
     let binding = |protocol: &str, profile: &str, argument: &str| {
         let definition: ToolDefinition = serde_json::from_value(

@@ -16,5 +16,5 @@ harness = false
 
 [dev-dependencies]
 hedit-broker = { path = "../hedit-broker" }
-hedit-plugin = { path = "../hedit-plugin" }
+hedit-plugin = { path = "../hedit-plugin", features = ["test-support"] }
 tempfile = "3"

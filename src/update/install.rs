@@ -147,7 +147,13 @@ impl Installation {
             copy_tree(&package.join(name), &docs.join(name))?;
         }
         copy_tree(&package.join("assets"), &docs.join("assets"))?;
-        let components = match self.kind {
+        for name in ["CHANGELOG.md", "docs", "vendor", "schemas", "examples"] {
+            let source = package.join(name);
+            if source.try_exists().map_err(error)? {
+                copy_tree(&source, &docs.join(name))?;
+            }
+        }
+        let mut components = match self.kind {
             Kind::Installed => vec![
                 (package.join("themes"), PathBuf::from("share/hedit/themes")),
                 (
@@ -160,6 +166,10 @@ impl Installation {
                 ),
                 (docs, "share/doc/hedit".into()),
                 (package.join("hedit-remote"), "bin/hedit-remote".into()),
+                (
+                    package.join("hedit-json-tools"),
+                    "bin/hedit-json-tools".into(),
+                ),
                 (package.join("hedit"), "bin/hedit".into()),
             ],
             Kind::Portable => [
@@ -173,12 +183,21 @@ impl Installation {
                 "install.sh",
                 "hedit.desktop",
                 "hedit-remote",
+                "hedit-json-tools",
                 "hedit",
             ]
             .into_iter()
             .map(|name| (package.join(name), PathBuf::from(name)))
             .collect(),
         };
+        if matches!(self.kind, Kind::Portable) {
+            for name in ["CHANGELOG.md", "docs", "vendor", "schemas"] {
+                let source = package.join(name);
+                if source.try_exists().map_err(error)? {
+                    components.insert(components.len() - 1, (source, PathBuf::from(name)));
+                }
+            }
+        }
         let mut targets = Vec::new();
         // Stage everything before modifying anything. Merge resource trees so
         // additional palettes and unrelated installed documentation are retained.

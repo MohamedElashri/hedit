@@ -2,6 +2,7 @@
 """Package, extract, install, and check the executable in an isolated prefix."""
 import argparse
 import hashlib
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -30,13 +31,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=ROOT / 'target/release/hedit')
     parser.add_argument('--helper', type=Path, default=ROOT / 'target/release/hedit-remote')
+    parser.add_argument('--json-tool', type=Path)
+    parser.add_argument('--native-broker', action='store_true')
     args = parser.parse_args()
+    json_tool = args.json_tool or args.binary.with_name('hedit-json-tools')
     with tempfile.TemporaryDirectory(prefix='hedit-package-smoke-') as work:
         work = Path(work)
         source = work / 'source'
         prepare_source(source)
         subprocess.run([sys.executable, str(source / 'scripts/package-linux.py'),
-                        '--binary', str(args.binary.resolve()), '--helper', str(args.helper.resolve()), '--out-dir', str(work)], check=True)
+                        '--binary', str(args.binary.resolve()), '--helper', str(args.helper.resolve()), '--json-tool', str(json_tool.resolve()), '--out-dir', str(work)], check=True)
         archive = next(work.glob('hedit-*.tar.gz'))
         checksum = archive.with_name(archive.name + '.sha256').read_text().split()[0]
         assert hashlib.sha256(archive.read_bytes()).hexdigest() == checksum
@@ -50,6 +54,7 @@ def main():
         assert result.stdout.strip() == f'hedit {VERSION}', result.stdout
         helper = prefix / 'bin/hedit-remote'
         assert subprocess.check_output([str(helper), '--version'], text=True).strip() == f'hedit-remote {VERSION}'
+        assert subprocess.check_output([str(prefix / 'bin/hedit-json-tools'), '--version'], text=True).strip() == f'hedit-json-tools {VERSION}'
         for relative in ['share/applications/hedit.desktop',
                          'share/icons/hicolor/scalable/apps/hedit.svg',
                          'share/doc/hedit/README.md', 'share/doc/hedit/USER_GUIDE.md',
@@ -74,10 +79,15 @@ def main():
             assert (package / relative).read_bytes() == (ROOT / relative).read_bytes(), relative
             assert (prefix / 'share/doc/hedit' / relative).read_bytes() == (ROOT / relative).read_bytes(), relative
         resources = prefix / 'share/doc/hedit/examples/extensions'
-        for name in ['sdk-markdown', 'sdk-table', 'sdk-trim']:
+        for name in ['sdk-markdown', 'sdk-table', 'sdk-trim', 'scoped-json', 'scoped-rename', 'scoped-markdown-html']:
             subprocess.run([str(prefix / 'bin/hedit'), 'plugin', 'test',
                             str(resources / f'{name}.json'), str(resources / f'{name}.fixtures.json')],
                            check=True, capture_output=True, timeout=30)
+        if args.native_broker:
+            environment = dict(os.environ, HEDIT_REFERENCE_TOOL=str(prefix / 'bin/hedit-json-tools'),
+                               HEDIT_REFERENCE_EDITOR=str(prefix / 'bin/hedit'))
+            subprocess.run(['cargo', 'test', '--locked', '-p', 'hedit-json-tools',
+                            '--test', 'native_reference'], cwd=ROOT, env=environment, check=True)
     print('Linux package checksum, extraction, installation, and executable smoke test passed.')
 
 

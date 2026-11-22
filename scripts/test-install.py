@@ -9,6 +9,7 @@ import subprocess
 import tarfile
 import tempfile
 import unittest
+from package_resources import copy_documentation
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -86,17 +87,11 @@ class ReleaseInstaller(unittest.TestCase):
             binary.write_text('#!/bin/sh\nprintf "hedit 0.1.2\\n"\n')
             binary.chmod(0o755)
             shutil.copy2(binary, stage / "hedit-remote")
+            shutil.copy2(binary, stage / "hedit-json-tools")
             shutil.copy2(ROOT / 'packaging/linux/install.sh', stage / 'install.sh')
             shutil.copy2(ROOT / 'packaging/linux/hedit.desktop', stage / 'hedit.desktop')
-            for filename in ['README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md', 'CHANGELOG.md', 'LICENSE']:
-                shutil.copy2(ROOT / filename, stage / filename)
-            for directory in ['assets', 'themes', 'docs/images']:
-                shutil.copytree(ROOT / directory, stage / directory)
-            for relative in ['vendor/egui_commonmark/PATCH.md', 'vendor/libghostty-vt-sys/PATCH.md',
-                             'docs/extensions.md', 'docs/extension-security.md', 'examples/extensions/markdown-task.json',
-                             'examples/extensions/markdown-quote.json']:
-                (stage / relative).parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(ROOT / relative, stage / relative)
+            copy_documentation(ROOT, stage)
+            shutil.copytree(ROOT / 'themes', stage / 'themes')
             archive = self.fixtures / f'{name}.tar.gz'
             with tarfile.open(archive, 'w:gz') as output:
                 output.add(stage, arcname=name)

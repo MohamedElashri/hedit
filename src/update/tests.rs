@@ -68,6 +68,10 @@ impl Fixture {
             &package.join("hedit-remote"),
             &format!("#!/bin/sh\nprintf 'hedit-remote {VERSION}\\n'\n"),
         );
+        executable(
+            &package.join("hedit-json-tools"),
+            &format!("#!/bin/sh\nprintf 'hedit-json-tools {VERSION}\\n'\n"),
+        );
         let archive = directory.path().join(format!(
             "{}.tar.gz",
             package.file_name().unwrap().to_string_lossy()
@@ -452,6 +456,13 @@ fn production_packager_output_is_accepted_by_updater() {
         &helper,
         &format!(
             "#!/bin/sh\nprintf 'hedit-remote {}\\n'\n",
+            env!("CARGO_PKG_VERSION")
+        ),
+    );
+    executable(
+        &work.path().join("hedit-json-tools"),
+        &format!(
+            "#!/bin/sh\nprintf 'hedit-json-tools {}\\n'\n",
             env!("CARGO_PKG_VERSION")
         ),
     );

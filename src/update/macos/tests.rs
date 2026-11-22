@@ -397,56 +397,32 @@ fn zip_case_aliases_and_size_bombs_are_refused() {
 #[test]
 fn production_macos_package_is_accepted_by_updater() {
     let work = tempfile::tempdir().unwrap();
-    let binary = work.path().join("universal");
     let source = work.path().join("fixture.c");
-    fs::write(
-        &source,
-        format!(
-            "#include <stdio.h>\nint main(void) {{ puts(\"hedit {}\"); return 0; }}\n",
-            env!("CARGO_PKG_VERSION")
-        ),
-    )
-    .unwrap();
-    run(Command::new("/usr/bin/clang")
-        .args(["-arch", "arm64", "-arch", "x86_64"])
-        .arg(&source)
-        .arg("-o")
-        .arg(&binary));
-    let arm = work.path().join("arm64");
-    let intel = work.path().join("intel");
-    for (arch, target) in [("arm64", &arm), ("x86_64", &intel)] {
-        run(Command::new("/usr/bin/lipo")
-            .arg(&binary)
-            .args(["-thin", arch, "-output"])
-            .arg(target));
-    }
-    fs::write(
-        &source,
-        format!(
-            "#include <stdio.h>\nint main(void) {{ puts(\"hedit-remote {}\"); return 0; }}\n",
-            env!("CARGO_PKG_VERSION")
-        ),
-    )
-    .unwrap();
-    let helper_arm = work.path().join("helper-arm64");
-    let helper_intel = work.path().join("helper-intel");
-    for (arch, target) in [("arm64", &helper_arm), ("x86_64", &helper_intel)] {
-        run(Command::new("/usr/bin/clang")
-            .args(["-arch", arch])
-            .arg(&source)
-            .arg("-o")
-            .arg(target));
+    for name in ["hedit", "hedit-remote", "hedit-json-tools"] {
+        fs::write(
+            &source,
+            format!(
+                "#include <stdio.h>\nint main(void) {{ puts(\"{name} {}\"); return 0; }}\n",
+                env!("CARGO_PKG_VERSION")
+            ),
+        )
+        .unwrap();
+        for arch in ["arm64", "x86_64"] {
+            let directory = work.path().join(arch);
+            fs::create_dir_all(&directory).unwrap();
+            run(Command::new("/usr/bin/clang")
+                .args(["-arch", arch])
+                .arg(&source)
+                .arg("-o")
+                .arg(directory.join(name)));
+        }
     }
     run(Command::new("python3")
         .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/package-macos.py"))
         .arg("--arm64")
-        .arg(arm)
+        .arg(work.path().join("arm64/hedit"))
         .arg("--intel")
-        .arg(intel)
-        .arg("--helper-arm64")
-        .arg(helper_arm)
-        .arg("--helper-intel")
-        .arg(helper_intel)
+        .arg(work.path().join("x86_64/hedit"))
         .arg("--out-dir")
         .arg(work.path()));
     let name = format!("hedit-{}-macos-universal.zip", env!("CARGO_PKG_VERSION"));
@@ -463,4 +439,16 @@ fn production_macos_package_is_accepted_by_updater() {
     let app = destination.join("hedit.app");
     verify_bundle(&app, env!("CARGO_PKG_VERSION")).unwrap();
     install::verify_binary(&app.join("Contents/MacOS/hedit"), env!("CARGO_PKG_VERSION")).unwrap();
+    let tool = app.join("Contents/MacOS/hedit-json-tools");
+    for arch in ["arm64", "x86_64"] {
+        run(Command::new("/usr/bin/lipo")
+            .arg(&tool)
+            .args(["-verify_arch", arch]));
+    }
+    let output = Command::new(&tool).arg("--version").output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap().trim(),
+        format!("hedit-json-tools {}", env!("CARGO_PKG_VERSION"))
+    );
 }

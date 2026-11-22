@@ -96,7 +96,7 @@ package: build ## Create the Linux release archive and SHA-256 file in dist/
 	$(PYTHON) scripts/package-linux.py --helper "$(REMOTE_HELPER)"
 
 smoke: build ## Verify Linux package extraction, installation, checksums, and the executable
-	$(PYTHON) scripts/smoke-package.py --helper "$(REMOTE_HELPER)"
+	$(PYTHON) scripts/smoke-package.py --native-broker --helper "$(REMOTE_HELPER)"
 
 linux-packages: build ## Build Linux tarball, DEB, RPM, and AppImage (requires packaging tools)
 	$(PYTHON) scripts/package-linux.py --helper "$(REMOTE_HELPER)" --formats tar.gz deb rpm appimage
@@ -107,6 +107,7 @@ smoke-linux-packages: ## Verify Linux formats and distro installation (requires 
 install: build ## Install the Linux build under PREFIX; supports DESTDIR staging
 	install -Dm755 target/release/hedit "$(DESTDIR)$(PREFIX)/bin/hedit"
 	install -Dm755 target/release/hedit-remote "$(DESTDIR)$(PREFIX)/bin/hedit-remote"
+	install -Dm755 target/release/hedit-json-tools "$(DESTDIR)$(PREFIX)/bin/hedit-json-tools"
 	install -Dm644 assets/hedit.svg "$(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/hedit.svg"
 	install -Dm644 packaging/linux/hedit.desktop "$(DESTDIR)$(PREFIX)/share/applications/hedit.desktop"
 	install -d "$(DESTDIR)$(PREFIX)/share/hedit/themes"
