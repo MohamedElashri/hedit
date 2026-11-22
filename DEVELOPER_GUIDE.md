@@ -524,6 +524,22 @@ Themes are JSON under `themes/`; preserve schema fields and
 `python3 scripts/generate-brand.py`; keep `src/brand.rs` consistent. Asset
 dark/light names describe their intended background.
 
+## Documentation website
+
+The [documentation site](https://melashri.net/hedit/) uses Nida with a local minimal
+theme. The build splits this guide, the user guide, and plugin references into web
+pages without maintaining duplicate prose. Edit the original Markdown for shared
+content, or `website/content/` for web tutorials. **Edit this page** links to the
+canonical source. Release versions come from `Cargo.toml`.
+
+Run `make test-docs-site docs-site` with the pinned Nida release installed. For a
+local preview, run `nida serve --site target/docs-site` and open
+`http://127.0.0.1:1702/hedit/`. Reassemble after source-guide changes. The Pages
+workflow checks relevant pull requests and publishes only from `main`.
+See [website maintenance](https://github.com/MohamedElashri/hedit/tree/main/website) for a checksum-pinned local generator,
+source locations, and deployment details. Browser JavaScript lives only under
+`website/static/js/`; the native editor has no frontend or Node build dependency.
+
 ## Packaging and releases
 
 `make package smoke` checks the Linux archive, checksum, extraction, installation,

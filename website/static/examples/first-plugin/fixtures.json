@@ -1,0 +1,13 @@
+[
+  {
+    "command": "first-plugin.prefix",
+    "input": "café / 東京",
+    "expected": "> café / 東京"
+  },
+  {
+    "command": "first-plugin.prefix",
+    "input": "λ\r\n東京",
+    "arguments": {"prefix": "→ "},
+    "expected": "→ λ\r\n東京"
+  }
+]

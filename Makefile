@@ -3,11 +3,12 @@
 CARGO ?= cargo
 PYTHON ?= python3
 ACTIONLINT ?= actionlint
+NIDA ?= nida
 PREFIX ?= $(HOME)/.local
 REMOTE_HELPER ?= target/release/hedit-remote
 export RELEASE_TAG
 
-.PHONY: help dev build run fmt fmt-check policy docs scripts-check static clippy lint test test-scripts test-renderer test-macos test-remote test-remote-live check ci smoke package install release-check workflow-lint linux-packages smoke-linux-packages macos clean
+.PHONY: help dev build run fmt fmt-check policy docs docs-site docs-site-prepare test-docs-site scripts-check static clippy lint test test-scripts test-renderer test-macos test-remote test-remote-live check ci smoke package install release-check workflow-lint linux-packages smoke-linux-packages macos clean
 
 help: ## Show available commands and configuration
 	@printf 'hedit development commands\n\n'
@@ -33,11 +34,20 @@ fmt: ## Format Rust source
 fmt-check: ## Check Rust formatting without changing files
 	$(CARGO) fmt --all --check
 
-policy: ## Check that the project stays free of Node/frontend files
+policy: ## Reject app frontend and Node files; browser scripts stay in the docs site
 	$(PYTHON) scripts/check-native.py
 
 docs: ## Check documentation links, images, and section anchors
 	$(PYTHON) scripts/check-docs.py
+
+docs-site: ## Assemble, check, and build the Nida docs site (requires Nida)
+	$(PYTHON) scripts/build-docs.py --nida "$(NIDA)"
+
+docs-site-prepare: ## Assemble web sources for nida serve --site target/docs-site
+	$(PYTHON) scripts/build-docs.py --prepare-only
+
+test-docs-site: ## Test documentation imports, rendered-link checks, and native policy
+	$(PYTHON) scripts/test-docs-site.py
 
 scripts-check: ## Check Python and installer shell syntax
 	$(PYTHON) -m compileall -q scripts

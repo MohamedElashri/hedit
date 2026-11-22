@@ -1,0 +1,10 @@
+{
+  "version": "0.8.5",
+  "archives": {
+    "darwin_arm64": "f4256f615d44608143f72f6c0f1bc908d4849235bb9010512ab7da92dc01673c",
+    "darwin_x86_64": "ce55ffde75e6e50ba493cfa059daa186e56ac5957cea3f2c1f19ccf92e32d734",
+    "linux_arm64": "43fd340404086a918de99826311ec01ef14aead649a538f15df13e8b87cfb895",
+    "linux_x86_64": "a982311b61210a0e30be5408453e3176d9decbabce6612e61c01433266f3f70f",
+    "windows_x86_64": "36cd67a322968816f3559cfda2fec4355fbafe37a5e1a2d985fac7ced0b4b57f"
+  }
+}

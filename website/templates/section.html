@@ -1,0 +1,10 @@
+{{ define "section" }}{{ template "base" . }}{{ end }}
+{{ define "content" }}
+<main id="main" class="article" tabindex="-1">
+  {{ template "article-header" . }}
+  <div class="prose">{{ unsafeHTML .Section.BodyHTML }}</div>
+  <ul class="topic-list">{{ range .Index.Nav .Section.SectionPath }}<li><a href="{{ $.BasePath }}{{ .URL }}">{{ .Title }}</a>{{ if .IsSection }}{{ with .Section.Description }}<p>{{ . }}</p>{{ end }}{{ else }}{{ with .Page.Description }}<p>{{ . }}</p>{{ end }}{{ end }}</li>{{ end }}</ul>
+  {{ template "article-footer" . }}
+</main>
+{{ template "outline" . }}
+{{ end }}

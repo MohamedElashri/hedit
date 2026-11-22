@@ -16,7 +16,8 @@
 <p align="center">
   <a href="#install">Install</a> ·
   <a href="#quick-start">Quick start</a> ·
-  <a href="USER_GUIDE.md">User guide</a> ·
+  <a href="https://melashri.net/hedit/">Documentation</a> ·
+  <a href="https://melashri.net/hedit/plugins/">Plugin development</a> ·
   <a href="CHANGELOG.md">Release notes</a>
 </p>
 
@@ -142,7 +143,8 @@ recovery checkpoint. [Recovery behavior](USER_GUIDE.md#recovery).
 | [![Integrated terminal running the sample Rust project](docs/images/terminal.png)](docs/images/terminal.png) | [![Appearance settings with built-in theme previews](docs/images/themes.png)](docs/images/themes.png) |
 | [Opt-in terminal](USER_GUIDE.md#integrated-terminal) | [Built-in and custom themes](USER_GUIDE.md#appearance) |
 
-[User guide](USER_GUIDE.md) · [Build and contribute](DEVELOPER_GUIDE.md) ·
+[Documentation](https://melashri.net/hedit/) · [Offline user guide](USER_GUIDE.md) ·
+[Plugin development](https://melashri.net/hedit/plugins/) · [Build and contribute](DEVELOPER_GUIDE.md) ·
 [Report an issue](https://github.com/MohamedElashri/hedit/issues)
 
 ## Licence

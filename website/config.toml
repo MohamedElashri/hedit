@@ -1,0 +1,39 @@
+base_url = "https://melashri.net/hedit/"
+title = "hedit documentation"
+description = "Learn to use hedit and develop plugins for its isolated Lua extension system."
+language = "en"
+author = "Mohamed Elashri"
+content_dir = "content"
+static_dir = "static"
+output_dir = "public"
+paginate = 100
+minify_html = true
+syntax_theme = "github"
+
+[markdown]
+heading_anchors = false
+
+[feed]
+enabled = false
+
+[sitemap]
+enabled = true
+
+[robots]
+enabled = true
+
+[sections]
+default_sort_by = "weight"
+
+[search]
+enabled = true
+filename = "search-index.js"
+
+[pipeline]
+fingerprint = true
+minify_css = true
+minify_js = true
+
+[server]
+host = "127.0.0.1"
+port = 1702
