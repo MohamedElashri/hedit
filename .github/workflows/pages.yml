@@ -75,7 +75,7 @@ jobs:
           if [ -n "$PAGES_BASE_URL" ]; then
             python3 scripts/build-docs.py --nida target/docs-tools/nida --base-url "${PAGES_BASE_URL%/}/"
           else
-            make docs-site NIDA=target/docs-tools/nida
+            python3 scripts/build-docs.py --nida target/docs-tools/nida --base-url https://melashri.net/hedit/
           fi
       - name: Upload Pages artifact
         if: github.ref == 'refs/heads/main'

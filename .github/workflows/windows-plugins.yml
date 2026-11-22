@@ -4,7 +4,6 @@ on:
   pull_request:
     paths:
       - '.github/workflows/windows-plugins.yml'
-      - '.github/workflows/actions.lock'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'crates/hedit-plugin/**'

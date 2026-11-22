@@ -152,7 +152,13 @@ def prepare(base_url=None):
     OUTPUT.mkdir(parents=True)
     for name in ('content', 'templates', 'static'):
         shutil.copytree(SITE / name, OUTPUT / name)
-    shutil.copy2(SITE / 'config.toml', OUTPUT / 'config.toml')
+    config_text = (SITE / 'config.toml').read_text()
+    if base_url:
+        config_text, count = re.subn(r'(?m)^base_url\s*=.*$',
+                                     'base_url = ' + json.dumps(base_url.rstrip('/') + '/'), config_text)
+        if count != 1:
+            raise ValueError('Expected one base_url in the site configuration')
+    (OUTPUT / 'config.toml').write_text(config_text)
     for page, body, line in extracted:
         destination = OUTPUT / 'content' / page['path']
         if destination.exists():
@@ -199,9 +205,8 @@ def main():
     actual = subprocess.check_output([args.nida, 'version'], text=True).strip()
     if actual != f'nida version {expected}':
         raise SystemExit(f'Expected Nida {expected}; found {actual}. Run python3 scripts/setup-nida.py.')
-    override = ['--base-url', args.base_url] if args.base_url else []
     for command in ('check', 'build'):
-        subprocess.run([args.nida, command, '--site', str(source), *override], check=True)
+        subprocess.run([args.nida, command, '--site', str(source)], check=True)
     subprocess.run([sys.executable, str(ROOT / 'scripts/check-docs-site.py'), '--base-url', args.base_url or
                     tomllib.loads((SITE / 'config.toml').read_text())['base_url']], check=True)
 

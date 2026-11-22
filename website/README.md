@@ -72,6 +72,11 @@ pull requests without deployment authority. Only `main` publishes to the
 `github-pages` environment. Actions are pinned to full commits; Nida archives are
 pinned by version and SHA-256. To update Nida, review its release and update the
 archive hashes in [nida.lock.json](nida.lock.json).
+Site-only changes run this workflow instead of the application matrix. Changes
+to application code or the shared offline guides still run application CI;
+manual and release validation remain available independently. A workflow-lock
+update alone does not rebuild the application; dispatch application CI when
+deliberately updating its build actions.
 After changing workflow `uses:` entries, run the official
 `gh actions-lock .github/workflows/pages.yml` generator and commit its lockfile
 diff. Repository policy requires coverage even for full-commit action references.
@@ -79,6 +84,9 @@ diff. Repository policy requires coverage even for full-commit action references
 Pages uses the repository owner's inherited custom domain. The configured
 `/hedit/` prefix is used in local preview, navigation, search, and canonical URLs.
 The workflow takes the actual base URL from GitHub's Pages configuration.
+The assembler writes that URL into its generated config before both Nida
+commands; it does not depend on a command-line override supported by only some
+Nida commands. Pull requests exercise this same explicit-URL build path.
 
 Keep browser scripts in `website/static/js/`. The native-app policy permits
 JavaScript only there and continues to reject frontend code in the application
