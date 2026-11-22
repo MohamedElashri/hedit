@@ -561,6 +561,49 @@ fn require_job(handle: HANDLE, cpu_ticks: i64) -> io::Result<()> {
     Ok(())
 }
 
+// Capture only this process's thread IDs: no VA clone, contexts or system-wide
+// Toolhelp walk. PSS descriptors are local objects, not ordinary kernel handles.
+fn thread_count(process: HANDLE) -> io::Result<u32> {
+    use windows_sys::Win32::System::Diagnostics::ProcessSnapshotting::*;
+    struct Snapshot(HPSS);
+    impl Drop for Snapshot {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                unsafe { PssFreeSnapshot(GetCurrentProcess(), self.0) };
+            }
+        }
+    }
+    let status = |value: u32| -> io::Result<()> {
+        if value == ERROR_SUCCESS {
+            Ok(())
+        } else {
+            Err(io::Error::from_raw_os_error(value as i32))
+        }
+    };
+    let mut handle = ptr::null_mut();
+    status(unsafe { PssCaptureSnapshot(process, PSS_CAPTURE_THREADS, 0, &mut handle) })?;
+    let mut snapshot = Snapshot(handle);
+    let mut info = PSS_THREAD_INFORMATION::default();
+    let query = unsafe {
+        PssQuerySnapshot(
+            snapshot.0,
+            PSS_QUERY_THREAD_INFORMATION,
+            (&mut info as *mut PSS_THREAD_INFORMATION).cast(),
+            mem::size_of_val(&info) as u32,
+        )
+    };
+    // The descriptor belongs to this host process even when the target is a
+    // confined child. Always release it once and fail closed if cleanup fails.
+    let freed = unsafe { PssFreeSnapshot(GetCurrentProcess(), snapshot.0) };
+    snapshot.0 = ptr::null_mut();
+    status(query)?;
+    status(freed)?;
+    if info.ThreadsCaptured == 0 {
+        return Err(io::Error::other("Tool thread accounting failed."));
+    }
+    Ok(info.ThreadsCaptured)
+}
+
 pub(crate) struct Worker {
     process: OwnedHandle,
     cpu_ticks: i64,
@@ -845,32 +888,7 @@ impl Worker {
         Ok(worker)
     }
     pub(crate) fn over_thread_limit(&self) -> io::Result<bool> {
-        use windows_sys::Win32::System::Diagnostics::ToolHelp::*;
-        let snapshot = unsafe { owned(CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0)) }?;
-        let mut entry = THREADENTRY32 {
-            dwSize: mem::size_of::<THREADENTRY32>() as u32,
-            ..Default::default()
-        };
-        check(unsafe { Thread32First(snapshot.as_raw_handle(), &mut entry) })?;
-        let mut count = 0;
-        let process = unsafe { GetProcessId(self.process.as_raw_handle()) };
-        for _ in 0..65536 {
-            if entry.th32OwnerProcessID == process {
-                count += 1;
-                if count > 32 {
-                    return Ok(true);
-                }
-            }
-            if unsafe { Thread32Next(snapshot.as_raw_handle(), &mut entry) } == 0 {
-                if unsafe { GetLastError() } != ERROR_NO_MORE_FILES {
-                    return Err(io::Error::last_os_error());
-                }
-                return Ok(false);
-            }
-        }
-        Err(io::Error::other(
-            "Tool thread accounting exceeded its limit.",
-        ))
+        Ok(thread_count(self.process.as_raw_handle())? > 32)
     }
     pub(crate) fn finished(&self, wait_ms: u32) -> io::Result<bool> {
         match unsafe { WaitForSingleObject(self.process.as_raw_handle(), wait_ms) } {
