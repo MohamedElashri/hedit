@@ -21,7 +21,7 @@ serde_json = "1"
 notify = "8.2.0"
 url = "2"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "stream"] }
-hickory-resolver = { version = "0.25", features = ["system-config", "tokio"] }
+hickory-resolver = { version = "0.26", features = ["system-config", "tokio"] }
 tokio = { version = "1", features = ["rt-multi-thread", "time", "net", "sync", "macros", "io-util"] }
 
 [target.'cfg(unix)'.dependencies]
