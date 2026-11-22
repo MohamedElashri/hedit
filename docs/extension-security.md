@@ -518,3 +518,17 @@ also expire after 120 seconds and at 16 MiB in each transport direction, with a
 4 KiB lifetime stderr budget. These are fixed host limits, not worker-selected
 values. No implicit restart resets them. This transport alone does not activate
 LSP grants or establish a persistent document/service owner.
+
+The scoped JSON-RPC controller serializes at most 256 requests per connection
+with non-reused host IDs. It rejects responses before full request delivery,
+foreign/duplicate/unsolicited responses and error responses. Any cancellation,
+timeout, malformed frame or protocol failure destroys the native owner, so a
+late response cannot attach to a replacement request. Each exchange bounds
+traffic to 2 MiB and 64 incoming messages; outgoing frames and retained raw
+diagnostics have separate count/byte budgets.
+
+Server-initiated requests receive MethodNotFound. In particular, a server cannot
+invoke workspace edits, execute commands, register capabilities or request
+configuration through this controller. Diagnostic notifications remain untrusted
+data until document URI/version/range and publication authority are checked.
+This protocol layer still does not activate installed plugin LSP profiles.

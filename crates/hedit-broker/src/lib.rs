@@ -17,6 +17,7 @@ pub mod session;
 
 pub mod declaration;
 pub mod host;
+pub mod lsp;
 pub mod recovery_store;
 pub mod state;
 pub mod tool;

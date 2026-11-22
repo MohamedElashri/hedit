@@ -10,6 +10,8 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
+#[path = "native_tools/lsp.rs"]
+mod native_lsp;
 fn main() {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     if let Some(success) = hedit_plugin::run_if_requested(&args) {
@@ -101,6 +103,30 @@ fn main() {
     cancel.store(false, Ordering::Release);
     duplex(&state, id, &owner);
     empty(&config.join("extensions-broker/tool-runs"));
+    let peer_source = root.path().join("lsp.rs");
+    std::fs::write(&peer_source, include_str!("fixtures/native_lsp.rs")).unwrap();
+    let peer = root
+        .path()
+        .join(if cfg!(windows) { "lsp.exe" } else { "lsp" });
+    let mut compiler = std::process::Command::new("rustc");
+    compiler.args([
+        "--edition=2021",
+        "--crate-name=hedit_native_lsp_fixture",
+        "-C",
+        "opt-level=1",
+        "-C",
+        "debuginfo=0",
+    ]);
+    #[cfg(windows)]
+    compiler.args(["-C", "target-feature=+crt-static"]);
+    assert!(compiler
+        .arg(peer_source)
+        .arg("-o")
+        .arg(&peer)
+        .status()
+        .unwrap()
+        .success());
+    native_lsp::verify(&state, &peer);
     broker_chain(&state, id, token, definition);
     images.remove(id, &owner).unwrap();
     println!("Imported native image: exact Unicode bytes, private run ownership, cancellation and cleanup passed.");
