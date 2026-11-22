@@ -499,9 +499,12 @@ python3 scripts/profile-plugin-ui.py --frames 1200 --out-dir target/plugin-valid
 python3 scripts/profile-plugin-broker.py --trials 25 --out-dir target/plugin-validation/broker
 ```
 
-The UI probe alternates disabled/native-idle and disabled-typing/native-typing
-workloads over three trials using a near-64-KiB Unicode/CRLF JSON document. It
-records actual egui CPU-frame work, UI-thread allocations, numeric activity
+The UI probe interleaves independent disabled/native views over three trials
+using a near-64-KiB Unicode/CRLF JSON document. Frame order balances both edits
+and native requests; disabled/disabled A/A controls expose comparison noise.
+The native/disabled pair shares native background load, so its comparison
+measures incremental UI cost. Process CPU and footprint belong to both views.
+It records actual egui CPU-frame work, UI-thread allocations, numeric activity
 phases, host physical footprint, published results and Stop cleanup. It does not
 measure GPU presentation, physical input latency, other-thread allocations or
 aggregate child-process memory. The broker probe separates reply validation,

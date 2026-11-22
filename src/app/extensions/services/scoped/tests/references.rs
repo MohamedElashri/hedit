@@ -359,7 +359,9 @@ fn profile_scoped_native_frames() {
             let work_started = Instant::now();
             for index in 0..frames {
                 let start = Instant::now();
-                let order = if (index + trial) % 2 == 0 {
+                // Balance the 10-frame edit and 20-frame request cadences too;
+                // alternating frames alone always gives one view first edit.
+                let order = if (index + index / 20 + trial) % 2 == 0 {
                     [0, 1]
                 } else {
                     [1, 0]
