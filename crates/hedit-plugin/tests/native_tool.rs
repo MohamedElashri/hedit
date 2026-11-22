@@ -5,14 +5,14 @@ fn main() {
     if let Some(ok) = hedit_plugin::tool::run_if_requested(&args) {
         std::process::exit(i32::from(!ok));
     }
-    #[cfg(target_os = "macos")]
-    macos::run(args);
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    native::run(args);
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     println!("Native tool adapter not enabled on this platform.");
 }
 
-#[cfg(target_os = "macos")]
-mod macos {
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod native {
     use hedit_plugin::tool::{self, Launch};
     use std::{
         fs,
@@ -113,7 +113,9 @@ mod macos {
                 "stdout-flood" | "stderr-flood" => {
                     assert_eq!(error.to_string(), "Tool output limit exceeded.")
                 }
+                #[cfg(target_os = "macos")]
                 "memory" => assert_eq!(error.to_string(), "Tool memory limit exceeded."),
+                #[cfg(target_os = "macos")]
                 "threads" => assert_eq!(error.to_string(), "Tool thread limit exceeded."),
                 "spin" => assert_ne!(error.kind(), io::ErrorKind::TimedOut),
                 _ => {}
@@ -261,6 +263,52 @@ mod macos {
             _ => {}
         }
         assert!(std::env::vars_os().next().is_none());
+        #[cfg(target_os = "linux")]
+        {
+            let page = unsafe {
+                libc::mmap(
+                    std::ptr::null_mut(),
+                    300 * 1024 * 1024,
+                    libc::PROT_READ | libc::PROT_WRITE,
+                    libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                    -1,
+                    0,
+                )
+            };
+            assert_eq!(
+                page,
+                libc::MAP_FAILED,
+                "hard address-space cap was lost across exec"
+            );
+            assert_eq!(
+                io::Error::last_os_error().raw_os_error(),
+                Some(libc::ENOMEM)
+            );
+            assert_eq!(
+                unsafe { libc::prctl(libc::PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0) },
+                1
+            );
+            assert_eq!(unsafe { libc::prctl(libc::PR_GET_SECCOMP, 0, 0, 0, 0) }, 2);
+            for flags in [
+                0,
+                libc::CLONE_VM as u64,
+                (libc::CLONE_VM | libc::CLONE_SIGHAND | libc::CLONE_THREAD) as u64 | (1u64 << 32),
+            ] {
+                let result = unsafe {
+                    libc::syscall(libc::SYS_clone, flags, 0usize, 0usize, 0usize, 0usize)
+                };
+                if result == 0 {
+                    unsafe { libc::_exit(33) }
+                }
+                assert_eq!(result, -1);
+                assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::EPERM));
+            }
+            assert_eq!(
+                unsafe { libc::fcntl(1, libc::F_SETOWN, libc::getppid()) },
+                -1
+            );
+            assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::EPERM));
+        }
         let snapshot = std::env::current_dir().unwrap();
         assert_eq!(
             fs::read_to_string(snapshot.join("input.txt")).unwrap(),

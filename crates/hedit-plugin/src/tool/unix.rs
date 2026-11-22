@@ -122,7 +122,7 @@ pub(super) fn run(
             return Err(io::Error::new(io::ErrorKind::TimedOut, "Tool timed out."));
         }
         if child.0.try_wait()?.is_none() {
-            match super::macos::check_resources(&child.0) {
+            match super::native::check_resources(&child.0) {
                 Ok(()) => {}
                 Err(error) if child.0.try_wait()?.is_none() => return Err(error),
                 Err(_) => {}
@@ -192,4 +192,43 @@ pub(super) fn run(
             std::thread::sleep(Duration::from_millis(5));
         }
     }
+}
+
+pub(super) fn bootstrap() -> io::Result<()> {
+    use std::os::unix::process::CommandExt;
+    super::native::prepare()?;
+    for (fd, mode) in [
+        (0, libc::O_RDONLY),
+        (1, libc::O_WRONLY),
+        (2, libc::O_WRONLY),
+    ] {
+        let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+        if unsafe { libc::fstat(fd, stat.as_mut_ptr()) } != 0
+            || unsafe { stat.assume_init() }.st_mode & libc::S_IFMT != libc::S_IFIFO
+            || unsafe { libc::fcntl(fd, libc::F_GETFL) } & libc::O_ACCMODE != mode
+        {
+            return Err(io::Error::other("Tool transport is unavailable."));
+        }
+    }
+    let mut input = io::stdin().lock();
+    let mut length = [0; 4];
+    input.read_exact(&mut length)?;
+    let length = u32::from_le_bytes(length) as usize;
+    if length == 0 || length > HEADER_BYTES {
+        return Err(super::invalid());
+    }
+    let mut header = vec![0; length];
+    input.read_exact(&mut header)?;
+    let launch: Launch = serde_json::from_slice(&header).map_err(|_| super::invalid())?;
+    launch.validate()?;
+    let mut command = Command::new(&launch.executable);
+    command
+        .args(&launch.arguments)
+        .env_clear()
+        .current_dir(&launch.snapshot);
+    super::native::enter(&launch)?;
+    io::stdout().write_all(READY)?;
+    io::stdout().flush()?;
+    drop(input);
+    Err(command.exec())
 }

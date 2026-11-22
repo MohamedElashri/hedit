@@ -60,7 +60,7 @@ pub(crate) fn enter() -> io::Result<()> {
     target_endian = "little",
     target_pointer_width = "64",
 ))]
-mod linux;
+pub(crate) mod linux;
 
 #[cfg(windows)]
 pub(crate) mod windows;
