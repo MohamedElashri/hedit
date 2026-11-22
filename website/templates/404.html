@@ -1,4 +1,4 @@
 {{ define "404" }}{{ template "base" . }}{{ end }}
 {{ define "content" }}
-<main id="main" class="article not-found" tabindex="-1"><p class="breadcrumbs">404</p><h1>Page not found</h1><p>The page may have moved. Search the documentation or return to the overview.</p><p><a class="button" href="{{ .BasePath }}/search/" data-open-search>Search documentation</a> <a href="{{ .BasePath }}/">Documentation overview</a></p></main>
+<main id="main" class="article not-found" tabindex="-1"><p class="breadcrumbs">404</p><h1>Page not found</h1><p>The page may have moved. Search the documentation or return to the overview.</p><p><a class="button" href="{{ .BasePath }}/search/" data-open-search>Search documentation</a> <a href="{{ .BasePath }}/">Documentation overview</a></p><footer class="article-footer">{{ template "site-credit" . }}</footer></main>
 {{ end }}

@@ -1,0 +1,41 @@
+{{ define "seo-head" }}
+{{ $description := default .Description .Config.Description }}
+{{ $image := absURL "images/screenshot-light.png" }}
+{{ $home := absURL "/" }}
+{{ $siteID := printf "%s#website" $home }}
+{{ $noindex := or (eq .CurrentURL "/search/") (eq .CurrentURL "/404.html") }}
+<title>{{ if eq .CurrentURL "/" }}{{ .Config.Title }}{{ else }}{{ .Title }} — {{ .Config.Title }}{{ end }}</title>
+<meta name="description" content="{{ $description }}">
+<meta name="author" content="{{ .Config.Author }}">
+<link rel="canonical" href="{{ .CanonicalURL }}">
+<link rel="sitemap" type="application/xml" title="Sitemap" href="{{ .BasePath }}/sitemap.xml">
+<meta name="robots" content="{{ if $noindex }}noindex, follow{{ else }}index, follow, max-image-preview:large{{ end }}">
+<meta property="og:site_name" content="{{ .Config.Title }}">
+<meta property="og:title" content="{{ .Title }}">
+<meta property="og:description" content="{{ $description }}">
+<meta property="og:type" content="website">
+<meta property="og:url" content="{{ .CanonicalURL }}">
+<meta property="og:image" content="{{ $image }}">
+<meta property="og:image:width" content="2560">
+<meta property="og:image:height" content="1640">
+<meta property="og:image:alt" content="hedit editing a Rust project in its native workspace">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{{ .Title }}">
+<meta name="twitter:description" content="{{ $description }}">
+<meta name="twitter:image" content="{{ $image }}">
+<meta name="twitter:image:alt" content="hedit editing a Rust project in its native workspace">
+{{ if not $noindex }}
+{{ if eq .CurrentURL "/" }}
+<script type="application/ld+json">{{ jsonify (dict "@context" "https://schema.org" "@type" "WebSite" "@id" $siteID "name" .Config.Title "url" $home "description" .Config.Description "inLanguage" .Config.Language) }}</script>
+{{ else }}
+{{ $breadcrumbID := printf "%s#breadcrumb" .CanonicalURL }}
+<script type="application/ld+json">{{ jsonify (dict "@context" "https://schema.org" "@type" "WebPage" "@id" .CanonicalURL "url" .CanonicalURL "name" .Title "description" $description "inLanguage" .Config.Language "isPartOf" (dict "@id" $siteID) "breadcrumb" (dict "@id" $breadcrumbID)) }}</script>
+{{ $path := .Section.SectionPath }}{{ if .Page.RelativePath }}{{ $path = .Page.SectionPath }}{{ end }}
+{{ $ancestors := .Index.Ancestors $path }}
+<script type="application/ld+json">{
+  "@context": "https://schema.org", "@type": "BreadcrumbList", "@id": {{ jsonify $breadcrumbID }},
+  "itemListElement": [{{ range $i, $section := $ancestors }}{{ if $i }},{{ end }}{{ jsonify (dict "@type" "ListItem" "position" (add $i 1) "name" $section.Title "item" (absURL $section.URL)) }}{{ end }}{{ if .Page.RelativePath }},{{ jsonify (dict "@type" "ListItem" "position" (add (len $ancestors) 1) "name" .Title "item" .CanonicalURL) }}{{ end }}]
+}</script>
+{{ end }}
+{{ end }}
+{{ end }}
