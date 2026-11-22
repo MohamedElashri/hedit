@@ -211,8 +211,68 @@ fn usage() -> Usage {
     }
 }
 
+struct ProfileCase {
+    app: HeditApp,
+    ctx: egui::Context,
+    config: tempfile::TempDir,
+    _project: tempfile::TempDir,
+    _session: tempfile::TempDir,
+}
+
+fn profile_case(text: &str, native: bool) -> ProfileCase {
+    let config = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let active = project.path().join("active.json");
+    std::fs::write(&active, text).unwrap();
+    std::fs::write(project.path().join("secondary.json"), "{}").unwrap();
+    if native {
+        install_json_reference(
+            config.path(),
+            project.path(),
+            &[
+                "scoped-json.diagnostics",
+                "scoped-json.hover",
+                "scoped-json.symbols",
+            ],
+        );
+    }
+    let (session, ctx, mut app) = app_with("neutral", Some(config.path()));
+    let mut document = hedit::document::Document::open(app.workspace.editor.id(), &active).unwrap();
+    let page = document.page(0).unwrap();
+    app.finish_opened_document(document, page, 0, None, false, None);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![]);
+    if native {
+        for command in [
+            "scoped-json.diagnostics",
+            "scoped-json.hover",
+            "scoped-json.symbols",
+        ] {
+            app.plugin_services.request(command);
+            app.plugin_services.open = false;
+            pump(&mut app, &ctx, |app| {
+                app.plugin_services
+                    .entries
+                    .iter()
+                    .find(|entry| entry.contribution.id == command)
+                    .and_then(|entry| entry.scoped.as_ref())
+                    .and_then(|scoped| scoped.ready.as_ref())
+                    .is_some()
+            });
+        }
+        assert_eq!(app.plugin_services.entries.len(), 3);
+    }
+    ProfileCase {
+        app,
+        ctx,
+        config,
+        _project: project,
+        _session: session,
+    }
+}
+
 #[test]
-#[ignore = "controlled scoped/native LSP frame and retention probe; writes HEDIT_PLUGIN_UI_PROBE_OUT"]
+#[ignore = "controlled paired native LSP frame/retention probe; writes HEDIT_PLUGIN_UI_PROBE_OUT"]
 fn profile_scoped_native_frames() {
     use crate::app::extensions::lua::tests::measured_allocations::measure;
     let mut initial_qos = libc::qos_class_t::QOS_CLASS_UNSPECIFIED;
@@ -248,125 +308,101 @@ fn profile_scoped_native_frames() {
     assert!(text.len() < 64 * 1024 - 1000);
     let mut workloads = Vec::new();
     for trial in 0..3 {
-        let mut modes = vec![
-            "disabled_idle",
-            "native_idle",
-            "disabled_typing",
-            "typing_with_native",
+        let mut pairs = vec![
+            (["disabled_idle", "native_idle"], false, [false, true]),
+            (
+                ["disabled_typing", "typing_with_native"],
+                true,
+                [false, true],
+            ),
+            (["control_idle_a", "control_idle_b"], false, [false, false]),
+            (
+                ["control_typing_a", "control_typing_b"],
+                true,
+                [false, false],
+            ),
         ];
         if trial % 2 == 1 {
-            modes.reverse();
+            pairs.reverse();
         }
-        for mode in modes {
-            let config = tempfile::tempdir().unwrap();
-            let project = tempfile::tempdir().unwrap();
-            let active = project.path().join("active.json");
-            std::fs::write(&active, &text).unwrap();
-            std::fs::write(project.path().join("secondary.json"), "{}").unwrap();
-            if !mode.starts_with("disabled") {
-                install_json_reference(
-                    config.path(),
-                    project.path(),
-                    &[
-                        "scoped-json.diagnostics",
-                        "scoped-json.hover",
-                        "scoped-json.symbols",
-                    ],
-                );
-            }
-            let (_session, ctx, mut app) = app_with("neutral", Some(config.path()));
-            let id = app.workspace.editor.id();
-            let mut document = hedit::document::Document::open(id, &active).unwrap();
-            let page = document.page(0).unwrap();
-            app.finish_opened_document(document, page, 0, None, false, None);
-            frame(&ctx, &mut app, vec![]);
-            frame(&ctx, &mut app, vec![]);
-            if !mode.starts_with("disabled") {
-                for command in [
-                    "scoped-json.diagnostics",
-                    "scoped-json.hover",
-                    "scoped-json.symbols",
-                ] {
-                    app.plugin_services.request(command);
-                    app.plugin_services.open = false;
-                    pump(&mut app, &ctx, |app| {
-                        app.plugin_services
-                            .entries
-                            .iter()
-                            .find(|entry| entry.contribution.id == command)
-                            .and_then(|entry| entry.scoped.as_ref())
-                            .and_then(|scoped| scoped.ready.as_ref())
-                            .is_some()
-                    });
-                }
-                assert_eq!(app.plugin_services.entries.len(), 3);
-            }
+        for (names, typing, native) in pairs {
+            let mut cases = [
+                profile_case(&text, native[0]),
+                profile_case(&text, native[1]),
+            ];
             for _ in 0..60 {
-                frame(&ctx, &mut app, vec![]);
+                for case in &mut cases {
+                    case.app.receive(&case.ctx);
+                    frame(&case.ctx, &mut case.app, vec![]);
+                }
                 std::thread::sleep(Duration::from_millis(16));
             }
-            let text_bytes_before = app.active().page.text.len();
-            let revision_before = app.active().page.info.revision;
+            let sizes = cases
+                .each_ref()
+                .map(|case| case.app.active().page.text.len());
+            let revisions = cases
+                .each_ref()
+                .map(|case| case.app.active().page.info.revision);
+            let mut seen = cases.each_ref().map(|case| {
+                case.app
+                    .plugin_services
+                    .entries
+                    .iter()
+                    .filter_map(|entry| entry.scoped.as_ref().and_then(|s| s.ready.as_ref()))
+                    .map(|ready| ready.request)
+                    .collect::<std::collections::BTreeSet<_>>()
+            });
+            let mut samples = [Vec::new(), Vec::new()];
+            let mut published = [0usize; 2];
+            let mut memory = Vec::new();
             let before = usage();
             let work_started = Instant::now();
-            let mut published = 0usize;
-            let mut seen = std::collections::BTreeSet::new();
-            for entry in &app.plugin_services.entries {
-                if let Some(ready) = entry
-                    .scoped
-                    .as_ref()
-                    .and_then(|scoped| scoped.ready.as_ref())
-                {
-                    seen.insert(ready.request);
-                }
-            }
-            let mut samples = Vec::new();
-            let mut memory = Vec::new();
             for index in 0..frames {
                 let start = Instant::now();
-                let sample = measure(|| {
-                    app.receive(&ctx);
-                    if mode == "typing_with_native" && index % 20 == 0 {
-                        app.plugin_services.request(
-                            [
-                                "scoped-json.diagnostics",
-                                "scoped-json.hover",
-                                "scoped-json.symbols",
-                            ][index / 20 % 3],
-                        );
-                        app.plugin_services.open = false;
-                    }
-                    let events = if matches!(mode, "disabled_typing" | "typing_with_native")
-                        && index % 10 == 0
-                    {
-                        vec![egui::Event::Text(" ".into())]
-                    } else {
-                        vec![]
-                    };
-                    std::hint::black_box(frame(&ctx, &mut app, events));
-                });
-                samples.push(sample);
-                for entry in &app.plugin_services.entries {
-                    if let Some(ready) = entry
-                        .scoped
-                        .as_ref()
-                        .and_then(|scoped| scoped.ready.as_ref())
-                    {
-                        if seen.insert(ready.request) {
-                            published += 1;
+                let order = if (index + trial) % 2 == 0 {
+                    [0, 1]
+                } else {
+                    [1, 0]
+                };
+                for slot in order {
+                    let ProfileCase { app, ctx, .. } = &mut cases[slot];
+                    samples[slot].push(measure(|| {
+                        app.receive(ctx);
+                        if native[slot] && typing && index % 20 == 0 {
+                            app.plugin_services.request(
+                                [
+                                    "scoped-json.diagnostics",
+                                    "scoped-json.hover",
+                                    "scoped-json.symbols",
+                                ][index / 20 % 3],
+                            );
+                            app.plugin_services.open = false;
                         }
-                    }
-                }
-                if seen.len() > 128 {
-                    seen.clear();
+                        let events = if typing && index % 10 == 0 {
+                            vec![egui::Event::Text(" ".into())]
+                        } else {
+                            vec![]
+                        };
+                        std::hint::black_box(frame(ctx, app, events));
+                    }));
                     for entry in &app.plugin_services.entries {
-                        if let Some(ready) = entry
-                            .scoped
-                            .as_ref()
-                            .and_then(|scoped| scoped.ready.as_ref())
-                        {
-                            seen.insert(ready.request);
+                        if let Some(ready) = entry.scoped.as_ref().and_then(|s| s.ready.as_ref()) {
+                            if seen[slot].insert(ready.request) {
+                                published[slot] += 1;
+                            }
                         }
+                    }
+                    if seen[slot].len() > 128 {
+                        seen[slot].clear();
+                        seen[slot].extend(
+                            app.plugin_services
+                                .entries
+                                .iter()
+                                .filter_map(|entry| {
+                                    entry.scoped.as_ref().and_then(|s| s.ready.as_ref())
+                                })
+                                .map(|ready| ready.request),
+                        );
                     }
                 }
                 if index % 60 == 0 {
@@ -376,74 +412,84 @@ fn profile_scoped_native_frames() {
             }
             let elapsed_us = work_started.elapsed().as_micros();
             let after = usage();
-            let text_bytes_after = app.active().page.text.len();
-            let revision_after = app.active().page.info.revision;
-            let expected_events = if matches!(mode, "disabled_typing" | "typing_with_native") {
-                frames.div_ceil(10)
-            } else {
-                0
-            };
-            assert_eq!(
-                text_bytes_after,
-                text_bytes_before + expected_events,
-                "{mode}: input events did not reach the active document"
-            );
-            assert_eq!(
-                revision_after - revision_before,
-                expected_events as u64,
-                "{mode}: every typing event must edit the real document"
-            );
-            if mode == "typing_with_native" {
-                assert!(published > 0, "No real results published during typing");
-            }
-            let phases = app.extension_manager.measured_activity();
-            let errors: Vec<_> = app
-                .plugin_services
-                .entries
+            let phases = cases
+                .each_ref()
+                .map(|case| case.app.extension_manager.measured_activity());
+            let registries: Vec<_> = cases
                 .iter()
-                .filter_map(|entry| entry.error.as_ref().map(|_| "provider_failure"))
-                .collect();
-            assert!(
-                errors.is_empty(),
-                "{mode}: provider failed during sustained work"
-            );
-            let registries: Vec<_> = app
-                .plugin_services
-                .entries
-                .iter()
+                .flat_map(|case| case.app.plugin_services.entries.iter())
                 .filter_map(|entry| entry.scoped.as_ref())
-                .map(|scoped| scoped.native_services.clone())
+                .map(|s| s.native_services.clone())
                 .collect();
-            let before_stop = Instant::now();
-            let stop_ui = measure(|| app.plugin_services.suspend());
+            for slot in 0..2 {
+                let expected = if typing { frames.div_ceil(10) } else { 0 };
+                assert_eq!(
+                    cases[slot].app.active().page.text.len(),
+                    sizes[slot] + expected,
+                    "{}: every input must edit the real document",
+                    names[slot]
+                );
+                assert_eq!(
+                    cases[slot].app.active().page.info.revision - revisions[slot],
+                    expected as u64,
+                    "{}: every input must advance its revision",
+                    names[slot]
+                );
+                assert!(
+                    cases[slot]
+                        .app
+                        .plugin_services
+                        .entries
+                        .iter()
+                        .all(|entry| entry.error.is_none()),
+                    "{}: provider failure",
+                    names[slot]
+                );
+                if native[slot] && typing {
+                    assert!(published[slot] > 0, "No real results published");
+                }
+            }
+            let stop_started = Instant::now();
+            let stop_ui = cases
+                .each_mut()
+                .map(|case| measure(|| case.app.plugin_services.suspend()).0);
             let until = Instant::now() + Duration::from_secs(5);
             while registries.iter().any(|registry| !registry.settled()) {
                 assert!(Instant::now() < until);
                 std::thread::sleep(Duration::from_millis(5));
             }
+            let stop_cleanup_us = stop_started.elapsed().as_micros();
             let stopped = usage();
-            let live_runs = std::fs::read_dir(config.path().join("extensions-broker/tool-runs"))
-                .map(|entries| {
-                    entries
-                        .filter_map(Result::ok)
-                        .filter(|entry| entry.file_name() != "index.lock")
-                        .count()
-                })
-                .unwrap_or(0);
-            assert_eq!(live_runs, 0, "native payloads retained after Stop");
-            workloads.push(
-                json!({"trial":trial,"mode":mode,"snapshot_bytes":text.len(),
-                "frames":frames,"text_bytes_before":text_bytes_before,"text_bytes_after":text_bytes_after,
-                "revision_before":revision_before,"revision_after":revision_after,"elapsed_us":elapsed_us,"published_results":published,"recent_activity":phases,"samples_us_allocations_requested_bytes":samples,
-                "usage_before":before,"usage_after":after,"usage_after_stop":stopped,
-                "memory_samples":memory,"stop_cleanup_us":before_stop.elapsed().as_micros(),"stop_ui_us":stop_ui.0,
-                "live_runs_after_stop":live_runs}),
-            );
+            for slot in 0..2 {
+                let case = &cases[slot];
+                let live_runs =
+                    std::fs::read_dir(case.config.path().join("extensions-broker/tool-runs"))
+                        .map(|entries| {
+                            entries
+                                .filter_map(Result::ok)
+                                .filter(|entry| entry.file_name() != "index.lock")
+                                .count()
+                        })
+                        .unwrap_or(0);
+                assert_eq!(live_runs, 0, "native run payloads retained after Stop");
+                workloads.push(json!({
+                    "trial":trial,"mode":names[slot],"paired_with":names[1-slot],"paired_host_usage":true,
+                    "snapshot_bytes":text.len(),"frames":frames,"elapsed_us":elapsed_us,
+                    "text_bytes_before":sizes[slot],"text_bytes_after":case.app.active().page.text.len(),
+                    "revision_before":revisions[slot],"revision_after":case.app.active().page.info.revision,
+                    "published_results":published[slot],"recent_activity":&phases[slot],
+                    "samples_us_allocations_requested_bytes":&samples[slot],
+                    "usage_before":&before,"usage_after":&after,"usage_after_stop":&stopped,
+                    "memory_samples":&memory,"stop_ui_us":stop_ui[slot],"stop_cleanup_us":stop_cleanup_us,
+                    "live_runs_after_stop":live_runs
+                }));
+            }
         }
     }
     std::fs::write(output,serde_json::to_vec_pretty(&json!({
         "os":std::env::consts::OS,"arch":std::env::consts::ARCH,"debug_assertions":cfg!(debug_assertions),
-        "ui_thread_qos":{"initial_class":initial_qos as u32,"initial_priority":initial_priority,"requested":"user_interactive","relative_priority":0},
-        "scope":"Same-build instrumented egui CPU frames and UI-thread allocation traffic. Three source-approved native LSP profiles use real rotated Lua callbacks and private project snapshots. Approximately 60 KiB Unicode JSON; typing at one event per ten 16-ms frames. Physical host footprint, self CPU and context switches exclude child usage. No GPU/OS input/presentation latency or total-process-tree memory claim. Raw text/paths are not recorded.",
+        "ui_thread_qos":{"initial_class":initial_qos as u32,"initial_priority":initial_priority,
+            "requested":"user_interactive","relative_priority":0},
+        "scope":"Foreground-QoS paired egui CPU frames/UI-thread allocations. Two independent views are interleaved within each 16-ms pair with alternating order. Disabled/native pairs share native background load to isolate incremental UI costs; separate disabled/disabled A/A pairs quantify measurement variance. Process CPU/footprint are shared per pair, exclude children, and are not per-view estimates. Unpaired runs retain whole-process comparisons. Approximately 60 KiB Unicode/CRLF JSON; every typing event is verified. No GPU/physical-input/presentation or total-process-tree-memory claim. No raw text/paths recorded.",
         "workloads":workloads})).unwrap()).unwrap();
 }

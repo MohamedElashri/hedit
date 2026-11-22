@@ -92,6 +92,11 @@ def main():
                     summary[baseline]['cpu_frame_us']['p95'] - 1
                    for mode, baseline in [('native_idle', 'disabled_idle'),
                                           ('typing_with_native', 'disabled_typing')]}
+    controls = {mode: summary[right]['cpu_frame_us']['p95'] /
+                summary[left]['cpu_frame_us']['p95'] - 1
+                for mode, left, right in [
+                    ('idle', 'control_idle_a', 'control_idle_b'),
+                    ('typing', 'control_typing_a', 'control_typing_b')]}
     changed = [name for name, digest in hashes.items()
                if hashlib.sha256((ROOT/name).read_bytes()).hexdigest() != digest]
     if changed:
@@ -109,9 +114,10 @@ def main():
                     ['RUSTFLAGS', 'CARGO_TARGET_DIR', 'CARGO_PROFILE_RELEASE_LTO', 'CARGO_INCREMENTAL']},
                 'test_executable_sha256': hashlib.sha256(Path(executables[0]).read_bytes()).hexdigest(),
                 'summary': summary, 'p95_regression_fraction': comparisons,
-                'ui_thread_qos': report['ui_thread_qos'], 'scope': report['scope']}
+                'aa_control_p95_fraction': controls, 'ui_thread_qos': report['ui_thread_qos'], 'scope': report['scope']}
     (output/'metadata.json').write_text(json.dumps(metadata, indent=2)+'\n')
-    print(json.dumps({'summary': summary, 'p95_regression_fraction': comparisons}, indent=2))
+    print(json.dumps({'summary': summary, 'p95_regression_fraction': comparisons,
+                      'aa_control_p95_fraction': controls}, indent=2))
 
 
 if __name__ == '__main__':
