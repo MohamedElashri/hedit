@@ -161,6 +161,7 @@ impl HeditApp {
                                     ui,
                                     &self.theme,
                                     active,
+                                    self.command_enabled(Command::SourceControl),
                                     &self.shortcut_text(Command::SourceControl),
                                 )
                             },

@@ -22,12 +22,14 @@ impl CursorView {
         }
     }
     pub(super) fn put(&self, b: &mut Buffer) {
-        b.view.anchor = self.anchor.min(b.page.text.chars().count());
-        b.view.head = self.head.min(b.page.text.chars().count());
+        // Split views restore every frame; scan only up to the furthest offset.
+        let characters = b.page.text.chars().take(self.anchor.max(self.head)).count();
+        b.view.anchor = self.anchor.min(characters);
+        b.view.head = self.head.min(characters);
         b.view.scroll_top = self.scroll_top;
         b.view.scroll_left = self.scroll_left;
-        b.view.selections = self.selections.clone();
-        b.view.folds = self.folds.clone();
+        b.view.selections.clone_from(&self.selections);
+        b.view.folds.clone_from(&self.folds);
         b.restore_cursor = true;
     }
 }
@@ -887,19 +889,21 @@ mod group_tests {
     #[test]
     fn shared_edits_and_undo_transform_independent_group_cursors() {
         let (_dir, ctx, mut app) = app();
+        app.workspace.open[0].page.text = "café / 東京 / 😀".into();
+        app.workspace.edit(0, "abcdef").unwrap();
         app.split(1);
         app.focus_group(1, false);
-        app.set_selections(vec![hedit::advanced::Selection::caret(6)]);
+        app.set_selections(vec![hedit::advanced::Selection::caret(13)]);
         frame(&ctx, &mut app, vec![]);
         app.focus_group(0, false);
         app.set_selections(vec![hedit::advanced::Selection::caret(0)]);
         frame(&ctx, &mut app, vec![egui::Event::Text("x".into())]);
-        assert_eq!(app.active().page.text, "xabcdef");
+        assert_eq!(app.active().page.text, "xcafé / 東京 / 😀");
         app.focus_group(1, false);
-        assert_eq!(app.active().view.head, 7);
+        assert_eq!(app.active().view.head, 14);
         app.execute(&ctx, Command::Undo);
         finish_app_job(&mut app, &ctx);
-        assert_eq!(app.active().page.text, "abcdef");
+        assert_eq!(app.active().page.text, "café / 東京 / 😀");
         assert_eq!(app.workspace.open.len(), 2);
     }
     #[test]

@@ -1040,14 +1040,7 @@ mod surface {
             }
 
             if actions.hide {
-                self.terminal.dragged_tab = None;
-                if let Some(tab) = self.terminal.tabs.get_mut(self.terminal.active) {
-                    tab.preedit.clear();
-                }
-                self.terminal.open = false;
-                self.terminal.binding_prefix = None;
-                self.focus_editor = true;
-                ctx.memory_mut(|m| m.surrender_focus(input_id()));
+                self.hide_panel();
             }
             if let Some(index) = actions.stop {
                 if let Some(tab) = self.terminal.tabs.get_mut(index) {

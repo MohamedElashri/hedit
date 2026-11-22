@@ -1190,6 +1190,15 @@ fn workspace_switcher_preserves_drafts_and_files_across_themes_and_small_sidebar
         assert_eq!(app.active().view.id, id);
         assert!(app.workspace.closed.is_empty());
     }
+    click_label(&ctx, &mut app, "Files");
+    app.busy = true;
+    click_label(&ctx, &mut app, "Source Control");
+    assert_eq!(app.sidebar, workbench_navigation::Sidebar::Files);
+    app.busy = false;
+    click_label(&ctx, &mut app, "Source Control");
+    finish_git(&ctx, &mut app);
+    assert_eq!(app.sidebar, workbench_navigation::Sidebar::SourceControl);
+    assert_eq!(app.source_control.draft, "Keep my commit message");
     // Fallback navigation remains inside a sidebar at its minimum width.
     let output = ctx.run(
         egui::RawInput {

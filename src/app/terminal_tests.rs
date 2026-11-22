@@ -535,6 +535,36 @@ fn terminal_header_scales_without_changing_shell_or_terminal_typography() {
             assert_eq!(app.terminal_font_id(), terminal_font);
         }
     }
+    let output = terminal_frame_size(&ctx, &mut app, vec![], Modifiers::NONE, size);
+    let bar = ctx
+        .read_response(egui::Id::new("terminal-tab-bar"))
+        .unwrap()
+        .rect;
+    let more = output
+        .shapes
+        .iter()
+        .find_map(|shape| match &shape.shape {
+            egui::Shape::Mesh(mesh)
+                if hedit::icons::Icon::More.matches_texture(&ctx, mesh.texture_id)
+                    && bar.contains_rect(mesh.calc_bounds()) =>
+            {
+                Some(mesh.calc_bounds())
+            }
+            _ => None,
+        })
+        .unwrap();
+    super::tests::click_at(&ctx, &mut app, more.center(), size);
+    let output = terminal_frame_size(&ctx, &mut app, vec![], Modifiers::NONE, size);
+    let hide = output
+        .shapes
+        .iter()
+        .find_map(|shape| super::tests::text_rect(&shape.shape, "Hide terminal"))
+        .unwrap();
+    super::tests::click_at(&ctx, &mut app, hide.center(), size);
+    assert!(!app.terminal.open && !app.terminal.focus);
+    assert_eq!(app.panel_state.last, workbench_panel::Panel::Terminal);
+    assert_eq!(app.terminal.tabs[0].id, id);
+    assert!(app.terminal.tabs[0].session.running);
     settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
 }
 
