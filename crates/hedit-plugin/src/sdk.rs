@@ -32,7 +32,7 @@ pub struct Snapshot {
     pub crlf: bool,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Input {
     pub sdk_version: u32,

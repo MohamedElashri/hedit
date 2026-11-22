@@ -1,4 +1,5 @@
 //! Bounded native highlighting, filename associations, and stable session IDs.
+pub mod declarative;
 pub mod grammar;
 mod keywords;
 mod lexer;

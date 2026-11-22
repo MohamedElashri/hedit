@@ -113,37 +113,139 @@ fn decode_sdk_reply_traced(
     }
 }
 
+pub(super) fn run_service(
+    input: crate::service::Input,
+    approval: Option<File>,
+    cancelled: &AtomicBool,
+    trace: &crate::telemetry::Recorder,
+) -> Result<crate::service::Output, crate::sdk::Failure> {
+    if !super::SUPPORTED {
+        return Err(Error::Unavailable.into());
+    }
+    use crate::telemetry::Phase;
+    let request = trace.measure(Phase::Encode, || protocol::encode_service(&input))?;
+    let reply = super::supervisor::supervise_service(
+        &super::supervisor::executable()?,
+        request,
+        cancelled,
+        Duration::from_millis(crate::service::CALLBACK_MILLIS),
+        approval,
+        trace,
+    )?;
+    trace.measure(Phase::Decode, || decode_service_reply(&input, &reply))
+}
+pub(super) fn decode_service_reply(
+    input: &crate::service::Input,
+    bytes: &[u8],
+) -> Result<crate::service::Output, crate::sdk::Failure> {
+    if bytes.len() > crate::service::MAX_RESULT_BYTES + 8192 {
+        return Err(Error::Worker.into());
+    }
+    let reply: crate::service::Reply = serde_json::from_slice(bytes).map_err(|_| Error::Worker)?;
+    if reply.protocol_version != crate::service::VERSION {
+        return Err(Error::Worker.into());
+    }
+    match reply.outcome {
+        crate::service::Outcome::Success(output) => {
+            output.validate(input)?;
+            Ok(*output)
+        }
+        crate::service::Outcome::Failure(failure) => {
+            failure.validate(&input.package)?;
+            Err(failure)
+        }
+    }
+}
+
 pub(super) fn run_helper(isolated: bool) -> bool {
     run_helper_io(isolated, io::stdin().lock(), io::stdout().lock())
 }
 
-fn run_helper_io(isolated: bool, input: impl Read, mut output: impl Write) -> bool {
+pub(super) fn run_service_helper(isolated: bool) -> bool {
+    let mut output = io::stdout().lock();
+    if isolated
+        && output
+            .write_all(&[crate::service::READY])
+            .and_then(|_| output.flush())
+            .is_err()
+    {
+        return false;
+    }
+    run_helper_io_for(isolated, true, io::stdin().lock(), output)
+}
+fn run_helper_io(isolated: bool, input: impl Read, output: impl Write) -> bool {
+    run_helper_io_for(isolated, false, input, output)
+}
+fn run_helper_io_for(
+    isolated: bool,
+    service: bool,
+    input: impl Read,
+    mut output: impl Write,
+) -> bool {
     // No attacker-influenced request bytes or Lua code are consumed before
     // the process is isolated. Error is reported through a fixed status code.
     let result = if isolated {
-        protocol::decode_invocation(input).and_then(|input| match input {
-            protocol::Invocation::Legacy(input) => {
-                serde_json::to_vec(&evaluate(input)?).map_err(|_| Error::Worker)
+        protocol::decode_invocation(input).and_then(|input| {
+            if service != matches!(input, protocol::Invocation::Service(_)) {
+                return Err(Error::Request);
             }
-            protocol::Invocation::Sdk(input) => {
-                let worker_started = std::time::Instant::now();
-                let location = Rc::new(std::cell::RefCell::new(None));
-                let result = with_lua(|lua, environment| {
-                    crate::sdk::lua::evaluate_detailed(lua, environment, input, location.clone())
-                });
-                let outcome = match result {
-                    Ok(transaction) => crate::sdk::Outcome::Success(transaction),
-                    Err(error) => crate::sdk::Outcome::Failure(crate::sdk::Failure::evaluation(
-                        error,
-                        location.borrow_mut().take(),
-                    )),
-                };
-                serde_json::to_vec(&crate::sdk::Reply {
-                    protocol_version: 1,
-                    worker_time_us: worker_started.elapsed().as_micros().min(2_000_000) as u64,
-                    outcome,
-                })
-                .map_err(|_| Error::Worker)
+            match input {
+                protocol::Invocation::Legacy(input) => {
+                    serde_json::to_vec(&evaluate(input)?).map_err(|_| Error::Worker)
+                }
+                protocol::Invocation::Service(input) => {
+                    let location = Rc::new(std::cell::RefCell::new(None));
+                    let result = with_lua_budget(
+                        crate::service::CALLBACK_INSTRUCTIONS,
+                        |lua, environment| {
+                            crate::service::lua::evaluate(lua, environment, input, location.clone())
+                        },
+                    );
+                    let outcome = match result {
+                        Ok(output) => crate::service::Outcome::Success(Box::new(output)),
+                        Err(error) => {
+                            let mut failure = crate::sdk::Failure::evaluation(
+                                error,
+                                location.borrow_mut().take(),
+                            );
+                            failure.kind = match failure.kind {
+                                Error::SdkTransaction | Error::SdkType => Error::ServiceResult,
+                                Error::SdkLimit => Error::ServiceLimit,
+                                other => other,
+                            };
+                            crate::service::Outcome::Failure(failure)
+                        }
+                    };
+                    serde_json::to_vec(&crate::service::Reply {
+                        protocol_version: crate::service::VERSION,
+                        outcome,
+                    })
+                    .map_err(|_| Error::Worker)
+                }
+                protocol::Invocation::Sdk(input) => {
+                    let worker_started = std::time::Instant::now();
+                    let location = Rc::new(std::cell::RefCell::new(None));
+                    let result = with_lua(|lua, environment| {
+                        crate::sdk::lua::evaluate_detailed(
+                            lua,
+                            environment,
+                            input,
+                            location.clone(),
+                        )
+                    });
+                    let outcome = match result {
+                        Ok(transaction) => crate::sdk::Outcome::Success(transaction),
+                        Err(error) => crate::sdk::Outcome::Failure(
+                            crate::sdk::Failure::evaluation(error, location.borrow_mut().take()),
+                        ),
+                    };
+                    serde_json::to_vec(&crate::sdk::Reply {
+                        protocol_version: 1,
+                        worker_time_us: worker_started.elapsed().as_micros().min(2_000_000) as u64,
+                        outcome,
+                    })
+                    .map_err(|_| Error::Worker)
+                }
             }
         })
     } else {
@@ -350,5 +452,55 @@ mod tests {
             assert!(!error.to_string().contains("private fixture"));
         }
         assert!(decode_sdk_reply(&input, br#"{"protocol_version":1,"protocol_version":1,"outcome":{"failure":{"kind":"syntax"}}}"#).is_err());
+    }
+    #[test]
+    fn service_roles_framing_and_result_identity_cannot_be_confused() {
+        use crate::service::{self, Kind, Trigger};
+        let input = service::Input {
+            protocol_version: service::VERSION,
+            request: service::Request {
+                id: "f".repeat(32),
+                kind: Kind::Diagnostics,
+                trigger: Trigger::Manual,
+                position: 0,
+                action: None,
+                choice: None,
+            },
+            package: sdk_input(),
+            cache: Default::default(),
+            may_edit: false,
+        };
+        let request = protocol::encode_service(&input).unwrap();
+        let mut output = Vec::new();
+        assert!(run_helper_io_for(
+            true,
+            false,
+            request.as_slice(),
+            &mut output
+        ));
+        assert_eq!(output, [Error::Request as u8]);
+        output.clear();
+        assert!(run_helper_io_for(
+            true,
+            true,
+            protocol::encode_sdk(&input.package).unwrap().as_slice(),
+            &mut output
+        ));
+        assert_eq!(output, [Error::Request as u8]);
+        let valid = serde_json::json!({"protocol_version":1,"outcome":{"success":{"request":input.request.id,"document":input.package.snapshot.document,"revision":input.package.snapshot.revision,"cache":{},"result":{"diagnostics":[]}}}});
+        let bytes = serde_json::to_vec(&valid).unwrap();
+        decode_service_reply(&input, &bytes).unwrap();
+        for end in 0..bytes.len() {
+            assert!(decode_service_reply(&input, &bytes[..end]).is_err());
+        }
+        for field in ["request", "document", "revision"] {
+            let mut bad = valid.clone();
+            bad["outcome"]["success"][field] = "foreign".into();
+            assert!(decode_service_reply(&input, &serde_json::to_vec(&bad).unwrap()).is_err());
+        }
+        let mut trailing = bytes.clone();
+        trailing.extend(b"{}");
+        assert!(decode_service_reply(&input, &trailing).is_err());
+        assert!(decode_service_reply(&input,br#"{"protocol_version":1,"protocol_version":1,"outcome":{"failure":{"kind":"execution"}}}"#).is_err());
     }
 }

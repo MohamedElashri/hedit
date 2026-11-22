@@ -731,6 +731,11 @@ impl HeditApp {
                                 self.open_preferences(PreferencesPage::Recovery);
                             }
                             self.language_menu(ui);
+                            if let Some(count) = self.plugin_services.summary() {
+                                if ui.small_button(format!("Extensions · {count}")).clicked() {
+                                    self.plugin_services.open = true;
+                                }
+                            }
                             self.language_status_button(ui);
                             self.status_menus(ui, &mut status_action);
                         },

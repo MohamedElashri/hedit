@@ -49,14 +49,8 @@ class WindowsPackage(unittest.TestCase):
                 shutil.copy2(packager.ROOT / filename, project / filename)
             for directory in ['assets', 'themes', 'docs/images', 'examples/cuda']:
                 shutil.copytree(packager.ROOT / directory, project / directory)
-            documents = ['vendor/egui_commonmark/PATCH.md', 'vendor/libghostty-vt-sys/PATCH.md',
-                         'docs/extensions.md', 'docs/extension-security.md', 'docs/plugin-sdk.md',
-                         'schemas/plugin-manifest.schema.json', 'schemas/hedit-sdk.lua',
-                         'examples/extensions/sdk-markdown.json', 'examples/extensions/sdk-markdown.fixtures.json',
-                         'examples/extensions/sdk-table.json', 'examples/extensions/sdk-table.fixtures.json',
-                         'examples/extensions/sdk-trim.json', 'examples/extensions/sdk-trim.fixtures.json',
-                         'examples/extensions/markdown-task.json',
-                         'examples/extensions/markdown-quote.json']
+            from package_resources import DOCUMENTATION_FILES
+            documents = DOCUMENTATION_FILES
             for relative in documents:
                 (project / relative).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(packager.ROOT / relative, project / relative)
@@ -84,6 +78,9 @@ class WindowsPackage(unittest.TestCase):
                 self.assertEqual(examples, {'examples/cuda/vector_add.cu',
                                             'examples/extensions/markdown-task.json',
                                             'examples/extensions/markdown-quote.json',
+                                            'examples/extensions/document-assist.json',
+                                            'examples/extensions/document-assist.fixtures.json',
+                                            'examples/extensions/demo-visuals.json',
                                             *{f'examples/extensions/sdk-{name}{suffix}.json'
                                               for name in ['markdown', 'table', 'trim']
                                               for suffix in ['', '.fixtures']}})

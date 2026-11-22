@@ -46,9 +46,24 @@ pub fn lock_with_timeout(
     file: &File,
     timeout: std::time::Duration,
 ) -> Result<(), std::fs::TryLockError> {
+    lock_retry(file, timeout, File::try_lock)
+}
+
+/// Shared disclosure guards permit concurrent readers while policy changes stay exclusive.
+pub fn lock_shared_with_timeout(
+    file: &File,
+    timeout: std::time::Duration,
+) -> Result<(), std::fs::TryLockError> {
+    lock_retry(file, timeout, File::try_lock_shared)
+}
+fn lock_retry(
+    file: &File,
+    timeout: std::time::Duration,
+    attempt: impl Fn(&File) -> Result<(), std::fs::TryLockError>,
+) -> Result<(), std::fs::TryLockError> {
     let started = std::time::Instant::now();
     loop {
-        match file.try_lock() {
+        match attempt(file) {
             Ok(()) => return Ok(()),
             Err(std::fs::TryLockError::WouldBlock) => {
                 let remaining = timeout.saturating_sub(started.elapsed());

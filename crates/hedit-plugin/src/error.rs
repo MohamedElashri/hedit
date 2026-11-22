@@ -27,6 +27,9 @@ pub enum Error {
     SdkTransaction,
     SdkType,
     SdkLimit,
+    ServiceBusy,
+    ServiceResult,
+    ServiceLimit,
 }
 
 impl Error {
@@ -39,6 +42,7 @@ impl Error {
                 | Self::ReturnSize
                 | Self::Deadline
                 | Self::SdkLimit
+                | Self::ServiceLimit
         )
     }
 
@@ -86,6 +90,9 @@ impl fmt::Display for Error {
                 "The editing SDK proposed an invalid or unauthorized transaction."
             }
             Self::SdkType => "The editing SDK must return a valid transaction table.",
+            Self::ServiceResult => "The provider returned an invalid or unauthorized result.",
+            Self::ServiceLimit => "The provider exceeded its documented result or resource limits.",
+            Self::ServiceBusy => "The editor's concurrent provider limit is reached.",
             Self::SdkLimit => "The editing SDK exceeded its documented result or resource limits.",
         })
     }

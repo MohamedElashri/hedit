@@ -221,7 +221,7 @@ fn authoring_manifest(path: &Path, original: &str) -> Result<String, String> {
         serde_json::from_str(original).map_err(|error| error.to_string())?;
     let sdk = fields
         .get("api_version")
-        .is_some_and(|v| serde_json::from_str::<u32>(v.get()).ok() == Some(3));
+        .is_some_and(|v| matches!(serde_json::from_str::<u32>(v.get()).ok(), Some(3 | 4)));
     if !sdk && original.len() as u64 > MAX_MANIFEST_BYTES {
         return Err(format!(
             "Manifest exceeds the {MAX_MANIFEST_BYTES}-byte limit."
@@ -499,6 +499,18 @@ struct Fixture {
     storage: Option<crate::plugin_runtime::sdk::Storage>,
     #[serde(default)]
     expected_storage: Option<crate::plugin_runtime::sdk::Storage>,
+    #[serde(default)]
+    expected_result: Option<serde_json::Value>,
+    #[serde(default)]
+    cache: crate::plugin_runtime::sdk::Storage,
+    #[serde(default)]
+    expected_cache: Option<crate::plugin_runtime::sdk::Storage>,
+    #[serde(default)]
+    trigger: Option<crate::plugin_runtime::service::Trigger>,
+    #[serde(default)]
+    action: Option<String>,
+    #[serde(default)]
+    choice: Option<hedit::plugin_options::Value>,
 }
 
 fn plain_text() -> String {
@@ -527,7 +539,88 @@ fn test_traced(path: &Path, fixtures: &Path, timings: bool) -> Result<(), String
                 return Err("Unknown fixture language.".into());
             }
             let settings = manifest.fixture_settings(&case.settings)?;
-            let result = if manifest.sdk {
+            let result = if let Some(definition) = manifest.provider(&case.command) {
+                use crate::plugin_runtime::{sdk, service};
+                if !case.arguments.is_empty()
+                    || case.storage.is_some()
+                    || case.expected_storage.is_some()
+                {
+                    return Err("Providers use explicit cache, without command arguments or private storage.".into());
+                }
+                let original = case.input;
+                let mut snapshot = super::options::sdk_snapshot(
+                    &case.language,
+                    original.clone(),
+                    case.selections
+                        .unwrap_or_else(|| vec![sdk::Selection { anchor: 0, head: 0 }]),
+                    original.contains("\r\n"),
+                )
+                .map_err(|error| error.to_string())?;
+                snapshot.document = "a".repeat(32);
+                snapshot.revision = "0".into();
+                let trigger = case.trigger.unwrap_or_else(|| {
+                    if definition.events.contains(&service::Trigger::Manual) {
+                        service::Trigger::Manual
+                    } else {
+                        definition.events[0]
+                    }
+                });
+                if trigger != service::Trigger::Interaction && !definition.events.contains(&trigger)
+                {
+                    return Err("Fixture trigger is not declared by the provider.".into());
+                }
+                let expected_cache = case.expected_cache.unwrap_or_else(|| case.cache.clone());
+                let input = service::Input {
+                    protocol_version: service::VERSION,
+                    request: service::Request {
+                        id: "f".repeat(32),
+                        kind: definition.kind,
+                        trigger,
+                        position: snapshot.selections[0].head,
+                        action: case.action,
+                        choice: case.choice,
+                    },
+                    package: sdk::Input {
+                        sdk_version: sdk::VERSION,
+                        source: source.to_owned(),
+                        modules: manifest
+                            .modules
+                            .iter()
+                            .map(|(k, v)| (k.clone(), v.to_string()))
+                            .collect(),
+                        resources: manifest.resources.as_ref().clone(),
+                        snapshot: snapshot.clone(),
+                        settings,
+                        arguments: Default::default(),
+                        storage: None,
+                    },
+                    cache: case.cache,
+                    may_edit: definition.may_edit,
+                };
+                crate::plugin_runtime::run_service_fixture(input)
+                    .map_err(|error| error.to_string())
+                    .and_then(|output| {
+                        if output.cache != expected_cache {
+                            return Err("Provider cache differs from expected_cache.".into());
+                        }
+                        if let Some(expected) = case.expected_result {
+                            if serde_json::to_value(&output.result).map_err(|e| e.to_string())?
+                                != expected
+                            {
+                                return Err("Provider result differs from expected_result.".into());
+                            }
+                        } else if !matches!(output.result, service::ResultSet::Formatting(_)) {
+                            return Err("Supply expected_result for a provider fixture.".into());
+                        }
+                        match output.result {
+                            service::ResultSet::Formatting(transaction) => transaction
+                                .prepare(&snapshot)
+                                .map(|prepared| prepared.text)
+                                .map_err(|error| error.to_string()),
+                            _ => Ok(original),
+                        }
+                    })
+            } else if manifest.sdk {
                 let len = case.input.len();
                 let crlf = case.input.contains("\r\n");
                 let snapshot = super::options::sdk_snapshot(

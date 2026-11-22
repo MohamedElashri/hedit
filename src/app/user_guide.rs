@@ -28,7 +28,7 @@ documents! {
     "assets/licenses/libghostty-rs-MIT.txt",
     "assets/licenses/lua-MIT.txt",
     "assets/licenses/Noto-Sans-Arabic-OFL.txt",
-    "docs/extensions.md", "docs/extension-security.md", "docs/plugin-sdk.md", "examples/extensions/markdown-task.json",
+    "docs/extensions.md", "docs/extension-security.md", "docs/plugin-sdk.md", "docs/plugin-services.md", "examples/extensions/document-assist.json", "examples/extensions/document-assist.fixtures.json", "examples/extensions/demo-visuals.json", "examples/extensions/markdown-task.json",
     "examples/extensions/markdown-quote.json",
 }
 

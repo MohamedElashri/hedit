@@ -22,6 +22,7 @@ enum Scope {
     Document,
     DocumentAndStorage,
     Save,
+    Provider,
 }
 
 impl Scope {
@@ -31,6 +32,7 @@ impl Scope {
             Self::Document => "Read and edit current document",
             Self::DocumentAndStorage => "Current document and private command storage",
             Self::Save => "Read and replace document on save",
+            Self::Provider => "Current-document provider callback",
         }
     }
 }
@@ -65,6 +67,12 @@ impl Invocation {
         }
     }
 
+    pub(in crate::app) fn provider(command_id: &str) -> Self {
+        Self {
+            scope: Scope::Provider,
+            ..Self::new(command_id)
+        }
+    }
     pub(in crate::app) fn on_save(command_id: &str) -> Self {
         Self {
             scope: Scope::Save,
@@ -76,6 +84,7 @@ impl Invocation {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::app) enum InvocationOutcome {
     Applied,
+    Published,
     Discarded,
     Failed,
     LimitReached,
@@ -97,6 +106,7 @@ impl InvocationOutcome {
     fn label(self) -> &'static str {
         match self {
             Self::Applied => "Applied",
+            Self::Published => "Result published",
             Self::Discarded => "Discarded",
             Self::Failed => "Failed",
             Self::LimitReached => "Limit reached",

@@ -46,59 +46,80 @@ fn confines_native_file_network_and_inherited_descriptors() {
         }
         native_probe();
     }
-    let directory = tempfile::tempdir().unwrap();
-    let secret = directory.path().join("private.txt");
-    fs::write(&secret, "private fixture").unwrap();
-    let file = fs::File::open(&secret).unwrap();
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    listener.set_nonblocking(true).unwrap();
-    let executable = prepare(directory.path());
-    let mut command = Command::new(executable);
-    command
-        .args(["--exact", TEST, "--nocapture"])
-        .env_clear()
-        .env(PROBE, "1")
-        .env("HEDIT_PROBE_PATH", &secret)
-        .env(
-            "HEDIT_PROBE_PORT",
-            listener.local_addr().unwrap().port().to_string(),
-        )
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    // Intentionally inherit a sensitive descriptor. The adapter must remove it
-    // even though App Sandbox does not revoke an already-open descriptor.
-    unsafe {
-        command.pre_exec(move || {
-            if libc::dup2(file.as_raw_fd(), 200) == -1 {
-                return Err(io::Error::last_os_error());
-            }
-            Ok(())
-        });
+    for role in ["command", "service"] {
+        let directory = tempfile::tempdir().unwrap();
+        let secret = directory.path().join("private.txt");
+        fs::write(&secret, "private fixture").unwrap();
+        let file = fs::File::open(&secret).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let executable = prepare(directory.path());
+        let mut command = Command::new(executable);
+        command
+            .args(["--exact", TEST, "--nocapture"])
+            .env_clear()
+            .env(PROBE, role)
+            .env("HEDIT_PROBE_PATH", &secret)
+            .env(
+                "HEDIT_PROBE_PORT",
+                listener.local_addr().unwrap().port().to_string(),
+            )
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        // Intentionally inherit a sensitive descriptor. The adapter must remove it
+        // even though App Sandbox does not revoke an already-open descriptor.
+        unsafe {
+            command.pre_exec(move || {
+                if libc::dup2(file.as_raw_fd(), 200) == -1 {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let mut child = command.spawn().unwrap();
+        verify_child(&child).unwrap();
+        child.stdin.take().unwrap().write_all(b"x").unwrap();
+        let result = child.wait_with_output().unwrap();
+        assert!(
+            result.status.success(),
+            "native probe exited: {:?}: {}",
+            result.status,
+            String::from_utf8_lossy(&result.stdout)
+        );
+        assert!(result.stdout.ends_with(b"native probe passed\n"));
+        assert_eq!(fs::read_to_string(secret).unwrap(), "private fixture");
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
     }
-    let mut child = command.spawn().unwrap();
-    verify_child(&child).unwrap();
-    child.stdin.take().unwrap().write_all(b"x").unwrap();
-    let result = child.wait_with_output().unwrap();
-    assert!(
-        result.status.success(),
-        "native probe exited: {:?}: {}",
-        result.status,
-        String::from_utf8_lossy(&result.stdout)
-    );
-    assert!(result.stdout.ends_with(b"native probe passed\n"));
-    assert_eq!(fs::read_to_string(secret).unwrap(), "private fixture");
-    assert_eq!(
-        listener.accept().unwrap_err().kind(),
-        io::ErrorKind::WouldBlock
-    );
 }
 
 fn native_probe() -> ! {
     let path = std::ffi::CString::new(std::env::var("HEDIT_PROBE_PATH").unwrap()).unwrap();
     let port: u16 = std::env::var("HEDIT_PROBE_PORT").unwrap().parse().unwrap();
     check(unsafe { libc::fcntl(200, libc::F_GETFD) } != -1, 10);
-    check(enter().is_ok(), 11);
+    let service = std::env::var(PROBE).as_deref() == Ok("service");
+    check(
+        if service {
+            super::super::enter_service()
+        } else {
+            enter()
+        }
+        .is_ok(),
+        11,
+    );
+    if service {
+        check(
+            unsafe { libc::getpriority(libc::PRIO_PROCESS, 0) } >= 10,
+            40,
+        );
+        check(
+            unsafe { libc::setpriority(libc::PRIO_PROCESS, 0, 0) } != 0,
+            41,
+        );
+    }
     check(unsafe { libc::fcntl(200, libc::F_GETFD) } == -1, 12);
     let mut byte = [0];
     check(

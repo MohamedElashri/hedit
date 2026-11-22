@@ -145,3 +145,7 @@ fingerprint through a separate channel so users can compare it before trusting
 the key. Bundle updates show the release and changed scripts. Signed updates
 must use the installed publisher’s key and increase the version. Lua permissions
 remain a separate approval.
+
+Provider API 4 / SDK 2 and declarative language/theme packs are described in the
+[provider reference](plugin-services.md). Their native and load-test stage gates
+remain explicit in `plugin_plan.md`.
