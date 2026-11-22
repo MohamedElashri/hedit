@@ -3,14 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{ if eq .CurrentURL "/" }}{{ .Config.Title }}{{ else }}{{ .Title }} — {{ .Config.Title }}{{ end }}</title>
-  <meta name="description" content="{{ default .Description .Config.Description }}">
-  <link rel="canonical" href="{{ .CanonicalURL }}">
+  {{ template "seo-head" . }}
   <meta name="color-scheme" content="light dark">
-  <meta property="og:title" content="{{ .Title }}">
-  <meta property="og:description" content="{{ default .Description .Config.Description }}">
-  <meta property="og:type" content="website">
-  <meta property="og:url" content="{{ .CanonicalURL }}">
   <script>
     document.documentElement.classList.add('js');
     try { var theme = localStorage.getItem('hedit-docs-theme'); if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme; } catch (_) {}
@@ -82,8 +76,12 @@
 <footer class="article-footer">
   <div class="source-links">{{ with .Page.Extra.source_url }}<a href="{{ . }}">Edit this page</a>{{ else }}{{ with .Section.Extra.source_url }}<a href="{{ . }}">Edit this page</a>{{ end }}{{ end }}<a href="https://github.com/MohamedElashri/hedit/issues">Report a documentation issue</a></div>
   {{ with .Index.Neighbors "" .CurrentURL }}<nav class="pager" aria-label="Adjacent pages">{{ with .Prev }}<a rel="prev" href="{{ $.BasePath }}{{ .URL }}"><span>Previous</span>{{ .Title }}</a>{{ else }}<span></span>{{ end }}{{ with .Next }}<a rel="next" href="{{ $.BasePath }}{{ .URL }}"><span>Next</span>{{ .Title }}</a>{{ end }}</nav>{{ end }}
-  <p class="colophon">hedit documentation <span>Built with <a href="https://github.com/MohamedElashri/nida">Nida</a>. Hosted on GitHub Pages.</span></p>
+  {{ template "site-credit" . }}
 </footer>
+{{ end }}
+
+{{ define "site-credit" }}
+<p class="colophon"><span>© {{ (now).Year }} hedit contributors. <a href="https://github.com/MohamedElashri/hedit/blob/main/LICENSE">MIT license</a>.</span><span>Built with <a href="https://github.com/MohamedElashri/nida">Nida</a>. <a href="{{ .BasePath }}/sitemap.xml">Sitemap</a>.</span></p>
 {{ end }}
 
 {{ define "standard-article" }}

@@ -92,3 +92,17 @@ Nida commands. Pull requests exercise this same explicit-URL build path.
 Keep browser scripts in `website/static/js/`. The native-app policy permits
 JavaScript only there and continues to reject frontend code in the application
 and Node package/build files throughout the repository.
+
+## Search metadata
+
+The shared head provides page descriptions, canonical URLs, Open Graph/Twitter
+previews, and JSON-LD website/page/breadcrumb data. Search and error pages use
+`noindex`; the build removes internal search from Nida's sitemap. Site checks
+validate the metadata, structured JSON, social-image paths and exact sitemap set.
+The copyright footer uses the build year and links to the full MIT notice.
+
+The docs sitemap is `https://melashri.net/hedit/sitemap.xml`, ready for submission
+in Google Search Console or Bing Webmaster Tools. Effective crawler rules live at
+the domain's `/robots.txt`; a project's `/hedit/robots.txt` does not override that
+policy. The main domain currently allows ordinary search engines. Its crawler
+policy is maintained separately from this site.

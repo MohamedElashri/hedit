@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tomllib
 from urllib.parse import unquote, urlsplit
+import xml.etree.ElementTree as ET
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -207,6 +208,17 @@ def main():
         raise SystemExit(f'Expected Nida {expected}; found {actual}. Run python3 scripts/setup-nida.py.')
     for command in ('check', 'build'):
         subprocess.run([args.nida, command, '--site', str(source)], check=True)
+    # Nida includes the internal search page; advertise only indexable content.
+    sitemap = source / 'public/sitemap.xml'
+    tree = ET.parse(sitemap)
+    namespace = 'http://www.sitemaps.org/schemas/sitemap/0.9'
+    search_url = (args.base_url or tomllib.loads((SITE / 'config.toml').read_text())['base_url']).rstrip('/') + '/search/'
+    for entry in list(tree.getroot()):
+        if entry.findtext(f'{{{namespace}}}loc') == search_url:
+            tree.getroot().remove(entry)
+    ET.register_namespace('', namespace)
+    ET.indent(tree, space='  ')
+    tree.write(sitemap, encoding='utf-8', xml_declaration=True)
     subprocess.run([sys.executable, str(ROOT / 'scripts/check-docs-site.py'), '--base-url', args.base_url or
                     tomllib.loads((SITE / 'config.toml').read_text())['base_url']], check=True)
 

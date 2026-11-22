@@ -66,6 +66,16 @@ class Imports(unittest.TestCase):
 
 
 class RenderedLinks(unittest.TestCase):
+    def test_metadata_parser_preserves_jsonld_and_reports_malformed_data(self):
+        page = rendered.Page('<meta name="robots" content="noindex, follow">'
+                             '<meta property="og:image" content="https://example.com/a.png">'
+                             '<script type="application/ld+json">{"@type":"WebPage","name":"A & B"}</script>')
+        self.assertEqual(page.meta['robots'], 'noindex, follow')
+        self.assertEqual(page.structured, [{'@type': 'WebPage', 'name': 'A & B'}])
+        self.assertIn('https://example.com/a.png', page.links)
+        broken = rendered.Page('<script type="application/ld+json">{broken}</script>')
+        self.assertEqual(len(broken.json_errors), 1)
+
     def test_checks_navigation_fragments_assets_prefixes_and_search(self):
         with tempfile.TemporaryDirectory() as directory:
             public = Path(directory).resolve()
