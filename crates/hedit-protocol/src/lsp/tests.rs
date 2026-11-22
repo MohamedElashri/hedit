@@ -180,3 +180,14 @@ fn escaped_payloads_obey_encoded_byte_limits_and_exact_framing() {
         value
     );
 }
+
+#[test]
+fn data_json_preserves_duplicate_and_size_limits_without_rpc_authority() {
+    assert_eq!(
+        parse_data(br#"{"name":"cafe","items":[null,true]}"#, Limits::DATA).unwrap(),
+        json!({"name":"cafe","items":[null,true]})
+    );
+    assert!(parse_json(br#"{"name":"cafe"}"#, Limits::DATA).is_err());
+    assert!(parse_data(br#"{"name":1,"name":2}"#, Limits::DATA).is_err());
+    assert!(parse_data(&vec![b' '; 65537], Limits::DATA).is_err());
+}

@@ -7,6 +7,7 @@ license = "MIT"
 publish = false
 
 [dependencies]
+hedit-protocol = { path = "../hedit-protocol" }
 percent-encoding = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

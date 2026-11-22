@@ -1,7 +1,8 @@
 #![no_main]
-use hedit_core::language_server::wire::{self, Decoder, Limits, READ_BYTES};
+use hedit_protocol::lsp::{self as wire, Decoder, Limits, READ_BYTES};
 
 libfuzzer_sys::fuzz_target!(|bytes: &[u8]| {
+    let _ = wire::parse_data(bytes, Limits::DATA);
     let limits = Limits::SCOPED;
     // A short exponent may normalize into a longer decimal representation.
     // Encoding has its own byte budget, so not every accepted source JSON
