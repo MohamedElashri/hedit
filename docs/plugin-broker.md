@@ -1,7 +1,7 @@
 # Workspace and service broker
 
-SDK 3 is under implementation and unavailable to installed plugins. The editor
-still accepts manifest APIs 1–4, whose existing grants retain their meanings.
+SDK 3 is under implementation. This integration branch accepts experimental
+manifest API 5 / SDK 3 ordinary commands; APIs 1–4 retain their existing meanings.
 The types in `hedit-plugin::broker` and `hedit-broker` are internal development
 interfaces, not a released author contract. See the [current SDK](plugin-sdk.md)
 and [security model](extension-security.md) for supported functionality.
@@ -24,8 +24,10 @@ Trusted editor: installed source, consent, document revisions, native UI
    Fresh confined Lua worker: one bounded intent, then exit
 ```
 
-The editor's manifest/grant manager, workspace preview and buffer-freeze UI,
-recovery UI, author CLI, and extracted-package references are not integrated yet.
+The editor routes ordinary scoped commands through exact-source approval and
+separate directory/endpoint review, complete paged workspace previews, clean
+buffer preflight, and off-thread reconciliation. SDK 3 background-provider
+routing, recovery UI, author CLI and extracted-package references remain open.
 Tool declarations are validated, but tool and language-server requests report
 unavailable. Native external-tool isolation remains a separate implementation
 and platform gate. None of these gaps is covered by an unsandboxed fallback.
@@ -53,7 +55,11 @@ constructed from a plugin's permission assertions. An ordinary command approval
 cannot create workspace, tool, endpoint, or background-event grants.
 
 Every sensitive delivery/effect obtains a current shared policy guard. Revocation
-first cancels sessions, then obtains the exclusive policy lock and changes grants.
+publishes an owner-verified cancellation generation before waiting for the
+exclusive policy lock. Native file events directly cancel transports even when
+the UI is inactive. New sessions reject a pending mutation. A separate writer
+lock prevents one mutation from clearing another's intent; orphan repair obtains
+both locks and advances the generation before admitting sessions.
 Callbacks, updates, scope changes, closure and Stop must invalidate pending data
 and registrations. Final document edits and presentation require fresh editor
 checks when consumed. Revocation cannot retract disclosed text or completed
@@ -73,7 +79,7 @@ bounded scalar cache does. Existing command/provider framing remains unchanged.
 SDK 3 uses an explicit private protocol version and a 2 MiB frame ceiling.
 
 Limits include 32 callbacks, 10 seconds of aggregate active work, 64 MiB of chain
-I/O, four broker sessions/host threads, and the existing four shared native service
+I/O, 16 bounded session/host contexts, four active broker operations, and four native
 worker slots. The worker retains the service role's readiness deadline, 750 ms
 processing deadline, 200,000 instructions, 16 MiB Lua allocation limit and native
 resource/confinement policy. A reply cannot select a weaker launch role.
@@ -125,7 +131,9 @@ including repeated reads of cached snapshots. A resource's contents remain an
 immutable versioned snapshot; later disk edits do not silently change that version.
 Large batches must use bounded chunks. Truncation never implies a complete index.
 
-Private editor data and journal directories have durable physical-identity
+The configuration root and this window's session/recovery storage are excluded,
+even when custom session storage is inside the selected workspace. Private editor
+data and journal directories have durable physical-identity
 exclusions, refreshed across editor processes. Persist an exclusion before writing
 sensitive stage contents. Moves/renames do not grant access. The owner-only registry
 has a 4,096-identity ceiling; corruption, partial records or exhaustion fail closed.
@@ -142,12 +150,24 @@ nested mount points are refused before review.
 Preview preparation does not modify disk. A preview expires after 120 seconds;
 its exact host-created plan ID must be accepted before journal preparation.
 
-Before acceptance, the editor integration must show every changed file, reject or
-resolve dirty affected buffers, recheck their identities/revisions and freeze
-those buffers through commit. It must defer stale reload/open results, refresh
-successful changes and release the freeze on every failure or cancellation.
-Unrelated documents must remain usable. These UI requirements remain a gate;
-passing the standalone broker tests does not implement them.
+The command UI shows the selected directory and complete before/after text for
+every file. Preview pages are indexed during preparation, so drawing a page does
+not scan the full file. Host preflight inspects the window's open and shelved
+buffers using physical identities and complete before text, refusing dirty,
+followed, paged or non-UTF-8 matches. It checks at most 4,096 buffers in five
+seconds and charges that work to the chain budget.
+
+A generation-checked lease freezes affected clean buffers and defers incoming
+opens/reloads while the journal runs. Unrelated buffers remain editable. No
+document mutex is held through journal or reconciliation I/O. Independent buffer
+backups have a separate 64 MiB global reservation; this includes pending refresh
+pages. Successful replacements advance revisions and clear affected history.
+Unchanged files retain Undo; unexpected disk contents preserve the original
+buffer text unsaved. Cancellation and errors reconcile and release every lease.
+Deferred opens reread disk off-thread, and stale replies cannot roll back a
+reconciled page. Other windows/processes remain external writers and receive the
+existing external-change/conflict behavior; this is not a cross-window Undo or
+transaction service.
 
 All replacements, permission checks and the immutable journal are prepared and
 flushed before original-file changes. Retention reserves up to 32 journals and
@@ -226,8 +246,8 @@ on Windows. It uses disposable Unicode/CRLF files and a synthetic translation
 response. The transport tests separately exercise real loopback TLS; production
 endpoint policy cannot opt into that test route.
 
-Required gates still include installed grant/manager and buffer/recovery UI
-integration; native Windows x64/ARM64 and Linux filesystem/driver checks; external
+Required gates still include SDK 3 provider routing and recovery UI; fresh native
+Windows x64/ARM64 and Linux editor-integration checks; external
 tool/LSP confinement and adversarial tests; author/reference/extracted-package
 coverage; final sanitizer and sustained performance evidence; and universal macOS
 packaging. Startup samples from debug fixtures are exploratory, not whole-editor

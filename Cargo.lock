@@ -2041,6 +2041,7 @@ dependencies = [
  "egui_extras",
  "encoding_rs",
  "getrandom 0.4.3",
+ "hedit-broker",
  "hedit-core",
  "hedit-plugin",
  "hedit-remote",

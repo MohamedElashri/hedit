@@ -109,6 +109,7 @@ fn workspace_config(outer: &Path, cancel: Arc<Cancel>) -> Config {
     Config {
         package: input,
         provider: None,
+        cache: Default::default(),
         definition: Arc::new(definition),
         resources: Some(Resources::new(root).unwrap()),
         endpoints: Default::default(),
@@ -161,6 +162,7 @@ fn workspace_chain() {
             Effect::Finished {
                 transaction: None,
                 result: None,
+                ..
             } => assert_eq!(step, 3),
             _ => panic!("Unexpected fixture effect"),
         }
@@ -294,7 +296,8 @@ fn asynchronous_host() {
                     event,
                     Event::Finished {
                         transaction: None,
-                        result: None
+                        result: None,
+                        ..
                     }
                 ));
                 assert_eq!(

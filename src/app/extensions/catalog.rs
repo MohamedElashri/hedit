@@ -1,7 +1,12 @@
 //! Local manifest discovery and atomic changes from the Extensions manager.
 mod lifecycle;
 mod permissions;
+mod resources;
 mod state;
+pub(super) use resources::{
+    approve_resources, broker_authorization, broker_epoch, reset_resource_approvals,
+    resource_approvals, revoke_resources,
+};
 pub(super) use state::{read_state, write_state};
 
 use super::manifest::{self, Contribution, ExtensionAction, LuaPlugin, MAX_MANIFESTS};
@@ -35,6 +40,7 @@ pub(super) struct View {
     pub(super) notices: Vec<String>,
     pub(super) state_unreadable: bool,
     pub(super) grants_unreadable: bool,
+    pub(super) resources_unreadable: bool,
 }
 
 pub(super) struct ManifestStatus {
@@ -62,6 +68,9 @@ pub(super) struct LuaCommandStatus {
     pub(super) approved: bool,
     pub(super) storage: bool,
     pub(super) provider: Option<crate::plugin_runtime::service::Definition>,
+    pub(super) broker: Option<hedit_broker::declaration::Definition>,
+    pub(super) token: Option<hedit_broker::Handle>,
+    pub(super) resources: Option<hedit_broker::state::Approval>,
 }
 
 impl View {
@@ -123,6 +132,17 @@ pub(super) fn read(config: &Path) -> Catalog {
             Grants::default()
         }
     };
+    let resources = match resource_approvals(config) {
+        Ok(approvals) => approvals,
+        Err(error) => {
+            catalog.view.resources_unreadable = true;
+            catalog
+                .view
+                .notices
+                .push(format!("Resource access is unavailable: {error}"));
+            BTreeMap::new()
+        }
+    };
     let (over_limit, entries) = match scan(config) {
         Ok(scan) => scan,
         Err(error) => {
@@ -169,12 +189,19 @@ pub(super) fn read(config: &Path) -> Catalog {
                             matched.insert(id.clone(), grant.clone());
                         }
                         let storage = manifest.uses_storage(&id);
+                        let token = grant.and_then(resources::grant_token);
                         LuaCommandStatus {
                             id: id.clone(),
                             title: title.to_owned(),
                             approved: grant.is_some(),
                             storage,
                             provider: manifest.provider(&id).cloned(),
+                            broker: manifest.broker(&id).cloned(),
+                            token,
+                            resources: resources
+                                .get(&id)
+                                .filter(|approval| Some(approval.token) == token)
+                                .cloned(),
                         }
                     })
                     .collect();
@@ -207,7 +234,7 @@ pub(super) fn read(config: &Path) -> Catalog {
 }
 
 pub(super) fn set_enabled(config: &Path, id: &str, enabled: bool) -> Result<Catalog, String> {
-    let _lock = change_lock(config)?;
+    let _lock = permissions::mutation_lock(config)?;
     let mut ids = disabled(config)?;
     let current = read(config);
     let (entry, details) = current
@@ -253,7 +280,7 @@ pub(super) fn set_lua_approved(
     digest: &str,
     approved: bool,
 ) -> Result<Catalog, String> {
-    let lock = change_lock(config)?;
+    let lock = permissions::mutation_lock(config)?;
     let (installed, _) = current_lua_command(config, path, id, command)?;
     if installed.digest != digest {
         return Err("The Lua manifest changed. Reload extensions and review it again.".into());
@@ -334,7 +361,7 @@ pub(super) fn prepare_one_time(
     let ExtensionAction::Lua(plugin) = &mut contribution.action else {
         return Err("This command does not use Lua.".into());
     };
-    if plugin.storage || plugin.provider.is_some() {
+    if plugin.storage || plugin.provider.is_some() || plugin.broker.is_some() {
         return Err("Private storage and provider sessions require persistent approval.".into());
     }
     plugin.one_time = Some(Arc::new(OneTimeApproval::new(config, &lock)?));
@@ -409,6 +436,14 @@ pub(super) fn provider_authorization(config: &Path, plugin: &LuaPlugin) -> Optio
     authorization_with_lock(config, plugin, permissions::disclosure_lock(config).ok()?)
 }
 fn authorization_with_lock(config: &Path, plugin: &LuaPlugin, lock: File) -> Option<File> {
+    let epoch = permissions::broker_epoch(config, &lock).ok()?;
+    if plugin
+        .broker_epoch
+        .as_ref()
+        .is_some_and(|expected| expected.as_ref() != &epoch)
+    {
+        return None;
+    }
     let grant = &plugin.grant;
     let id = grant.command.split_once('.')?.0;
     if disabled(config).ok()?.contains(id) {
@@ -428,6 +463,7 @@ fn authorization_with_lock(config: &Path, plugin: &LuaPlugin, lock: File) -> Opt
 }
 
 pub(super) fn read_consistent(config: &std::path::Path) -> Result<Catalog, String> {
+    permissions::repair_orphan(config)?;
     let _lock = change_lock(config)?;
     Ok(read(config))
 }

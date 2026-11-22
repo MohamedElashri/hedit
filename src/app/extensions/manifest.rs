@@ -16,6 +16,7 @@ const DECLARATIVE_API_VERSION: u32 = 1;
 const LUA_API_VERSION: u32 = 2;
 const SDK_API_VERSION: u32 = 3;
 const SERVICE_API_VERSION: u32 = 4;
+const BROKER_API_VERSION: u32 = 5;
 pub(super) const MAX_DIRECTORY_ENTRIES: usize = 256;
 pub(super) const MAX_MANIFESTS: usize = 32;
 pub(super) const MAX_MANIFEST_BYTES: u64 = 32 * 1024;
@@ -151,6 +152,7 @@ struct SdkDefinition {
     sdk_version: u32,
     id: String,
     commands: Vec<Command>,
+    #[serde(default)]
     permissions: Vec<Permission>,
     #[serde(deserialize_with = "unique_scripts")]
     scripts: BTreeMap<String, Arc<str>>,
@@ -197,6 +199,53 @@ pub(super) enum Permission {
     ObserveEvents,
     #[serde(rename = "ui.present")]
     PresentUi,
+    #[serde(rename = "workspace.discover")]
+    DiscoverWorkspace,
+    #[serde(rename = "workspace.read")]
+    ReadWorkspace,
+    #[serde(rename = "workspace.edit")]
+    EditWorkspace,
+    #[serde(rename = "workspace.watch")]
+    WatchWorkspace,
+    #[serde(rename = "tools.run")]
+    RunTool,
+    #[serde(rename = "network.https")]
+    Https,
+}
+impl From<hedit_broker::declaration::Capability> for Permission {
+    fn from(capability: hedit_broker::declaration::Capability) -> Self {
+        use hedit_broker::declaration::Capability as C;
+        match capability {
+            C::DocumentRead => Self::ReadDocument,
+            C::DocumentEdit => Self::EditDocument,
+            C::Observe => Self::ObserveEvents,
+            C::Present => Self::PresentUi,
+            C::Discover => Self::DiscoverWorkspace,
+            C::Read => Self::ReadWorkspace,
+            C::Edit => Self::EditWorkspace,
+            C::Watch => Self::WatchWorkspace,
+            C::Tool => Self::RunTool,
+            C::Https => Self::Https,
+        }
+    }
+}
+impl Permission {
+    fn broker(self) -> Option<hedit_broker::declaration::Capability> {
+        use hedit_broker::declaration::Capability as C;
+        Some(match self {
+            Self::ReadDocument => C::DocumentRead,
+            Self::EditDocument => C::DocumentEdit,
+            Self::ObserveEvents => C::Observe,
+            Self::PresentUi => C::Present,
+            Self::DiscoverWorkspace => C::Discover,
+            Self::ReadWorkspace => C::Read,
+            Self::EditWorkspace => C::Edit,
+            Self::WatchWorkspace => C::Watch,
+            Self::RunTool => C::Tool,
+            Self::Https => C::Https,
+            _ => return None,
+        })
+    }
 }
 
 pub(super) const LUA_CAPABILITIES: [Permission; 2] =
@@ -225,6 +274,18 @@ pub(super) fn valid_capabilities(capabilities: &[Permission]) -> bool {
                 Permission::EditDocument,
                 Permission::PrivateStorage,
             ]
+        || capabilities
+            .iter()
+            .copied()
+            .map(Permission::broker)
+            .collect::<Option<Vec<_>>>()
+            .is_some_and(|values| {
+                hedit_broker::declaration::validate_capabilities(
+                    &values,
+                    values.contains(&hedit_broker::declaration::Capability::Observe),
+                )
+                .is_ok()
+            })
 }
 
 pub(super) struct Manifest {
@@ -245,7 +306,13 @@ impl Manifest {
             .iter()
             .filter(|command| matches!(command.action, ActionDefinition::Lua { .. }))
             .map(|command| {
-                let mut capabilities = if let Some(provider) = &command.provider {
+                let mut capabilities = if let Some(broker) = &command.broker {
+                    broker
+                        .canonical()
+                        .into_iter()
+                        .map(Permission::from)
+                        .collect()
+                } else if let Some(provider) = &command.provider {
                     let mut capabilities = PROVIDER_CAPABILITIES.to_vec();
                     if provider.may_edit {
                         capabilities.push(Permission::EditDocument);
@@ -275,6 +342,15 @@ impl Manifest {
             .iter()
             .find(|c| c.id == name)?
             .provider
+            .as_ref()
+    }
+    pub(super) fn broker(&self, command: &str) -> Option<&hedit_broker::declaration::Definition> {
+        let (owner, name) = command.split_once('.')?;
+        (owner == self.id).then_some(())?;
+        self.commands
+            .iter()
+            .find(|command| command.id == name)?
+            .broker
             .as_ref()
     }
     pub(super) fn uses_storage(&self, command: &str) -> bool {
@@ -413,6 +489,8 @@ impl Manifest {
                     one_time: None,
                     sdk: self.sdk,
                     provider: command.provider.map(Arc::new),
+                    broker: command.broker.map(Arc::new),
+                    broker_epoch: None,
                     storage: command.private_storage.unwrap_or(false),
                     modules: self.modules.clone(),
                     resources: self.resources.clone(),
@@ -445,6 +523,8 @@ struct Command {
     private_storage: Option<bool>,
     #[serde(default, deserialize_with = "optional_provider")]
     provider: Option<crate::plugin_runtime::service::Definition>,
+    #[serde(default, deserialize_with = "optional_broker")]
+    broker: Option<hedit_broker::declaration::Definition>,
 }
 
 #[derive(Deserialize)]
@@ -489,6 +569,8 @@ pub(in crate::app) struct LuaPlugin {
     pub(super) sdk: bool,
     pub(super) storage: bool,
     pub(super) provider: Option<Arc<crate::plugin_runtime::service::Definition>>,
+    pub(super) broker: Option<Arc<hedit_broker::declaration::Definition>>,
+    pub(super) broker_epoch: Option<Arc<Vec<u8>>>,
     pub(super) modules: Arc<BTreeMap<String, Arc<str>>>,
     pub(super) resources: Arc<BTreeMap<String, String>>,
     pub(super) arguments: Arc<Arguments>,
@@ -498,6 +580,11 @@ pub(in crate::app) struct LuaPlugin {
     pub(super) installed_path: PathBuf,
     pub(super) grant: Arc<super::catalog::Grant>,
     pub(super) one_time: Option<Arc<super::catalog::OneTimeApproval>>,
+}
+fn optional_broker<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<hedit_broker::declaration::Definition>, D::Error> {
+    hedit_broker::declaration::Definition::deserialize(d).map(Some)
 }
 
 impl LuaPlugin {
@@ -687,8 +774,10 @@ pub(super) fn parse_manifest(text: &str) -> Result<Manifest, String> {
             error.to_string()
         }
     })?;
-    if !matches!(version.api_version, SDK_API_VERSION | SERVICE_API_VERSION)
-        && text.len() as u64 > MAX_MANIFEST_BYTES
+    if !matches!(
+        version.api_version,
+        SDK_API_VERSION | SERVICE_API_VERSION | BROKER_API_VERSION
+    ) && text.len() as u64 > MAX_MANIFEST_BYTES
     {
         return Err(format!(
             "Manifest exceeds the {MAX_MANIFEST_BYTES}-byte limit."
@@ -730,12 +819,14 @@ pub(super) fn parse_manifest(text: &str) -> Result<Manifest, String> {
                 definition.settings,
             )
         }
-        SDK_API_VERSION | SERVICE_API_VERSION => {
+        SDK_API_VERSION | SERVICE_API_VERSION | BROKER_API_VERSION => {
             let definition: SdkDefinition =
                 serde_json::from_str(text).map_err(|error| error.to_string())?;
             if definition.api_version != version.api_version
                 || definition.sdk_version
-                    != if version.api_version == SERVICE_API_VERSION {
+                    != if version.api_version == BROKER_API_VERSION {
+                        crate::plugin_runtime::broker::SDK_VERSION
+                    } else if version.api_version == SERVICE_API_VERSION {
                         2
                     } else {
                         crate::plugin_runtime::sdk::VERSION
@@ -744,7 +835,9 @@ pub(super) fn parse_manifest(text: &str) -> Result<Manifest, String> {
                 return Err("Unsupported editing SDK version.".into());
             }
             let storage = definition.permissions.contains(&Permission::PrivateStorage);
-            let mut expected = if version.api_version == SERVICE_API_VERSION {
+            let mut expected = if version.api_version == BROKER_API_VERSION {
+                Vec::new()
+            } else if version.api_version == SERVICE_API_VERSION {
                 let mut expected = vec![Permission::ReadDocument];
                 if definition.commands.iter().any(|c| {
                     c.provider.is_none() || c.provider.as_ref().is_some_and(|p| p.may_edit)
@@ -758,7 +851,7 @@ pub(super) fn parse_manifest(text: &str) -> Result<Manifest, String> {
             } else {
                 SDK_CAPABILITIES.to_vec()
             };
-            if storage {
+            if storage && version.api_version != BROKER_API_VERSION {
                 expected.push(Permission::PrivateStorage);
             }
             if definition.permissions.len() != expected.len()
@@ -804,7 +897,7 @@ pub(super) fn parse_manifest(text: &str) -> Result<Manifest, String> {
         }
         version => {
             return Err(format!(
-                "API version {version} is unsupported. This editor supports versions 1 through 4."
+                "API version {version} is unsupported. This editor supports versions 1 through 5."
             ))
         }
     };
@@ -829,9 +922,31 @@ pub(super) fn parse_manifest(text: &str) -> Result<Manifest, String> {
     let mut command_ids = HashSet::new();
     let mut used_scripts = HashSet::new();
     for command in &commands {
-        if let Some(provider) = &command.provider {
-            if version.api_version != SERVICE_API_VERSION
+        if let Some(broker) = &command.broker {
+            if version.api_version != BROKER_API_VERSION
                 || !matches!(command.action, ActionDefinition::Lua { .. })
+                || command.on_save
+                || command.private_storage.is_some()
+            {
+                return Err("Broker commands require API 5 / SDK 3, explicit capabilities and no legacy save hook or private-storage field.".into());
+            }
+            broker.validate(command.provider.is_some())?;
+            if command.provider.as_ref().is_some_and(|provider| {
+                provider.may_edit != broker.has(hedit_broker::declaration::Capability::DocumentEdit)
+            }) {
+                return Err("Provider edit authority must match its broker capabilities.".into());
+            }
+        } else if version.api_version == BROKER_API_VERSION {
+            return Err("Every SDK 3 command requires an explicit broker declaration.".into());
+        }
+        if let Some(provider) = &command.provider {
+            if version.api_version == BROKER_API_VERSION {
+                return Err("Manifest API 5 currently supports ordinary Lua commands; use API 4 for installed providers.".into());
+            }
+            if !matches!(
+                version.api_version,
+                SERVICE_API_VERSION | BROKER_API_VERSION
+            ) || !matches!(command.action, ActionDefinition::Lua { .. })
                 || command.on_save
                 || command.private_storage.unwrap_or(false)
                 || command.arguments.is_some()
@@ -839,6 +954,21 @@ pub(super) fn parse_manifest(text: &str) -> Result<Manifest, String> {
                 return Err("Providers require API 4 Lua actions with separately reviewed triggers and no save hook, command inputs, or persistent storage.".into());
             }
             provider.validate().map_err(|e| e.to_string())?;
+            if command.broker.as_ref().is_some_and(|broker| {
+                !broker.has(hedit_broker::declaration::Capability::DocumentRead)
+            }) && (provider.kind != crate::plugin_runtime::service::Kind::Presentation
+                || provider.events.iter().any(|event| {
+                    !matches!(
+                        event,
+                        crate::plugin_runtime::service::Trigger::Manual
+                            | crate::plugin_runtime::service::Trigger::Close
+                    )
+                }))
+            {
+                return Err(
+                    "Document providers and document events require explicit document.read.".into(),
+                );
+            }
         }
         if command.private_storage.is_some()
             && !matches!(version.api_version, SDK_API_VERSION | SERVICE_API_VERSION)
@@ -854,8 +984,10 @@ pub(super) fn parse_manifest(text: &str) -> Result<Manifest, String> {
             return Err("Private storage commands must declare storage.private.".into());
         }
         if let Some(arguments) = &command.arguments {
-            if !matches!(version.api_version, SDK_API_VERSION | SERVICE_API_VERSION)
-                || !matches!(command.action, ActionDefinition::Lua { .. })
+            if !matches!(
+                version.api_version,
+                SDK_API_VERSION | SERVICE_API_VERSION | BROKER_API_VERSION
+            ) || !matches!(command.action, ActionDefinition::Lua { .. })
                 || arguments.len() > MAX_SETTINGS
                 || arguments.iter().any(|(key, definition)| {
                     !valid_id(key)
@@ -949,7 +1081,10 @@ pub(super) fn parse_manifest(text: &str) -> Result<Manifest, String> {
         settings: Arc::new(settings),
         modules,
         resources,
-        sdk: matches!(version.api_version, SDK_API_VERSION | SERVICE_API_VERSION),
+        sdk: matches!(
+            version.api_version,
+            SDK_API_VERSION | SERVICE_API_VERSION | BROKER_API_VERSION
+        ),
         capabilities,
     })
 }

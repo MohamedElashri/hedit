@@ -708,7 +708,9 @@ cover scoped discovery/read/search, versioned chunks and batched reads, native
 watch continuations, reviewed existing-file plans, recoverable journals and
 retention quotas, exact-endpoint HTTPS, strict JSON helpers, and bounded
 background host execution. These are internal development interfaces. Installed
-manifests still accept APIs 1–4; no workspace, network or tool grants are enabled.
+API 5 ordinary commands are integrated on this branch with separate source and
+resource review. SDK 3 providers remain rejected until their host routing is
+complete; native tool requests report unavailable.
 
 The host validates declarations, source-independent operation envelopes, opaque
 session/version handles, callback steps, UTF-8/CRLF edits, aggregate resource
@@ -717,8 +719,9 @@ writes, capture races, malformed receipts/ledgers, full-width Windows file IDs,
 replaced/moved private stages, conservative cleanup and retained storage quotas.
 Ordinary capture failures attempt a no-clobber restore. The capture/publication
 visibility gap remains explicit; this is not atomic single-file replacement or
-global multi-file Undo. Dirty-buffer verification/freeze/reload and recovery UI
-are requirements for the editor integration, not completed by the backend tests.
+global multi-file Undo. The command integration verifies/freezes/reconciles this window's matching clean
+buffers, while explicit recovery UI remains required. Other windows/processes
+retain the existing external-change/conflict handling.
 
 Local macOS evidence: 1,359 workspace tests passed (63 intentionally ignored),
 plus the custom native continuation test. The broker suite has 47 regressions;
@@ -744,10 +747,9 @@ with `scripts/profile-plugin-broker.py` after stopping other builds/fuzzing.
 Required next work:
 
 - Repeat native platform and universal macOS gates after editor integration.
-- Integrate manifest/SDK compatibility, exact-source resource grants, trusted
-  scope/endpoint review, manager disclosure/activity and immediate Stop.
-- Implement complete workspace previews, affected-buffer conflict/freeze/reload
-  handling, and explicit recovery/cleanup UI without blocking unrelated buffers.
+- Finish SDK 3 provider routing and explicit recovery/cleanup UI.
+- Validate command grant/manager, complete previews and buffer reconciliation on
+  Linux/Windows and in universal macOS packages, with sustained UI/retention probes.
 - Finish separately confined external-tool and typed LSP backends using the
   selected native macOS sandbox with monitored memory
   limits and documented overshoot. A native prototype is not a production tool
@@ -768,3 +770,30 @@ protocol-security workflow passed at `74bb601` (run `44899794017`), before the
 Windows-only rename correction. Native CI found and fixed Linux O_PATH directory
 flushes and Windows handle-relative no-clobber recovery renames. These close the
 foundation's native test gap; the editor integration and tool/LSP gates stay open.
+
+
+### Scoped command integration
+
+Experimental manifest API 5 / SDK 3 ordinary commands now use the scoped host.
+Exact-source approval is separate from physical directory rights and exact HTTPS
+endpoint selection. Source changes prune resource grants; corrupt resource
+approval reset preserves a private backup. No document.read grant means a neutral
+empty snapshot. Installed SDK 3 providers are rejected explicitly while their
+routing is unfinished; tool/LSP requests remain unavailable.
+
+Revocation publishes a cancellation generation before waiting for the policy
+writer lock. Native notifications directly stop disclosures without UI frames;
+orphan repair and competing writers are tested. Preview pages are indexed off
+the UI thread. A generation-checked lease freezes matching clean local buffers,
+keeps independent bounded backups, reconciles partial failures, preserves Undo
+when disk is unchanged and advances revisions after replacement. Deferred opens
+reread disk off-thread; stale page/save replies cannot overwrite newer buffers.
+Unrelated buffers remain editable during an accepted workspace commit.
+
+Local default-feature workspace validation passed 1,386 tests (63 intentionally
+ignored). Native command tests cover empty-document disclosure, exact grants,
+revocation without UI frames, single-document Undo, multi-file application while
+switching focus, and source/resource reset. Broker backend validation passed 55
+tests plus the real confined-worker continuation fixture. Final command/UI
+performance, fresh platform CI, provider/recovery integration, tool/LSP backends,
+author tooling and extracted-package references remain open Stage 3 gates.

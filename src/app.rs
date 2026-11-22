@@ -157,6 +157,8 @@ use std::{
 };
 
 enum Action {
+    ExtensionDeferred(Box<extensions::DeferredEvent>),
+    ExtensionWorkspace(extensions::WorkspaceRefresh),
     ExtensionSave(extensions::SaveResult),
     Quality(Box<quality::Event>),
     Add(Box<Document>, Page, usize),
@@ -288,6 +290,9 @@ pub struct HeditApp {
     extensions: Vec<extensions::Contribution>,
     extension_manager: extensions::Manager,
     lua_transform: Option<extensions::LuaTransform>,
+    broker_command: Option<extensions::BrokerCommand>,
+    broker_deferred: VecDeque<extensions::DeferredEvent>,
+    broker_deferred_running: bool,
     plugin_services: extensions::Services,
     extension_syntax: std::collections::BTreeMap<u64, String>,
     /// Tab moves through the fields of the snippet inserted last.
@@ -520,6 +525,9 @@ impl HeditApp {
             extensions,
             extension_manager: extensions::Manager::default(),
             lua_transform: None,
+            broker_command: None,
+            broker_deferred: VecDeque::new(),
+            broker_deferred_running: false,
             plugin_services: extensions::Services::default(),
             extension_syntax: Default::default(),
             snippet: None,
@@ -1155,8 +1163,30 @@ impl HeditApp {
         self.receive_folder_search(ctx);
         self.opens.pump(ctx);
         loop {
-            let (event, request) = if let Ok(event) = self.rx.try_recv() {
-                (event, None)
+            if self.workspace.editor.workspace_commit_pending() && self.broker_deferred.len() >= 64
+            {
+                break;
+            }
+            let deferred = if !self.broker_deferred_running
+                && !self.workspace.editor.workspace_commit_pending()
+            {
+                self.broker_deferred.pop_front()
+            } else {
+                None
+            };
+            let (event, request) = if let Some(deferred) = deferred {
+                let Some(deferred) = self.reload_broker_deferred(ctx, deferred) else {
+                    continue;
+                };
+                (deferred.event, deferred.request)
+            } else if let Ok(event) = self.rx.try_recv() {
+                match event {
+                    Ok(Action::ExtensionDeferred(deferred)) => {
+                        self.broker_deferred_running = false;
+                        (deferred.event, deferred.request)
+                    }
+                    event => (event, None),
+                }
             } else if !self.busy {
                 match self.opens.take() {
                     Some((request, event)) => (event, Some(request)),
@@ -1165,6 +1195,48 @@ impl HeditApp {
             } else {
                 break;
             };
+            if self.defer_broker_event(&event) {
+                self.broker_deferred.push_back(extensions::DeferredEvent {
+                    event,
+                    request,
+                    refresh: true,
+                });
+                continue;
+            }
+            if let Ok(
+                Action::Page(id, page, _)
+                | Action::Reloaded(id, page, _)
+                | Action::ReopenRead(id, page, _)
+                | Action::History(id, page, _, _)
+                | Action::Discarded(id, Some(page)),
+            ) = &event
+            {
+                if self.workspace.open.iter().any(|buffer| {
+                    buffer.page.info.id == *id && buffer.page.info.revision > page.info.revision
+                }) {
+                    if request.is_none() {
+                        self.busy = false;
+                        self.job_editor_focus = None;
+                    } else {
+                        self.notice =
+                            "The file changed while opening. Open the location again.".into();
+                    }
+                    continue;
+                }
+            }
+            if let Ok(Action::Saved(id, info)) = &event {
+                if self.workspace.open.iter().any(|buffer| {
+                    buffer.page.info.id == *id && buffer.page.info.revision > info.revision
+                }) {
+                    self.notifications.pending_save = None;
+                    if request.is_none() {
+                        self.busy = false;
+                        self.job_editor_focus = None;
+                    }
+                    self.build_after_save(ctx);
+                    continue;
+                }
+            }
             let background = request
                 .as_ref()
                 .is_some_and(|request| !self.open_focus(request))
@@ -1226,7 +1298,8 @@ impl HeditApp {
                         matches!(&**event, quality::Event::GitMarkers(..))
                     }
                     Ok(
-                        Action::Font(..)
+                        Action::ExtensionWorkspace(_)
+                        | Action::Font(..)
                         | Action::FontFailed(..)
                         | Action::TerminalFont(..)
                         | Action::UiFont(..)
@@ -1243,7 +1316,11 @@ impl HeditApp {
             };
             let reloaded = matches!(&event, Ok(Action::Reloaded(..)));
             match event {
+                Ok(Action::ExtensionDeferred(_)) => {
+                    unreachable!("deferred results are unwrapped before dispatch")
+                }
                 Ok(Action::RefactorApplied(applied)) => self.finish_refactor(ctx, *applied),
+                Ok(Action::ExtensionWorkspace(refresh)) => self.refresh_broker_buffers(refresh),
                 Ok(Action::ExplorerEntry(token, outcome)) => {
                     self.finish_explorer_entry(ctx, token, outcome)
                 }
@@ -2576,6 +2653,10 @@ impl HeditApp {
                                     && !self.closing
                                     && self.workspace.remote.as_ref().is_none_or(|r| r.writable())
                                     && !buffer.follow
+                                    && !self
+                                        .workspace
+                                        .editor
+                                        .workspace_document_frozen(buffer.page.info.id)
                                     && !self.preferences_open
                                     && !self.palette
                                     && !self.plugin_services.open
@@ -4032,6 +4113,7 @@ impl eframe::App for HeditApp {
         self.record_copies(ctx);
         self.close_dialog(ctx);
         self.poll_lua_transform(ctx);
+        self.poll_broker_command(ctx);
         self.poll_plugin_services(ctx);
         self.terminal_onboarding(ctx);
         self.notification_center(ctx);
@@ -4115,6 +4197,7 @@ impl eframe::App for HeditApp {
 impl Drop for HeditApp {
     fn drop(&mut self) {
         self.lua_transform.take();
+        self.broker_command.take();
         self.plugin_services.suspend();
         self.languages.service.take();
         if let Some(worker) = self.checkpoint_worker.take() {
@@ -4185,6 +4268,7 @@ mod tests {
             app.record_copies(ctx);
             app.close_dialog(ctx);
             app.poll_lua_transform(ctx);
+            app.poll_broker_command(ctx);
             app.poll_plugin_services(ctx);
             app.notification_center(ctx);
         });

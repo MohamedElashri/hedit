@@ -227,41 +227,7 @@ impl Definition {
         values
     }
     pub fn validate(&self, provider: bool) -> Result<(), String> {
-        if self.capabilities.is_empty()
-            || self.capabilities.len() > 10
-            || self.capabilities.iter().collect::<BTreeSet<_>>().len() != self.capabilities.len()
-        {
-            return Err("Declare distinct broker capabilities.".into());
-        }
-        for (requested, required) in [
-            (Capability::DocumentEdit, Capability::DocumentRead),
-            (Capability::Edit, Capability::Read),
-            (Capability::Watch, Capability::Observe),
-        ] {
-            if self.has(requested) && !self.has(required) {
-                return Err(format!(
-                    "{} also requires explicit {}.",
-                    requested.name(),
-                    required.name()
-                ));
-            }
-        }
-        if provider
-            && ![
-                Capability::DocumentRead,
-                Capability::Observe,
-                Capability::Present,
-            ]
-            .iter()
-            .all(|capability| self.has(*capability))
-        {
-            return Err(
-                "Broker providers require document.read, events.observe, and ui.present.".into(),
-            );
-        }
-        if !provider && self.has(Capability::Observe) {
-            return Err("Background event authority requires a provider declaration.".into());
-        }
+        validate_capabilities(&self.capabilities, provider)?;
         if self.tools.len() > 8
             || self.endpoints.len() > 8
             || self.has(Capability::Tool) != !self.tools.is_empty()
@@ -296,6 +262,40 @@ impl Definition {
         }
         Ok(())
     }
+}
+/// Shared structural validation for exact-source approval records and manifests.
+pub fn validate_capabilities(capabilities: &[Capability], provider: bool) -> Result<(), String> {
+    let has = |capability| capabilities.contains(&capability);
+    if capabilities.is_empty()
+        || capabilities.len() > 10
+        || capabilities.iter().collect::<BTreeSet<_>>().len() != capabilities.len()
+    {
+        return Err("Declare distinct broker capabilities.".into());
+    }
+    for (requested, required) in [
+        (Capability::DocumentEdit, Capability::DocumentRead),
+        (Capability::Edit, Capability::Read),
+        (Capability::Watch, Capability::Observe),
+    ] {
+        if has(requested) && !has(required) {
+            return Err(format!(
+                "{} also requires explicit {}.",
+                requested.name(),
+                required.name()
+            ));
+        }
+    }
+    if provider
+        && ![Capability::Observe, Capability::Present]
+            .iter()
+            .all(|capability| has(*capability))
+    {
+        return Err("Broker providers require events.observe and ui.present.".into());
+    }
+    if !provider && has(Capability::Observe) {
+        return Err("Background event authority requires a provider declaration.".into());
+    }
+    Ok(())
 }
 fn vector<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>, const MAX: usize>(
     decoder: D,

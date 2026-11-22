@@ -1,4 +1,5 @@
 //! Settings for installing local extensions and approving individual Lua commands.
+mod resources;
 use super::{
     activity::{Activity, Invocation, InvocationOutcome},
     catalog::{
@@ -41,6 +42,11 @@ enum Update {
     File(Option<Box<InstallReview>>),
     OneTime(Contribution),
     FolderOpened,
+    Scope {
+        command: String,
+        token: hedit_broker::Handle,
+        selected: Option<hedit_broker::state::SelectedScope>,
+    },
 }
 
 enum Request {
@@ -53,6 +59,8 @@ enum Request {
     Revoke(Approval),
     AllowOnce,
     CancelOnce,
+    ChooseScope,
+    RevokeResources(String),
 }
 
 enum Review {
@@ -60,12 +68,15 @@ enum Review {
     Approve(Approval),
     Uninstall(InstalledManifest),
     ResetApprovals,
+    ResetResourceApprovals,
+    Resources(resources::ResourceReview),
 }
 
 struct Approval {
     sdk: bool,
     storage: bool,
     provider: Option<crate::plugin_runtime::service::Definition>,
+    broker: Option<hedit_broker::declaration::Definition>,
     path: PathBuf,
     extension: String,
     command: String,
@@ -219,6 +230,13 @@ impl Manager {
             for notice in &view.notices {
                 ui.colored_label(ui.visuals().error_fg_color, notice);
             }
+            if view.resources_unreadable
+                && ui
+                    .add_enabled(can_act, egui::Button::new("Reset resource approvals…"))
+                    .clicked()
+            {
+                request = Some(Request::Review(Review::ResetResourceApprovals));
+            }
             if view.grants_unreadable
                 && ui
                     .add_enabled(can_act, egui::Button::new("Reset Lua approvals…"))
@@ -250,6 +268,7 @@ impl Manager {
                 match shown.inner {
                     Some(ReviewChoice::Confirm) => return Some(Request::Confirm),
                     Some(ReviewChoice::Once) => return Some(Request::AllowOnce),
+                    Some(ReviewChoice::ChooseScope) => return Some(Request::ChooseScope),
                     Some(ReviewChoice::Cancel) | None => {}
                 }
             }
@@ -362,21 +381,45 @@ fn installed_row(
                             "Review permissions…"
                         };
                         if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
-                            let approval = Approval {
-                                sdk: lua.sdk,
-                                storage: command.storage,
-                                provider: command.provider.clone(),
-                                path: entry.path.clone(),
-                                extension: details.id.clone(),
-                                command: command.id.clone(),
-                                title: command.title.clone(),
-                                digest: lua.digest.clone(),
-                            };
+                            let approval =
+                                Approval::for_command(&entry.path, &details.id, command, lua);
                             request = Some(if command.approved {
                                 Request::Revoke(approval)
                             } else {
                                 Request::Review(Review::Approve(approval))
                             });
+                        }
+                        if let Some(token) = command.token.filter(|_| command.broker.is_some()) {
+                            if ui
+                                .add_enabled(can_act, egui::Button::new("Review resources…"))
+                                .clicked()
+                            {
+                                request = Some(Request::Review(Review::Resources(
+                                    resources::ResourceReview::new(
+                                        Approval::for_command(
+                                            &entry.path,
+                                            &details.id,
+                                            command,
+                                            lua,
+                                        ),
+                                        token,
+                                        command.resources.as_ref(),
+                                    ),
+                                )));
+                            }
+                            if command.resources.is_some()
+                                && ui
+                                    .add_enabled(
+                                        can_act,
+                                        egui::Button::new("Revoke resource access"),
+                                    )
+                                    .clicked()
+                            {
+                                request = Some(Request::RevokeResources(command.id.clone()));
+                            }
+                            if let Some(approval) = &command.resources {
+                                resources::summary(ui, approval);
+                            }
                         }
                     });
                 });
@@ -390,6 +433,7 @@ enum ReviewChoice {
     Confirm,
     Cancel,
     Once,
+    ChooseScope,
 }
 
 impl Review {
@@ -403,6 +447,8 @@ impl Review {
             Self::Approve(_) => "Approve Lua command",
             Self::Uninstall(_) => "Uninstall extension",
             Self::ResetApprovals => "Reset Lua approvals",
+            Self::ResetResourceApprovals => "Reset resource approvals",
+            Self::Resources(_) => "Review extension resources",
         }
     }
 
@@ -432,7 +478,7 @@ impl Review {
             if matches!(self, Self::Approve(_))
                 && ui
                     .add_enabled(
-                        ready && !matches!(self,Self::Approve(approval) if approval.storage || approval.provider.is_some()),
+                        ready && !matches!(self,Self::Approve(approval) if approval.storage || approval.provider.is_some() || approval.broker.is_some()),
                         egui::Button::new("Allow once"),
                     )
                     .clicked()
@@ -446,7 +492,7 @@ impl Review {
             }
             None
         })
-        .inner
+        .inner.or_else(||match self { Self::Resources(review) if review.choose_scope=>{review.choose_scope=false;Some(ReviewChoice::ChooseScope)},_=>None })
     }
     fn details(&mut self, ui: &mut egui::Ui) -> Option<&'static str> {
         match self {
@@ -490,7 +536,14 @@ impl Review {
                     ui.label("Commands in this manifest");
                     command_list(ui, &review.preview.commands);
                     if review.preview.lua {
-                        requested_permissions(ui, review.preview.sdk, review.preview.storage);
+                        if review.preview.brokers.is_empty() {
+                            requested_permissions(ui, review.preview.sdk, review.preview.storage);
+                        } else {
+                            for (command, definition) in &review.preview.brokers {
+                                ui.monospace(command);
+                                resources::capabilities(ui, definition);
+                            }
+                        }
                         ui.weak("Approve each Lua command separately after installation.");
                     }
                 } else {
@@ -503,7 +556,10 @@ impl Review {
                 ui.monospace(&approval.command);
                 path_label(ui, "Manifest", &approval.path);
                 ui.label("Approval applies to this command and these exact manifest contents.");
-                if let Some(provider) = &approval.provider {
+                if let Some(broker) = &approval.broker {
+                    resources::capabilities(ui, broker);
+                    ui.label("Source approval alone grants no folder, executable or endpoint. Review those resources separately.");
+                } else if let Some(provider) = &approval.provider {
                     ui.label(format!(
                         "Provider: {:?}; triggers: {:?}; debounce: {} ms",
                         provider.kind, provider.events, provider.debounce_ms
@@ -534,6 +590,14 @@ impl Review {
             Self::ResetApprovals => {
                 ui.label("Back up the unreadable approval file in the configuration folder. Every Lua command will need fresh approval.");
                 Some("Reset approvals")
+            }
+            Self::Resources(review) => {
+                review.show(ui);
+                Some("Approve resource access")
+            }
+            Self::ResetResourceApprovals => {
+                ui.label("Back up the unreadable resource approval file. Workspace directories, HTTPS endpoints and tools will require fresh review. Command source approvals are retained.");
+                Some("Reset resource approvals")
             }
         }
     }
@@ -587,6 +651,24 @@ fn command_list(ui: &mut egui::Ui, commands: &[(String, String)]) {
 }
 
 impl Approval {
+    fn for_command(
+        path: &Path,
+        extension: &str,
+        command: &catalog::LuaCommandStatus,
+        lua: &catalog::LuaStatus,
+    ) -> Self {
+        Self {
+            sdk: lua.sdk,
+            storage: command.storage,
+            provider: command.provider.clone(),
+            broker: command.broker.clone(),
+            path: path.into(),
+            extension: extension.into(),
+            command: command.id.clone(),
+            title: command.title.clone(),
+            digest: lua.digest.clone(),
+        }
+    }
     fn change(self, config: &Path, approved: bool) -> Result<Catalog, String> {
         catalog::set_lua_approved(
             config,
@@ -661,6 +743,21 @@ impl HeditApp {
                 }
             }
             Ok(Update::FolderOpened) => {}
+            Ok(Update::Scope {
+                command,
+                token,
+                selected,
+            }) => {
+                if showing {
+                    if let Some(Review::Resources(review)) = &mut manager.review {
+                        if review.source.command == command && review.token == token {
+                            if let Some(scope) = selected {
+                                review.scope = Some(scope);
+                            }
+                        }
+                    }
+                }
+            }
             Err(error) => {
                 if showing {
                     manager.feedback = Some(Feedback::Error(error));
@@ -682,8 +779,14 @@ impl HeditApp {
         }
         if matches!(
             &request,
-            Some(Request::SetEnabled(..) | Request::Revoke(_) | Request::Confirm)
+            Some(
+                Request::SetEnabled(..)
+                    | Request::Revoke(_)
+                    | Request::Confirm
+                    | Request::RevokeResources(_)
+            )
         ) {
+            self.broker_command.take();
             self.plugin_services.suspend();
         }
         match request {
@@ -737,6 +840,19 @@ impl HeditApp {
                 manager.review = Some(review);
                 ctx.request_repaint();
             }
+            Some(Request::ChooseScope) => {
+                if let Some(Review::Resources(review))=&manager.review {
+                    let rights=review.rights();
+                    let command=review.source.command.clone();let token=review.token;
+                    let private_directory = self.workspace.store.directory().to_owned();
+                    manager.work(ctx,move || {
+                        let selected=rfd::FileDialog::new().set_title("Select a local extension workspace").pick_folder();
+                        let scope=selected.map(|path| {let state=hedit_broker::state::State::open(&config,[private_directory]).map_err(|e|e.to_string())?;hedit_broker::state::SelectedScope::select(&path,rights,&state).map_err(|e|e.to_string())}).transpose()?;
+                        Ok(Update::Scope {command,token,selected:scope})
+                    });
+                }
+            }
+            Some(Request::RevokeResources(command)) => manager.mutate(ctx,config,"Resource access revoked.",move |config|catalog::revoke_resources(config,&command)),
             Some(Request::Revoke(approval)) => {
                 manager.mutate(ctx, config, "Command approval revoked.", move |config| {
                     approval.change(config, false)
@@ -785,6 +901,8 @@ impl HeditApp {
                     "Lua approvals reset. The previous file is backed up in the configuration folder.",
                     catalog::reset_unreadable_approvals,
                 ),
+                Some(Review::Resources(review)) => manager.mutate(ctx,config,"Resource access updated.",move |config|review.approve(config)),
+                Some(Review::ResetResourceApprovals) => manager.mutate(ctx, config, "Resource approvals reset. The previous file is backed up in extensions-broker.", catalog::reset_resource_approvals),
                 None => {}
             },
             None => {}
