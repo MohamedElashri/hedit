@@ -1,13 +1,17 @@
 //! A complete bounded projection of the explicitly approved workspace surface.
 use crate::{
     resources::{Reservation, Resources},
-    workspace::{Budget, Snapshot},
+    workspace::Budget,
 };
 use std::io;
 pub(super) const MAX_PROJECT_BYTES: usize = 16 * 1024 * 1024;
 pub(super) const MAX_PATH_BYTES: usize = 64 * 1024;
+pub(super) struct File {
+    pub relative: String,
+    pub text: String,
+}
 pub struct Projection {
-    pub(super) files: Vec<(Snapshot, Reservation)>,
+    pub(super) files: Vec<(File, Option<Reservation>)>,
     bytes: usize,
 }
 fn full() -> io::Error {
@@ -56,12 +60,86 @@ impl Projection {
             let memory = resources.reserve(
                 snapshot.text.capacity()
                     + snapshot.relative.capacity()
-                    + std::mem::size_of::<Snapshot>(),
+                    + std::mem::size_of::<File>(),
             )?;
-            projection.files.push((snapshot, memory));
+            projection.files.push((
+                File {
+                    relative: snapshot.relative,
+                    text: snapshot.text,
+                },
+                Some(memory),
+            ));
         }
         root.current()?;
         Ok(projection)
+    }
+    /// Overlay a host-owned open snapshot. A workspace-relative name must
+    /// already occur in this complete approved projection. Otherwise issue a
+    /// private synthetic name without revealing the editor's original path.
+    pub fn document(
+        &mut self,
+        snapshot: &hedit_plugin::sdk::Snapshot,
+        relative: Option<&str>,
+        resources: Option<&Resources>,
+    ) -> io::Result<String> {
+        snapshot.validate().map_err(|_| full())?;
+        let (name, existing) = match relative {
+            Some(relative) => {
+                if resources.is_none() || !super::runs::safe_path(relative) {
+                    return Err(full());
+                }
+                let index = self
+                    .files
+                    .iter()
+                    .position(|(file, _)| file.relative == relative)
+                    .ok_or_else(full)?;
+                (relative.to_owned(), Some(index))
+            }
+            None => {
+                let extension = match snapshot.language.as_str() {
+                    "rust" => "rs",
+                    "json" => "json",
+                    "python" => "py",
+                    "c" => "c",
+                    "cpp" => "cpp",
+                    "javascript" => "js",
+                    "typescript" => "ts",
+                    "markdown" => "md",
+                    "go" => "go",
+                    "lua" => "lua",
+                    _ => "txt",
+                };
+                let name = format!("hedit-{}.{}", snapshot.document, extension);
+                if self.files.iter().any(|(file, _)| file.relative == name) {
+                    return Err(full());
+                }
+                (name, None)
+            }
+        };
+        let before = existing.map_or(0, |index| self.files[index].0.text.len());
+        let bytes = self
+            .bytes
+            .checked_sub(before)
+            .and_then(|bytes| bytes.checked_add(snapshot.text.len()))
+            .filter(|bytes| *bytes <= MAX_PROJECT_BYTES)
+            .ok_or_else(full)?;
+        let file = File {
+            relative: name.clone(),
+            text: snapshot.text.clone(),
+        };
+        let memory = resources
+            .map(|resources| {
+                resources.reserve(
+                    file.relative.capacity() + file.text.capacity() + std::mem::size_of::<File>(),
+                )
+            })
+            .transpose()?;
+        match existing {
+            Some(index) => self.files[index] = (file, memory),
+            None => self.files.push((file, memory)),
+        }
+        self.bytes = bytes;
+        Ok(name)
     }
     pub fn bytes(&self) -> usize {
         self.bytes
@@ -89,6 +167,56 @@ mod tests {
             .unwrap(),
         )
         .unwrap()
+    }
+    #[test]
+    fn current_document_overlay_cannot_name_an_unapproved_workspace_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("known.json"), "old").unwrap();
+        let resources = resources(dir.path(), &[Right::Read, Right::Discover]);
+        let cancel = AtomicBool::new(false);
+        let mut projection = Projection::workspace(
+            &resources,
+            &mut Budget::new(&cancel, Duration::from_secs(10), MAX_PROJECT_BYTES),
+        )
+        .unwrap();
+        let snapshot = hedit_plugin::sdk::Snapshot {
+            document: "a".repeat(32),
+            revision: "42".into(),
+            language: "json".into(),
+            text: "new café 東京".into(),
+            selections: vec![hedit_plugin::sdk::Selection { anchor: 0, head: 0 }],
+            crlf: false,
+        };
+        for path in [
+            "unknown.json",
+            "../escape.json",
+            ".secret",
+            "known.json/child",
+        ] {
+            assert!(projection
+                .document(&snapshot, Some(path), Some(&resources))
+                .is_err());
+        }
+        assert!(projection
+            .document(&snapshot, Some("known.json"), None)
+            .is_err());
+        assert_eq!(
+            projection
+                .document(&snapshot, Some("known.json"), Some(&resources))
+                .unwrap(),
+            "known.json"
+        );
+        assert_eq!(projection.files[0].0.text, snapshot.text);
+        assert_eq!(projection.bytes(), snapshot.text.len());
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("known.json")).unwrap(),
+            "old"
+        );
+        let mut neutral = Projection::empty();
+        let relative = neutral.document(&snapshot, None, None).unwrap();
+        assert_eq!(relative, format!("hedit-{}.json", "a".repeat(32)));
+        assert_eq!(neutral.files[0].0.text, snapshot.text);
+        assert!(neutral.document(&snapshot, None, None).is_err());
     }
     #[test]
     fn projection_retains_exact_unicode_snapshots_with_explicit_omissions() {

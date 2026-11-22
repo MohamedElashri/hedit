@@ -268,3 +268,36 @@ fn unsolicited_responses_and_role_confusion_fail_before_features() {
         )
         .is_err());
 }
+
+#[test]
+fn idle_flood_limits_do_not_reset_on_each_poll() {
+    let mut connection = ready(Wire::new(READ_BYTES));
+    let message = wire::encode(
+        &json!({"jsonrpc":"2.0","method":"window/logMessage","params":{}}),
+        Limits::SCOPED,
+    )
+    .unwrap();
+    for _ in 0..2 {
+        for _ in 0..32 {
+            connection
+                .transport
+                .as_mut()
+                .unwrap()
+                .output
+                .extend(&message);
+        }
+        connection
+            .idle(&AtomicBool::new(false), deadline())
+            .unwrap();
+    }
+    connection
+        .transport
+        .as_mut()
+        .unwrap()
+        .output
+        .extend(&message);
+    assert!(connection
+        .idle(&AtomicBool::new(false), deadline())
+        .is_err());
+    assert!(connection.transport.is_none());
+}

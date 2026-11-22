@@ -75,7 +75,7 @@ impl Record {
         Ok(OVERHEAD + self.image + bytes)
     }
 }
-fn safe_path(path: &str) -> bool {
+pub(super) fn safe_path(path: &str) -> bool {
     !path.is_empty()
         && path.len() <= crate::workspace::MAX_PATH_BYTES
         && path.split('/').all(crate::workspace::component)
@@ -140,6 +140,16 @@ impl Service {
     }
 }
 impl Run {
+    pub(crate) fn snapshot_directory(&self) -> &Path {
+        &self.launch.snapshot
+    }
+    pub(crate) fn document_uri(&self, relative: &str, bytes: usize) -> io::Result<String> {
+        if !safe_path(relative) || self.record.files.get(relative) != Some(&(bytes as u64)) {
+            return Err(invalid());
+        }
+        hedit_core::language_server::text::uri(&self.launch.snapshot.join(relative))
+            .map_err(|_| invalid())
+    }
     pub fn service(self, cancel: &AtomicBool, deadline: std::time::Instant) -> io::Result<Service> {
         let transport = hedit_plugin::tool::Stream::open(&self.launch, cancel, deadline)?;
         Ok(Service {
