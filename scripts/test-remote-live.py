@@ -593,6 +593,26 @@ class LiveTests(unittest.TestCase):
         self.assertEqual(process.returncode, 0, stderr.decode())
         self.assertIn(b"PENDING_RECONCILIATION_OK", stdout)
         self.assertEqual(self.root.joinpath("file").read_text(), "PENDING_ONCEbase")
+        print(f"\n{stdout.decode().splitlines()[0]}", flush=True)
+
+    def test_editor_detects_external_changes_during_continuous_work(self):
+        source = self.root / "file"
+        source.write_text("base")
+        probe = ROOT / "target/debug/examples/remote_workspace_probe"
+        process = subprocess.Popen(
+            [str(probe), str(LAB.client_config), str(ARGS.binary), str(self.state),
+             str(self.root), str(LAB.port), "continuous_work"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        self.clients.append(process)
+        self.assertTrue(select.select([process.stdout], [], [], 10)[0], "probe readiness timed out")
+        self.assertEqual(process.stdout.readline(), b"CHANGE_POLL_READY\n")
+        source.write_text("changed externally")
+        process.stdin.write(b"x")
+        process.stdin.flush()
+        stdout, stderr = process.communicate(timeout=15)
+        self.assertEqual(process.returncode, 0, stderr.decode())
+        self.assertIn(b"CHANGE_POLL_OK", stdout)
 
     def test_editor_flush_frontier_allows_later_edits_behind_a_delayed_read(self):
         worker, _ = self.worker()
@@ -639,6 +659,22 @@ class LiveTests(unittest.TestCase):
         self.assertIn("EDITOR_REMOTE_OK", result.stdout)
         self.assertIn("ب🦀", self.root.joinpath("file").read_text())
         self.assertEqual(self.root.joinpath("scratch-saved.txt").read_text(), "SCRATCH_HOST_ONLY")
+        self.assertFalse(LAB.sentinel.exists())
+
+    def test_preview_and_workspace_reopen_preserve_host_recovery(self):
+        self.root.joinpath("first.txt").write_text("first")
+        self.root.joinpath("second.txt").write_text("second")
+        self.root.joinpath("subfolder").mkdir()
+        self.root.joinpath("link").symlink_to(self.root / "subfolder")
+        probe = ROOT / "target/debug/examples/remote_workspace_probe"
+        result = subprocess.run(
+            [str(probe), str(LAB.client_config), str(ARGS.binary), str(self.state),
+             str(self.root.resolve()), str(LAB.port), "reopen_workspace"],
+            capture_output=True, text=True, timeout=45,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("WORKSPACE_REOPEN_OK", result.stdout)
+        self.assertEqual(self.root.joinpath("first.txt").read_text(), "first")
         self.assertFalse(LAB.sentinel.exists())
 
     def test_language_servers_run_on_host_and_stop_when_trust_is_revoked(self):
@@ -700,6 +736,21 @@ class LiveTests(unittest.TestCase):
               f"p95={timings[94]:.2f} p99={timings[98]:.2f}", flush=True)
         self.assertEqual(self.text(wire, doc), "ب🦀"*100)
         self.assertLess(timings[98], 2000, "local commit stalled; inspect storage/transport")
+
+    def test_managed_ssh_cold_and_warm_connection_timings(self):
+        if os.geteuid() == 0:
+            self.skipTest("managed SSH setup requires a non-root account")
+        self.root.joinpath("file").write_text("base")
+        probe = ROOT / "target/debug/examples/remote_workspace_probe"
+        for condition in ("cold", "warm"):
+            result = subprocess.run(
+                [str(probe), str(LAB.client_config), "", str(self.state),
+                 str(self.root), str(LAB.port), "managed_timings"],
+                capture_output=True, text=True, timeout=60,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("Managed SSH ms:", result.stdout)
+            print(f"\n{condition.capitalize()} {result.stdout.strip()}", flush=True)
 
 
 def parse_args(arguments=None):

@@ -1925,7 +1925,7 @@ fn git_commands_are_available_in_the_catalog_and_respect_custom_bindings() {
     finish_git(&ctx, &mut app);
     app.source_control.draft = "Use a custom Git binding".into();
     app.quality.config.keybindings.push(quality::Binding {
-        command: Command::GitCommit,
+        command: Command::GitCommit.into(),
         shortcut: "F9".into(),
         editor_only: false,
     });

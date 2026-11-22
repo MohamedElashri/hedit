@@ -30,7 +30,7 @@ fn markup_selection_shortcut_expands_and_soft_undo_restores_without_editing() {
     let revision = app.active().page.info.revision;
     let before = app.selections();
     app.quality.config.keybindings.push(quality::Binding {
-        command: Command::SelectAll,
+        command: Command::SelectAll.into(),
         shortcut: "Alt+F5".into(),
         editor_only: true,
     });
@@ -66,7 +66,7 @@ fn markup_selection_availability_and_rebinding_respect_editor_focus() {
     assert!(!app.command_enabled(Command::ExpandToTag));
     app.workspace.open[0].page.info.paged = false;
     app.quality.config.keybindings.push(quality::Binding {
-        command: Command::ExpandToTag,
+        command: Command::ExpandToTag.into(),
         shortcut: "Alt+F7".into(),
         editor_only: true,
     });

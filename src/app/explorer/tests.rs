@@ -277,7 +277,7 @@ fn personal_bindings_override_contextual_f2_and_tab_can_leave_the_tree() {
     paint(&ctx, &mut app, vec![key(Key::Tab, Modifiers::NONE)]);
     assert!(!ctx.memory(|m| m.has_focus(egui::Id::new("explorer-tree"))));
     app.quality.config.keybindings.push(quality::Binding {
-        command: Command::New,
+        command: Command::New.into(),
         shortcut: "F2".into(),
         editor_only: false,
     });

@@ -14,6 +14,7 @@ pub(super) enum Command {
     ExplorerNewFolder,
     ExplorerRename,
     ConnectSsh,
+    SshOutput,
     MarkdownSource,
     MarkdownSplit,
     MarkdownPreview,
@@ -136,6 +137,7 @@ pub(super) enum Command {
     IndentGuides,
     Minimap,
     New,
+    NewFileFromTemplate,
     NewWindow,
     Open,
     OpenFolder,
@@ -280,6 +282,7 @@ impl Command {
         Self::ExplorerRename,
         Self::Palette,
         Self::ConnectSsh,
+        Self::SshOutput,
         Self::MarkdownSource,
         Self::MarkdownSplit,
         Self::MarkdownPreview,
@@ -401,6 +404,7 @@ impl Command {
         Self::IndentGuides,
         Self::Minimap,
         Self::New,
+        Self::NewFileFromTemplate,
         Self::NewWindow,
         Self::Open,
         Self::OpenFolder,
@@ -553,6 +557,7 @@ impl Command {
     pub(super) fn label(self) -> &'static str {
         match self {
             Self::ConnectSsh => "Connect via SSH…",
+            Self::SshOutput => "Show SSH Output",
             Self::MarkdownSource => "Markdown: show source",
             Self::MarkdownSplit => "Markdown: split source and preview",
             Self::MarkdownPreview => "Markdown: render preview",
@@ -685,6 +690,7 @@ impl Command {
             Self::IndentGuides => "Show indentation guides",
             Self::Minimap => "Show minimap",
             Self::New => "New file",
+            Self::NewFileFromTemplate => "New File from Template…",
             Self::NewWindow => "New window",
             Self::Open => "Open file…",
             Self::OpenFolder => "Open folder…",
@@ -1089,6 +1095,8 @@ pub(super) enum Pick {
     Font(String),
     /// A saved macro, by name.
     Macro(String),
+    /// An extension command's stable ID.
+    Extension(String),
     Location(definitions::Location),
 }
 
@@ -1389,8 +1397,7 @@ impl HeditApp {
                     return;
                 }
                 Command::OpenFolder => {
-                    self.remote_ui.picker = Some(remote::Picker::Folder);
-                    self.remote_ui.path.clear();
+                    self.open_folder(ctx);
                     return;
                 }
                 command if command.requires_local() => {
@@ -1433,6 +1440,7 @@ impl HeditApp {
                     | Command::Grid
                     | Command::SinglePane
                     | Command::BuildResults
+                    | Command::SshOutput
                     | Command::LanguageProblems
                     | Command::Terminal
                     | Command::NewTerminal
@@ -1750,7 +1758,9 @@ impl HeditApp {
                 }
                 self.report(r);
             }
-            Command::ConnectSsh => self.show_remote_explorer(ctx),
+            Command::NewFileFromTemplate => self.choose_extension_template(ctx),
+            Command::ConnectSsh => self.show_ssh_picker(ctx),
+            Command::SshOutput => self.show_ssh_output(),
             Command::Open => self.open(ctx, None),
             Command::NewWindow => {
                 let session = hedit::windows::new_session(self.workspace.store.directory());
@@ -2066,6 +2076,7 @@ impl HeditApp {
             Buffer(usize),
             File(String),
             Command(Command),
+            Extension(String),
             Syntax(syntax::Language),
             /// Remember a build system (or "automatic") and build with it.
             BuildWith(String),
@@ -2138,6 +2149,14 @@ impl HeditApp {
             let mut items = Vec::new();
             // Letters in order, best matches first; equal scores keep their order.
             let score = |text: &str| hedit::folder::fuzzy_match(text, &filter).map(|(s, _)| s);
+            let extension_detail = |id: &str| {
+                let shortcut = self.extension_shortcut_text(id);
+                if shortcut.is_empty() {
+                    id.to_owned()
+                } else {
+                    format!("{id} · {shortcut}")
+                }
+            };
             let mut scored: Vec<(i64, (String, String, Item))> = vec![];
             if let Some(list) = &self.pick_list {
                 for (label, detail, pick) in &list.items {
@@ -2147,6 +2166,10 @@ impl HeditApp {
                         scored.push((found, (label.clone(), detail.clone(), Item::Pick(pick.clone()))));
                     }
                 }
+            } else if let Some(command) = self.extensions.iter().find(|c| commands && c.id == filter) {
+                if self.extension_available_by_id(&command.id) {
+                    scored.push((i64::MAX, (command.title.clone(), extension_detail(&command.id), Item::Extension(command.id.clone()))));
+                }
             } else if commands {
                 for &command in Command::ALL {
                     if let Some(found) = score(command.label()).filter(|_| command != Command::Palette && self.command_enabled(command)) {
@@ -2154,6 +2177,12 @@ impl HeditApp {
                             found,
                             (command.label().to_owned(), self.shortcut_text(command), Item::Command(command)),
                         ));
+                    }
+                }
+                for command in self.extension_commands() {
+                    let found = score(&command.title).or_else(|| score(&command.id).map(|score| score - 50));
+                    if let Some(found) = found {
+                        scored.push((found, (command.title.clone(), extension_detail(&command.id), Item::Extension(command.id.clone()))));
                     }
                 }
                 // Build with a chosen system, remembered for Ctrl+B.
@@ -2330,6 +2359,9 @@ impl HeditApp {
                 }
                 Item::File(path) => self.open(ctx, Some(path.into())),
                 Item::Command(command) => self.execute(ctx, command),
+                Item::Extension(id) => {
+                    self.run_extension_by_id(ctx, &id);
+                }
                 Item::Pick(Pick::Paste(text)) => self.paste_entry(ctx, text),
                 Item::Pick(Pick::File(path)) => self.open(ctx, Some(path)),
                 Item::Pick(Pick::ExistingFile(path)) => self.open_existing(ctx, path),
@@ -2350,6 +2382,9 @@ impl HeditApp {
                         .find(|m| m.name == name)
                         .map(|m| m.steps.clone());
                     self.play_macro(steps.unwrap_or_default());
+                }
+                Item::Pick(Pick::Extension(id)) => {
+                    self.run_extension_by_id(ctx, &id);
                 }
                 Item::Pick(Pick::Location(location)) => self.open_location(ctx, location),
                 Item::Syntax(language) => self.set_syntax(Some(language)),

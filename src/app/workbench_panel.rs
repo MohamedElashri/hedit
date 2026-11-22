@@ -8,10 +8,18 @@ pub(super) enum Panel {
     Terminal,
 }
 
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+enum OutputChannel {
+    #[default]
+    Build,
+    Ssh,
+}
+
 pub(super) struct State {
     pub last: Panel,
     pub maximized: bool,
     pub normal_height: f32,
+    output: OutputChannel,
 }
 impl Default for State {
     fn default() -> Self {
@@ -19,6 +27,7 @@ impl Default for State {
             last: Panel::Problems,
             maximized: false,
             normal_height: 230.0,
+            output: OutputChannel::Build,
         }
     }
 }
@@ -53,6 +62,16 @@ impl HeditApp {
         } else {
             self.set_panel(panel);
         }
+    }
+
+    pub(super) fn show_ssh_output(&mut self) {
+        self.panel_state.output = OutputChannel::Ssh;
+        self.set_panel(Panel::Output);
+    }
+
+    pub(super) fn show_build_output(&mut self) {
+        self.panel_state.output = OutputChannel::Build;
+        self.set_panel(Panel::Output);
     }
 
     pub(super) fn hide_panel(&mut self) {
@@ -168,7 +187,19 @@ impl HeditApp {
                 });
                 ui.separator();
                 match panel {
-                    Panel::Output => self.build_contents(ui),
+                    Panel::Output => {
+                        ui.horizontal(|ui| {
+                            for (channel, label) in
+                                [(OutputChannel::Build, "Build"), (OutputChannel::Ssh, "SSH")]
+                            {
+                                ui.selectable_value(&mut self.panel_state.output, channel, label);
+                            }
+                        });
+                        match self.panel_state.output {
+                            OutputChannel::Build => self.build_contents(ui),
+                            OutputChannel::Ssh => self.ssh_output_contents(ui),
+                        }
+                    }
                     Panel::Problems => {
                         self.problems_contents(ui);
                     }

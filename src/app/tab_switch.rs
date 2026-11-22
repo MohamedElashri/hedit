@@ -14,6 +14,20 @@ pub(super) struct TabCycle {
 /// taken for Ctrl+Tab. Some keyboard layouts also type the key's character
 /// with Alt, as in Alt+1 or Alt+Q; that key's paired text is dropped too.
 pub(super) fn take_exact(ctx: &egui::Context, modifiers: Modifiers, key: Key) -> bool {
+    take_exact_input(ctx, modifiers, key, modifiers.alt)
+}
+
+/// A personal shortcut can claim a printable key even without modifiers.
+pub(super) fn take_configured(ctx: &egui::Context, modifiers: Modifiers, key: Key) -> bool {
+    take_exact_input(ctx, modifiers, key, true)
+}
+
+fn take_exact_input(
+    ctx: &egui::Context,
+    modifiers: Modifiers,
+    key: Key,
+    suppress_text: bool,
+) -> bool {
     ctx.input_mut(|i| {
         let matches = |e: &egui::Event| {
             matches!(e, egui::Event::Key { key: k, pressed: true, modifiers: m, .. } if *k == key && m.matches_exact(modifiers))
@@ -26,11 +40,11 @@ pub(super) fn take_exact(ctx: &egui::Context, modifiers: Modifiers, key: Key) ->
         // the keyboard layout can change it (e.g. Alt+Shift+2 produces '@').
         // Suppress paired text for coalesced repeats too, while taking only one
         // key press. Never remove unrelated typing elsewhere in the batch.
-        if modifiers.alt
+        if suppress_text
             && !modifiers.ctrl
             && !modifiers.command
             && !modifiers.mac_cmd
-            && key.name().chars().count() == 1
+            && (key == Key::Space || key.name().chars().count() == 1)
         {
             for index in (n..i.events.len().saturating_sub(1)).rev() {
                 if matches(&i.events[index])

@@ -44,7 +44,9 @@ class MacPackage(unittest.TestCase):
                 shutil.copy2(packager.ROOT / filename, project / filename)
             for directory in ['assets', 'themes', 'docs/images', 'examples/cuda']:
                 shutil.copytree(packager.ROOT / directory, project / directory)
-            for relative in ['vendor/egui_commonmark/PATCH.md', 'vendor/libghostty-vt-sys/PATCH.md']:
+            documents = ['vendor/egui_commonmark/PATCH.md', 'vendor/libghostty-vt-sys/PATCH.md',
+                         'docs/extensions.md', 'examples/extensions/markdown-task.json']
+            for relative in documents:
                 (project / relative).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(packager.ROOT / relative, project / relative)
             (project / 'examples/development_probe.rs').write_text('not a release resource')
@@ -77,7 +79,9 @@ class MacPackage(unittest.TestCase):
                 self.assertIn('hedit.app/Contents/Resources/Documentation/LICENSE', bundle.namelist())
                 self.assertEqual(bundle.read('hedit.app/Contents/Resources/Documentation/assets/licenses/egui_commonmark-MIT.txt'),
                                  (packager.ROOT / 'assets/licenses/egui_commonmark-MIT.txt').read_bytes())
-                for relative in ['CHANGELOG.md', 'vendor/egui_commonmark/PATCH.md', 'vendor/libghostty-vt-sys/PATCH.md'] + [path.relative_to(packager.ROOT).as_posix() for path in (packager.ROOT / 'docs/images').glob('*') if path.is_file()]:
+                images = [path.relative_to(packager.ROOT).as_posix()
+                          for path in (packager.ROOT / 'docs/images').glob('*') if path.is_file()]
+                for relative in ['CHANGELOG.md', *documents, *images]:
                     self.assertEqual(bundle.read('hedit.app/Contents/Resources/Documentation/' + relative),
                                      (packager.ROOT / relative).read_bytes())
                 self.assertIn('hedit.app/Contents/Resources/themes/hedit-ink.json', bundle.namelist())

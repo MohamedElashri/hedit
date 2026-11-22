@@ -196,7 +196,7 @@ fn oversized_config_files_are_rejected_before_any_preferences_are_replaced() {
     for (index, file) in files.iter().enumerate() {
         let mut candidate = previous.clone();
         candidate.keybindings.push(quality::Binding {
-            command: Command::Save,
+            command: Command::Save.into(),
             shortcut: "Primary+Alt+S".into(),
             editor_only: false,
         });
@@ -388,13 +388,13 @@ fn key_bindings_are_recorded_by_pressing_keys_and_saved() {
     app.open_preferences(PreferencesPage::Keys);
     frame(&ctx, &mut app, vec![]);
     // Escape while recording cancels the recording, not the Settings window.
-    app.key_capture = Some(Command::Goto);
+    app.key_capture = Some(Command::Goto.into());
     frame(&ctx, &mut app, vec![key(Key::Escape, Modifiers::NONE)]);
     assert_eq!(app.key_capture, None);
     assert!(app.preferences_open);
     assert!(!app.overridden(Command::Goto));
     // A shortcut that another command uses moves, and that command is unbound.
-    app.key_capture = Some(Command::Goto);
+    app.key_capture = Some(Command::Goto.into());
     frame(&ctx, &mut app, vec![key(Key::F, Modifiers::COMMAND)]);
     // With no second key, the single key is used once the chord wait ends.
     app.capture_first = app

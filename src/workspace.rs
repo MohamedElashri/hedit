@@ -5,7 +5,11 @@ use crate::{
     syntax::Language,
     Editor,
 };
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 pub struct Change {
     pub revision: u64,
@@ -165,10 +169,12 @@ impl Workspace {
                 collapsed: false,
             }],
         };
-        let saved = remote
-            .metadata(None)
-            .ok()
-            .and_then(|v| serde_json::from_value::<SessionView>(v).ok());
+        let saved = remote.metadata(None).ok().and_then(|value| {
+            let saved_folders = value.get("folders").is_some() || value.get("folder").is_some();
+            serde_json::from_value::<SessionView>(value)
+                .ok()
+                .map(|view| (view, saved_folders))
+        });
         let mut identities = std::collections::HashMap::new();
         for info in remote.list()? {
             let host_id = info.document;
@@ -178,7 +184,13 @@ impl Workspace {
             let page = document.page(0)?;
             workspace.add(document, page)?;
         }
-        if let Some(saved) = saved {
+        if let Some((saved, saved_folders)) = saved {
+            if saved_folders {
+                if let Some(folders) = restore_remote_folders(&remote, saved.folder, saved.folders)
+                {
+                    workspace.folders = folders;
+                }
+            }
             let mut buffers = std::mem::take(&mut workspace.open);
             let mut open = vec![];
             for mut view in saved.open {
@@ -604,6 +616,64 @@ impl Workspace {
     }
 }
 
+fn restore_remote_folders(
+    remote: &crate::remote::Connection,
+    legacy: Option<FolderView>,
+    mut folders: Vec<FolderView>,
+) -> Option<Vec<FolderView>> {
+    if folders.is_empty() {
+        folders.extend(legacy);
+    }
+    if folders.is_empty() {
+        return Some(folders);
+    }
+
+    // Match the helper's path-byte limit, including up to three URI bytes per
+    // encoded byte. The host separately bounds the whole view to 256 KiB.
+    const MAX_PATH_BYTES: usize = 4096;
+    let max_uri_len = remote.root().as_os_str().len() + 3 * MAX_PATH_BYTES;
+    let normalize = |path: &str| -> Option<String> {
+        if path.len() > max_uri_len {
+            return None;
+        }
+        let relative = remote.relative(Path::new(path)).ok()?;
+        if relative.len() > MAX_PATH_BYTES
+            || relative.contains(&0)
+            || std::str::from_utf8(&relative).is_err()
+            || (!relative.is_empty() && relative.split(|&byte| byte == b'/').any(<[u8]>::is_empty))
+        {
+            return None;
+        }
+        Some(remote.uri(&relative).to_string_lossy().into_owned())
+    };
+    let mut roots = HashSet::new();
+    folders.retain_mut(|folder| {
+        let Some(path) = normalize(&folder.path) else {
+            return false;
+        };
+        if !roots.insert(path.clone()) {
+            return false;
+        }
+        let prefix = format!("{}/", path.trim_end_matches('/'));
+        let mut expanded_paths = HashSet::new();
+        folder.expanded.retain_mut(|entry| {
+            let Some(expanded) = normalize(entry) else {
+                return false;
+            };
+            if (expanded != path && !expanded.starts_with(&prefix))
+                || !expanded_paths.insert(expanded.clone())
+            {
+                return false;
+            }
+            *entry = expanded;
+            true
+        });
+        folder.path = path;
+        true
+    });
+    (!folders.is_empty()).then_some(folders)
+}
+
 pub fn splice<'a>(old: &str, new: &'a str) -> (usize, usize, &'a str) {
     // Comparing blocks lets the compiler use vectorized equality for the
     // unchanged region; scalar comparison only locates the differing byte.
@@ -662,5 +732,70 @@ fn label(page: &Page) -> String {
             label.push('…');
         }
         label
+    }
+}
+
+#[cfg(test)]
+mod remote_folder_restore_tests {
+    use super::*;
+
+    fn folder(path: impl Into<String>) -> FolderView {
+        FolderView {
+            path: path.into(),
+            visible: false,
+            expanded: vec![],
+            collapsed: true,
+        }
+    }
+
+    #[test]
+    fn folder_restore_preserves_remote_views_and_drops_unscoped_paths() {
+        let remote = crate::remote::tests::disconnected();
+        let mut nested = folder("hedit-ssh://test/src");
+        nested.expanded = vec![
+            "hedit-ssh://test/src/subfolder".into(),
+            "hedit-ssh://test/src/%73ubfolder".into(),
+            "hedit-ssh://test/src-other/sibling".into(),
+            "hedit-ssh://test/src/%2e%2e".into(),
+            "hedit-ssh://test/src/%FF".into(),
+            "hedit-ssh://other/src/subfolder".into(),
+            "/local/src/subfolder".into(),
+        ];
+        let mut root = folder("hedit-ssh://test");
+        root.visible = true;
+        root.expanded = vec!["hedit-ssh://test/src".into()];
+        let folders = restore_remote_folders(
+            &remote,
+            None,
+            vec![
+                nested,
+                root,
+                folder("hedit-ssh://test/%73rc"),
+                folder("hedit-ssh://test/~scratch/test"),
+                folder("hedit-ssh://other/foreign"),
+                folder("/local"),
+                folder(format!("hedit-ssh://test/{}", "a".repeat(4097))),
+            ],
+        )
+        .unwrap();
+        assert_eq!(folders.len(), 2);
+        assert_eq!(folders[0].path, "hedit-ssh://test/src");
+        assert_eq!(folders[0].expanded, ["hedit-ssh://test/src/subfolder"]);
+        assert!(!folders[0].visible && folders[0].collapsed);
+        assert_eq!(folders[1].path, "hedit-ssh://test/");
+        assert_eq!(folders[1].expanded, ["hedit-ssh://test/src"]);
+        assert!(folders[1].visible);
+    }
+
+    #[test]
+    fn folder_restore_accepts_legacy_and_intentionally_empty_views() {
+        let remote = crate::remote::tests::disconnected();
+        let legacy = folder("hedit-ssh://test/legacy");
+        let folders = restore_remote_folders(&remote, Some(legacy), vec![]).unwrap();
+        assert_eq!(folders[0].path, "hedit-ssh://test/legacy");
+        assert!(restore_remote_folders(&remote, None, vec![])
+            .unwrap()
+            .is_empty());
+        assert!(restore_remote_folders(&remote, Some(folder("/local")), vec![]).is_none());
     }
 }

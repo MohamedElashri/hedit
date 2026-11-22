@@ -41,6 +41,7 @@ impl HeditApp {
         enum Action {
             Files,
             Git,
+            Remote,
             Command(Command),
         }
         let mut action = None;
@@ -102,7 +103,7 @@ impl HeditApp {
                     )
                     .clicked()
                     {
-                        action = Some(Action::Command(Command::ConnectSsh));
+                        action = Some(Action::Remote);
                     }
                 });
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
@@ -133,6 +134,14 @@ impl HeditApp {
                 } else {
                     self.show_git_sidebar(ctx);
                 }
+            }
+            Some(Action::Remote) => {
+                self.close_transient(ctx);
+                if self.source_control.open {
+                    self.leave_review();
+                    self.focus_editor = true;
+                }
+                self.show_remote_explorer(ctx);
             }
             Some(Action::Command(command)) => self.execute(ctx, command),
             None => {}

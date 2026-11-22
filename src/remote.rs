@@ -10,10 +10,13 @@ use hedit_remote::{
     protocol::{Action, DocumentInfo, Request, Response},
 };
 use serde_json::Value;
+pub mod askpass;
 pub mod bootstrap;
+pub mod diagnostics;
 pub mod explorer;
+use diagnostics::{Event as Diagnostic, Failure as DiagnosticFailure};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -26,6 +29,10 @@ const URI_SET: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
     .remove(b'-')
     .remove(b'_')
     .remove(b'~');
+const CHANGE_POLL_INTERVAL: Duration = Duration::from_millis(750);
+const EDIT_AGE_LIMIT: Duration = Duration::from_secs(2);
+const MAX_PENDING_EDITS: usize = 64;
+const MAX_PENDING_BYTES: usize = 1024 * 1024;
 type Reply = mpsc::SyncSender<Result<Response, String>>;
 enum Work {
     Call(Request, Reply),
@@ -41,17 +48,17 @@ pub struct Config {
     /// Resolve account paths and install the matching user-local helper.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub managed: bool,
+    /// Let OpenSSH request credentials using a local masked prompt.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub interactive_auth: bool,
     #[serde(skip)]
     pub takeover: bool,
 }
 impl Config {
     pub fn validate(&self) -> Result<(), String> {
-        (if self.managed {
-            self.target.command_for(":")
-        } else {
-            self.target.command()
-        })
-        .map_err(|e| format!("Invalid SSH settings: {e}"))?;
+        self.target
+            .validate_settings(self.managed)
+            .map_err(|e| format!("Invalid SSH settings: {e}"))?;
         if !(self.root.starts_with('/') || self.managed && self.root.is_empty())
             || self.root.contains(['\0', '\r', '\n'])
         {
@@ -66,22 +73,78 @@ impl Config {
         }
         Ok(())
     }
+
+    /// Configure an application-owned SSH command for this connection profile.
+    /// The caller is responsible for quoting arguments in the remote command.
+    pub fn setup_command(&self, remote_command: &str) -> Result<std::process::Command, String> {
+        let mut command = self
+            .target
+            .command_for_detailed(remote_command, self.interactive_auth)?;
+        if self.interactive_auth {
+            askpass::configure(&mut command, &self.target.host)?;
+        }
+        Ok(command)
+    }
 }
 struct State {
     epoch: u64,
     token: String,
     session: String,
     connected: bool,
+    forwarded_ports: Vec<u16>,
     reconnecting: bool,
     retry: Retry,
     error: Option<String>,
-    pending: Vec<(Request, String)>,
+    diagnostics: diagnostics::Log,
+    pending: VecDeque<PendingEdit>,
     pending_bytes: usize,
-    oldest: Option<Instant>,
     infos: HashMap<String, DocumentInfo>,
     changed: HashMap<u64, bool>,
     trusted: bool,
     wake: Option<Arc<dyn Fn() + Send + Sync>>,
+}
+#[derive(Clone)]
+struct PendingEdit {
+    request: Request,
+    path: String,
+    queued_at: Instant,
+}
+impl State {
+    fn record_connection_loss(&mut self, error: Option<String>) {
+        if self.connected {
+            self.diagnostics.record(Diagnostic::TransportLost(
+                error
+                    .as_deref()
+                    .map(DiagnosticFailure::classify)
+                    .unwrap_or(DiagnosticFailure::Unknown),
+            ));
+        }
+        self.connected = false;
+        self.trusted = false;
+        self.error = error;
+    }
+
+    fn oldest_edit_deadline(&self) -> Option<Instant> {
+        self.pending
+            .front()
+            .map(|edit| edit.queued_at + EDIT_AGE_LIMIT)
+    }
+    fn can_edit_until_deadline(&self) -> bool {
+        self.connected
+            && self.error.is_none()
+            && self.pending.len() < MAX_PENDING_EDITS
+            && self.pending_bytes < MAX_PENDING_BYTES
+    }
+    fn acknowledge_edit(&mut self, path: &str, info: DocumentInfo) {
+        if let Some(edit) = self.pending.pop_front() {
+            self.pending_bytes -= edit_cost(&edit.request);
+        }
+        if let Some(current) = self.infos.get_mut(path) {
+            if info.revision >= current.revision {
+                *current = info;
+            }
+        }
+    }
 }
 fn notify(state: &Mutex<State>) {
     // Never invoke a UI callback while holding the transport's state lock.
@@ -133,7 +196,7 @@ fn queued_edit_pending(state: &State, request: &Request) -> bool {
         state
             .pending
             .iter()
-            .any(|(pending, _)| edit_identity(pending) == Some(id))
+            .any(|pending| edit_identity(&pending.request) == Some(id))
     })
 }
 fn barrier_result(state: &State, through: &[(u64, u64)]) -> Result<(), String> {
@@ -141,7 +204,7 @@ fn barrier_result(state: &State, through: &[(u64, u64)]) -> Result<(), String> {
         && !state
             .pending
             .iter()
-            .any(|(request, _)| edit_identity(request).is_some_and(|id| through.contains(&id)))
+            .any(|edit| edit_identity(&edit.request).is_some_and(|id| through.contains(&id)))
     {
         Ok(())
     } else {
@@ -162,11 +225,17 @@ fn rpc(client: &mut Client, request: Request) -> Result<Response, String> {
 fn establish(
     config: &Config,
     expected: Option<&str>,
+    interactive: bool,
 ) -> Result<(Client, String, u64, String), String> {
-    let mut client=Client::connect_detailed(&config.target).map_err(|e|format!("Cannot connect securely: {e}. Check the pinned host key, SSH key, and installed helper."))?;
-    let Response::Hello { session, .. } = rpc(&mut client, Request::Hello {})? else {
-        return Err("Invalid helper handshake.".into());
-    };
+    let connection = Client::connect_with_session_using(&config.target, interactive, |command| {
+        if interactive {
+            askpass::configure(command, &config.target.host)?;
+        }
+        Ok(())
+    });
+    let (mut client, session) = connection.map_err(|e| {
+        format!("Cannot connect securely: {e}. Check the pinned host key, SSH key, and installed helper.")
+    })?;
     if expected.is_some_and(|s| s != session) {
         return Err("The host recovery session changed. Pending edits remain in memory; reconnect to the original state directory.".into());
     }
@@ -211,13 +280,16 @@ impl Default for Retry {
     }
 }
 impl Retry {
-    fn schedule(&mut self) {
-        if self.enabled && self.attempts < 5 && self.next.is_none() {
-            self.next = Some(Instant::now() + Duration::from_secs(1 << self.attempts));
+    fn schedule(&mut self, now: Instant) -> Option<Instant> {
+        if self.enabled && self.attempts < 5 {
+            let delay = Duration::from_secs(1 << self.attempts);
+            Some(*self.next.get_or_insert(now + delay))
+        } else {
+            None
         }
     }
-    fn due(&mut self) -> bool {
-        if self.next.is_some_and(|next| Instant::now() >= next) {
+    fn due(&mut self, now: Instant) -> bool {
+        if self.next.is_some_and(|next| now >= next) {
             self.next = None;
             self.attempts += 1;
             true
@@ -232,23 +304,16 @@ fn replay_pending(
     mut send: impl FnMut(Request) -> Result<Response, String>,
 ) -> Result<(), String> {
     let pending = shared.lock().unwrap().pending.clone();
-    for (mut request, path) in pending {
+    for PendingEdit {
+        mut request, path, ..
+    } in pending
+    {
         if let Request::Apply { epoch: e, .. } = &mut request {
             *e = epoch;
         }
         let response = send(request.clone())?;
         let info = durable_info(&request, response)?;
-        let mut state = shared.lock().unwrap();
-        state.pending.remove(0);
-        state.pending_bytes = state.pending.iter().map(|(r, _)| edit_cost(r)).sum();
-        if state.pending.is_empty() {
-            state.oldest = None;
-        }
-        if let Some(current) = state.infos.get_mut(&path) {
-            if info.revision >= current.revision {
-                *current = info;
-            }
-        }
+        shared.lock().unwrap().acknowledge_edit(&path, info);
     }
     Ok(())
 }
@@ -256,18 +321,25 @@ fn reconnect(
     config: &Config,
     client: &mut Client,
     shared: &Mutex<State>,
+    automatic: bool,
 ) -> Result<Response, String> {
     let expected = {
         let mut state = shared.lock().unwrap();
         state.connected = false;
         state.reconnecting = true;
         state.trusted = false;
+        let attempt = automatic.then_some(state.retry.attempts);
+        state.diagnostics.record(Diagnostic::Reconnecting(attempt));
         state.session.clone()
     };
     notify(shared);
     client.disconnect();
     let result: Result<Response, String> = (|| {
-        let (new, _, epoch, token) = establish(config, Some(&expected))?;
+        let (new, _, epoch, token) = establish(
+            config,
+            Some(&expected),
+            !automatic && config.interactive_auth,
+        )?;
         *client = new;
         {
             let mut state = shared.lock().unwrap();
@@ -283,11 +355,18 @@ fn reconnect(
         match &result {
             Ok(_) => {
                 state.connected = true;
+                state.forwarded_ports = client.forwarded_ports();
                 state.error = None;
                 state.retry = Retry::default();
+                state.diagnostics.record(Diagnostic::Reconnected);
             }
             Err(error) => {
                 state.error = Some(error.clone());
+                state
+                    .diagnostics
+                    .record(Diagnostic::ReconnectFailed(DiagnosticFailure::classify(
+                        error,
+                    )));
                 // Session mismatch, fencing and reconciliation conflicts need a
                 // human decision; only an unusable transport permits retries.
                 if !client.is_failed() || error.contains("recovery session changed") {
@@ -297,8 +376,51 @@ fn reconnect(
             }
         }
     }
+    if result.is_err() {
+        client.disconnect();
+    }
     notify(shared);
     result
+}
+fn poll_changes(client: &mut Client, shared: &Mutex<State>, cursor: &mut usize) {
+    let documents = {
+        let state = shared.lock().unwrap();
+        let mut ids = state.infos.values().map(|i| i.document).collect::<Vec<_>>();
+        ids.sort_unstable();
+        ids.dedup();
+        let total = ids.len();
+        let selected = ids
+            .into_iter()
+            .cycle()
+            .skip(if total == 0 { 0 } else { *cursor % total })
+            .take(total.min(8))
+            .collect();
+        *cursor = cursor.wrapping_add(8);
+        selected
+    };
+    let mut changed_state = false;
+    match rpc(client, Request::Changes { documents }) {
+        Ok(Response::Value { value }) => {
+            if let Ok(values) = serde_json::from_value::<Vec<(u64, bool)>>(value) {
+                let mut state = shared.lock().unwrap();
+                for (id, changed) in values {
+                    changed_state |= state.changed.insert(id, changed).unwrap_or(false) != changed;
+                }
+            }
+        }
+        other => {
+            let mut state = shared.lock().unwrap();
+            changed_state = true;
+            state.record_connection_loss(Some(
+                other
+                    .err()
+                    .unwrap_or_else(|| "Invalid host change response.".into()),
+            ));
+        }
+    }
+    if changed_state {
+        notify(shared);
+    }
 }
 impl Connection {
     pub fn connect(config: Config) -> Result<Arc<Self>, String> {
@@ -308,18 +430,22 @@ impl Connection {
         } else {
             config
         };
-        let (mut client, session, epoch, token) = establish(&config, None)?;
+        let (mut client, session, epoch, token) =
+            establish(&config, None, config.interactive_auth)?;
+        let mut diagnostics = diagnostics::Log::default();
+        diagnostics.record(Diagnostic::Connected);
         let state = Arc::new(Mutex::new(State {
             epoch,
             token,
             session: session.clone(),
             connected: true,
+            forwarded_ports: client.forwarded_ports(),
             reconnecting: false,
             retry: Retry::default(),
             error: None,
-            pending: vec![],
+            diagnostics,
+            pending: VecDeque::new(),
             pending_bytes: 0,
-            oldest: None,
             infos: HashMap::new(),
             changed: HashMap::new(),
             trusted: false,
@@ -330,89 +456,69 @@ impl Connection {
         let settings = config.clone();
         std::thread::spawn(move || {
             let mut change_cursor = 0usize;
+            let mut next_change = Instant::now() + CHANGE_POLL_INTERVAL;
             loop {
-                let retry = {
+                let (connected, retry, deadline) = {
                     let mut state = shared.lock().unwrap();
-                    if !state.connected && !state.reconnecting && client.is_failed() {
-                        state.retry.schedule();
-                        state.retry.due()
+                    let now = Instant::now();
+                    if state.connected {
+                        (true, false, Some(next_change))
+                    } else if !state.reconnecting && client.is_failed() {
+                        let deadline = state.retry.schedule(now);
+                        (false, state.retry.due(now), deadline)
                     } else {
-                        false
+                        (false, false, None)
                     }
                 };
                 if retry {
-                    let _ = reconnect(&settings, &mut client, &shared);
+                    let _ = reconnect(&settings, &mut client, &shared, true);
+                    next_change = Instant::now() + CHANGE_POLL_INTERVAL;
+                    continue;
                 }
-                let work = match rx.recv_timeout(Duration::from_millis(750)) {
+                // Servicing queued work must not postpone file changes forever.
+                if connected && Instant::now() >= next_change {
+                    poll_changes(&mut client, &shared, &mut change_cursor);
+                    next_change = Instant::now() + CHANGE_POLL_INTERVAL;
+                    continue;
+                }
+                // A disconnected workspace without a scheduled retry can sleep
+                // until the next user action arrives.
+                let next_work = match deadline {
+                    Some(deadline) => {
+                        rx.recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                    }
+                    None => rx.recv().map_err(|_| mpsc::RecvTimeoutError::Disconnected),
+                };
+                let work = match next_work {
                     Ok(w) => w,
                     Err(mpsc::RecvTimeoutError::Disconnected) => break,
-                    Err(_) => {
-                        let connected = shared.lock().unwrap().connected;
-                        if connected {
-                            let mut changed_state = false;
-                            let ids = {
-                                let s = shared.lock().unwrap();
-                                let mut ids =
-                                    s.infos.values().map(|i| i.document).collect::<Vec<_>>();
-                                ids.sort_unstable();
-                                ids.dedup();
-                                let total = ids.len();
-                                let selected = ids
-                                    .into_iter()
-                                    .cycle()
-                                    .skip(if total == 0 { 0 } else { change_cursor % total })
-                                    .take(total.min(8))
-                                    .collect::<Vec<_>>();
-                                change_cursor = change_cursor.wrapping_add(8);
-                                selected
-                            };
-                            match rpc(&mut client, Request::Changes { documents: ids }) {
-                                Ok(Response::Value { value }) => {
-                                    if let Ok(values) =
-                                        serde_json::from_value::<Vec<(u64, bool)>>(value)
-                                    {
-                                        let mut s = shared.lock().unwrap();
-                                        for (id, changed) in values {
-                                            changed_state |=
-                                                s.changed.insert(id, changed).unwrap_or(false)
-                                                    != changed;
-                                        }
-                                    }
-                                }
-                                other => {
-                                    let mut s = shared.lock().unwrap();
-                                    changed_state = true;
-                                    s.connected = false;
-                                    s.trusted = false;
-                                    s.error =
-                                        Some(other.err().unwrap_or_else(|| {
-                                            "Invalid host change response.".into()
-                                        }));
-                                }
-                            }
-                            if changed_state {
-                                notify(&shared);
-                            }
-                        }
-                        continue;
-                    }
+                    Err(mpsc::RecvTimeoutError::Timeout) => continue,
                 };
                 match work {
                     Work::Call(request, reply) => {
-                        let result = if shared.lock().unwrap().connected {
-                            rpc(&mut client, request)
+                        let result = if connected {
+                            let trust = match &request {
+                                Request::Trust { allow, .. } => Some(*allow),
+                                _ => None,
+                            };
+                            let result = rpc(&mut client, request);
+                            if client.is_failed() {
+                                shared
+                                    .lock()
+                                    .unwrap()
+                                    .record_connection_loss(result.as_ref().err().cloned());
+                            } else if let (Some(allow), Ok(Response::Pong {})) = (trust, &result) {
+                                // Publish trust on the serialized transport worker
+                                // before the caller can observe the acknowledgement.
+                                shared.lock().unwrap().trusted = allow;
+                            }
+                            result
                         } else {
                             Err(
                             "The remote workspace is disconnected. Reconnect before continuing."
                                 .into(),
                         )
                         };
-                        if client.is_failed() {
-                            let mut state = shared.lock().unwrap();
-                            state.connected = false;
-                            state.trusted = false;
-                            state.error = result.as_ref().err().cloned();
-                        }
                         let _ = reply.send(result);
                     }
                     Work::Edit(request, path) => {
@@ -427,28 +533,13 @@ impl Connection {
                             .and_then(|response| durable_info(&request, response));
                         let mut s = shared.lock().unwrap();
                         match result {
-                            Ok(info) => {
-                                if !s.pending.is_empty() {
-                                    s.pending.remove(0);
-                                }
-                                s.pending_bytes = s.pending.iter().map(|(r, _)| edit_cost(r)).sum();
-                                if s.pending.is_empty() {
-                                    s.oldest = None;
-                                }
-                                if let Some(current) = s.infos.get_mut(&path) {
-                                    if info.revision >= current.revision {
-                                        *current = info;
-                                    }
-                                }
-                            }
+                            Ok(info) => s.acknowledge_edit(&path, info),
                             other => {
-                                s.connected = false;
-                                s.trusted = false;
-                                s.error = Some(
+                                s.record_connection_loss(Some(
                                     other
                                         .err()
                                         .unwrap_or_else(|| "Invalid durability receipt.".into()),
-                                );
+                                ));
                             }
                         }
                     }
@@ -464,11 +555,13 @@ impl Connection {
                         state.retry.enabled = false;
                         state.retry.next = None;
                         state.error = Some("Disconnected. Pending edits remain in this window; reconnect to resume.".into());
+                        state.diagnostics.record(Diagnostic::Disconnected);
                         let _ = reply.send(Ok(Response::Pong {}));
                     }
                     Work::Reconnect(reply) => {
                         shared.lock().unwrap().retry = Retry::default();
-                        let result = reconnect(&settings, &mut client, &shared);
+                        let result = reconnect(&settings, &mut client, &shared, false);
+                        next_change = Instant::now() + CHANGE_POLL_INTERVAL;
                         let _ = reply.send(result);
                     }
                 }
@@ -572,7 +665,7 @@ impl Connection {
             let through = state
                 .pending
                 .iter()
-                .filter_map(|(request, _)| edit_identity(request))
+                .filter_map(|edit| edit_identity(&edit.request))
                 .collect();
             self.tx
                 .try_send(Work::Barrier(through, tx))
@@ -596,27 +689,54 @@ impl Connection {
         self.tx
             .try_send(Work::Reconnect(tx))
             .map_err(|_| "Remote request queue is full.")?;
-        rx.recv_timeout(Duration::from_secs(60))
+        let timeout = Duration::from_secs(60)
+            + if self.config.interactive_auth {
+                askpass::AUTH_TIMEOUT
+            } else {
+                Duration::ZERO
+            };
+        rx.recv_timeout(timeout)
             .map_err(|_| "Reconnect timed out.")??;
         Ok(())
     }
     pub fn trust(&self, allow: bool) -> Result<(), String> {
         self.flush()?;
         let epoch = self.state.lock().unwrap().epoch;
-        self.call(Request::Trust { epoch, allow })?;
-        self.state.lock().unwrap().trusted = allow;
-        notify(&self.state);
+        if !matches!(
+            self.call(Request::Trust { epoch, allow })?,
+            Response::Pong {}
+        ) {
+            return Err("Invalid SSH execution trust reply.".into());
+        }
         Ok(())
     }
     pub fn writable(&self) -> bool {
         let s = self.state.lock().unwrap();
-        s.connected
-            && s.error.is_none()
-            && s.pending.len() < 64
-            && s.pending_bytes < 1024 * 1024
-            && s.oldest
-                .is_none_or(|t| t.elapsed() < Duration::from_secs(2))
+        s.can_edit_until_deadline()
+            && s.oldest_edit_deadline()
+                .is_none_or(|deadline| deadline > Instant::now())
     }
+    /// Repaint once when a still-editable workspace would pause for durability.
+    /// Acknowledgements and connection transitions wake the UI independently.
+    pub fn backpressure_repaint_after(&self) -> Option<Duration> {
+        let s = self.state.lock().unwrap();
+        if !s.can_edit_until_deadline() {
+            return None;
+        }
+        let delay = s
+            .oldest_edit_deadline()?
+            .checked_duration_since(Instant::now())?;
+        (!delay.is_zero()).then_some(delay)
+    }
+    pub fn forwarded_ports(&self) -> Vec<u16> {
+        let state = self.state.lock().unwrap();
+        if state.connected {
+            state.forwarded_ports.clone()
+        } else {
+            Vec::new()
+        }
+    }
+
     pub fn status(&self) -> (bool, bool, usize, String) {
         let s = self.state.lock().unwrap();
         (
@@ -647,13 +767,26 @@ impl Connection {
             },
         )
     }
+    pub fn take_diagnostics(&self) -> Vec<Diagnostic> {
+        self.state.lock().unwrap().diagnostics.drain()
+    }
     fn service(&self) -> Result<Client, String> {
         self.flush()?;
         let (session, epoch, token) = {
             let s = self.state.lock().unwrap();
             (s.session.clone(), s.epoch, s.token.clone())
         };
-        let mut client = Client::connect(&self.config.target).map_err(|e| e.to_string())?;
+        let mut client = if self.config.interactive_auth {
+            let mut command = self
+                .config
+                .target
+                .command_with_auth(true)
+                .map_err(|error| error.to_string())?;
+            askpass::configure(&mut command, &self.config.target.host)?;
+            Client::spawn_with_session(command, askpass::AUTH_TIMEOUT)?.0
+        } else {
+            Client::connect(&self.config.target).map_err(|error| error.to_string())?
+        };
         rpc(
             &mut client,
             Request::Bind {
@@ -780,10 +913,10 @@ impl Connection {
             Action::Edit { text, .. } | Action::EditBytes { text, .. } => text.len() + 128,
             _ => 128,
         };
-        if s.pending.len() >= 64
-            || s.pending_bytes + cost > 1024 * 1024
-            || s.oldest
-                .is_some_and(|t| t.elapsed() > Duration::from_secs(2))
+        if s.pending.len() >= MAX_PENDING_EDITS
+            || s.pending_bytes + cost > MAX_PENDING_BYTES
+            || s.oldest_edit_deadline()
+                .is_some_and(|deadline| deadline <= Instant::now())
         {
             return Err(
                 "Host durability is behind. Wait for receipts before editing further.".into(),
@@ -805,11 +938,12 @@ impl Connection {
         self.tx
             .try_send(Work::Edit(request.clone(), key.clone()))
             .map_err(|_| "Remote edit queue is full.")?;
-        s.pending.push((request, key.clone()));
+        s.pending.push_back(PendingEdit {
+            request,
+            path: key.clone(),
+            queued_at: Instant::now(),
+        });
         s.pending_bytes += cost;
-        if s.oldest.is_none() {
-            s.oldest = Some(Instant::now());
-        }
         s.infos.get_mut(&key).unwrap().revision = sequence;
         drop(s);
         Ok(())
@@ -1412,8 +1546,16 @@ impl Connection {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+    fn push_edit(state: &mut State, request: Request, queued_at: Instant) {
+        state.pending_bytes += edit_cost(&request);
+        state.pending.push_back(PendingEdit {
+            request,
+            path: "file".into(),
+            queued_at,
+        });
+    }
     #[test]
     fn reconnect_replays_in_order_and_retains_the_unacknowledged_tail() {
         let remote = disconnected();
@@ -1427,9 +1569,8 @@ mod tests {
         };
         {
             let mut state = remote.state.lock().unwrap();
-            state.pending = vec![(request(1), "file".into()), (request(2), "file".into())];
-            state.pending_bytes = state.pending.iter().map(|(r, _)| edit_cost(r)).sum();
-            state.oldest = Some(Instant::now());
+            push_edit(&mut state, request(1), Instant::now());
+            push_edit(&mut state, request(2), Instant::now());
         }
         let mut received = vec![];
         let result = replay_pending(&remote.state, 7, |request| {
@@ -1462,14 +1603,14 @@ mod tests {
         assert_eq!(received, [1, 2]);
         let state = remote.state.lock().unwrap();
         assert_eq!(state.pending.len(), 1);
-        assert_eq!(edit_identity(&state.pending[0].0), Some((4, 2)));
-        assert_eq!(state.pending_bytes, edit_cost(&state.pending[0].0));
-        assert!(state.oldest.is_some());
+        assert_eq!(edit_identity(&state.pending[0].request), Some((4, 2)));
+        assert_eq!(state.pending_bytes, edit_cost(&state.pending[0].request));
     }
     #[test]
     fn receipt_for_another_sequence_cannot_discard_a_pending_edit() {
         let remote = disconnected();
-        remote.state.lock().unwrap().pending.push((
+        push_edit(
+            &mut remote.state.lock().unwrap(),
             Request::Apply {
                 session: "test".into(),
                 epoch: 1,
@@ -1478,8 +1619,8 @@ mod tests {
                 base_revision: 0,
                 action: Action::Undo {},
             },
-            "file".into(),
-        ));
+            Instant::now(),
+        );
         let result = replay_pending(&remote.state, 2, |_| {
             Ok(Response::Durable {
                 sequence: 2,
@@ -1501,25 +1642,22 @@ mod tests {
     #[test]
     fn automatic_retries_are_bounded_and_intentional_disconnect_stops_them() {
         let mut retry = Retry::default();
+        let mut now = Instant::now();
         for attempt in 0..5 {
-            retry.schedule();
-            let delay = retry
-                .next
-                .unwrap()
-                .saturating_duration_since(Instant::now());
-            assert!(delay <= Duration::from_secs(1 << attempt));
-            assert!(!retry.due());
-            retry.next = Some(Instant::now());
-            assert!(retry.due());
+            let deadline = now + Duration::from_secs(1 << attempt);
+            assert_eq!(retry.schedule(now), Some(deadline));
+            let before = deadline - Duration::from_millis(1);
+            assert_eq!(retry.schedule(before), Some(deadline));
+            assert!(!retry.due(before));
+            assert!(retry.due(deadline));
+            now = deadline;
         }
-        retry.schedule();
-        assert!(retry.next.is_none());
+        assert_eq!(retry.schedule(now), None);
         let mut stopped = Retry {
             enabled: false,
             ..Retry::default()
         };
-        stopped.schedule();
-        assert!(stopped.next.is_none());
+        assert_eq!(stopped.schedule(now), None);
     }
     #[test]
     fn edits_already_replayed_during_reconnect_are_not_sent_from_the_queue_again() {
@@ -1533,16 +1671,17 @@ mod tests {
             action: Action::Undo {},
         };
         let mut state = remote.state.lock().unwrap();
-        state.pending.push((request.clone(), "file".into()));
+        push_edit(&mut state, request.clone(), Instant::now());
         assert!(queued_edit_pending(&state, &request));
         state.pending.clear();
         assert!(!queued_edit_pending(&state, &request));
     }
-    fn disconnected() -> Connection {
+    pub(crate) fn disconnected() -> Connection {
         let (tx, _) = mpsc::sync_channel(1);
         Connection {
             config: Config {
                 target: SshTarget {
+                    routing: Default::default(),
                     host: "test".into(),
                     user: None,
                     port: 22,
@@ -1552,6 +1691,7 @@ mod tests {
                 },
                 root: "/srv/work".into(),
                 managed: false,
+                interactive_auth: false,
                 takeover: false,
             },
             prefix: "hedit-ssh://test/".into(),
@@ -1561,12 +1701,13 @@ mod tests {
                 token: String::new(),
                 session: String::new(),
                 connected: false,
+                forwarded_ports: Vec::new(),
                 reconnecting: false,
                 retry: Retry::default(),
                 error: None,
-                pending: vec![],
+                diagnostics: diagnostics::Log::default(),
+                pending: VecDeque::new(),
                 pending_bytes: 0,
-                oldest: None,
                 infos: HashMap::new(),
                 changed: HashMap::new(),
                 trusted: false,
@@ -1574,6 +1715,25 @@ mod tests {
             })),
         }
     }
+    #[test]
+    fn transport_diagnostics_report_only_one_loss_per_connection() {
+        let connection = disconnected();
+        {
+            let mut state = connection.state.lock().unwrap();
+            state.connected = true;
+            state.trusted = true;
+            state.record_connection_loss(Some("private.example: Connection reset".into()));
+            state.record_connection_loss(Some("private.example: failure".into()));
+            assert!(!state.connected);
+            assert!(!state.trusted);
+        }
+        assert_eq!(
+            connection.take_diagnostics(),
+            [Diagnostic::TransportLost(DiagnosticFailure::Network)]
+        );
+        assert!(connection.take_diagnostics().is_empty());
+    }
+
     #[test]
     fn a_read_rejects_a_moved_document_even_when_its_revision_did_not_change() {
         let mut remote = disconnected();
@@ -1631,7 +1791,7 @@ mod tests {
             },
         };
         let mut state = state.lock().unwrap();
-        state.pending.push((edit, "path".into()));
+        push_edit(&mut state, edit, Instant::now());
         assert!(
             barrier_result(&state, &[(1, 1)]).is_err(),
             "an earlier unacknowledged edit cannot pass"
@@ -1658,6 +1818,81 @@ mod tests {
         notify(&remote.state);
         assert!(called.load(Ordering::Relaxed));
         remote.state.lock().unwrap().wake = None;
+    }
+    #[test]
+    fn durability_deadline_follows_the_oldest_unacknowledged_edit() {
+        let remote = disconnected();
+        let edit = |sequence| Request::Apply {
+            session: "test".into(),
+            epoch: 1,
+            document: 4,
+            sequence,
+            base_revision: sequence - 1,
+            action: Action::Undo {},
+        };
+        let right_now = Instant::now();
+        {
+            let mut state = remote.state.lock().unwrap();
+            state.connected = true;
+            push_edit(&mut state, edit(1), right_now - EDIT_AGE_LIMIT);
+            push_edit(&mut state, edit(2), right_now);
+        }
+        assert!(!remote.writable());
+        assert!(remote.backpressure_repaint_after().is_none());
+        {
+            let mut state = remote.state.lock().unwrap();
+            state.acknowledge_edit(
+                "file",
+                DocumentInfo {
+                    document: 4,
+                    revision: 1,
+                    bytes: 0,
+                    path: b"file".to_vec(),
+                    saved_revision: 0,
+                    encoding: "UTF-8".into(),
+                    bom: false,
+                    dirty: true,
+                },
+            );
+            assert_eq!(
+                state.oldest_edit_deadline(),
+                Some(right_now + EDIT_AGE_LIMIT)
+            );
+            assert_eq!(state.pending_bytes, edit_cost(&edit(2)));
+        }
+        assert!(remote.writable());
+        assert!(remote.backpressure_repaint_after().is_some());
+        let mut state = remote.state.lock().unwrap();
+        state.connected = false;
+        assert_eq!(state.pending.len(), 1);
+        drop(state);
+        assert!(!remote.writable());
+        assert!(remote.backpressure_repaint_after().is_none());
+    }
+
+    #[test]
+    fn a_trust_reply_cannot_restore_trust_after_disconnect() {
+        let mut remote = disconnected();
+        let (tx, rx) = mpsc::sync_channel(1);
+        remote.tx = tx;
+        let state = remote.state.clone();
+        state.lock().unwrap().connected = true;
+        let caller = std::thread::spawn(move || remote.trust(true));
+        let Work::Barrier(_, reply) = rx.recv_timeout(Duration::from_secs(5)).unwrap() else {
+            panic!("expected durability check before trust");
+        };
+        reply.send(Ok(())).unwrap();
+        let Work::Call(Request::Trust { allow: true, .. }, reply) =
+            rx.recv_timeout(Duration::from_secs(5)).unwrap()
+        else {
+            panic!("expected trust request");
+        };
+        // The transport can process a disconnect after sending the trust
+        // acknowledgement, before the trust caller regains the state lock.
+        state.lock().unwrap().connected = false;
+        reply.send(Ok(Response::Pong {})).unwrap();
+        caller.join().unwrap().unwrap();
+        assert!(!state.lock().unwrap().trusted);
     }
     #[test]
     fn host_paths_cannot_become_local_filesystem_capabilities() {

@@ -342,7 +342,7 @@ fn terminal_hide_keeps_session_and_disabling_ends_it_without_editing_buffer() {
     assert!(!app.focus_editor);
     // A rebound toggle works while the shell has focus, including a chord.
     app.quality.config.keybindings = vec![quality::Binding {
-        command: Command::Terminal,
+        command: Command::Terminal.into(),
         shortcut: "Primary+K, Primary+T".into(),
         editor_only: false,
     }];

@@ -40,6 +40,103 @@ fn keyboard_tab_selection_reveals_the_active_tab_in_a_large_workspace() {
         "the active tab must be visible after keyboard navigation"
     );
 }
+
+#[test]
+fn idle_git_refresh_uses_the_same_deadline_as_the_worker() {
+    let (dir, ctx, mut app) = app("", 1);
+    let path = dir.path().join("file.txt");
+    std::fs::write(&path, "text").unwrap();
+    app.open(&ctx, Some(path));
+    super::tests::finish_app_job(&mut app, &ctx);
+    let b = app.active();
+    app.quality.git_key = Some((
+        b.view.id,
+        b.page.info.revision,
+        b.page.info.dirty,
+        app.settings.mini_diff.clone(),
+    ));
+    app.quality.git_at = Some(Instant::now());
+    assert!(app.git_refresh_delay(&ctx).is_none());
+
+    app.quality.git_at = Some(Instant::now() - Duration::from_secs(35));
+    assert_eq!(app.git_refresh_delay(&ctx), Some(Duration::ZERO));
+
+    app.settings.mini_diff = "off".into();
+    assert!(app.git_refresh_delay(&ctx).is_none());
+    app.poll_git(&ctx);
+    assert!(!app.quality.git_pending);
+    assert!(app.quality.git_key.is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn mini_diff_finishes_after_a_saved_file_is_replaced_by_a_fifo() {
+    let (dir, ctx, mut app) = app("", 1);
+    let path = dir.path().join("file.txt");
+    std::fs::write(&path, "original").unwrap();
+    app.open(&ctx, Some(path.clone()));
+    super::tests::finish_app_job(&mut app, &ctx);
+    std::fs::remove_file(&path).unwrap();
+    assert!(std::process::Command::new("mkfifo")
+        .arg(&path)
+        .status()
+        .unwrap()
+        .success());
+    app.settings.mini_diff = "saved".into();
+    app.poll_git(&ctx);
+    assert!(app.quality.git_pending);
+    let started = Instant::now();
+    while app.quality.git_pending {
+        app.receive(&ctx);
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "Mini Diff opened a pipe"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(app.quality.git_base.is_empty());
+}
+
+#[test]
+fn mini_diff_does_not_retain_an_oversized_disk_baseline() {
+    let (dir, ctx, mut app) = app("", 1);
+    let path = dir.path().join("file.txt");
+    std::fs::write(&path, "original").unwrap();
+    app.open(&ctx, Some(path.clone()));
+    super::tests::finish_app_job(&mut app, &ctx);
+    let large = vec![b'x'; (2 * hedit::document::SMALL_LIMIT + 4) as usize];
+    std::fs::write(&path, large).unwrap();
+    app.settings.mini_diff = "saved".into();
+    app.poll_git(&ctx);
+    assert!(app.quality.git_pending);
+    let started = Instant::now();
+    while app.quality.git_pending {
+        app.receive(&ctx);
+        assert!(started.elapsed() < Duration::from_secs(5));
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(app.quality.git_base.is_empty());
+}
+
+#[test]
+fn closing_tabs_and_splits_releases_derived_layouts() {
+    let (_dir, ctx, mut app) = app("first document", 2);
+    let id = app.active().view.id;
+    app.quality.git_base.insert(id, "base".into());
+    app.split(1);
+    frame(&ctx, &mut app, vec![]);
+    assert!(app.extra_layouts[0].last().is_some());
+    app.split(0);
+    assert!(app.extra_layouts[0].last().is_none());
+
+    app.select_tab(1);
+    frame(&ctx, &mut app, vec![]);
+    app.workspace.close(0).unwrap();
+    app.sync_groups();
+    assert!(!app.quality.git_base.contains_key(&id));
+    app.editor_layout.activate((id, 0));
+    assert!(app.editor_layout.last().is_none());
+}
 #[test]
 #[ignore = "manual release CPU audit of tabs, selections, split panes, and long lines"]
 fn profile_workspace_interaction() {

@@ -47,7 +47,9 @@ class WindowsPackage(unittest.TestCase):
                 shutil.copy2(packager.ROOT / filename, project / filename)
             for directory in ['assets', 'themes', 'docs/images', 'examples/cuda']:
                 shutil.copytree(packager.ROOT / directory, project / directory)
-            for relative in ['vendor/egui_commonmark/PATCH.md', 'vendor/libghostty-vt-sys/PATCH.md']:
+            documents = ['vendor/egui_commonmark/PATCH.md', 'vendor/libghostty-vt-sys/PATCH.md',
+                         'docs/extensions.md', 'examples/extensions/markdown-task.json']
+            for relative in documents:
                 (project / relative).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(packager.ROOT / relative, project / relative)
             (project / 'examples/development_probe.rs').write_text('not a release resource')
@@ -62,13 +64,16 @@ class WindowsPackage(unittest.TestCase):
                                  'assets/dictionaries/en_US-LICENSE.txt', 'assets/licenses/egui_commonmark-MIT.txt',
                                  'examples/cuda/vector_add.cu']:
                     self.assertEqual(bundle.read(prefix + relative), (packager.ROOT / relative).read_bytes())
-                for relative in ['vendor/egui_commonmark/PATCH.md', 'vendor/libghostty-vt-sys/PATCH.md'] + [path.relative_to(packager.ROOT).as_posix() for path in (packager.ROOT / 'docs/images').glob('*') if path.is_file()]:
+                images = [path.relative_to(packager.ROOT).as_posix()
+                          for path in (packager.ROOT / 'docs/images').glob('*') if path.is_file()]
+                for relative in documents + images:
                     self.assertEqual(bundle.read(prefix + relative), (packager.ROOT / relative).read_bytes())
                 self.assertTrue(all(name.startswith(prefix) and '\\' not in name for name in bundle.namelist()))
                 self.assertNotIn(prefix + 'install.sh', bundle.namelist())
                 examples = {name[len(prefix):] for name in bundle.namelist()
                             if name.startswith(prefix + 'examples/')}
-                self.assertEqual(examples, {'examples/cuda/vector_add.cu'})
+                self.assertEqual(examples, {'examples/cuda/vector_add.cu',
+                                            'examples/extensions/markdown-task.json'})
             checksum = archive.with_name(archive.name + '.sha256').read_bytes()
             digest = hashlib.sha256(archive.read_bytes()).hexdigest()
             self.assertEqual(checksum, f'{digest}  {archive.name}\n'.encode())
