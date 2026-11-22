@@ -34,7 +34,7 @@ pub(super) fn sidebar_button(
 pub(super) fn workspace_switcher(
     ui: &mut egui::Ui,
     theme: &Theme,
-    git: bool,
+    selected: Option<bool>,
     shortcut: &str,
 ) -> Option<bool> {
     use hedit::icons::Icon;
@@ -88,11 +88,11 @@ pub(super) fn workspace_switcher(
             egui::WidgetInfo::selected(
                 egui::WidgetType::SelectableLabel,
                 ui.is_enabled(),
-                git == source,
+                selected == Some(source),
                 label,
             )
         });
-        let active = git == source;
+        let active = selected == Some(source);
         if response.hovered() {
             ui.painter().rect_filled(part, 0.0, theme.hover().color());
         }

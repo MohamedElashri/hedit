@@ -136,11 +136,6 @@ impl HeditApp {
                 }
             }
             Some(Action::Remote) => {
-                self.close_transient(ctx);
-                if self.source_control.open {
-                    self.leave_review();
-                    self.focus_editor = true;
-                }
                 self.show_remote_explorer(ctx);
             }
             Some(Action::Command(command)) => self.execute(ctx, command),
@@ -149,12 +144,41 @@ impl HeditApp {
     }
     pub(super) fn workspace_header(&mut self, ui: &mut egui::Ui, git: bool) -> Option<bool> {
         if !self.settings.show_activity_bar {
-            let selected = controls::workspace_switcher(
-                ui,
-                &self.theme,
-                git,
-                &self.shortcut_text(Command::SourceControl),
-            );
+            let mut remote = false;
+            let active = (self.sidebar != Sidebar::Remote).then_some(git);
+            let selected = ui
+                .horizontal(|ui| {
+                    let metrics = hedit::ui_style::Metrics::for_ui(ui);
+                    let width =
+                        (ui.available_width() - metrics.control - ui.spacing().item_spacing.x)
+                            .max(1.0);
+                    let selected = ui
+                        .allocate_ui_with_layout(
+                            egui::vec2(width, metrics.toolbar),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                controls::workspace_switcher(
+                                    ui,
+                                    &self.theme,
+                                    active,
+                                    &self.shortcut_text(Command::SourceControl),
+                                )
+                            },
+                        )
+                        .inner;
+                    remote = icons::toggle(
+                        ui,
+                        Icon::Remote,
+                        "Remote Explorer",
+                        self.sidebar == Sidebar::Remote,
+                    )
+                    .clicked();
+                    selected
+                })
+                .inner;
+            if remote {
+                self.show_remote_explorer(ui.ctx());
+            }
             if selected == Some(false) {
                 self.sidebar = Sidebar::Files;
             }

@@ -525,12 +525,12 @@ fn terminal_header_scales_without_changing_shell_or_terminal_typography() {
             assert_eq!(bar.height(), Metrics::new(font, density).tab);
             for action in [
                 egui::Id::new("terminal-new-tab"),
-                egui::Id::new("terminal-hide"),
                 egui::Id::new(("terminal-tab-close", id)),
             ] {
                 let rect = ctx.read_response(action).unwrap().rect;
                 assert!(bar.contains_rect(rect) && rect.width() >= 22.0 && rect.height() >= 22.0);
             }
+            assert!(ctx.read_response(egui::Id::new("terminal-hide")).is_none());
             assert_eq!(app.terminal.tabs[0].id, id);
             assert_eq!(app.terminal_font_id(), terminal_font);
         }

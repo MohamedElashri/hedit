@@ -34,7 +34,7 @@ pub(super) fn bar(ui: &mut egui::Ui, state: &mut TerminalState, theme: &Theme) -
         rect.bottom() - 0.5,
         egui::Stroke::new(1.0_f32, theme.border.color()),
     );
-    let controls_width = control * 3.0 + 8.0;
+    let controls_width = control * 2.0 + 8.0;
     let tabs_rect = egui::Rect::from_min_max(
         rect.min + egui::vec2(4.0, 0.0),
         egui::pos2(
@@ -180,14 +180,6 @@ pub(super) fn bar(ui: &mut egui::Ui, state: &mut TerminalState, theme: &Theme) -
         });
         response.on_hover_text("Terminal actions and all tabs");
     });
-    actions.hide |= icon_button(
-        &mut controls,
-        theme,
-        "terminal-hide",
-        "Hide terminal · Ctrl+` (Control+` on macOS)",
-        Icon::ChevronDown,
-    )
-    .clicked();
     actions
 }
 

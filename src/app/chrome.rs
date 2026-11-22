@@ -995,7 +995,6 @@ impl HeditApp {
                     {
                         self.show_git_sidebar(ctx);
                     }
-                    self.remote_sidebar_button(ui);
                     self.remote_explorer(ui);
                     return;
                 }

@@ -453,23 +453,12 @@ impl HeditApp {
         None
     }
 
-    pub(super) fn remote_sidebar_button(&mut self, ui: &mut egui::Ui) {
-        if ui
-            .add(
-                egui::Button::new("Remote Explorer")
-                    .selected(self.sidebar == workbench_navigation::Sidebar::Remote)
-                    .min_size(egui::vec2(ui.available_width(), 26.0)),
-            )
-            .clicked()
-        {
-            if self.sidebar == workbench_navigation::Sidebar::Remote {
-                self.sidebar = workbench_navigation::Sidebar::Files;
-            } else {
-                self.show_remote_explorer(ui.ctx());
-            }
-        }
-    }
     pub(super) fn show_remote_explorer(&mut self, ctx: &egui::Context) {
+        self.close_transient(ctx);
+        if self.source_control.open {
+            self.leave_review();
+            self.focus_editor = true;
+        }
         self.settings.show_sidebar = true;
         self.distraction_free = false;
         self.sidebar = workbench_navigation::Sidebar::Remote;
@@ -2014,13 +2003,22 @@ mod tests {
     }
 
     #[test]
-    fn activity_bar_switches_between_remote_and_files_without_changing_documents() {
+    fn remote_navigation_preserves_documents_with_and_without_the_activity_bar() {
+        use crate::app::tests::text_rect;
         use hedit::icons::Icon;
         let (_dir, ctx, mut app) = app();
         let size = egui::vec2(720.0, 480.0);
         app.workspace.open[0].page.text = "Keep this draft".into();
         app.workspace.edit(0, "").unwrap();
-        for icon in [Icon::Remote, Icon::Files, Icon::Remote] {
+        for (activity_bar, icon) in [
+            (true, Icon::Remote),
+            (true, Icon::Files),
+            (true, Icon::Remote),
+            (false, Icon::Files),
+            (false, Icon::Remote),
+            (false, Icon::Files),
+        ] {
+            app.settings.show_activity_bar = activity_bar;
             for _ in 0..3 {
                 frame(&ctx, &mut app, size, vec![]);
             }
@@ -2028,13 +2026,18 @@ mod tests {
             let rect = output
                 .shapes
                 .iter()
-                .find_map(|s| match &s.shape {
-                    egui::Shape::Mesh(mesh) if icon.matches_texture(&ctx, mesh.texture_id) => {
-                        Some(mesh.calc_bounds())
+                .find_map(|s| {
+                    if !activity_bar && icon == Icon::Files {
+                        return text_rect(&s.shape, "Files");
                     }
-                    _ => None,
+                    match &s.shape {
+                        egui::Shape::Mesh(mesh) if icon.matches_texture(&ctx, mesh.texture_id) => {
+                            Some(mesh.calc_bounds())
+                        }
+                        _ => None,
+                    }
                 })
-                .expect("visible activity icon");
+                .expect("visible navigation control");
             for pressed in [true, false] {
                 frame(
                     &ctx,
