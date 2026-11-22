@@ -1,0 +1,16 @@
+{{ define "search" }}{{ template "base" . }}{{ end }}
+{{ define "content" }}
+<main id="main" class="article" tabindex="-1">
+  {{ template "article-header" . }}
+  <div class="prose">{{ unsafeHTML .Page.BodyHTML }}</div>
+  <form class="page-search" role="search" data-page-search>
+    <label for="page-query">Search all documentation</label>
+    <div class="search-field"><input id="page-query" type="search" name="q" autocomplete="off" placeholder="Try Save hooks or UTF-8" maxlength="200"><button type="submit">Search</button></div>
+    <p class="search-status" role="status">Type to search the user guides and plugin reference.</p>
+    <ol class="search-results"></ol>
+  </form>
+  <noscript><p>Search needs JavaScript. Browse the user guides and API reference using Contents.</p></noscript>
+  {{ template "article-footer" . }}
+</main>
+{{ template "outline" . }}
+{{ end }}

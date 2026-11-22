@@ -1,0 +1,92 @@
+{{ define "base" }}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ if eq .CurrentURL "/" }}{{ .Config.Title }}{{ else }}{{ .Title }} — {{ .Config.Title }}{{ end }}</title>
+  <meta name="description" content="{{ default .Description .Config.Description }}">
+  <link rel="canonical" href="{{ .CanonicalURL }}">
+  <meta name="color-scheme" content="light dark">
+  <meta property="og:title" content="{{ .Title }}">
+  <meta property="og:description" content="{{ default .Description .Config.Description }}">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="{{ .CanonicalURL }}">
+  <script>
+    document.documentElement.classList.add('js');
+    try { var theme = localStorage.getItem('hedit-docs-theme'); if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme; } catch (_) {}
+  </script>
+  <link rel="icon" type="image/svg+xml" href="{{ asset "favicon.svg" }}">
+  <link rel="stylesheet" href="{{ asset "css/docs.css" }}">
+  <style>{{ syntaxCSS }}[data-theme=dark] .z-chroma span { color: inherit; }{{ unsafeCSS (replace (printf "%s" (syntaxCSS "github-dark")) ".z-chroma" "[data-theme=dark] .z-chroma") }}@media (prefers-color-scheme: dark) { :root:not([data-theme=light]) .z-chroma span { color: inherit; }{{ unsafeCSS (replace (printf "%s" (syntaxCSS "github-dark")) ".z-chroma" ":root:not([data-theme=light]) .z-chroma") }} }</style>
+</head>
+<body data-index="{{ .BasePath }}/{{ .Config.Search.Filename }}" data-base-path="{{ .BasePath }}">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <a class="brand" href="{{ .BasePath }}/"><img src="{{ asset "favicon.svg" }}" width="25" height="25" alt=""><span>hedit</span><span class="brand-divider">/</span><span class="brand-docs">docs</span></a>
+    <a class="version" href="{{ .BasePath }}/project/release-notes/">v{{ dig .Data "project.version" }}</a>
+    <nav class="header-links" aria-label="Primary">
+      <a href="{{ .BasePath }}/guide/"{{ if or (hasPrefix .CurrentURL "/guide/") (hasPrefix .CurrentURL "/getting-started/") }} aria-current="true"{{ end }}>User guide</a>
+      <a href="{{ .BasePath }}/plugins/"{{ if hasPrefix .CurrentURL "/plugins/" }} aria-current="true"{{ end }}>Plugin development</a>
+      <a href="{{ .BasePath }}/reference/"{{ if hasPrefix .CurrentURL "/reference/" }} aria-current="true"{{ end }}>API reference</a>
+    </nav>
+    <div class="header-actions">
+      <a class="search-trigger" href="{{ .BasePath }}/search/" data-open-search>{{ template "icon-search" . }}<span>Search docs</span><kbd data-search-key>⌘ K</kbd></a>
+      <button class="theme-toggle js-only" type="button" aria-label="Switch color theme" title="Switch color theme"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg></button>
+      <a class="github-link" href="https://github.com/MohamedElashri/hedit">GitHub</a>
+    </div>
+  </header>
+  <details class="mobile-menu"><summary>Contents</summary>{{ template "navigation" . }}</details>
+  <div class="docs-layout">
+    <aside class="sidebar" aria-label="Documentation">{{ template "navigation" . }}</aside>
+    {{ template "content" . }}
+  </div>
+  <dialog class="search-dialog" aria-labelledby="search-title">
+    <div class="dialog-heading"><h2 id="search-title">Search documentation</h2><button type="button" data-close-search aria-label="Close search">Esc</button></div>
+    <form data-dialog-search role="search"><label class="sr-only" for="dialog-query">Search all documentation</label><input id="dialog-query" type="search" autocomplete="off" placeholder="Try Save hooks or UTF-8" maxlength="200"><p class="search-status" role="status">Type to search the user guides and plugin reference.</p><ol class="search-results"></ol></form>
+  </dialog>
+  <script src="{{ asset "js/docs.js" }}" defer></script>
+</body>
+</html>{{ end }}
+
+{{ define "icon-search" }}<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>{{ end }}
+
+{{ define "navigation" }}
+<nav class="docs-navigation" aria-label="Documentation contents">
+  <a class="nav-home" href="{{ .BasePath }}/"{{ if eq .CurrentURL "/" }} aria-current="page"{{ end }}>Overview</a>
+  {{ range .Index.Nav "" }}{{ if .IsSection }}
+  <details class="nav-group"{{ if or (hasPrefix $.CurrentURL .URL) (and (eq $.CurrentURL "/") (eq .URL "/getting-started/")) }} open{{ end }}>
+    <summary>{{ .Title }}</summary>
+    <ul><li><a href="{{ $.BasePath }}{{ .URL }}"{{ if eq .URL $.CurrentURL }} aria-current="page"{{ end }}>Overview</a></li>
+    {{ range .Children }}<li><a href="{{ $.BasePath }}{{ .URL }}"{{ if eq .URL $.CurrentURL }} aria-current="page"{{ end }}>{{ .Title }}</a></li>{{ end }}</ul>
+  </details>
+  {{ end }}{{ end }}
+  <div class="nav-resources"><a href="https://github.com/MohamedElashri/hedit/releases/latest">Download hedit</a><a href="https://github.com/MohamedElashri/hedit/issues">Report an issue</a></div>
+</nav>
+{{ end }}
+
+{{ define "toc-list" }}<ul>{{ range . }}<li><a href="#{{ .ID }}">{{ .Title }}</a>{{ with .Children }}<ul>{{ range . }}<li><a href="#{{ .ID }}">{{ .Title }}</a></li>{{ end }}</ul>{{ end }}</li>{{ end }}</ul>{{ end }}
+
+{{ define "outline" }}
+{{ $toc := .Page.TOC }}{{ if not .Page.RelativePath }}{{ $toc = .Section.TOC }}{{ end }}
+<aside class="outline" aria-label="On this page">{{ with $toc }}<nav><p>On this page</p>{{ template "toc-list" . }}</nav>{{ end }}</aside>
+{{ end }}
+
+{{ define "article-header" }}
+  <nav class="breadcrumbs" aria-label="Breadcrumb"><a href="{{ .BasePath }}/">Docs</a>{{ if .Page.RelativePath }}{{ with .Index.GetSection .Page.SectionPath }}<span aria-hidden="true">/</span><a href="{{ $.BasePath }}{{ .URL }}">{{ .Title }}</a>{{ end }}{{ end }}</nav>
+  <header class="article-header"><h1>{{ .Title }}</h1>{{ with .Description }}<p class="lede">{{ . }}</p>{{ end }}</header>
+  {{ $toc := .Page.TOC }}{{ if not .Page.RelativePath }}{{ $toc = .Section.TOC }}{{ end }}
+  {{ with $toc }}<details class="inline-outline"><summary>On this page</summary>{{ template "toc-list" . }}</details>{{ end }}
+{{ end }}
+
+{{ define "article-footer" }}
+<footer class="article-footer">
+  <div class="source-links">{{ with .Page.Extra.source_url }}<a href="{{ . }}">Edit this page</a>{{ else }}{{ with .Section.Extra.source_url }}<a href="{{ . }}">Edit this page</a>{{ end }}{{ end }}<a href="https://github.com/MohamedElashri/hedit/issues">Report a documentation issue</a></div>
+  {{ with .Index.Neighbors "" .CurrentURL }}<nav class="pager" aria-label="Adjacent pages">{{ with .Prev }}<a rel="prev" href="{{ $.BasePath }}{{ .URL }}"><span>Previous</span>{{ .Title }}</a>{{ else }}<span></span>{{ end }}{{ with .Next }}<a rel="next" href="{{ $.BasePath }}{{ .URL }}"><span>Next</span>{{ .Title }}</a>{{ end }}</nav>{{ end }}
+  <p class="colophon">hedit documentation <span>Built with <a href="https://github.com/MohamedElashri/nida">Nida</a>. Hosted on GitHub Pages.</span></p>
+</footer>
+{{ end }}
+
+{{ define "standard-article" }}
+<main id="main" class="article" tabindex="-1">{{ template "article-header" . }}<div class="prose">{{ unsafeHTML .Page.BodyHTML }}</div>{{ template "article-footer" . }}</main>
+{{ template "outline" . }}
+{{ end }}

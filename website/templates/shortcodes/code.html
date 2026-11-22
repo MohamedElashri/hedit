@@ -1,0 +1,1 @@
+{{ markdownify (printf "```%s\n%s\n```" (.Get "language") (readFile (printf "static/%s" (.Get "file")))) }}

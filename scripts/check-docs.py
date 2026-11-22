@@ -8,7 +8,9 @@ from urllib.parse import unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 files = [ROOT / name for name in ['README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md', 'CHANGELOG.md',
-                                   'docs/extensions.md', 'docs/extension-security.md', 'docs/plugin-sdk.md', 'vendor/egui_commonmark/PATCH.md']]
+                                   'docs/extensions.md', 'docs/extension-security.md', 'docs/plugin-sdk.md',
+                                   'docs/plugin-services.md', 'docs/plugin-broker.md', 'website/README.md',
+                                   'vendor/egui_commonmark/PATCH.md']]
 files += sorted((ROOT / 'assets/licenses').glob('*.md'))
 
 
@@ -72,7 +74,7 @@ for path in files:
     if path.name in {'CHANGELOG.md', 'PATCH.md'} or not path.is_file():
         continue
     for number, line in enumerate(path.read_text().splitlines(), 1):
-        for match in re.finditer(r'(?<![\w.])v?\d+\.\d+\.\d+', line):
+        for match in re.finditer(r'(?<![\w.])v?\d+\.\d+\.\d+(?![\w.])', line):
             if not re.search(r'(Rust|Python|Zig) $', line[:match.start()]):
                 errors.append(f'{path.name}:{number}: hard-coded version {match.group()}; '
                               'use X.Y.Z or link to CHANGELOG.md')

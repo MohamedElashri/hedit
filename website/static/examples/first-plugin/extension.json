@@ -1,0 +1,15 @@
+{
+  "api_version": 3,
+  "sdk_version": 1,
+  "id": "first-plugin",
+  "permissions": ["document.read", "document.edit"],
+  "commands": [{
+    "id": "prefix",
+    "title": "Prefix document",
+    "arguments": {
+      "prefix": {"label": "Prefix", "default": "> "}
+    },
+    "action": {"kind": "lua", "source": "prefix.lua"}
+  }],
+  "script_files": ["prefix.lua"]
+}

@@ -1,0 +1,99 @@
+name: Documentation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'website/**'
+      - 'docs/**'
+      - 'examples/extensions/**'
+      - 'schemas/**'
+      - 'assets/hedit.svg'
+      - 'README.md'
+      - 'USER_GUIDE.md'
+      - 'DEVELOPER_GUIDE.md'
+      - 'CHANGELOG.md'
+      - 'Cargo.toml'
+      - 'Makefile'
+      - 'scripts/*docs*.py'
+      - 'scripts/check-native.py'
+      - 'scripts/setup-nida.py'
+      - '.github/workflows/pages.yml'
+  pull_request:
+    paths:
+      - 'website/**'
+      - 'docs/**'
+      - 'examples/extensions/**'
+      - 'schemas/**'
+      - 'assets/hedit.svg'
+      - 'README.md'
+      - 'USER_GUIDE.md'
+      - 'DEVELOPER_GUIDE.md'
+      - 'CHANGELOG.md'
+      - 'Cargo.toml'
+      - 'Makefile'
+      - 'scripts/*docs*.py'
+      - 'scripts/check-native.py'
+      - 'scripts/setup-nida.py'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Check and build Nida documentation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Test imports, rendered links, and the native-app policy
+        run: make test-docs-site docs policy
+      - name: Install checksum-pinned Nida
+        run: python3 scripts/setup-nida.py
+      - name: Read deployment URL
+        if: github.ref == 'refs/heads/main'
+        id: pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - name: Check and build documentation
+        env:
+          PAGES_BASE_URL: ${{ steps.pages.outputs.base_url }}
+        run: |
+          if [ -n "$PAGES_BASE_URL" ]; then
+            python3 scripts/build-docs.py --nida target/docs-tools/nida --base-url "$PAGES_BASE_URL/"
+          else
+            make docs-site NIDA=target/docs-tools/nida
+          fi
+      - name: Upload Pages artifact
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: target/docs-site/public
+
+  deploy:
+    name: Publish documentation
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

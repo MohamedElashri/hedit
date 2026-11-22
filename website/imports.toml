@@ -1,0 +1,222 @@
+# Web pages are assembled from the same Markdown shipped as offline help.
+[documents]
+"README.md" = "_index.md"
+"USER_GUIDE.md" = "guide/_index.md"
+
+[[pages]]
+source = "USER_GUIDE.md"
+heading = "Installation"
+path = "getting-started/install.md"
+title = "Install hedit"
+description = "Choose a package, verify your download, and install on macOS, Linux, or Windows."
+weight = 10
+
+[[pages]]
+source = "USER_GUIDE.md"
+heading = "Updates"
+path = "getting-started/updates.md"
+title = "Update hedit"
+description = "Install an update while keeping your settings and recovery data."
+weight = 30
+
+[[pages]]
+source = "USER_GUIDE.md"
+heading = "Files and folders"
+path = "guide/files.md"
+title = "Files, folders, and projects"
+description = "Open a project, organize tabs, manage encodings, and work with the Explorer."
+weight = 10
+
+[[pages]]
+source = "USER_GUIDE.md"
+heading = "Editing"
+path = "guide/editing.md"
+title = "Edit text"
+description = "Use selections, multiple cursors, snippets, macros, and undo."
+weight = 20
+
+[[pages]]
+source = "USER_GUIDE.md"
+heading = "Finding and navigating"
+path = "guide/search.md"
+title = "Find and navigate"
+description = "Search files and projects, replace text, and navigate by line or symbol."
+weight = 30
+
+[[pages]]
+source = "USER_GUIDE.md"
+heading = "Writing code"
+path = "guide/language-support.md"
+title = "Language support"
+description = "Set up language servers, completion, diagnostics, navigation, and formatting."
+weight = 40
+
+[[pages]]
+source = "USER_GUIDE.md"
+heading = "Views and layout"
+path = "guide/layout.md"
+title = "Arrange your workspace"
+description = "Work with editor groups, tabs, folding, sidebars, and focus modes."
+weight = 50
+
+[[pages]]
+source = "USER_GUIDE.md"
+heading = "Bottom panel"
+path = "guide/panels.md"
+title = "Problems, output, and notifications"
+description = "Inspect diagnostics, build output, progress, and notification history."
+weight = 60
+
+[[pages]]
+source = "USER_GUIDE.md"
+heading = "Integrated terminal"
+path = "guide/terminal.md"
+title = "Use the terminal"
+description = "Enable and configure the integrated terminal and its keyboard behavior."
+weight = 70
+
+[[pages]]
+source = "USER_GUIDE.md"
+heading = "Source Control"
+path = "guide/git.md"
+title = "Review changes with Git"
+description = "Review diffs, stage files or individual changes, and create commits."
+weight = 80
+
+[[pages]]
+source = "USER_GUIDE.md"
+heading = "Markdown preview"
+path = "guide/markdown.md"
+title = "Write Markdown"
+description = "Preview technical notes with images, equations, and diagrams beside their source."
+weight = 90
+
+[[pages]]
+source = "USER_GUIDE.md"
+heading = "SSH remote workspaces"
+path = "guide/ssh.md"
+title = "Work over SSH"
+description = "Connect to remote projects, review execution trust, and understand recovery and platform limits."
+weight = 100
+
+[[pages]]
+source = "USER_GUIDE.md"
+heading = "Large files and logs"
+path = "guide/large-files.md"
+title = "Large files and logs"
+description = "Navigate paged files, follow logs, and handle external changes."
+weight = 110
+
+[[pages]]
+source = "USER_GUIDE.md"
+heading = "Settings"
+exclude = ["Extensions"]
+path = "guide/settings.md"
+title = "Configure hedit"
+description = "Find settings, inspect formatting precedence, and configure projects and personal preferences."
+weight = 120
+
+[[pages]]
+source = "USER_GUIDE.md"
+heading = "Appearance"
+path = "guide/appearance.md"
+title = "Themes and fonts"
+description = "Choose a theme, customize colors, and configure editor typography."
+weight = 130
+
+[[pages]]
+source = "USER_GUIDE.md"
+heading = "Extensions"
+path = "guide/extensions.md"
+title = "Install and manage plugins"
+description = "Install plugins, review permissions, bind Save hooks, and manage providers and resource grants."
+weight = 140
+
+[[pages]]
+source = "USER_GUIDE.md"
+heading = "CUDA tools"
+path = "guide/cuda.md"
+title = "CUDA tools"
+description = "Use CUDA syntax support and the optional local Linux toolkit integration."
+weight = 150
+
+[[pages]]
+source = "USER_GUIDE.md"
+heading = "Command line"
+path = "guide/cli.md"
+title = "Command line"
+description = "Open projects, files, locations, and standard input from a shell."
+weight = 160
+
+[[pages]]
+source = "USER_GUIDE.md"
+heading = "Keyboard shortcuts"
+path = "guide/shortcuts.md"
+title = "Keyboard shortcuts"
+description = "Find default bindings and the platform-specific keys used on macOS."
+weight = 170
+
+[[pages]]
+source = "USER_GUIDE.md"
+heading = "Recovery"
+path = "guide/recovery.md"
+title = "Recover your work"
+description = "Understand checkpoints, closed files, recovery locations, and their limits."
+weight = 180
+
+[[pages]]
+source = "USER_GUIDE.md"
+heading = "Troubleshooting"
+path = "guide/troubleshooting.md"
+title = "Troubleshooting"
+description = "Resolve startup, graphics, font, terminal, and update problems."
+weight = 190
+
+[[pages]]
+source = "docs/extensions.md"
+path = "reference/manifests.md"
+title = "Manifests and legacy transforms"
+description = "API versions, declarative contributions, selection transforms, installation, and bundle signing."
+weight = 10
+
+[[pages]]
+source = "docs/plugin-sdk.md"
+path = "reference/document-sdk.md"
+title = "Document editing SDK"
+description = "SDK 1 document transactions, byte coordinates, inputs, resources, storage, and compatibility."
+weight = 20
+
+[[pages]]
+source = "docs/plugin-services.md"
+path = "reference/providers.md"
+title = "Providers and presentation"
+description = "SDK 2 callbacks, events, native result UI, cache, scheduling, and visual packs."
+weight = 30
+
+[[pages]]
+source = "docs/plugin-broker.md"
+path = "reference/broker.md"
+title = "Workspace and service broker"
+description = "SDK 3 continuations, scoped project operations, reviewed native tools, LSP, and public HTTPS."
+weight = 40
+
+[[pages]]
+source = "docs/extension-security.md"
+path = "reference/security.md"
+title = "Threat model and isolation"
+description = "Trust boundaries, consent, protocol validation, OS enforcement, resource limits, and residual risks."
+weight = 50
+
+[[pages]]
+source = "DEVELOPER_GUIDE.md"
+path = "project/contributing.md"
+title = "Build and contribute"
+description = "Build hedit, run the platform checks, and navigate the native application architecture."
+weight = 10
+
+[[pages]]
+source = "CHANGELOG.md"
+path = "project/release-notes.md"
+title = "Release notes"
+description = "Changes in released versions and work awaiting the next release."
+weight = 20
