@@ -72,6 +72,9 @@ pull requests without deployment authority. Only `main` publishes to the
 `github-pages` environment. Actions are pinned to full commits; Nida archives are
 pinned by version and SHA-256. To update Nida, review its release and update the
 archive hashes in [nida.lock.json](nida.lock.json).
+After changing workflow `uses:` entries, run the official
+`gh actions-lock .github/workflows/pages.yml` generator and commit its lockfile
+diff. Repository policy requires coverage even for full-commit action references.
 
 Pages uses the repository owner's inherited custom domain. The configured
 `/hedit/` prefix is used in local preview, navigation, search, and canonical URLs.

@@ -536,7 +536,7 @@ Run `make test-docs-site docs-site` with the pinned Nida release installed. For 
 local preview, run `nida serve --site target/docs-site` and open
 `http://127.0.0.1:1702/hedit/`. Reassemble after source-guide changes. The Pages
 workflow checks relevant pull requests and publishes only from `main`.
-See [website maintenance](website/README.md) for a checksum-pinned local generator,
+See [website maintenance](https://github.com/MohamedElashri/hedit/tree/main/website) for a checksum-pinned local generator,
 source locations, and deployment details. Browser JavaScript lives only under
 `website/static/js/`; the native editor has no frontend or Node build dependency.
 
