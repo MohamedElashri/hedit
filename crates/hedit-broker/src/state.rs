@@ -203,6 +203,7 @@ pub struct Resolved {
 }
 pub struct State {
     directory: Dir,
+    path: PathBuf,
     protected: Protected,
     recovery: Arc<RecoveryStore>,
 }
@@ -216,20 +217,33 @@ impl State {
         let config = config.canonicalize()?;
         let parent = Dir::open_ambient_dir(&config, cap_std::ambient_authority())?;
         let directory = private_child(&parent, DIRECTORY)?;
-        let protected =
-            Protected::persistent(&directory, std::iter::once(config).chain(extra_exclusions))?;
+        let protected = Protected::persistent(
+            &directory,
+            std::iter::once(config.clone()).chain(extra_exclusions),
+        )?;
         let recovery = Arc::new(RecoveryStore::open(
             private_child(&directory, "recovery")?,
             &protected,
         )?);
         Ok(Self {
             directory,
+            path: config.join(DIRECTORY),
             protected,
             recovery,
         })
     }
     pub fn exists(config: &Path) -> bool {
         config.join(DIRECTORY).exists()
+    }
+    /// Open only when reviewing/using tools, so corrupt tool storage does not
+    /// disable unrelated document or workspace capabilities. Call off the UI.
+    pub fn tool_store(&self) -> io::Result<Arc<crate::tool::Store>> {
+        crate::tool::Store::open(
+            private_child(&self.directory, "tool-images")?,
+            &self.path.join("tool-images"),
+            &self.protected,
+        )
+        .map(Arc::new)
     }
     pub fn recovery(&self) -> Arc<RecoveryStore> {
         self.recovery.clone()

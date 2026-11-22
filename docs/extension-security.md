@@ -421,3 +421,21 @@ ACLs and positive sandbox grants are not copied. Destination pathname identity i
 checked before named-stream operations. These primitives require a host-owned,
 excluded parent and prior storage admission; they do not grant execution authority
 or yet enable broker tool/LSP requests.
+
+Imported images use a durable private store with at most 64 records and 256 MiB
+of reserved payload plus metadata allowance. Each image reserves its declared
+length plus 128 KiB before copying; the allowance covers bounded trust marks,
+receipts and bookkeeping, rather than claiming a physical filesystem-block
+quota. Interrupted imports retain their reservation and cannot execute. Missing,
+foreign or corrupt admission data is preserved and blocks further admission.
+
+Image records bind the imported digest to the command, exact source approval,
+profile and serialized argument recipe. Resolution rechecks identity, timestamps,
+length, header, content digest and trust-mark digest. Removal requires the same
+owner and uses a durable retirement name so restart can finish bounded cleanup.
+Only known regular, owner-only, single-link files are removed. The stable store
+root is excluded before image bytes arrive; importing and retiring images does
+not append per-image entries to the permanent workspace exclusion registry.
+Tool storage is opened separately from ordinary broker state, so damaged tool
+storage does not disable unrelated document/workspace features. Broker tool/LSP
+activation and per-invocation snapshot admission remain separate requirements.
