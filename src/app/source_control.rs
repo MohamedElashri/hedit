@@ -715,7 +715,6 @@ impl HeditApp {
                         }
                     });
                 }
-                self.remote_sidebar_button(ui);
                 ui.add_space(8.0);
                 self.git_repository_header(ui, ctx);
                 let pending = self.source_control.pending || self.busy || self.closing;

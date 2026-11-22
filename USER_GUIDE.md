@@ -579,7 +579,7 @@ trusted host. Drag the panel edge to resize it.
 | **X** / Ctrl+Shift+W | Close that shell |
 | Ctrl+PageUp/PageDown | Previous/next terminal tab |
 | **…** / right-click | Rename, restart, stop, close, copy selection |
-| Chevron / toggle shortcut | Hide panel while shells keep running |
+| Panel close button / toggle shortcut | Hide panel while shells keep running |
 
 These keys apply while terminal-focused; macOS uses Cmd for new/close, Control
 for tab switching. **Ctrl+C** interrupts; copy/paste uses **Ctrl+Shift+C/V**
@@ -685,9 +685,11 @@ editing, or close the review without closing your document. Search has its own
 query and options, separate from Find within the current file. Search's **More…**
 menu can detach it into a window.
 
-The activity bar provides Files, Source Control, Find in files and Settings.
+The activity bar provides Files, Source Control, Find in files, Remote Explorer
+and Settings.
 Click the active Files or Source Control icon to hide its sidebar. Turn off
-`show_activity_bar` in Settings to restore the text workspace switcher.
+`show_activity_bar` in Settings to use the text workspace switcher and a compact
+Remote Explorer icon.
 
 The status bar shows position, indentation, line endings, encoding, syntax, and
 recovery; hover for details. Click its recovery dot for settings.

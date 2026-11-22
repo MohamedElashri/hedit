@@ -136,11 +136,6 @@ impl HeditApp {
                 }
             }
             Some(Action::Remote) => {
-                self.close_transient(ctx);
-                if self.source_control.open {
-                    self.leave_review();
-                    self.focus_editor = true;
-                }
                 self.show_remote_explorer(ctx);
             }
             Some(Action::Command(command)) => self.execute(ctx, command),
@@ -149,12 +144,42 @@ impl HeditApp {
     }
     pub(super) fn workspace_header(&mut self, ui: &mut egui::Ui, git: bool) -> Option<bool> {
         if !self.settings.show_activity_bar {
-            let selected = controls::workspace_switcher(
-                ui,
-                &self.theme,
-                git,
-                &self.shortcut_text(Command::SourceControl),
-            );
+            let mut remote = false;
+            let active = (self.sidebar != Sidebar::Remote).then_some(git);
+            let selected = ui
+                .horizontal(|ui| {
+                    let metrics = hedit::ui_style::Metrics::for_ui(ui);
+                    let width =
+                        (ui.available_width() - metrics.control - ui.spacing().item_spacing.x)
+                            .max(1.0);
+                    let selected = ui
+                        .allocate_ui_with_layout(
+                            egui::vec2(width, metrics.toolbar),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                controls::workspace_switcher(
+                                    ui,
+                                    &self.theme,
+                                    active,
+                                    self.command_enabled(Command::SourceControl),
+                                    &self.shortcut_text(Command::SourceControl),
+                                )
+                            },
+                        )
+                        .inner;
+                    remote = icons::toggle(
+                        ui,
+                        Icon::Remote,
+                        "Remote Explorer",
+                        self.sidebar == Sidebar::Remote,
+                    )
+                    .clicked();
+                    selected
+                })
+                .inner;
+            if remote {
+                self.show_remote_explorer(ui.ctx());
+            }
             if selected == Some(false) {
                 self.sidebar = Sidebar::Files;
             }
@@ -178,7 +203,7 @@ impl HeditApp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::tests::{click_at, frame_size};
+    use crate::app::tests::{click_at, frame_size, text_rect};
     fn app() -> (tempfile::TempDir, egui::Context, HeditApp) {
         let dir = tempfile::tempdir().unwrap();
         let (workspace, _) = Workspace::restore(dir.path().join("session")).unwrap();
@@ -209,6 +234,10 @@ mod tests {
             frame_size(&ctx, &mut app, vec![], size);
         }
         let out = frame_size(&ctx, &mut app, vec![], size);
+        assert!(!out
+            .shapes
+            .iter()
+            .any(|s| text_rect(&s.shape, "Remote Explorer").is_some()));
         let files = icon(&out, &ctx, Icon::Files);
         click_at(&ctx, &mut app, files.center(), size);
         assert!(!app.settings.show_sidebar);
@@ -225,6 +254,10 @@ mod tests {
         assert_eq!(app.sidebar, Sidebar::SourceControl);
         assert!(!app.source_control.open);
         let out = frame_size(&ctx, &mut app, vec![], size);
+        assert!(!out
+            .shapes
+            .iter()
+            .any(|s| text_rect(&s.shape, "Remote Explorer").is_some()));
         click_at(&ctx, &mut app, icon(&out, &ctx, Icon::Files).center(), size);
         assert!(!app.source_control.open);
         assert_eq!(app.active().page.text, "Keep this unsaved note");

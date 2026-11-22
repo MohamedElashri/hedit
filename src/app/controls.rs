@@ -34,7 +34,8 @@ pub(super) fn sidebar_button(
 pub(super) fn workspace_switcher(
     ui: &mut egui::Ui,
     theme: &Theme,
-    git: bool,
+    selected: Option<bool>,
+    source_control_enabled: bool,
     shortcut: &str,
 ) -> Option<bool> {
     use hedit::icons::Icon;
@@ -79,20 +80,23 @@ pub(super) fn workspace_switcher(
             egui::Rect::from_min_max(egui::pos2(split, rect.top()), rect.max),
         ),
     ] {
-        let response = ui.interact(
-            part,
-            ui.id().with(("workspace-mode", source)),
-            egui::Sense::click(),
-        );
+        let enabled = ui.is_enabled() && (!source || source_control_enabled);
+        let response = ui.add_enabled(enabled, |ui: &mut egui::Ui| {
+            ui.interact(
+                part,
+                ui.id().with(("workspace-mode", source)),
+                egui::Sense::click(),
+            )
+        });
         response.widget_info(|| {
             egui::WidgetInfo::selected(
                 egui::WidgetType::SelectableLabel,
-                ui.is_enabled(),
-                git == source,
+                enabled,
+                selected == Some(source),
                 label,
             )
         });
-        let active = git == source;
+        let active = selected == Some(source);
         if response.hovered() {
             ui.painter().rect_filled(part, 0.0, theme.hover().color());
         }
@@ -114,7 +118,9 @@ pub(super) fn workspace_switcher(
                 egui::StrokeKind::Inside,
             );
         }
-        let color = if active {
+        let color = if !enabled {
+            theme.muted.color().gamma_multiply(0.5)
+        } else if active {
             theme.text.color()
         } else {
             theme.muted.color()

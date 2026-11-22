@@ -1190,7 +1190,16 @@ fn workspace_switcher_preserves_drafts_and_files_across_themes_and_small_sidebar
         assert_eq!(app.active().view.id, id);
         assert!(app.workspace.closed.is_empty());
     }
-    // Both targets remain entirely inside a sidebar at its minimum width.
+    click_label(&ctx, &mut app, "Files");
+    app.busy = true;
+    click_label(&ctx, &mut app, "Source Control");
+    assert_eq!(app.sidebar, workbench_navigation::Sidebar::Files);
+    app.busy = false;
+    click_label(&ctx, &mut app, "Source Control");
+    finish_git(&ctx, &mut app);
+    assert_eq!(app.sidebar, workbench_navigation::Sidebar::SourceControl);
+    assert_eq!(app.source_control.draft, "Keep my commit message");
+    // Fallback navigation remains inside a sidebar at its minimum width.
     let output = ctx.run(
         egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
@@ -1201,12 +1210,20 @@ fn workspace_switcher_preserves_drafts_and_files_across_themes_and_small_sidebar
         },
         |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
-                controls::workspace_switcher(ui, &app.theme, false, "Ctrl+Shift+G");
+                app.workspace_header(ui, true);
             });
         },
     );
     assert!(visible(&output, "Files"));
     assert!(visible(&output, "Git"));
+    assert!(output.shapes.iter().any(|shape| match &shape.shape {
+        egui::Shape::Mesh(mesh)
+            if hedit::icons::Icon::Remote.matches_texture(&ctx, mesh.texture_id) =>
+        {
+            shape.clip_rect.contains_rect(mesh.calc_bounds())
+        }
+        _ => false,
+    }));
 }
 
 #[test]
@@ -2405,7 +2422,11 @@ fn activity_bar_switches_workspaces_without_losing_commit_drafts() {
     app.settings.show_activity_bar = true;
     app.source_control.draft = "Keep my activity bar draft".into();
     let id = app.active().view.id;
-    for icon in [hedit::icons::Icon::Files, hedit::icons::Icon::SourceControl] {
+    for icon in [
+        hedit::icons::Icon::Files,
+        hedit::icons::Icon::Remote,
+        hedit::icons::Icon::SourceControl,
+    ] {
         frame(&ctx, &mut app, vec![]);
         let out = frame(&ctx, &mut app, vec![]);
         let rect = out
@@ -2421,7 +2442,7 @@ fn activity_bar_switches_workspaces_without_losing_commit_drafts() {
         super::super::tests::click_at(&ctx, &mut app, rect.center(), egui::vec2(1280.0, 820.0));
     }
     finish_git(&ctx, &mut app);
-    assert!(app.source_control.open);
+    assert_eq!(app.sidebar, workbench_navigation::Sidebar::SourceControl);
     assert_eq!(app.active().view.id, id);
     assert_eq!(app.source_control.draft, "Keep my activity bar draft");
 }
