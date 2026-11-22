@@ -1,8 +1,11 @@
 //! Local extension manifests contribute commands to the Command Palette.
+mod activity;
 mod catalog;
+mod distribution;
 mod lua;
 mod manager;
 mod manifest;
+mod options;
 mod templates;
 
 use super::{snippet_fields, HeditApp};
@@ -10,10 +13,12 @@ use eframe::egui;
 use hedit::intelligence;
 use std::path::Path;
 
+pub(crate) use distribution::run_cli as run_plugin_cli;
 pub(super) use lua::LuaTransform;
 pub(super) use manager::Manager;
 use manifest::ExtensionAction;
 pub(super) use manifest::{load, Contribution};
+pub(super) use options::SaveResult;
 pub(super) use templates::Template;
 
 const MAX_INDENT_BYTES: usize = 4096;
@@ -37,7 +42,8 @@ impl HeditApp {
                 .selections
                 .iter()
                 .any(|selection| selection.anchor != selection.head);
-        let available = !self.extensions.is_empty()
+        let one_time = self.extension_manager.one_time_command();
+        let available = (!self.extensions.is_empty() || one_time.is_some())
             && !self.busy
             && !self.closing
             && !self.preferences_open
@@ -47,25 +53,26 @@ impl HeditApp {
                 .remote
                 .as_ref()
                 .is_none_or(|remote| remote.writable());
-        let editable = available
-            && !self.markdown_preview_only()
-            && !editor.follow
-            && !info.paged
-            && editor.view.selections.is_empty();
-        self.extensions.iter().filter(move |command| {
-            let enabled = match command.action {
-                ExtensionAction::InsertSnippet { .. } => editable,
-                ExtensionAction::NewFile { .. } => available,
-                ExtensionAction::Lua(_) => {
-                    editable
-                        && selection
-                        && self.workspace.remote.is_none()
-                        && self.lua_transform.is_none()
-                        && crate::plugin_runtime::SUPPORTED
-                }
-            };
-            enabled && command.when.matches(language, filename, selection)
-        })
+        let editable = available && !self.markdown_preview_only() && !editor.follow && !info.paged;
+        one_time
+            .into_iter()
+            .chain(self.extensions.iter())
+            .filter(move |command| {
+                let enabled = match command.action {
+                    ExtensionAction::InsertSnippet { .. } => {
+                        editable && editor.view.selections.is_empty()
+                    }
+                    ExtensionAction::NewFile { .. } => available,
+                    ExtensionAction::Lua(_) => {
+                        editable
+                            && selection
+                            && self.workspace.remote.is_none()
+                            && self.lua_transform.is_none()
+                            && crate::plugin_runtime::SUPPORTED
+                    }
+                };
+                enabled && command.when.matches(language, filename, selection)
+            })
     }
 
     pub(super) fn extension_available_by_id(&self, id: &str) -> bool {
@@ -94,7 +101,10 @@ impl HeditApp {
         };
         match action {
             ExtensionAction::InsertSnippet { body } => self.run_extension_snippet(&body),
-            ExtensionAction::Lua(plugin) => self.start_lua_transform(plugin),
+            ExtensionAction::Lua(plugin) => {
+                self.extension_manager.consume_one_time(id);
+                self.start_lua_transform(id, plugin);
+            }
             ExtensionAction::NewFile { body, language } => {
                 self.run_extension_template(ctx, &body, language)
             }

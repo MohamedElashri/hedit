@@ -30,12 +30,15 @@ rustybuzz = { version = "0.20.1", optional = true }
 eframe = { version = "0.31.1", default-features = false, features = ["default_fonts", "glow", "x11", "wayland", "persistence"] }
 rfd = "0.17"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["raw_value"] }
 tempfile = "3"
 memchr = "2"
 directories = "6"
 semver = "1"
 sha2 = "0.11"
+hex = "0.4"
+ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std", "zeroize"] }
+zeroize = "1"
 regex = "1.13.1"
 encoding_rs = "0.8.42"
 trash = "5.2.9"
@@ -67,7 +70,7 @@ raw-window-handle = "0.6"
 wayland-client = { version = "0.31", features = ["system", "dlopen"] }
 wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 
-[target.'cfg(all(target_os = "linux", target_arch = "x86_64", target_pointer_width = "64"))'.dependencies]
+[target.'cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"), target_endian = "little", target_pointer_width = "64"))'.dependencies]
 libc = "0.2"
 mlua = { version = "=0.12.2", default-features = false, features = ["lua54", "vendored"] }
 

@@ -4,20 +4,23 @@ use std::io;
 
 pub(crate) const SUPPORTED: bool = cfg!(all(
     target_os = "linux",
-    target_arch = "x86_64",
+    any(target_arch = "x86_64", target_arch = "aarch64"),
+    target_endian = "little",
     target_pointer_width = "64",
 ));
 
 #[cfg(all(
     target_os = "linux",
-    target_arch = "x86_64",
+    any(target_arch = "x86_64", target_arch = "aarch64"),
+    target_endian = "little",
     target_pointer_width = "64",
 ))]
 pub(crate) use linux::enter;
 
 #[cfg(not(all(
     target_os = "linux",
-    target_arch = "x86_64",
+    any(target_arch = "x86_64", target_arch = "aarch64"),
+    target_endian = "little",
     target_pointer_width = "64",
 )))]
 pub(crate) fn enter() -> io::Result<()> {
@@ -29,7 +32,8 @@ pub(crate) fn enter() -> io::Result<()> {
 
 #[cfg(all(
     target_os = "linux",
-    target_arch = "x86_64",
+    any(target_arch = "x86_64", target_arch = "aarch64"),
+    target_endian = "little",
     target_pointer_width = "64",
 ))]
 mod linux {
@@ -37,12 +41,16 @@ mod linux {
     use std::mem::MaybeUninit;
 
     // Linux UAPI values from linux/audit.h, linux/magic.h and asm/unistd.h.
-    const AUDIT_ARCH_X86_64: u32 = 0xc000_003e;
+    #[cfg(target_arch = "x86_64")]
+    const AUDIT_ARCH: u32 = 0xc000_003e;
+    #[cfg(target_arch = "aarch64")]
+    const AUDIT_ARCH: u32 = 0xc000_00b7;
+    #[cfg(target_arch = "x86_64")]
     const X32_SYSCALL_BIT: u32 = 0x4000_0000;
     const PIPEFS_MAGIC: u32 = 0x5049_5045;
 
-    // Offsets in struct seccomp_data. x86_64 is little-endian and syscall
-    // descriptors, protection flags and mapping flags are 32-bit arguments.
+    // Layout of seccomp_data for the supported little-endian ABIs. The kernel
+    // consumes the low 32 bits for descriptors and protection flags.
     const SYSCALL_NUMBER: u32 = 0;
     const SYSCALL_ARCH: u32 = 4;
     const SYSCALL_ARGS: u32 = 16;
@@ -131,12 +139,13 @@ mod linux {
     fn install_filter() -> io::Result<()> {
         let mut instructions = vec![
             load_word(SYSCALL_ARCH),
-            equal(AUDIT_ARCH_X86_64, 1, 0),
+            equal(AUDIT_ARCH, 1, 0),
             KILL,
             load_word(SYSCALL_NUMBER),
-            has_bits(X32_SYSCALL_BIT, 0, 1),
-            KILL,
         ];
+        // x32 shares the Linux audit architecture value with x86_64.
+        #[cfg(target_arch = "x86_64")]
+        instructions.extend([has_bits(X32_SYSCALL_BIT, 0, 1), KILL]);
 
         allow_if(
             &mut instructions,
@@ -185,6 +194,7 @@ mod linux {
             libc::SYS_brk,
             libc::SYS_munmap,
             libc::SYS_getrandom,
+            #[cfg(target_arch = "x86_64")]
             libc::SYS_time,
             libc::SYS_rt_sigreturn,
             libc::SYS_exit,

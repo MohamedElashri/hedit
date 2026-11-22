@@ -1772,7 +1772,7 @@ impl HeditApp {
             Command::OpenFolder => self.open_folder(ctx),
             Command::CloseFolder => self.close_folder(),
             Command::RefreshFolder => self.refresh_folder(),
-            Command::Save => self.save_file(ctx, false),
+            Command::Save => self.save_from_command(ctx),
             Command::SaveAs => self.save_file(ctx, true),
             Command::Close => {
                 self.request_close(vec![self.active().view.id]);

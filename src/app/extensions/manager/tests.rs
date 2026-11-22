@@ -37,7 +37,7 @@ fn show_picked_manifest(app: &mut HeditApp, source: &Path, config: &Path) {
     let (tx, rx) = mpsc::channel();
     app.extension_manager.pending = Some(rx);
     app.extension_manager.discard_file_review = false;
-    tx.send(Ok(Update::File(Some(review)))).unwrap();
+    tx.send(Ok(Update::File(Some(Box::new(review))))).unwrap();
 }
 
 #[test]
@@ -116,6 +116,43 @@ fn extension_settings_reviews_install_update_command_approval_and_uninstall() {
     assert!(app.extensions.is_empty());
     assert_eq!(fs::read_to_string(&original).unwrap(), sample);
     assert_eq!(fs::read_to_string(&updated).unwrap(), update);
+}
+
+#[test]
+fn settings_allows_one_run_without_storing_an_approval() {
+    if !crate::plugin_runtime::SUPPORTED {
+        return;
+    }
+    let config = tempfile::tempdir().unwrap();
+    let directory = config.path().join("extensions");
+    fs::create_dir(&directory).unwrap();
+    fs::write(directory.join("markdown-quote.json"), SAMPLE).unwrap();
+    let (_session, ctx, mut app) = app_with("", Some(config.path()));
+    app.open_preferences(PreferencesPage::Extensions);
+    finish(&mut app, &ctx);
+    assert!(app.extensions.is_empty());
+
+    click_label(&ctx, &mut app, "Review permissions…");
+    finish(&mut app, &ctx);
+    click_label(&ctx, &mut app, "Allow once");
+    finish(&mut app, &ctx);
+    let id = "markdown-quote.quote";
+    let once = app.extension_manager.one_time_command().unwrap();
+    assert_eq!(once.id, id);
+    assert!(app.extensions.is_empty());
+    assert!(!config.path().join("extensions-lua-grants.json").exists());
+
+    assert!(!app
+        .extension_manager
+        .consume_one_time("markdown-quote.other"));
+    assert!(app.extension_manager.consume_one_time(id));
+    assert!(!app.extension_manager.consume_one_time(id));
+    assert!(app.extension_manager.one_time_command().is_none());
+
+    app.extension_manager
+        .record(Invocation::new(id), InvocationOutcome::Denied);
+    // A denied attempt records its status without recording its diagnostic.
+    click_label(&ctx, &mut app, "Recent Lua activity");
 }
 
 #[test]

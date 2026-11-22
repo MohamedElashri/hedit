@@ -14,8 +14,11 @@
 - Import, enable, disable, and reload extensions in Settings. Review commands before installing and see per-file validation errors.
 - Assign extension commands personal shortcuts and scope their availability by editor language, filename, or selection.
 - Insert literal selection and file-name variables in extension snippets. Open extension templates as unsaved files with syntax and tab stops.
-- Run approved Lua extensions in an isolated worker on Linux x86-64. Commands transform a single local text selection as one undoable edit.
+- Run approved Lua extensions in an isolated worker on Linux x86-64 and ARM64. Commands transform a single local text selection as one undoable edit.
 - Review, install, update, and uninstall extensions in Settings. Approve Lua permissions per command. Revoke approvals by turning off, updating, or uninstalling an extension.
+- Try a Lua command once, preview multi-selection edits, and see recent command outcomes in Settings.
+- Configure typed plugin settings and opt in to a Lua save hook for a language.
+- Validate and test plugins from the CLI. Package Lua files into versioned bundles with optional publisher signatures.
 
 ### Changed
 

@@ -156,6 +156,7 @@ pub struct Settings {
     pub ui_font_size: f32,
     pub ui_density: crate::ui_style::Density,
     pub keybinding_preset: KeybindingPreset,
+    pub extensions: crate::plugin_options::Options,
     // Editor
     /// A font family name or font file path; empty uses the built-in font.
     pub font_face: String,
@@ -273,6 +274,7 @@ impl Default for Settings {
             ui_font_size: 13.0,
             ui_density: crate::ui_style::Density::default(),
             keybinding_preset: KeybindingPreset::default(),
+            extensions: crate::plugin_options::Options::default(),
             font_face: String::new(),
             font_size: 14.0,
             line_padding: 0.0,
@@ -395,6 +397,7 @@ impl Settings {
         }
     }
     pub fn validate(&self) -> Result<(), String> {
+        self.extensions.validate()?;
         if !(10.0..=20.0).contains(&self.ui_font_size) {
             return Err("ui_font_size must be between 10 and 20.".into());
         }
