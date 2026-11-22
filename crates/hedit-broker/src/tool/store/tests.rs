@@ -198,3 +198,24 @@ fn crash_cleanup_reclaims_only_authenticated_retired_images() {
     assert!(store.records().unwrap().is_empty());
     assert!(!directory.path().join("images").join(removed).exists());
 }
+
+#[test]
+fn unrelated_damaged_storage_cannot_expand_admission_or_force_full_store_reads_for_execution() {
+    let directory = tempfile::tempdir().unwrap();
+    let (source, _) = fixture(directory.path());
+    let store = open(directory.path());
+    let owner = binding();
+    let cancel = AtomicBool::new(false);
+    let id = store
+        .import(Source::select(&source).unwrap(), owner.clone(), &cancel)
+        .unwrap();
+    let foreign = directory.path().join("images/foreign.txt");
+    std::fs::write(&foreign, "preserve me").unwrap();
+    assert!(store.records().is_err());
+    assert!(store
+        .import(Source::select(&source).unwrap(), owner.clone(), &cancel)
+        .is_err());
+    assert_eq!(store.info(id, &owner).unwrap().bytes, 256);
+    assert_eq!(store.resolve(id, &owner, &cancel).unwrap().bytes(), 256);
+    assert_eq!(std::fs::read_to_string(foreign).unwrap(), "preserve me");
+}

@@ -50,6 +50,8 @@ pub struct Session {
     definition: Arc<crate::declaration::Definition>,
     resources: Option<Resources>,
     endpoints: BTreeMap<String, Arc<Endpoint>>,
+    tools: BTreeMap<String, Arc<crate::tool::Grant>>,
+    tool_bytes: u64,
     network: Arc<Network>,
     recovery: Arc<crate::recovery_store::RecoveryStore>,
     cancel: Arc<Cancel>,
@@ -75,6 +77,8 @@ fn invalid() -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, "Invalid broker continuation.")
 }
 pub struct Config {
+    pub source_token: Option<Handle>,
+    pub tools: BTreeMap<String, Arc<crate::tool::Grant>>,
     pub owner: Option<crate::journal::Owner>,
     pub package: sdk::Input,
     pub provider: Option<service::Request>,
@@ -153,6 +157,17 @@ impl Session {
         {
             return Err(invalid());
         }
+        if config.tools.len() > 8 {
+            return Err(invalid());
+        }
+        for (profile, grant) in &config.tools {
+            let owner = config.owner.as_ref().ok_or_else(denied)?;
+            let token = config.source_token.ok_or_else(denied)?;
+            let definition = config.definition.tools.get(profile).ok_or_else(denied)?;
+            if !grant.matches(&owner.command, token, profile, definition) {
+                return Err(denied());
+            }
+        }
         let background = provider
             .then(|| PROVIDERS.try_acquire())
             .transpose()
@@ -192,6 +207,8 @@ impl Session {
             definition: config.definition,
             resources: config.resources,
             endpoints: config.endpoints,
+            tools: config.tools,
+            tool_bytes: 256 * 1024 * 1024,
             network: config.network,
             recovery: config.recovery,
             cancel: config.cancel,
@@ -329,6 +346,7 @@ impl Session {
         self.changes.clear();
         self.resources.take();
         self.endpoints.clear();
+        self.tools.clear();
         self.input.response.take();
         self.input.cache.0.clear();
         self.input.package.snapshot.text.clear();
@@ -612,15 +630,45 @@ impl Session {
                 }
             }
             Intent::Tool {
-                profile, arguments, ..
+                profile,
+                input,
+                arguments,
             } => {
                 let tool = self.definition.tools.get(&profile).ok_or_else(denied)?;
                 if tool.protocol != crate::declaration::ToolProtocol::Filter {
                     return Err(denied());
                 }
                 tool.argv(&arguments).map_err(|_| denied())?;
-                Response::Failed {
-                    code: FailureCode::Unavailable,
+                let grant = self.tools.get(&profile).ok_or_else(denied)?;
+                self.tool_bytes =
+                    self.tool_bytes
+                        .checked_sub(grant.image_work())
+                        .ok_or_else(|| {
+                            io::Error::new(
+                                io::ErrorKind::OutOfMemory,
+                                "Native image work budget exhausted.",
+                            )
+                        })?;
+                let deadline = started + WORK.saturating_sub(self.spent);
+                match grant.filter(
+                    self.resources.as_ref(),
+                    &arguments,
+                    &input,
+                    atomic,
+                    &mut budget,
+                    deadline,
+                ) {
+                    Ok(output) => Response::Tool { status: 0, output },
+                    Err(error) => Response::Failed {
+                        code: match error.kind() {
+                            io::ErrorKind::Interrupted => FailureCode::Cancelled,
+                            io::ErrorKind::PermissionDenied => FailureCode::Denied,
+                            io::ErrorKind::OutOfMemory | io::ErrorKind::TimedOut => {
+                                FailureCode::Limit
+                            }
+                            _ => FailureCode::Failed,
+                        },
+                    },
                 }
             }
             Intent::LanguageServer { profile, .. } => {

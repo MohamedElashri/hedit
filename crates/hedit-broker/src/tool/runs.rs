@@ -169,8 +169,8 @@ impl Runs {
         identity::regular(&file)?;
         hedit_core::private_io::verify(&file.into_std())?;
         native::sync_dir(&store.directory)?;
-        let _lock = store.lock()?;
-        store.records()?;
+        // Admission and payload checks run in prepare/reap. Callback setup
+        // should not traverse live project projections.
         Ok(store)
     }
     fn current(&self) -> io::Result<()> {

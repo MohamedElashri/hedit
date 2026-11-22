@@ -150,6 +150,21 @@ Provider API 4 / SDK 2 and declarative language/theme packs are described in the
 [provider reference](plugin-services.md). Their native and load-test stage gates
 remain explicit in `plugin_plan.md`.
 
+## Native filter approval
+
+Experimental API 5 / SDK 3 commands can request native filter profiles. In
+**Review resources…**, select a standalone executable and inspect its filename,
+SHA-256 digest, argument choices and data scope before approving the review.
+Selection imports a private copy; it grants no execution access until approval.
+Updating the original file does not replace that copy. Reimport and review an
+update explicitly. Remove tool access or revoke resources to stop future use.
+
+Native filters receive command-supplied text and, only with separate workspace
+discover/read approval, an immutable copy of eligible project files. They receive
+no live workspace mount or writable scratch. Bounds, OS enforcement and residual
+risks are described in the [security model](extension-security.md).
+Language servers and the SDK 3 author/release gates remain under implementation.
+
 ## Workspace recovery
 
 On the experimental API 5 branch, **Settings → Extensions → Workspace recovery…**

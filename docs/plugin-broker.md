@@ -9,8 +9,8 @@ and [security model](extension-security.md) for supported functionality.
 ## Implementation boundary
 
 The host crate implements scoped workspace access, search, versioned resources,
-watch continuations, edit plans, recovery storage, exact-endpoint HTTPS, and a
-bounded asynchronous driver. Lua runs in a fresh confined process for each
+watch continuations, edit plans, recovery storage, exact-endpoint HTTPS, isolated
+native filters and a bounded asynchronous driver. Lua runs in a fresh confined process for each
 continuation. The driver uses a trusted host thread for filesystem and network
 work; that thread does not evaluate plugin source.
 
@@ -29,9 +29,9 @@ separate directory/endpoint review, complete paged workspace previews, clean
 buffer preflight, and off-thread reconciliation. Providers share the same source,
 resource, revocation and commit checks. Explicit recovery is available in
 Extensions settings. Author CLI and extracted-package references remain open.
-Tool declarations are validated, but tool and language-server requests report
-unavailable. Native external-tool isolation remains a separate implementation
-and platform gate. None of these gaps is covered by an unsandboxed fallback.
+Native filters require separate image selection and final exact-source resource
+approval. Language-server requests remain unavailable while their persistent
+protocol/lifetime support is implemented. There is no unsandboxed fallback.
 
 ## Authority and threat model
 
@@ -268,20 +268,35 @@ ambient-secret fallback exists.
 
 ## External tools and remaining release gates
 
-Tools must use a separately reviewed confinement profile, exact executable/runtime
-identity, finite reviewed arguments, fixed environment and direct launch without
-a shell. Initial profiles should allow no filesystem writes; writable scratch
-needs an enforceable aggregate quota. Project reads need a private validated
-snapshot, not a live mount of the original workspace. Plugin workers continue to
-deny child processes. Language servers also need typed stdio framing, request and
-URI/version checks, UTF-16 conversion, and independent lifetime/CPU/restart limits.
+Native filters use separately reviewed images, finite literal/choice arguments,
+a fixed minimal environment and direct launch. The broker's sealed Rust grant
+binds command, source approval token, profile and recipe; worker-supplied paths,
+identities and permission assertions cannot construct it. Session construction
+rejects mismatched command/source/recipe grants.
 
-The macOS prototype demonstrated native filesystem/network/child restrictions,
-but a hard unprivileged native memory ceiling has not been established. VM
-isolation is not required for the selected native profile: macOS will use
-monitored memory limits, with explicitly documented detection/termination
-overshoot. This prototype does not enable tools or establish Windows/Linux tool
-support. Unsupported filesystem/process confinement must report unavailable.
+The editor imports a checked private image without running a version command.
+Import alone creates no execution authority. Resource review shows its filename,
+digest, scope and argument choices before approval; reapproval cannot reuse an
+old source token. Each invocation retains a distinct executable and immutable
+project projection through process termination. Workspace projections require
+discover/read grants and refuse truncation or unsafe/incomplete content.
+
+Filters accept at most 64 KiB of input/output. Success requires a successful exit,
+complete input delivery, bounded UTF-8 output and output EOF. Native failures
+return fixed broker codes rather than tool diagnostics. Image verification/copy
+work has a separate 256 MiB session budget; native launch and execution consume
+the existing ten-second active-work budget. Current source authority protects
+disclosure throughout; cancellation terminates the process before bundle cleanup.
+
+The [native threat model](extension-security.md#native-tool-process-boundary)
+documents Seatbelt, Landlock/seccomp, LPAC/write restrictions, resource limits,
+private storage admission and residual OS risks. macOS uses monitored memory
+limits under the selected native model, with explicit overshoot rather than a VM
+or hard unprivileged memory-cap claim. Unknown/corrupt storage is preserved.
+
+Persistent LSP still needs strict framing/JSON-RPC, issued URI and revision checks,
+UTF-16 conversion, typed results and independent process lifetime/CPU/restart
+limits before activation.
 
 Run the shared and native continuation tests with:
 
@@ -298,7 +313,7 @@ endpoint policy cannot opt into that test route.
 
 Required gates still include native provider/recovery acceptance on all supported platforms; fresh native
 Windows x64/ARM64 and Linux editor-integration checks; external
-tool/LSP confinement and adversarial tests; author/reference/extracted-package
+persistent LSP and final tool adversarial acceptance; author/reference/extracted-package
 coverage; final sanitizer and sustained performance evidence; and universal macOS
 packaging. Startup samples from debug fixtures are exploratory, not whole-editor
 latency claims. Scheduled codec-only AddressSanitizer campaigns retain source

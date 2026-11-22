@@ -8,4 +8,6 @@ mod trust;
 pub use projection::Projection;
 mod runs;
 pub use runs::{Run, Runs};
-pub use store::{Binding, Image, Record, Store};
+mod grant;
+pub use grant::Grant;
+pub use store::{Binding, Image, Info, Record, Store};

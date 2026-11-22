@@ -325,7 +325,7 @@ fn capabilities<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<Capability
 fn arguments<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<Argument>, D::Error> {
     vector::<_, _, 32>(d)
 }
-fn unique_map<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
+pub(crate) fn unique_map<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
     decoder: D,
 ) -> Result<BTreeMap<String, T>, D::Error> {
     struct Visitor<T>(std::marker::PhantomData<T>);

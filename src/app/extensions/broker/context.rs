@@ -200,6 +200,8 @@ impl Context {
             let mut package = setup.package.clone();
             package.arguments = arguments;
             Ok(hedit_broker::session::Config {
+                source_token: Some(token),
+                tools: resolved.tools,
                 owner: Some(hedit_broker::journal::Owner {
                     command: setup.command.clone(),
                     digest: setup.plugin.grant.digest().into(),

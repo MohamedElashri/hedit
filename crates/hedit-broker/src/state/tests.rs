@@ -148,3 +148,13 @@ fn session_storage_exclusions_are_durable_even_when_inside_a_selected_workspace(
     std::fs::rename(&private, project.join("moved-session")).unwrap();
     assert!(root.read("moved-session/buffer.txt", &mut budget).is_err());
 }
+
+#[test]
+fn duplicate_native_tool_approval_keys_are_never_reinterpreted_as_one_grant() {
+    let token = Handle::fresh().unwrap();
+    let image = Handle::fresh().unwrap();
+    let json = format!(
+        r#"{{"command":"test.command","token":"{token}","scope":null,"endpoints":[],"tools":{{"formatter":"{image}","formatter":"{image}"}}}}"#
+    );
+    assert!(serde_json::from_str::<Approval>(&json).is_err());
+}
