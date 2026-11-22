@@ -68,6 +68,30 @@ struct Target {
     extra: Vec<Selection>,
 }
 
+#[derive(Debug)]
+struct TransformFailure {
+    message: String,
+    outcome: InvocationOutcome,
+}
+
+impl TransformFailure {
+    fn failed(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            outcome: InvocationOutcome::Failed,
+        }
+    }
+}
+
+impl From<plugin_runtime::Error> for TransformFailure {
+    fn from(error: plugin_runtime::Error) -> Self {
+        Self {
+            message: error.to_string(),
+            outcome: InvocationOutcome::worker_failure(error),
+        }
+    }
+}
+
 impl HeditApp {
     fn lua_target(&self) -> Option<Target> {
         let editor = self.active();
@@ -104,10 +128,15 @@ impl HeditApp {
         })
     }
 
-    pub(super) fn start_lua_transform(&mut self, command: &str, plugin: LuaPlugin) {
+    pub(super) fn start_lua_transform(
+        &mut self,
+        ctx: &egui::Context,
+        command: &str,
+        plugin: LuaPlugin,
+    ) {
         let proposal = self.lua_proposal(command, plugin);
         match proposal {
-            Ok(proposal) => match self.request_lua_approval(&proposal.plugin) {
+            Ok(proposal) => match self.request_lua_approval(ctx, &proposal.plugin) {
                 Ok(approval) => {
                     self.lua_transform = Some(LuaTransform {
                         proposal,
@@ -142,7 +171,11 @@ impl HeditApp {
         })
     }
 
-    fn request_lua_approval(&self, plugin: &LuaPlugin) -> Result<Receiver<Option<File>>, String> {
+    fn request_lua_approval(
+        &self,
+        ctx: &egui::Context,
+        plugin: &LuaPlugin,
+    ) -> Result<Receiver<Option<File>>, String> {
         let config = self
             .settings_files
             .dir
@@ -150,10 +183,12 @@ impl HeditApp {
             .ok_or("Extension approval requires a user configuration folder.")?;
         let plugin = plugin.clone();
         let (sender, receiver) = mpsc::channel();
+        let ctx = ctx.clone();
         thread::Builder::new()
             .name("hedit-lua-approval".into())
             .spawn(move || {
                 let _ = sender.send(catalog::lua_authorization(&config, &plugin));
+                ctx.request_repaint();
             })
             .map_err(|_| "The extension approval check could not start.")?;
         Ok(receiver)
@@ -175,15 +210,10 @@ impl HeditApp {
                 .extension_manager
                 .record(job.proposal.invocation, outcome),
             Err(error) => {
-                let outcome = if error.contains("approval changed") {
-                    InvocationOutcome::Denied
-                } else {
-                    InvocationOutcome::worker_failure(&error)
-                };
                 self.extension_manager
-                    .record(job.proposal.invocation, outcome);
+                    .record(job.proposal.invocation, error.outcome);
                 self.notice = "Extension command failed.".into();
-                self.error = Some(error);
+                self.error = Some(error.message);
             }
         }
     }
@@ -192,7 +222,7 @@ impl HeditApp {
         &mut self,
         ctx: &egui::Context,
         job: &mut LuaTransform,
-    ) -> Result<Option<InvocationOutcome>, String> {
+    ) -> Result<Option<InvocationOutcome>, TransformFailure> {
         let proposal = &job.proposal;
         match &mut job.phase {
             Phase::Checking(approval) => {
@@ -208,7 +238,11 @@ impl HeditApp {
                         proposal.target.language,
                         selection,
                     );
-                    job.phase = Phase::Running(plugin_runtime::start(input, approval)?);
+                    let wake = ctx.clone();
+                    job.phase =
+                        Phase::Running(plugin_runtime::start(input, approval, move || {
+                            wake.request_repaint();
+                        })?);
                 }
             }
             Phase::Running(worker) => {
@@ -225,7 +259,9 @@ impl HeditApp {
                     } else {
                         job.phase = Phase::Committing {
                             replacements,
-                            approval: self.request_lua_approval(&proposal.plugin)?,
+                            approval: self
+                                .request_lua_approval(ctx, &proposal.plugin)
+                                .map_err(TransformFailure::failed)?,
                         };
                     }
                 }
@@ -234,7 +270,9 @@ impl HeditApp {
                 Some(true) => {
                     job.phase = Phase::Committing {
                         replacements: std::mem::take(replacements),
-                        approval: self.request_lua_approval(&proposal.plugin)?,
+                        approval: self
+                            .request_lua_approval(ctx, &proposal.plugin)
+                            .map_err(TransformFailure::failed)?,
                     };
                 }
                 Some(false) => {
@@ -380,26 +418,40 @@ fn show_preview(ctx: &egui::Context, diff: &[DiffLine]) -> Option<bool> {
 }
 
 // The returned lock serializes delivery or application with a revocation.
-fn receive_approval(approval: &Receiver<Option<File>>) -> Result<Option<File>, String> {
+fn receive_approval(approval: &Receiver<Option<File>>) -> Result<Option<File>, TransformFailure> {
     match approval.try_recv() {
         Ok(Some(guard)) => Ok(Some(guard)),
-        Ok(None) => Err("Extension approval changed. Review it in Settings → Extensions.".into()),
+        Ok(None) => Err(TransformFailure {
+            message: "Extension approval changed. Review it in Settings → Extensions.".into(),
+            outcome: InvocationOutcome::Denied,
+        }),
         Err(TryRecvError::Empty) => Ok(None),
-        Err(TryRecvError::Disconnected) => Err("The extension approval check stopped.".into()),
+        Err(TryRecvError::Disconnected) => Err(TransformFailure::failed(
+            "The extension approval check stopped.",
+        )),
     }
 }
 
 fn selected_ranges(text: &str, selections: Vec<Selection>) -> Result<Vec<Range<usize>>, String> {
-    let selections: Vec<_> = selections
+    let mut selections: Vec<_> = selections
         .into_iter()
         .filter(|selection| selection.start() != selection.end())
         .collect();
     if selections.len() > plugin_runtime::MAX_SELECTIONS {
         return Err("A Lua extension accepts at most 16 selections.".into());
     }
-    let ranges: Vec<_> = selections
-        .into_iter()
-        .map(|selection| selection_bytes(text, selection))
+    if selections.is_empty() {
+        return Err("Select text to run this extension command.".into());
+    }
+    selections.sort_by_key(|selection| (selection.start(), selection.end()));
+    if selections
+        .windows(2)
+        .any(|pair| pair[0].end() > pair[1].start())
+    {
+        return Err("Lua selections must not overlap.".into());
+    }
+    let ranges: Vec<_> = advanced::byte_ranges(text, &selections)
+        .map(|range| validate_selection_range(text, range))
         .collect::<Result<_, _>>()?;
     if ranges.iter().map(Range::len).sum::<usize>() > plugin_runtime::MAX_SELECTION_BYTES {
         return Err("Selected text exceeds the Lua input limit.".into());
@@ -407,9 +459,8 @@ fn selected_ranges(text: &str, selections: Vec<Selection>) -> Result<Vec<Range<u
     Ok(ranges)
 }
 
-fn selection_bytes(text: &str, selection: Selection) -> Result<Range<usize>, String> {
-    let start = advanced::byte(text, selection.start());
-    let end = advanced::byte(text, selection.end());
+fn validate_selection_range(text: &str, range: Range<usize>) -> Result<Range<usize>, String> {
+    let Range { start, end } = range;
     if start == end {
         return Err("Select text to run this extension command.".into());
     }
@@ -492,6 +543,61 @@ mod tests {
             app.poll_lua_transform(ctx);
             thread::sleep(std::time::Duration::from_millis(5));
         }
+    }
+
+    #[test]
+    fn approval_completion_wakes_an_idle_ui_with_the_authority_ready() {
+        let config = tempfile::tempdir().unwrap();
+        let (_session, _ctx, app, _) = approved(config.path(), "selected");
+        let super::super::ExtensionAction::Lua(plugin) = &app.extensions[0].action else {
+            panic!("expected a Lua command");
+        };
+        let ctx = egui::Context::default();
+        for _ in 0..4 {
+            let _ = ctx.run(egui::RawInput::default(), |_| {});
+        }
+        let (sender, receiver) = mpsc::channel();
+        ctx.set_request_repaint_callback(move |info| {
+            let _ = sender.send(info.delay);
+        });
+        let approval = app.request_lua_approval(&ctx, plugin).unwrap();
+        assert_eq!(
+            receiver
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .unwrap(),
+            std::time::Duration::ZERO
+        );
+        assert!(receive_approval(&approval).unwrap().is_some());
+    }
+
+    #[test]
+    fn approval_denial_and_worker_limits_preserve_the_document() {
+        let (sender, receiver) = mpsc::channel();
+        sender.send(None).unwrap();
+        assert_eq!(
+            receive_approval(&receiver).unwrap_err().outcome,
+            InvocationOutcome::Denied
+        );
+        drop(sender);
+        assert_eq!(
+            receive_approval(&receiver).unwrap_err().outcome,
+            InvocationOutcome::Failed
+        );
+
+        let config = tempfile::tempdir().unwrap();
+        let (_session, ctx, mut app, _) = approved(config.path(), "private text");
+        app.set_selections(vec![Selection { anchor: 0, head: 7 }]);
+        fake_result(&mut app, "unused");
+        app.lua_transform.as_mut().unwrap().phase = Phase::Running(
+            RunningPlugin::from_test_result(Err(plugin_runtime::Error::Instructions)),
+        );
+        app.poll_lua_transform(&ctx);
+        assert!(app.lua_transform.is_none());
+        assert_eq!(app.active().page.text, "private text");
+        assert_eq!(
+            app.error.as_deref(),
+            Some("The Lua plugin reached its instruction limit.")
+        );
     }
 
     #[test]
@@ -607,9 +713,151 @@ mod tests {
     }
 
     #[test]
+    fn pending_denied_or_disconnected_authorization_never_starts_a_worker() {
+        let config = tempfile::tempdir().unwrap();
+        let (_session, ctx, mut app, _) = approved(config.path(), "private text");
+        app.set_selections(vec![Selection { anchor: 0, head: 7 }]);
+        for disconnected in [false, true] {
+            fake_result(&mut app, "must not be applied");
+            let (sender, receiver) = mpsc::channel();
+            app.lua_transform.as_mut().unwrap().phase = Phase::Checking(receiver);
+            app.poll_lua_transform(&ctx);
+            assert!(matches!(
+                app.lua_transform.as_ref().unwrap().phase,
+                Phase::Checking(_)
+            ));
+            if !disconnected {
+                sender.send(None).unwrap();
+            }
+            drop(sender);
+            app.poll_lua_transform(&ctx);
+            assert!(app.lua_transform.is_none());
+            assert_eq!(app.active().page.text, "private text");
+            assert!(app.error.is_some());
+        }
+    }
+
+    #[test]
+    fn preview_cannot_apply_after_revocation_disable_removal_or_source_change() {
+        use crate::app::tests::{click_label, frame};
+
+        for change in ["revoke", "reapprove", "disable", "remove", "source"] {
+            let config = tempfile::tempdir().unwrap();
+            let (_session, ctx, mut app, digest) = approved(config.path(), "selected");
+            app.settings.extensions.preview_edits = true;
+            let selection = Selection { anchor: 0, head: 8 };
+            app.set_selections(vec![selection]);
+            fake_result(&mut app, "untrusted replacement");
+            frame(&ctx, &mut app, vec![]);
+            frame(&ctx, &mut app, vec![]);
+            assert!(matches!(
+                app.lua_transform.as_ref().unwrap().phase,
+                Phase::Preview { .. }
+            ));
+            match change {
+                "revoke" => set_approval(config.path(), &digest, false),
+                "reapprove" => {
+                    set_approval(config.path(), &digest, false);
+                    set_approval(config.path(), &digest, true);
+                }
+                "disable" => {
+                    catalog::set_enabled(config.path(), ID, false).unwrap();
+                }
+                "remove" => {
+                    std::fs::remove_file(config.path().join("extensions/markdown-quote.json"))
+                        .unwrap()
+                }
+                "source" => std::fs::write(
+                    config.path().join("extensions/markdown-quote.json"),
+                    MANIFEST.replace("quote.lua", "changed.lua"),
+                )
+                .unwrap(),
+                _ => unreachable!(),
+            }
+            click_label(&ctx, &mut app, "Apply changes");
+            finish_transform(&mut app, &ctx);
+            assert_eq!(app.active().page.text, "selected", "{change}");
+            assert_eq!(app.selections(), [selection], "{change}");
+            assert!(
+                app.error.as_deref().unwrap().contains("approval changed"),
+                "{change}"
+            );
+        }
+    }
+
+    #[test]
+    fn moving_to_another_pane_cancels_a_result_even_for_the_same_document() {
+        let config = tempfile::tempdir().unwrap();
+        let (_session, ctx, mut app, _) = approved(config.path(), "selected");
+        app.set_selections(vec![Selection { anchor: 0, head: 8 }]);
+        let document = app.active().page.info.id;
+        fake_result(&mut app, "untrusted replacement");
+        let group = app.panes.focused_id();
+        app.split(1);
+        app.execute(&ctx, Command::FocusGroup2);
+        assert_ne!(app.panes.focused_id(), group);
+        assert_eq!(app.active().page.info.id, document);
+        app.poll_lua_transform(&ctx);
+        assert!(app.lua_transform.is_none());
+        assert_eq!(app.active().page.text, "selected");
+        assert!(app.notice.contains("context changed"));
+    }
+
+    #[test]
+    fn selection_mapping_orders_unicode_ranges_and_rejects_overlaps() {
+        let text = "aλ🦀\r\n東京";
+        assert_eq!(
+            selected_ranges(
+                text,
+                vec![
+                    Selection { anchor: 7, head: 5 },
+                    Selection { anchor: 3, head: 1 }
+                ]
+            )
+            .unwrap(),
+            vec![1..7, 9..15]
+        );
+        assert!(selected_ranges(
+            text,
+            vec![
+                Selection { anchor: 1, head: 3 },
+                Selection { anchor: 2, head: 4 }
+            ]
+        )
+        .is_err());
+        assert!(selected_ranges(text, vec![Selection::caret(0)]).is_err());
+    }
+
+    #[test]
+    fn adjacent_selections_enforce_the_combined_lua_input_limit() {
+        let limit = plugin_runtime::MAX_SELECTION_BYTES;
+        let text = "x".repeat(limit + 1);
+        let ranges = |end| {
+            vec![
+                Selection {
+                    anchor: 0,
+                    head: limit / 2,
+                },
+                Selection {
+                    anchor: limit / 2,
+                    head: end,
+                },
+            ]
+        };
+        assert_eq!(
+            selected_ranges(&text, ranges(limit)).unwrap(),
+            vec![0..limit / 2, limit / 2..limit]
+        );
+        assert!(selected_ranges(&text, ranges(limit + 1)).is_err());
+    }
+
+    #[test]
     fn selection_limits_count_utf8_bytes_and_preserve_crlf_pairs() {
         let text = "λ\r\n";
-        let selected = |anchor, head| selection_bytes(text, advanced::Selection { anchor, head });
+        let selected = |anchor, head| {
+            selected_ranges(text, vec![Selection { anchor, head }])
+                .map(|mut ranges| ranges.remove(0))
+        };
         assert_eq!(selected(1, 0).unwrap(), 0..2);
         assert_eq!(selected(1, 3).unwrap(), 2..4);
         assert!(selected(0, 2).is_err());
@@ -617,20 +865,20 @@ mod tests {
         assert!(selected(3, 4).is_err());
 
         let text = "λ".repeat(plugin_runtime::MAX_SELECTION_BYTES / 2 + 1);
-        assert!(selection_bytes(
+        assert!(selected_ranges(
             &text,
-            advanced::Selection {
+            vec![Selection {
                 anchor: 0,
                 head: plugin_runtime::MAX_SELECTION_BYTES / 2,
-            }
+            }]
         )
         .is_ok());
-        assert!(selection_bytes(
+        assert!(selected_ranges(
             &text,
-            advanced::Selection {
+            vec![Selection {
                 anchor: 0,
                 head: plugin_runtime::MAX_SELECTION_BYTES / 2 + 1,
-            }
+            }]
         )
         .is_err());
     }

@@ -13,8 +13,8 @@ without their development headers. The UI is native Rust; no webview or Node.js.
 make dev
 make run ARGS='--session-dir /tmp/hedit-dev'
 make build
-make install                         # ~/.local; override PREFIX or DESTDIR
-cargo build --locked --no-default-features  # omit terminal and Zig
+make install                         # Linux: ~/.local; override PREFIX or DESTDIR
+cargo build --locked --workspace --no-default-features  # omit terminal and Zig
 cargo build --release --locked -p hedit-remote
 ```
 
@@ -41,7 +41,8 @@ required platform checks.
 | Command | Scope |
 | --- | --- |
 | `make static` / `make lint` | Formatting, docs, policy, script syntax; lint adds workspace Clippy |
-| `make test` | Workspace, patched renderer, installer/package tests |
+| `make test` | Linux workspace, patched renderer, installer/package tests |
+| `make test-scripts` | Offline toolchain and package tests on Linux/macOS |
 | `make test-renderer` | Patched egui/epaint tests |
 | `make test-remote` | Headless helper and recovery tests |
 | `make test-remote-live` | Disposable SSH, crashes, reconnects; requires `sshd` |
@@ -67,7 +68,7 @@ CPU frame measurements; use the native diagnostics below for CPU/GPU traces.
 On Linux/macOS, install OpenSSH server/client/keygen and FFmpeg, then run:
 
 ```sh
-python3 scripts/export-readme.py --work-dir /private/disk/hedit-images
+python3 scripts/export-readme.py --work-dir /path/to/private/hedit-images
 ```
 
 Use a private fixture parent on a supported durable filesystem, as for the live
@@ -96,6 +97,7 @@ and display latency. Keep collection/file I/O off the UI thread.
 | --- | --- |
 | Shared document/filesystem/search/Git/build engine | `crates/hedit-core/` |
 | SSH transport, worker, journal, path isolation | `crates/hedit-remote/` |
+| Shared Lua runtime and native sandbox adapters | `crates/hedit-plugin/` |
 | Sessions, settings, syntax, editing, updates | `src/` |
 | Native frame loop and feature panels | `src/app.rs`, `src/app/` |
 | Integration tests and SSH workspace driver | `tests/`, `tests/support/` |
@@ -127,35 +129,72 @@ for consistent focus/Escape. Help resolves only explicitly bundled documents.
 
 ## Lua extension architecture and testing
 
-Version 2 manifests bundle text source and declare the selection capabilities.
-Each approval binds one Lua command and its capabilities to the exact installed
-manifest, file identity, and a fresh token. hedit validates the grant before
-sending the selection to a worker and again before applying an edit. Both steps
-hold the same lock used by approval changes and extension management. The editor
-also checks the document revision, pane, and selection.
+The GUI-independent `crates/hedit-plugin` crate owns one Lua 5.4 engine for
+commands, fixtures, multi-selection edits, and save hooks. Extension authors use
+the [manifest and Lua reference](docs/extensions.md); host integration lives in
+`src/app/extensions/`. The [extension threat model](docs/extension-security.md)
+defines trust boundaries, residual risks, and security test requirements.
 
-Install and update use the reviewed input bytes. Update and uninstall compare
-the current installed snapshot with the reviewed copy and durably clear its Lua
-approvals before replacing or removing it. Unsupported approval files require an explicit reset before fresh consent. See the [extension guide](docs/extensions.md).
+| Component | Responsibility |
+| --- | --- |
+| `runtime.rs`, `options.rs` | Shared invocation limits, command identifiers, and scalar settings |
+| `runtime/protocol.rs` | Bounded request/reply codec, independent parent/worker validation, and exact edit-count parsing |
+| `runtime/engine.rs` | Lua library allowlist and instruction/memory limits |
+| `runtime/unix.rs`, `runtime/windows.rs` | Pipe delivery, cancellation, deadlines, and worker reaping |
+| `error.rs` | Typed runtime failures and fixed display messages; command/save activity classifies failures by type |
+| `sandbox/` | Native process confinement and resource checks; no Lua API or language policy |
+| Editor extension modules | Installation reviews, command consent, settings, previews, undoable edits, and save bindings |
 
-The Linux x86-64 and ARM64 editor builds launch a fresh worker with clean environment and
-bounded anonymous pipes. The worker drops inherited descriptors and installs
-kernel process restrictions before reading the request. Lua runs with a text
-loader, a small standard library, and memory, instruction, and wall-clock
-limits. The worker reports fixed error messages and exits after one command.
-See the [Lua and mlua licenses](assets/licenses/lua-MIT.txt).
+Each invocation starts a fresh worker with a restricted environment. The parent
+establishes isolation before sending text; the worker checks its confinement
+before reading a request. Lua receives text and declared scalar settings, with
+no file, network, process, or editor APIs. The shared engine allows 16 MiB of Lua
+allocations and one million instructions. Normal invocations have a two-second
+deadline; save hooks have 400 ms. Native memory limits also cover allocations
+outside Lua.
+Worker failures carry fixed status codes. Lua error text stays inside the worker;
+only the corresponding typed failure and fixed display message reach the editor.
+Asynchronous command and authorization checks wake the host event loop after
+queueing their results. The UI also retains bounded fallback polling.
 
-Run `cargo test --locked --test lua_plugin_runtime` for executable and sample
-coverage and `cargo test --locked --bin hedit plugin_` for isolation and
-supervisor regressions. Run `cargo test --locked --bin hedit app::extensions`
-for manifest, consent, preview, multi-selection, and save regressions.
-Use `cargo test --locked --test plugin_distribution` to verify packaging, signing,
-and fixture commands. Save hooks require a separate user binding to a persistent
-approval nonce. A worker has 400 ms for an on-save invocation.
+| Platform | Native boundary | Worker layout |
+| --- | --- | --- |
+| Linux x86-64 / ARM64 | seccomp syscall allowlist, descriptor restrictions, and a 256 MiB address-space limit; requires Linux 5.9 or the isolation syscalls backported | Editor executable through `/proc/self/exe` |
+| macOS universal | Signed App Sandbox helper with hardened runtime, CPU/child-process caps, and a parent-enforced 256 MiB physical-footprint limit | Nested `Contents/Helpers/hedit-plugin.app` |
+| Windows x86-64 / ARM64 | Capability-free AppContainer, private image ACL, explicit inherited handles, dynamic-code/child-process restrictions, and a job limiting memory to 256 MiB, CPU to two seconds, and active processes to one | Adjacent `hedit-plugin-worker.exe` |
 
-macOS and Windows currently decline executable Lua. A future macOS helper needs
-native sandbox and signing verification. A Windows helper needs a restricted
-AppContainer, explicit inherited handles, and native job-limit tests.
+The macOS parent validates the running helper's identifier, signing team, and
+exact entitlement set (`com.apple.security.app-sandbox=true`). Windows validates
+the suspended token and job before resuming the worker. App Sandbox permits its
+own container and some system resources; its policy differs from Linux seccomp
+and Windows AppContainer. The Lua allowlist is identical across platforms.
+
+Consent binds a command and its capabilities to the reviewed manifest, installed
+file identity, and a fresh token. Authorization holds the extension change lock
+through input delivery and is checked again before applying an edit. Read policy
+revisions through the held handle: Windows locks reject a second open handle.
+Document revision, pane, and selections must still match. Updates install the
+reviewed bytes and revoke grants before replacing files. Unsupported approval
+storage remains untouched until an explicit reset preserves a backup.
+
+On macOS, `make dev`, `make build`, and `make run` prepare the signed helper.
+After a custom Cargo build, run `python3 scripts/macos_plugin_helper.py --editor
+target/debug/hedit`. Packaging signs the nested helper before the containing app.
+On Windows, build with `--workspace` to include the adjacent headless executable.
+
+| Check | Command |
+| --- | --- |
+| Confinement, limits, and supervision | `cargo test --locked -p hedit-plugin` |
+| Editor consent, preview, settings, and save behavior | `cargo test --locked --bin hedit app::extensions` |
+| Executable fixtures and signed distribution | `cargo test --locked --test lua_plugin_runtime --test plugin_distribution` |
+| Save conflicts and access restrictions | `cargo test --locked --test save_security` |
+
+The Windows plugin workflow runs these checks natively on x64 and ARM64 and
+executes the shipped Lua example from the extracted x64 package. Unit tests can
+select a built worker with `HEDIT_LUA_TEST_WORKER`; production ignores it.
+Native probes must demonstrate isolation failures, resource termination, and
+cleanup. Desktop presentation, clipboard, dialogs, and accessibility also need
+an interactive Windows smoke test.
 
 ## SSH architecture and testing
 
@@ -238,7 +277,7 @@ palettes only when every color matches an old default; preserve custom colors.
 
 ### Shared bottom panel
 
-`app/workbench_panel.rs` owns the shared bottom region; Problems, Output and
+`src/app/workbench_panel.rs` owns the shared bottom region; Problems, Output and
 Terminal select one content renderer. Visibility flags never own worker lifetimes.
 Build and PTY polling run independently of layout, so hidden tabs drain output
 and report completion. Only the selected tab performs layout. Output line ranges
@@ -258,7 +297,7 @@ focus from the terminal.
 
 ### Group-local tabs
 
-`app/panes.rs` stores document IDs and per-tab cursor/revision snapshots for each
+`src/app/panes.rs` stores document IDs and per-tab cursor/revision snapshots for each
 stable group ID. `Workspace::open` remains the sole owner of document buffers;
 groups never clone text or undo journals. Shared-tab closure detaches a view,
 while the last reference uses the existing save/discard/recovery flow. Layout
@@ -269,7 +308,7 @@ reuse derived global title/location geometry and paint only visible tabs.
 
 ### Document navigation
 
-`app/document_navigation.rs` derives breadcrumbs from paths without filesystem
+`src/app/document_navigation.rs` derives breadcrumbs from paths without filesystem
 queries and retains at most four groups of metadata. The optional Outline reuses
 the revision/path-checked native symbol cache. It requests no work while hidden,
 skips paged and >2 MiB snapshots, uses a worker above 64 KiB and virtualizes up to
@@ -318,7 +357,7 @@ refresh. File contents use the existing conflict/reload/save guards.
 
 ### Notification history
 
-`app/notifications.rs` stores at most 128 entries and 256 KiB per window, with
+`src/app/notifications.rs` stores at most 128 entries and 256 KiB per window, with
 message length caps and consecutive deduplication. Passive observation records
 errors/notices without reopening windows or requesting focus. Typed save retry
 actions retain the buffer ID, source path and Save As mode. Build completions
@@ -418,7 +457,7 @@ configured palette when a session is restarted.
 
 ### Problems catalogue
 
-`app/language_servers/problems.rs` shares a bounded catalogue between Problems
+`src/app/language_servers/problems.rs` shares a bounded catalogue between Problems
 and Explorer. Language publications and build parse generations invalidate the
 catalogue. Filtered indices, source options and group rows are cached until the
 catalogue, filters or active-file scope change. Layout virtualizes that row map;
@@ -434,7 +473,7 @@ versions, positions and budgets, and uses synchronized text for unsaved files.
 The SSH bridge maps prepared file paths through the existing workspace boundary.
 The client never executes code-action commands or accepts unsolicited applyEdit.
 
-`app/language_servers/refactor.rs` captures the originating editor group and
+`src/app/language_servers/refactor.rs` captures the originating editor group and
 revision for the review. Apply preflights all sources, edits document clones
 through normal Document history and then publishes buffers. Local preparation
 failure leaves all original documents unchanged. Remote edits use existing host
@@ -475,7 +514,7 @@ accessibility, dialogs, and windows.
 Use x86-64 MSVC Rust and Visual Studio C++ tools for Windows 10+ with OpenGL:
 
 ```powershell
-cargo build --release --locked
+cargo build --release --locked --workspace
 python scripts/package-windows.py --smoke
 ```
 
@@ -494,9 +533,13 @@ dark/light names describe their intended background.
 
 `make package smoke` checks the Linux archive, checksum, extraction, installation,
 and executable. Ship guides, notices, assets, themes, and CUDA examples; exclude
-test drivers/development scripts. Keep packagers, installers, and tests aligned.
+test drivers/development scripts. `scripts/package_resources.py` defines the
+offline documentation and extension examples shared by all three packagers and
+`make install`. Keep package installers and tests aligned with that list.
 
-1. Update workspace versions/lockfile and a concise dated `CHANGELOG.md` entry.
+1. Keep the editor and workspace crate versions aligned, update the lockfile, and
+   add a concise dated `CHANGELOG.md` entry. Release checks reject a mismatched
+   core, SSH helper, or plugin worker version.
    Match README feature availability to the release downloads.
 2. Run `make ci`, no-default-features/live SSH tests, native platform validation,
    and `make release-check RELEASE_TAG=vX.Y.Z`.

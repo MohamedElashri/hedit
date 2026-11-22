@@ -1,4 +1,57 @@
 use hedit::advanced::{self as a, Fold, Projection, Selection as S};
+
+#[test]
+fn byte_ranges_match_unicode_boundaries_for_normalized_selection_sets() {
+    for text in ["", "ascii", "λ東京🦀", "aλ🦀\r\n東京"] {
+        let offsets: Vec<_> = text
+            .char_indices()
+            .map(|(byte, _)| byte)
+            .chain(std::iter::once(text.len()))
+            .collect();
+        let length = offsets.len() - 1;
+        for anchor in 0..=length + 1 {
+            for head in 0..=length + 1 {
+                let selections =
+                    a::normalize(&[S::caret(0), S { anchor, head }, S::caret(length)], length);
+                let expected: Vec<_> = selections
+                    .iter()
+                    .map(|range| offsets[range.start()]..offsets[range.end()])
+                    .collect();
+                assert_eq!(
+                    a::byte_ranges(text, &selections).collect::<Vec<_>>(),
+                    expected
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn batch_edits_keep_adjacent_unicode_ranges_and_end_carets_in_character_coordinates() {
+    let text = "aλ🦀\r\n東京";
+    let edit = a::replace(
+        text,
+        &[
+            S { anchor: 3, head: 1 },
+            S { anchor: 3, head: 5 },
+            S::caret(99),
+            S::caret(0),
+        ],
+        "→",
+    );
+    assert_eq!(edit.text, "→a→→東京→");
+    assert_eq!(
+        edit.selections,
+        vec![S::caret(1), S::caret(3), S::caret(4), S::caret(7)]
+    );
+    let unchanged = a::replace(text, &[], "unused");
+    assert_eq!(unchanged.text, text);
+    assert!(unchanged.selections.is_empty());
+    let inserted = a::replace("", &[S::caret(99)], "東京");
+    assert_eq!(inserted.text, "東京");
+    assert_eq!(inserted.selections, vec![S::caret(2)]);
+}
+
 #[test]
 fn word_boundaries_are_unicode_safe_and_cross_whitespace() {
     assert_eq!(a::word_boundary("αβ  name", 4, false), 0);

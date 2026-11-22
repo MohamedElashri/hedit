@@ -778,11 +778,25 @@ such as `{"python": {"tab_size": 4}}`, and custom `build_systems`.
 
 ### Extensions
 
-Extensions add snippet commands, file templates, or Lua commands that transform
-selected text. In **Settings → Extensions**, install, update, or uninstall
-manifests and review Lua permissions for individual commands. Lua commands run
-in local buffers on Linux x86-64 and ARM64. See the [extension guide](docs/extensions.md)
-for an installable example and the manifest fields.
+Extensions add snippet commands, file templates, and Lua text transforms. Open
+**Settings → Extensions** to install, update, disable, or uninstall them. Run
+commands from the Command Palette or assign a personal key binding. Templates
+appear under **New File from Template…**.
+
+Lua runs in local buffers on supported macOS, Linux, and Windows builds. Review
+each command's text-read and replacement permissions, then choose **Allow once**
+or **Approve command**. With edit previews enabled, inspect the proposed changes
+before applying them; one Undo restores the original text and selections.
+Disabling or updating an extension revokes its approvals.
+
+Configure declared plugin settings and review **Recent Lua activity** in the
+same page. **Lua on Save** separately enables a persistently approved command
+for a language; it can replace the whole local file when you save. Updated or
+reapproved commands need a new save binding. Failed hooks save the current editor
+text without applying the hook's proposed changes.
+
+See the [extension reference](docs/extensions.md) for installable examples, Lua
+limits, manifest fields, fixture tests, and signed bundles.
 
 ## Appearance
 
@@ -829,6 +843,7 @@ hedit [--session-dir DIR] [--new] [-w] [FILE[:LINE[:COLUMN]] | FOLDER ...] [-]
 | `--new` | Add an empty note |
 | `-w`, `--wait` | Wait until files close; use `git config --global core.editor "hedit -w"` |
 | `--session-dir DIR` | Separate session/window; default from `HEDIT_SESSION_DIR` |
+| `plugin check`, `plugin test`, `plugin pack`, `plugin keygen` | Validate, test, package, and sign [extensions](docs/extensions.md#develop-and-package) without a window |
 | `--lsp list`, `--lsp install ID`, `--lsp remove ID` | Manage local language servers without a window; optional `--lsp-dir DIR` selects another server store |
 | `--` | Remaining arguments are filenames |
 | `-h`, `--version` | Help/version |

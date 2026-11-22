@@ -45,15 +45,18 @@ class MacPackage(unittest.TestCase):
             for directory in ['assets', 'themes', 'docs/images', 'examples/cuda']:
                 shutil.copytree(packager.ROOT / directory, project / directory)
             documents = ['vendor/egui_commonmark/PATCH.md', 'vendor/libghostty-vt-sys/PATCH.md',
-                         'docs/extensions.md', 'examples/extensions/markdown-task.json',
+                         'docs/extensions.md', 'docs/extension-security.md', 'examples/extensions/markdown-task.json',
                          'examples/extensions/markdown-quote.json']
             for relative in documents:
                 (project / relative).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(packager.ROOT / relative, project / relative)
             (project / 'examples/development_probe.rs').write_text('not a release resource')
             calls = []
+            worker_entitlements = []
             def run(arguments, **kwargs):
                 calls.append(arguments)
+                if '--entitlements' in arguments:
+                    worker_entitlements.append(plistlib.loads(Path(arguments[arguments.index('--entitlements') + 1]).read_bytes()))
                 if arguments[:2] == ['lipo', '-create']:
                     Path(arguments[-1]).write_bytes(b'universal fixture')
                 elif arguments[0] == 'sips':
@@ -76,6 +79,12 @@ class MacPackage(unittest.TestCase):
                 self.assertIn(info['CFBundleShortVersionString'], archive.name)
                 self.assertEqual(bundle.read('hedit.app/Contents/MacOS/hedit'), b'universal fixture')
                 self.assertEqual(bundle.read('hedit.app/Contents/MacOS/hedit-remote'), b'universal fixture')
+                worker = 'hedit.app/Contents/Helpers/hedit-plugin.app/Contents/'
+                self.assertEqual(bundle.read(worker + 'MacOS/hedit'), b'universal fixture')
+                worker_info = plistlib.loads(bundle.read(worker + 'Info.plist'))
+                self.assertEqual(worker_info['CFBundleIdentifier'], 'hedit.hedit.plugin-worker')
+                self.assertEqual(worker_info['LSMinimumSystemVersion'], '11.0')
+                self.assertTrue(worker_info['LSBackgroundOnly'])
                 self.assertIn('hedit.app/Contents/Resources/hedit.icns', bundle.namelist())
                 self.assertIn('hedit.app/Contents/Resources/Documentation/LICENSE', bundle.namelist())
                 self.assertEqual(bundle.read('hedit.app/Contents/Resources/Documentation/assets/licenses/egui_commonmark-MIT.txt'),
@@ -98,6 +107,10 @@ class MacPackage(unittest.TestCase):
                                     call[2:] == ['-verify_arch', architecture] for call in calls))
             self.assertTrue(any(call[:4] == ['codesign', '--force', '--sign', '-'] for call in calls))
             self.assertTrue(any(call[:4] == ['codesign', '--verify', '--deep', '--strict'] for call in calls))
+            self.assertEqual(worker_entitlements, [{'com.apple.security.app-sandbox': True}])
+            worker_sign = next(i for i, call in enumerate(calls) if '--entitlements' in call)
+            outer_sign = next(i for i, call in enumerate(calls) if call[:2] == ['codesign', '--force'] and call[-1].endswith('/hedit.app'))
+            self.assertLess(worker_sign, outer_sign)
 
     def test_tool_failure_keeps_previous_archive(self):
         with tempfile.TemporaryDirectory() as work:

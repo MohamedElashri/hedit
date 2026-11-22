@@ -2,6 +2,7 @@
 """Package an x86-64 Windows executable as a portable ZIP with a checksum."""
 import argparse
 import hashlib
+import json
 from pathlib import Path
 import shutil
 import struct
@@ -9,6 +10,7 @@ import subprocess
 import tempfile
 import tomllib
 import zipfile
+from package_resources import copy_documentation
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -29,8 +31,10 @@ def check_binary(binary):
             raise ValueError('Expected an x86-64 Windows PE executable.')
 
 
-def package(binary, out_dir):
+def package(binary, out_dir, worker=None):
     check_binary(binary)
+    worker = worker or binary.with_name('hedit-plugin-worker.exe')
+    check_binary(worker)
     name = f'hedit-{version()}-windows-x86_64'
     out_dir.mkdir(parents=True, exist_ok=True)
     archive = out_dir / f'{name}.zip'
@@ -38,15 +42,9 @@ def package(binary, out_dir):
         stage = Path(work) / name
         stage.mkdir()
         shutil.copy2(binary, stage / 'hedit.exe')
-        for filename in ['README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md', 'CHANGELOG.md', 'LICENSE']:
-            shutil.copy2(ROOT / filename, stage / filename)
-        for directory in ['assets', 'themes', 'docs/images']:
-            shutil.copytree(ROOT / directory, stage / directory)
-        for relative in ['vendor/egui_commonmark/PATCH.md', 'vendor/libghostty-vt-sys/PATCH.md',
-                         'docs/extensions.md', 'examples/extensions/markdown-task.json',
-                         'examples/extensions/markdown-quote.json']:
-            (stage / relative).parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(ROOT / relative, stage / relative)
+        shutil.copy2(worker, stage / 'hedit-plugin-worker.exe')
+        copy_documentation(ROOT, stage)
+        shutil.copytree(ROOT / 'themes', stage / 'themes')
         shutil.copytree(ROOT / 'examples/cuda', stage / 'examples/cuda')
         temporary = Path(work) / archive.name
         with zipfile.ZipFile(temporary, 'w', compression=zipfile.ZIP_DEFLATED) as output:
@@ -69,7 +67,7 @@ def smoke(archive):
         with zipfile.ZipFile(archive) as bundle:
             bundle.extractall(work)
         root = Path(work) / archive.stem
-        for relative in ['hedit.exe', 'LICENSE', 'USER_GUIDE.md',
+        for relative in ['hedit.exe', 'hedit-plugin-worker.exe', 'LICENSE', 'USER_GUIDE.md',
                          'themes/hedit-ink.json', 'assets/dictionaries/en_US-LICENSE.txt',
                          'examples/cuda/vector_add.cu', 'docs/extensions.md',
                          'examples/extensions/markdown-task.json',
@@ -80,19 +78,32 @@ def smoke(archive):
         output = subprocess.run([str(binary), '--version'], check=True, capture_output=True, timeout=30)
         if output.stdout.decode('utf-8').strip() != f'hedit {version()}':
             raise ValueError('Packaged executable version does not match Cargo.toml.')
+        worker = root / 'hedit-plugin-worker.exe'
+        output = subprocess.run([str(worker), '--version'], check=True, capture_output=True, timeout=30)
+        if output.stdout.decode('utf-8').strip() != f'hedit-plugin-worker {version()}':
+            raise ValueError('Packaged Lua worker version does not match Cargo.toml.')
         output = subprocess.run([str(binary), '--help'], check=True, capture_output=True, timeout=30)
         if b'Usage: hedit' not in output.stdout:
             raise ValueError('Packaged executable did not print its help.')
+        fixture = Path(work) / 'lua-fixture.json'
+        fixture.write_text(json.dumps([{
+            'command': 'markdown-quote.quote',
+            'input': 'café / 東京', 'expected': '> café / 東京',
+        }]), encoding='utf-8')
+        subprocess.run([str(binary), 'plugin', 'test',
+                        str(root / 'examples/extensions/markdown-quote.json'), str(fixture)],
+                       check=True, capture_output=True, timeout=30)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=ROOT / 'target/release/hedit.exe')
+    parser.add_argument('--worker', type=Path, help='Headless Lua worker (defaults beside the editor).')
     parser.add_argument('--out-dir', type=Path, default=ROOT / 'dist')
     parser.add_argument('--smoke', action='store_true', help='Extract and run the package (requires Windows).')
     args = parser.parse_args()
     try:
-        archive = package(args.binary, args.out_dir)
+        archive = package(args.binary, args.out_dir, args.worker)
         if args.smoke:
             smoke(archive)
     except (OSError, ValueError, subprocess.SubprocessError) as error:

@@ -505,6 +505,32 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_invocations_can_claim_a_one_time_approval_only_once() {
+        let config = tempfile::tempdir().unwrap();
+        let (path, digest) = lua_install(config.path());
+        let plugin = once(config.path(), &path, &digest);
+        let approval = plugin.one_time.as_ref().unwrap();
+        let barrier = std::sync::Barrier::new(16);
+        let winners = std::thread::scope(|scope| {
+            let claims: Vec<_> = (0..16)
+                .map(|_| {
+                    scope.spawn(|| {
+                        barrier.wait();
+                        approval.claim()
+                    })
+                })
+                .collect();
+            claims
+                .into_iter()
+                .map(|claim| usize::from(claim.join().unwrap()))
+                .sum::<usize>()
+        });
+        assert_eq!(winners, 1);
+        assert!(!approval.claim());
+        assert!(lua_authorization(config.path(), &plugin).is_some());
+    }
+
+    #[test]
     fn one_time_approval_does_not_survive_disable_or_manifest_rollback() {
         let config = tempfile::tempdir().unwrap();
         let (path, digest) = lua_install(config.path());

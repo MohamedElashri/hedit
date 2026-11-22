@@ -89,7 +89,7 @@ jobs:
         run: python scripts/test-windows-package.py
       - name: Build portable release
         if: ${{ !inputs.checks_only }}
-        run: cargo build --release --locked
+        run: cargo build --release --locked --workspace
       - name: Package and verify extracted executable
         if: ${{ !inputs.checks_only }}
         run: python scripts/package-windows.py --smoke

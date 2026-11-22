@@ -57,14 +57,13 @@ pub(in crate::app) enum InvocationOutcome {
 }
 
 impl InvocationOutcome {
-    pub(in crate::app) fn worker_failure(message: &str) -> Self {
-        match message {
-            "The Lua plugin reached its instruction limit."
-            | "The Lua plugin reached its memory limit."
-            | "The Lua plugin exceeded its time limit."
-            | "The Lua plugin input is invalid or exceeds its limits."
-            | "The Lua plugin replacement exceeds 256 KiB." => Self::LimitReached,
-            _ => Self::Failed,
+    pub(in crate::app) fn worker_failure(error: crate::plugin_runtime::Error) -> Self {
+        if error.is_limit() {
+            Self::LimitReached
+        } else if error == crate::plugin_runtime::Error::Cancelled {
+            Self::Cancelled
+        } else {
+            Self::Failed
         }
     }
 
@@ -164,12 +163,16 @@ mod tests {
         assert_eq!(activity.recent[63].invocation.command, "example.format-1");
         assert_eq!(activity.recent[0].outcome, InvocationOutcome::Applied);
         assert_eq!(
-            InvocationOutcome::worker_failure("The Lua plugin exceeded its time limit."),
+            InvocationOutcome::worker_failure(crate::plugin_runtime::Error::Deadline),
             InvocationOutcome::LimitReached
         );
         assert_eq!(
-            InvocationOutcome::worker_failure("arbitrary document text"),
+            InvocationOutcome::worker_failure(crate::plugin_runtime::Error::Execution),
             InvocationOutcome::Failed
+        );
+        assert_eq!(
+            InvocationOutcome::worker_failure(crate::plugin_runtime::Error::Cancelled),
+            InvocationOutcome::Cancelled
         );
     }
 }

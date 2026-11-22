@@ -10,6 +10,7 @@ import subprocess
 import tarfile
 import tempfile
 import tomllib
+from package_resources import copy_documentation
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -35,9 +36,10 @@ def main():
     if not arch:
         parser.error(f'Unsupported package architecture: {machine}')
     version = tomllib.loads((ROOT / 'Cargo.toml').read_text())['package']['version']
-    reported = subprocess.check_output([str(args.helper), '--version'], text=True).strip()
-    if reported != f'hedit-remote {version}':
-        parser.error('The helper version must match the editor version.')
+    for binary, name in [(args.binary, 'hedit'), (args.helper, 'hedit-remote')]:
+        reported = subprocess.check_output([str(binary), '--version'], text=True).strip()
+        if reported != f'{name} {version}':
+            parser.error(f'{name} version must match Cargo.toml.')
     name = f'hedit-{version}-linux-{arch}'
     args.out_dir.mkdir(parents=True, exist_ok=True)
     archive = args.out_dir / f'{name}.tar.gz'
@@ -49,15 +51,8 @@ def main():
         standalone = stage / f'hedit-remote-{version}-linux-{arch}'
         shutil.copy2(args.helper, standalone)
         publish(standalone, args.out_dir / standalone.name)
-        for filename in ['README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md', 'CHANGELOG.md', 'LICENSE']:
-            shutil.copy2(ROOT / filename, stage / filename)
-        for directory in ['assets', 'themes', 'docs/images']:
-            shutil.copytree(ROOT / directory, stage / directory)
-        for relative in ['vendor/egui_commonmark/PATCH.md', 'vendor/libghostty-vt-sys/PATCH.md',
-                         'docs/extensions.md', 'examples/extensions/markdown-task.json',
-                         'examples/extensions/markdown-quote.json']:
-            (stage / relative).parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(ROOT / relative, stage / relative)
+        copy_documentation(ROOT, stage)
+        shutil.copytree(ROOT / 'themes', stage / 'themes')
         shutil.copytree(ROOT / 'examples/cuda', stage / 'examples/cuda')
         shutil.copy2(ROOT / 'packaging/linux/hedit.desktop', stage / 'hedit.desktop')
         shutil.copy2(ROOT / 'packaging/linux/install.sh', stage / 'install.sh')

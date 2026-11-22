@@ -64,23 +64,46 @@ pub fn normalize(selections: &[Selection], length: usize) -> Vec<Selection> {
     }
     result
 }
+
+/// Convert sorted, non-overlapping selections (as returned by `normalize`)
+/// with one forward traversal, without a per-character offset table.
+pub fn byte_ranges<'a>(
+    text: &'a str,
+    selections: &'a [Selection],
+) -> impl Iterator<Item = std::ops::Range<usize>> + 'a {
+    let mut chars = text.chars();
+    let mut at = 0;
+    let mut offset = move |target| {
+        debug_assert!(
+            target >= at,
+            "selection ranges must be sorted and non-overlapping"
+        );
+        if target > at {
+            let _ = chars.nth(target - at - 1);
+            at = target;
+        }
+        text.len() - chars.as_str().len()
+    };
+    selections
+        .iter()
+        .map(move |range| offset(range.start())..offset(range.end()))
+}
+
 pub fn replace(text: &str, selections: &[Selection], replacement: &str) -> Batch {
     let ranges = normalize(selections, text.chars().count());
-    let mut offsets: Vec<_> = text.char_indices().map(|(i, _)| i).collect();
-    offsets.push(text.len());
     let mut output = String::with_capacity(text.len());
     let mut previous = 0;
-    let mut cursors = vec![];
+    let mut previous_char = 0;
+    let mut cursors = Vec::with_capacity(ranges.len());
     let mut count = 0;
-    for range in ranges {
-        let a = offsets[range.start()];
-        let b = offsets[range.end()];
-        output.push_str(&text[previous..a]);
-        count += text[previous..a].chars().count();
+    let replacement_chars = replacement.chars().count();
+    for (selection, range) in ranges.iter().zip(byte_ranges(text, &ranges)) {
+        output.push_str(&text[previous..range.start]);
         output.push_str(replacement);
-        count += replacement.chars().count();
+        count += selection.start() - previous_char + replacement_chars;
         cursors.push(Selection::caret(count));
-        previous = b;
+        previous = range.end;
+        previous_char = selection.end();
     }
     output.push_str(&text[previous..]);
     Batch {

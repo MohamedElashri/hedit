@@ -11,6 +11,8 @@ import sys
 import tempfile
 import tomllib
 import zlib
+from package_resources import copy_documentation
+from macos_plugin_helper import prepare as prepare_plugin_helper
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -92,20 +94,12 @@ def package(arm64, intel, output, identity='-', helper_arm64=None, helper_intel=
         shutil.copytree(ROOT / 'themes', resources / 'themes')
         shutil.copytree(ROOT / 'examples/cuda', resources / 'examples/cuda')
         docs = resources / 'Documentation'
-        docs.mkdir()
-        for filename in ['README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md', 'CHANGELOG.md', 'LICENSE']:
-            shutil.copy2(ROOT / filename, docs / filename)
-        for directory in ['assets', 'docs/images']:
-            shutil.copytree(ROOT / directory, docs / directory)
-        for relative in ['vendor/egui_commonmark/PATCH.md', 'vendor/libghostty-vt-sys/PATCH.md',
-                         'docs/extensions.md', 'examples/extensions/markdown-task.json',
-                         'examples/extensions/markdown-quote.json']:
-            (docs / relative).parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(ROOT / relative, docs / relative)
+        copy_documentation(ROOT, docs)
         signing = ['codesign', '--force', '--sign', identity]
         if identity != '-':
             signing += ['--options', 'runtime', '--timestamp']
         subprocess.run([*signing, str(helper)], check=True)
+        prepare_plugin_helper(executable, contents / 'Helpers/hedit-plugin.app', identity)
         subprocess.run([*signing, str(app)], check=True)
         subprocess.run(['codesign', '--verify', '--deep', '--strict', str(app)], check=True)
         reported = subprocess.run([str(executable), '--version'], check=True, capture_output=True, text=True)

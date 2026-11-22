@@ -2,6 +2,7 @@
 """Check the Windows archive contract without requiring a Windows host."""
 import hashlib
 import importlib.util
+import json
 from pathlib import Path
 import shutil
 import struct
@@ -41,6 +42,7 @@ class WindowsPackage(unittest.TestCase):
             root = Path(work)
             binary = root / 'hedit.exe'
             binary.write_bytes(self.pe())
+            binary.with_name('hedit-plugin-worker.exe').write_bytes(self.pe())
             project = root / 'source'
             project.mkdir()
             for filename in ['Cargo.toml', 'README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md', 'CHANGELOG.md', 'LICENSE']:
@@ -48,7 +50,7 @@ class WindowsPackage(unittest.TestCase):
             for directory in ['assets', 'themes', 'docs/images', 'examples/cuda']:
                 shutil.copytree(packager.ROOT / directory, project / directory)
             documents = ['vendor/egui_commonmark/PATCH.md', 'vendor/libghostty-vt-sys/PATCH.md',
-                         'docs/extensions.md', 'examples/extensions/markdown-task.json',
+                         'docs/extensions.md', 'docs/extension-security.md', 'examples/extensions/markdown-task.json',
                          'examples/extensions/markdown-quote.json']
             for relative in documents:
                 (project / relative).parent.mkdir(parents=True, exist_ok=True)
@@ -60,6 +62,7 @@ class WindowsPackage(unittest.TestCase):
             prefix = archive.stem + '/'
             with zipfile.ZipFile(archive) as bundle:
                 self.assertEqual(bundle.read(prefix + 'hedit.exe'), binary.read_bytes())
+                self.assertEqual(bundle.read(prefix + 'hedit-plugin-worker.exe'), binary.with_name('hedit-plugin-worker.exe').read_bytes())
                 for relative in ['README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md', 'CHANGELOG.md', 'LICENSE',
                                  'themes/hedit-ink.json', 'assets/hedit.svg',
                                  'assets/dictionaries/en_US-LICENSE.txt', 'assets/licenses/egui_commonmark-MIT.txt',
@@ -85,33 +88,60 @@ class WindowsPackage(unittest.TestCase):
             root = Path(work)
             binary = root / 'hedit.exe'
             binary.write_bytes(self.pe())
+            binary.with_name('hedit-plugin-worker.exe').write_bytes(self.pe())
             archive = packager.package(binary, root / 'out')
             calls = []
 
             def run(arguments, **kwargs):
                 executable = Path(arguments[0])
                 self.assertTrue(executable.is_file())
-                self.assertEqual(executable.name, 'hedit.exe')
+                self.assertIn(executable.name, {'hedit.exe', 'hedit-plugin-worker.exe'})
                 self.assertIn('hedit portable test ', str(executable))
                 self.assertNotEqual(executable.parent, binary.parent)
                 self.assertTrue(kwargs['check'])
                 self.assertEqual(kwargs['timeout'], 30)
-                calls.append(arguments[1])
-                output = f'hedit {packager.version()}\r\n'.encode() if arguments[1] == '--version' else b'Usage: hedit\r\n'
+                calls.append((executable.name, arguments[1]))
+                if executable.name == 'hedit-plugin-worker.exe':
+                    self.assertEqual(arguments[1:], ['--version'])
+                    output = f'hedit-plugin-worker {packager.version()}\r\n'.encode()
+                elif arguments[1] == 'plugin':
+                    self.assertEqual(arguments[2], 'test')
+                    self.assertEqual(Path(arguments[3]), executable.parent / 'examples/extensions/markdown-quote.json')
+                    self.assertEqual(json.loads(Path(arguments[4]).read_text(encoding='utf-8')), [{
+                        'command': 'markdown-quote.quote',
+                        'input': 'café / 東京', 'expected': '> café / 東京',
+                    }])
+                    output = b''
+                else:
+                    output = f'hedit {packager.version()}\r\n'.encode() if arguments[1] == '--version' else b'Usage: hedit\r\n'
                 return subprocess.CompletedProcess(arguments, 0, stdout=output)
 
             with patch.object(packager.subprocess, 'run', side_effect=run):
                 packager.smoke(archive)
-            self.assertEqual(calls, ['--version', '--help'])
+            self.assertEqual(calls, [
+                ('hedit.exe', '--version'), ('hedit-plugin-worker.exe', '--version'),
+                ('hedit.exe', '--help'), ('hedit.exe', 'plugin'),
+            ])
             with patch.object(packager.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, stdout=b'hedit 0.0.0\n')):
                 with self.assertRaisesRegex(ValueError, 'version does not match'):
                     packager.smoke(archive)
+
+            def stale_worker(arguments, **kwargs):
+                if Path(arguments[0]).name == 'hedit-plugin-worker.exe':
+                    return subprocess.CompletedProcess(arguments, 0, stdout=b'hedit-plugin-worker 0.0.0\n')
+                return run(arguments, **kwargs)
+
+            with patch.object(packager.subprocess, 'run', side_effect=stale_worker) as probe:
+                with self.assertRaisesRegex(ValueError, 'Lua worker version does not match'):
+                    packager.smoke(archive)
+                self.assertEqual(probe.call_count, 2)
 
     def test_smoke_refuses_a_corrupted_archive_before_execution(self):
         with tempfile.TemporaryDirectory() as work:
             root = Path(work)
             binary = root / 'hedit.exe'
             binary.write_bytes(self.pe())
+            binary.with_name('hedit-plugin-worker.exe').write_bytes(self.pe())
             archive = packager.package(binary, root / 'out')
             archive.write_bytes(archive.read_bytes() + b'corruption')
             with patch.object(packager.subprocess, 'run') as run:

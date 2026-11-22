@@ -10,15 +10,10 @@
 - Opt into verified SSH config jump hosts and session-scoped localhost port forwarding on Linux and macOS clients.
 - Reopen recent workspaces by SSH host or preview a remote folder before opening it. SSH Output records connection stages and offers diagnostic and recovery actions.
 - Enable masked interactive SSH authentication per connection profile on Linux and macOS.
-- Install experimental local extensions from versioned JSON manifests. Extensions can add snippet commands to the Command Palette. See the [Extensions guide](USER_GUIDE.md#extensions).
-- Import, enable, disable, and reload extensions in Settings. Review commands before installing and see per-file validation errors.
-- Assign extension commands personal shortcuts and scope their availability by editor language, filename, or selection.
-- Insert literal selection and file-name variables in extension snippets. Open extension templates as unsaved files with syntax and tab stops.
-- Run approved Lua extensions in an isolated worker on Linux x86-64 and ARM64. Commands transform a single local text selection as one undoable edit.
-- Review, install, update, and uninstall extensions in Settings. Approve Lua permissions per command. Revoke approvals by turning off, updating, or uninstalling an extension.
-- Try a Lua command once, preview multi-selection edits, and see recent command outcomes in Settings.
-- Configure typed plugin settings and opt in to a Lua save hook for a language.
-- Validate and test plugins from the CLI. Package Lua files into versioned bundles with optional publisher signatures.
+- Install local JSON extensions for snippets, contextual commands, and new-file templates with syntax and tab stops. Manage them in Settings and assign personal shortcuts.
+- Run Lua text transforms on macOS, Linux, and Windows x86-64 and ARM64 using one shared engine with native process isolation. Review command-scoped permissions, allow a single attempt, preview multi-selection edits, and restore changes with Undo.
+- Configure typed extension settings, explicitly enable language-specific save hooks, and inspect recent command outcomes.
+- Validate and test extensions from the CLI. Package Lua source into versioned bundles and verify publisher signatures when reviewing updates.
 
 ### Changed
 
@@ -27,12 +22,18 @@
 
 ### Fixed
 
+- Reject excess Lua worker edits before deserializing them, and enforce decoded replacement limits while parsing replies.
+- Require worker output EOF before accepting Unix replies, and prevent native child-process creation in the macOS Lua helper.
+- Avoid repeated document scans when Lua commands read multiple selections, and remove per-character offset tables from multicursor replacements.
+- Wake the editor when Lua authorization checks and commands finish so results appear promptly.
+- Preserve cached Markdown figures with different text colors during redraws.
 - Report unreadable positions in malformed paged files without stalling the open worker.
 - Use atomic creation for new Save As destinations so another file created during the save stays intact and pending edits remain available for retry.
 - Preserve competing writes during existing-file saves and detect replacements with matching length and modification time. Validate UTF-8 before advancing a page past a partial character.
 - Read only regular, bounded files for Mini Diff comparisons against disk.
 - Prefer a typed SSH address over partial alias matches. Restore added folders and their expansion state with saved workspaces, replace edited connection profiles after successful setup, and let users retry after a background worker exits.
 - Keep SSH change checks on schedule under continuous activity, age only unacknowledged edits, and serialize execution-trust updates with reconnects. Stop pending-edit repaint timers while offline.
+- Preserve Windows atomic-save behavior while retaining the saved file identity, and read consent revisions through the handle that holds the policy lock.
 - Reject NUL characters and overflowing snippet field numbers in extension manifests. Match exact command IDs before titles and preserve the final caret marker during expansion.
 
 ## [0.6.2] - 2026-11-19
