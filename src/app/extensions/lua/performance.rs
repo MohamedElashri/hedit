@@ -1,5 +1,5 @@
 // Opt-in CPU frame/allocation evidence; never a timing assertion in normal CI.
-mod measured_allocations {
+pub(in crate::app::extensions) mod measured_allocations {
     use std::{alloc::{GlobalAlloc,Layout,System},cell::Cell,time::Instant};
     thread_local! {static COUNTS:Cell<Option<(u64,u64)>>=const{Cell::new(None)};}
     struct Allocator;

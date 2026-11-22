@@ -99,6 +99,11 @@ struct Approval {
 }
 
 impl Manager {
+    #[cfg(all(test, target_os = "macos"))]
+    pub(in crate::app::extensions) fn measured_activity(&self) -> Vec<serde_json::Value> {
+        self.activity.measured()
+    }
+
     pub(in crate::app) fn one_time_command(&self) -> Option<&Contribution> {
         self.one_time.as_ref()
     }

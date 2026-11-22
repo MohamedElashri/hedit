@@ -8,10 +8,10 @@ syntax and theme packs, editor annotations, project tools, formatters, and
 external integrations. Design the API around hedit's document model, native UI,
 shared Lua runtime, and explicit user consent.
 
-This is a forward-looking implementation plan against the current v0.7.0
-extension work. Proposed API names, module boundaries, and new limits below are
-not shipped contracts. Record their final definitions in the SDK reference
-before implementing dependent features.
+This document records the three-stage v0.7.0 design and its acceptance status.
+The SDK references define the implemented contract; the design below explains
+the goals and sequencing. The final status table distinguishes completed
+capabilities, deliberate exclusions and any outstanding release gates.
 
 Success means authors can build useful plugins in these categories with a
 stable, documented SDK, and users can understand and restrict their authority.
@@ -33,7 +33,7 @@ sandbox adapters supplying the OS-specific boundary.
 - Executing plugin code on SSH hosts or granting access to remote buffers
   implicitly. Remote extension placement and data access need a separate design.
 
-## Current foundation
+## Starting foundation
 
 The existing system already provides declarative snippets and file templates,
 Lua selection transforms, typed scalar settings, command conditions, previews,
@@ -55,7 +55,7 @@ limits and consent; it must not silently expand old grants.
 The authoritative current contracts are `docs/extensions.md`,
 `docs/extension-security.md`, and the Lua architecture section of
 `DEVELOPER_GUIDE.md` in the v0.7.0 implementation branch. This plan does not replace
-those documents or claim its proposed capabilities already exist.
+those documents. Current capability coverage is recorded at the end.
 
 ## Architecture and security rules
 
@@ -85,12 +85,14 @@ scheduling shared. Limit OS adapters to launching and identifying processes,
 confinement, resource accounting, handle transfer, and termination. A sandbox
 failure disables the affected capability; there is no unsandboxed fallback.
 
-Suggested implementation ownership:
+Implementation ownership:
 
 | Existing area | Planned responsibility |
 | --- | --- |
-| `crates/hedit-plugin/src/runtime/` | Shared transport, codecs, scheduling, Lua bindings, and invocation/service lifecycle |
-| `crates/hedit-plugin/src/sandbox/` | Native policy adapters for plugin workers and, later, distinct tool roles |
+| `crates/hedit-plugin/src/runtime/` | Shared Lua transport, worker validation, bindings and fresh invocation/callback lifecycle |
+| `crates/hedit-plugin/src/sandbox/` and `src/tool/` | Native worker and distinct filter/service tool policies, transport and accounting |
+| `crates/hedit-protocol/` | Shared bounded data JSON and LSP framing/codec |
+| `crates/hedit-broker/` | Scoped workspace/network/tool operations, recovery, native LSP translation and lifetime ownership |
 | `src/app/extensions/` | Broker integration, contribution registry, consent UI, activation, and host-rendered extension UI |
 | Existing document/editing modules | Immutable snapshots, coordinate conversion, edit validation, Undo, and recovery |
 | Existing language services | Provider adapters and reusable host functionality, after authority and threading review |
@@ -488,6 +490,14 @@ Initial acceptance targets, to calibrate and lock on documented reference machin
 | Idle behavior | No active plugin worker for an unused command; idle services stop or wait without a periodic UI polling requirement attributable to the plugin. |
 | Failure behavior | Every operation has a cancellation/deadline policy; repeated failures trigger bounded backoff or disablement instead of retry storms. |
 
+Reference calibration on the M1 Mac scopes the 5% CPU-frame comparison to
+interleaved disabled/native views under common background load, with balanced
+order and separate A/A controls. Unpaired long-block runs showed contradictory
+percentage changes without production changes, so they remain process-cost
+evidence rather than a reliable UI-overhead estimate. This refines the controlled
+workload, not the numerical target or security/resource policy. It does not
+promise 5% whole-system CPU, physical input or GPU latency overhead.
+
 Do not claim these numeric targets are current measurements or cross-editor
 benchmarks. If calibration changes a target, record the workload, evidence, and
 reason before accepting the feature. Keep benchmarks reproducible and store raw
@@ -567,355 +577,176 @@ stage gates, with explicit remaining limitations.
   native/package validation, and recorded performance baseline.
 - [x] Stage 2: language/event/presentation interfaces, safe service lifecycle,
   bounded sustained workloads, and native service-policy validation.
-- [ ] Stage 3: scoped workspace/tool/network services, recoverable multi-file
+- [x] Stage 3: scoped workspace/tool/network services, recoverable multi-file
   behavior, reference integrations, and native enforcement across supported OSes.
-- [ ] Public SDK/version/deprecation policy and author tooling are maintained.
-- [ ] Capability review, revocation, stop controls, and activity reporting are clear.
-- [ ] Threat model, conformance tests, fuzzing, performance evidence, and package
+- [x] Public SDK/version/deprecation policy and author tooling are maintained.
+- [x] Capability review, revocation, stop controls, and activity reporting are clear.
+- [x] Threat model, conformance tests, fuzzing, performance evidence, and package
   smoke tests cover every shipped capability and worker role.
-- [ ] Remaining gaps are documented by capability; there is no claim of Sublime
+- [x] Remaining gaps are documented by capability; there is no claim of Sublime
   package compatibility or unrestricted access.
 
 ## Implementation status
 
-The first Stage 1 increment is implemented on `v0.7.0/plugin-sdk`:
+The implementation retains one Lua core and small native sandbox adapters.
+API/SDK versions remain additive: APIs 1–2 cover legacy transforms, API 3 / SDK 1
+document transactions, API 4 / SDK 2 providers, and API 5 / SDK 3 scoped broker
+continuations. Existing versions are supported; none is deprecated by this work.
+The manifest schema, Lua annotations and confined CLI fixtures define author
+conformance. [SDK reference](docs/plugin-sdk.md),
+[provider contract](docs/plugin-services.md), [broker contract](docs/plugin-broker.md).
 
-- Manifest API 3 / SDK 1 with separate document capabilities, exact-copy
-  command approvals, schema, Lua annotations, and a public SDK reference.
-- Opaque snapshots, UTF-8 coordinates, independently validated structured edits,
-  final selections, preview, and one-step Undo; legacy APIs remain available.
-- Declared scalar inputs, reviewed package-local Lua imports and text resources,
-  and bounded private command storage with explicit persistent approval.
-- Versioned typed worker results, fixed errors, verified syntax locations, richer
-  confined fixtures, three reference packages, and extracted-package resources.
-- Adversarial broker/codec/storage tests, independent Unicode edit checks,
-  a reproducible coverage-guided codec fuzz target, and a synthetic latency probe.
-- Compact preview text blocks with indexed rows, formatted only when visible;
-  no-change detection does not construct a full preview.
+| Stage | Implemented vertical behavior |
+| --- | --- |
+| 1 — Editing | Opaque document/revision snapshots, Unicode/CRLF-safe structured edits and selections, arguments, review/Undo, approved Save hooks, reviewed modules/resources, bounded private command storage, signatures, schemas, annotations and real confined fixtures. |
+| 2 — Providers | Diagnostics, completion, hover, symbols, quick lists, decorations and typed actions; event coalescing, four-slot admission with foreground reserve, fresh Lua worker per callback, bounded scalar cache, Stop/revocation/quarantine, syntax/theme packs and native host rendering. |
+| 3 — Scoped services | Discover/read/search/watch grants, batched reads, reviewed existing-file edits with conflict checks and recoverable journals, fixed public HTTPS endpoints, reviewed private native images, immutable project projections, finite filters and persistent source/document-bound LSP owners. |
 
-Local macOS validation includes the full workspace regression suite, native
-confinement tests, SDK fixtures, strict all-feature lint, and offline package
-checks. The latest 61-second LLVM coverage campaign completed 713,703 inputs
-without a crash; it did not enable AddressSanitizer. On this arm64 development
-build, synthetic host transaction preparation measured p95 of 1–10 microseconds;
-complete CLI fixture invocations measured p95 of 46–62 milliseconds. CLI timings
-include editor process startup, confinement, transport, Lua, and exit. These are
-local synthetic measurements, not a GUI responsiveness or release-build claim.
-The probe records every sample and toolchain/build metadata for reproduction.
+The third stage includes six typed LSP result families: diagnostics, plain
+completion, hover, symbols, formatting and current-document edit actions. The
+broker owns request IDs, exact issued URI/version matching, UTF-8/16/32
+conversion, cancellation/draining, resource accounting and termination. Server
+requests cannot execute commands, apply edits or broaden grants. Native images
+never receive a live workspace mount, network or child-process authority.
 
-Stage 1's native Windows/Linux, universal macOS, sanitizer, numeric tracing, and
-controlled egui CPU-frame/allocation gates have passed on the implementation
-stack. The measurements below state their practical scope. Stage 2 is implemented
-and validated as recorded in the follow-ups; Stage 3 remains unavailable to installed plugins; its broker foundation is
-under implementation. Do not widen isolation to bypass a gate.
+Shipped references demonstrate the public contracts:
 
-### Stage 1 validation follow-up
+- SDK editing: Markdown formatting, tab-separated table conversion and trim/Save.
+- Providers: diagnostics/quick fixes, completion/hover, navigation and visual packs.
+- Scoped services: native JSON formatting/project LSP, reviewed ASCII identifier
+  replacement across existing files, and selected Markdown to HTML source through
+  the public GitHub endpoint. The rename example is bounded text replacement,
+  not semantic language refactoring.
 
-Linux and native Windows x64/ARM64 validation and universal macOS packaging passed
-for the editing SDK baseline. The phase/measurement follow-up adds fixed numeric
-atomic counters, CLI `--timings`, and a test-only per-thread allocator probe.
-Prompt/preview dwell is separate from computation. Worker-reported evaluation
-time is not used for authority or deadline enforcement.
+The JSON native image and all companion manifests, Lua sources, fixtures and
+schemas are included in platform packages and offline Help. Install/update smoke
+tests check the extracted resources and actual native launch path.
 
-A 601-second LLVM/AddressSanitizer campaign completed 2,435,033 inputs without a
-finding. The controlled egui typing probe alternated disabled/installed-idle/
-stale-result cases over three trials; idle p95 CPU-frame overhead stayed below
-5% (largest observed increase about 2.1%). It measures CPU input/layout work and
-allocation traffic, not OS delivery, GPU presentation, or retained process heap.
-Raw samples, corpus/logs, and environment metadata are retained locally under
-`target/plugin-validation`; reproduction commands are in the SDK reference.
-The instrumentation follow-up and Windows UTF-8 package-test correction passed
-CI. Universal macOS validation of the provider stack also includes this SDK.
+### Acceptance evidence
 
-### Stage 2 service policy decision
+This table records evidence for the feature stack, not a claim of independent
+security audit, formal verification, physical input latency or arbitrary language
+server compatibility.
 
-Use broker-managed sessions with **worker rotation per callback**. The host
-serializes callbacks per package, coalesces one pending event per provider, and
-retains only explicitly returned scalar cache data scoped to that provider's
-grant and active document. Each callback gets a fresh native sandbox and Lua VM;
-no global Lua variables survive. Clear cache/results on document scope changes,
-revocation, disable, update, and crash quarantine. Idle expiry clears the service
-cache; independently validated host UI results have a separate 120-second lifetime
-and retain no duplicate copy of that cache.
+| Boundary | Evidence |
+| --- | --- |
+| Worker and native policy | Actual confined Lua/SDK and hostile native images on macOS, Linux x86-64/ARM64 and Windows x64/ARM64; file/network/child denial, pipe impersonation, positive/negative LPAC controls, quotas, cancellation, parent/guardian death and kill/reap cleanup. |
+| Broker and effects | Strict malformed/duplicate/truncated/foreign replies; grant/revision/root identity changes; source and document lease closure; recoverable partial failure; policy recheck around disclosure and effects; no implicit failure restart. |
+| Author/API | Independent manifest schema validation, legacy/SDK 1–3 conformance, exact offline SDK 3 intent/response transcripts, installed source/resource grants and real JSON filter/project-LSP requests. |
+| Shared codecs | Final shared-codec AddressSanitizer campaign: 2,571,791 LSP/data JSON inputs and 1,092,470 SDK inputs without a finding (run 44957425023). Source archives, hashes, logs and corpus retained. This complements native policy tests. |
+| Performance | Optimized M1 macOS run at `be28619`: 3,600 frames per mode over three alternating trials, real Unicode/CRLF edits and three native LSP profiles. Paired incremental UI costs under common background load: idle p95 1,292 → 1,340 µs (+3.7%); typing p95 1,450 → 1,494 µs (+3.0%). Both satisfy the calibrated 5% incremental-UI target; A/A controls stay within ±5%. 132 results published; no provider failures or retained native run payloads after Stop. |
+| Distribution | Native confinement on all five runners, full macOS/Linux/Windows package CI and universal macOS assembly/extracted execution passed on production head `d8cec46`. The universal archive/signatures/slices and all shipped SDK/scoped fixtures are also checked on this Mac. |
 
-This deliberately avoids a resident untrusted VM and its cumulative CPU-limit
-problem. Keep the native one-shot ceiling and apply stricter service callback
-instruction/deadline limits plus host aggregate concurrency, rate, cache, idle,
-and restart budgets. A worker cannot choose a weaker role or request another
-provider's cache. Validate this rotating service policy natively on each OS.
-A resident-VM optimization remains a separate policy change, not a prerequisite
-for provider semantics and not an excuse to remove the native CPU ceiling.
+Reproduction commands and measurement limitations are in the
+[validation guide](docs/plugin-broker.md#external-tools-and-validation).
 
-### Stage 2 implementation follow-up
+### Measurement details
 
-Implemented on `v0.7.0/plugin-services` (review/validation pending): manifest API
-4 / SDK 2 with separate provider grants; diagnostics, completions, hover,
-symbols, formatting, code actions and presentation; a coalescing/rate-limited
-scheduler; rotated workers with distinct trusted launch role, bounded readiness
-handshake, lower priority and native limits; explicit per-provider/document cache;
-revision/selection-bound results and expiring typed actions; native results,
-quick lists, inputs, output/status, diagnostic gutter/underlines and annotations;
-and non-executable bounded language/theme packs. Formatting/quick fixes reuse the
-editing SDK validator, approval recheck, review policy and Undo. The manager
-cancels providers before policy mutations; policy watcher failures disable them.
+The final run used an Apple M1 / 16-GiB Mac, the production release optimization
+profile with default features disabled, a near-64-KiB Unicode/CRLF JSON document
+and three approved native LSP profiles. Foreground QoS is explicit and recorded.
+Two independent editor views alternate within each 16-ms pair, with order
+balanced for ordinary, edit and native-request frames and separate
+disabled/disabled A/A controls. The native/disabled pair shares native
+background load: its percentages measure incremental UI costs, not whole-process
+contention. Each typing workload committed 120 real edits; text length and
+document revision assertions verify every input event. There are 14,400
+native/control CPU-frame samples plus 14,400 A/A samples. A/A p95 differences
+were −3.1% idle and +1.6% typing; all controls and UI comparisons are within 5%.
 
-The `document-assist` and `demo-visuals` references use the ordinary public API.
-The macOS workspace suite passed 1,298 tests (62 intentionally ignored), and
-strict all-feature Clippy passed. Native macOS probes include service priority
-and unchanged file/network/descriptor/child restrictions. Reply/role confusion,
-request identity, truncation/duplicate fields, UTF-16, event storms, stale
-completion, cache invalidation, quarantine, revoked quick fixes and Undo have
-regressions. The native service-policy checks on Linux/Windows, controlled active
-provider CPU-frame/allocation evidence, sanitizer follow-up, extracted package
-smokes, and universal macOS validation remain required before closing Stage 2.
-Stage 3 is not implemented or enabled by this change.
+| Workload | Disabled p95 | Native p95 | Difference |
+| --- | --- | --- | --- |
+| Idle | 1,292 µs | 1,340 µs | +3.7% |
+| Typing | 1,450 µs | 1,494 µs | +3.0% |
 
-### Stage 2 security/performance follow-up
+Idle UI allocation p95 was 731 versus 724 disabled; requested bytes were 379,086
+versus 378,747. These are UI-thread allocation traffic, not retained heap.
+Snapshot capture now checks the borrowed document length before copying and
+avoids a redundant copy. A 1-MiB rejection regression previously allocated
+1,048,941 bytes; it now remains below 64 KiB. The idle optimization removes
+per-provider whole-document selection scans, repeated language detection and
+metadata-string allocation from revision checks.
 
-The initial provider feature passed Linux, macOS, Windows x64/ARM64, and remote
-regressions in PR #112. A 601-second AddressSanitizer codec campaign completed
-1,867,776 inputs without a finding, including added service request/result seeds.
-Follow-up fixes bound native result rendering to visible rows for one selected
-provider, paginate long output, cache/deduplicate decorations, and avoid cloning
-transactions until clicked. Returned cache transfers into session state without
-retaining a second copy in UI results.
+The native workloads observed UI Stop at most 85 µs and full native cleanup at
+most 122.0 ms. No run payloads remained after Stop. Initial approved-provider
+results after image import had a median of 208.0 ms and a maximum of 1,429.3 ms
+(n=9, including native startup and fresh Lua callbacks). The cold outlier is
+retained as startup-tail evidence outside the steady-state frame population;
+these nine observations are not a latency guarantee. Host physical footprint at
+the end of active typing pairs was 29.7–34.6 MiB for both views together.
 
-Provider authorization allows concurrent read/disclosure guards while keeping
-revocation and storage commits exclusive. Publication checks share global worker
-admission. Unconsumed UI authorization receipts expire after 200 ms on the bounded
-authorization thread, covering inactive windows; consumed guards remain held for
-the authorized operation. The same handoff protects ordinary editing commands.
-The updated macOS workspace suite passed 1,302 tests (63 intentionally ignored),
-and strict all-feature Clippy passed. These follow-up changes require fresh CI.
+The 25-trial optimized broker campaign used two small Unicode/CRLF files and 100
+confined callbacks. Input copies were 3 µs p95, reply validation 1 µs and broker
+I/O 653 µs, below the one-millisecond bookkeeping target. Broker I/O p99/max
+were 679/683 µs; these off-UI filesystem tails are retained. Complete callbacks
+were 27.6 ms p95; the first cold callback was 390.8 ms. Recoverable journal
+preparation was 30.1 ms p95 and application 50.8 ms p95. Those off-UI filesystem
+phases include durable flushes and are separate from bookkeeping.
 
-The controlled four-provider egui probe uses three alternating trials and 600
-samples per mode. With no concurrent builds/fuzzing, pooled typing-frame p95 was
-3,428 µs disabled, 3,448 µs installed/idle (+0.6%), and 3,879 µs while repeatedly
-dispatching/cancelling real native callbacks. Individual trials are noisy; this
-is a local CPU-frame/allocation probe, not a physical input/GPU latency guarantee.
-Raw exploratory and final samples are retained under `target/plugin-validation`.
-Final follow-up `9dd7f7c` passed Linux, macOS, Windows x64/ARM64, remote regressions,
-and universal macOS packaging/extracted-app validation (run `44859211258`). The
-Stage 2 implementation gate is closed; PR #112 remains a draft for review. This
-accepts the documented bounded provider API and measurement scope, not a claim of
-unrestricted editor compatibility. Stage 3 remains required to finish this plan.
+Measurements are elapsed time in the egui CPU path. Process CPU/footprint are
+shared by each pair and exclude children; they cannot be attributed to one view.
+They do not cover physical input, GPU/terminal/display latency,
+large-workspace/network latency or total process-tree memory. OS scheduling and
+CPU-frequency changes affect comparisons; a lower native typing time is not
+evidence that plugins accelerate the editor. Twenty-second-class trials and
+bounded Stop checks do not prove indefinite leak freedom.
 
+Raw samples, source archives/hashes, build/toolchain/hardware metadata, activity
+and the UI test executable hash are retained under
+`target/plugin-validation/final-ui` and `target/plugin-validation/final-broker`.
+The measured source was clean at `be28619`. The superseded probe without typing
+assertions is not acceptance evidence. Long-block runs are retained, including
+the +5.05% idle result that triggered the scan/allocation fix. Subsequent
+unchanged-runtime long-block baselines varied from 1.1 to 2.9 ms p95 and yielded
+contradictory relative timings even with foreground QoS. A first paired run at
+the final production head reported +0.45% idle and −0.61% typing, but its typing
+A/A control differed by −7.8%. Investigation found that even edit/request
+cadences always measured the same view first on edit frames. The final probe
+balances those events too and retains that failed control campaign. Paired/A-A
+calibration isolates UI overhead; it does not establish a universal 5%
+whole-system bound. Unpaired process CPU/footprint and all timing distributions
+remain available alongside the paired report. Sanitizer source/corpus/logs and
+native/CI records are in `target/plugin-validation/final-asan` and
+`target/plugin-validation/final-checks`.
 
-### Stage 3 broker checkpoint — implementation gate remains open
+### Deliberate limits
 
-The shared SDK 3 continuation protocol and host-only `hedit-broker` crate now
-cover scoped discovery/read/search, versioned chunks and batched reads, native
-watch continuations, reviewed existing-file plans, recoverable journals and
-retention quotas, exact-endpoint HTTPS, strict JSON helpers, and bounded
-background host execution. These are internal development interfaces. Installed
-API 5 ordinary commands are integrated on this branch with separate source and
-resource review. SDK 3 providers remain rejected until their host routing is
-complete; native tool requests report unavailable.
+- Host UI uses bounded native widgets and typed actions. Arbitrary HTML panels,
+  embedded browser runtimes and unrestricted internal commands are unsupported.
+- Language packs use a bounded keyword/comment/string scanner; complex regex or
+  TextMate grammar engines require separate designs.
+- No Sublime package compatibility, editor-internal object API, arbitrary shell,
+  environment, sockets, credentials or unrestricted native code loading.
+- Workspace plans edit existing eligible text files only. Create/delete/rename
+  operations and global multi-file Undo require separate designs.
+- LSP supports one current document and a fixed bounded project copy per owner.
+  No cross-file LSP edit actions, server commands, snippets/additional completion
+  edits, dynamic registration, live filesystem writes or process-tree servers.
+- Native services have finite wall/CPU/traffic/request budgets and zero automatic
+  restarts. Heavy runtimes exceeding the native policy fail unavailable.
+- Credentials are conditional future work: the reference HTTPS integration is
+  public and needs none. There is no ambient or plaintext-secret fallback.
+- Remote, paged, read-only and oversized documents do not acquire implicit
+  authority. Native memory monitoring on macOS can overshoot between samples;
+  it is not a hard memory cap or VM guarantee.
 
-The host validates declarations, source-independent operation envelopes, opaque
-session/version handles, callback steps, UTF-8/CRLF edits, aggregate resource
-limits and current policy guards. Recovery tests cover interruption, competing
-writes, capture races, malformed receipts/ledgers, full-width Windows file IDs,
-replaced/moved private stages, conservative cleanup and retained storage quotas.
-Ordinary capture failures attempt a no-clobber restore. The capture/publication
-visibility gap remains explicit; this is not atomic single-file replacement or
-global multi-file Undo. The command integration verifies/freezes/reconciles this window's matching clean
-buffers, while explicit recovery UI remains required. Other windows/processes
-retain the existing external-change/conflict handling.
+### Final validation status
 
-Local macOS evidence: 1,359 workspace tests passed (63 intentionally ignored),
-plus the custom native continuation test. The broker suite has 47 regressions;
-real confined-worker fixtures cover Unicode/CRLF project edits, synthetic HTTPS
-JSON, asynchronous apply, cancellation and stale preview decisions. Strict
-all-feature workspace Clippy, static/offline-Help checks and Linux/macOS/Windows
-packaging-script tests passed. This does not count script mocks as native
-Windows/Linux execution or validate a new universal release artifact.
+All three planned stages are implemented and validated within the documented
+bounds. Production head `d8cec46` passed full-feature native macOS regression,
+strict lint, all five native-tool runners, Windows x64/ARM64 Lua confinement,
+Linux/macOS/Windows package CI, SSH/crash-recovery and universal macOS
+assembly/extracted acceptance. The clean source at `be28619` passed the local
+paired/A-A workload. Production source also passed 113 local extension tests and
+strict all-target lint. The final memory regression proves oversized provider
+snapshots are rejected before allocating a document copy; valid snapshots make
+one copy. The prior contention regression verifies bounded authorization
+waiting, cancellation and stale-revision denial. The benchmark-only follow-up
+changes its order calibration and public measurement guide. A source comparison
+confirms no production code changed after the universal build. The final
+plan-only commit records this evidence; it does not change runtime or packaged
+resources.
 
-A final codec-only AddressSanitizer campaign completed 936,553 inputs in 601
-seconds without a finding. Its archived source hashes still match the codec.
-Scheduled campaigns now retain source, metadata, corpus, logs and failure
-artifacts. They do not execute Lua or replace native confinement tests.
-
-The release probe runs 25 two-file fixture trials (100 real confined callbacks),
-with immediate synthetic preview acceptance and separate host/worker timings.
-Input-copy p95 was 3 µs; reply-validation p95 1 µs; broker I/O p95 800 µs. Native callback p95 was 37.927 ms, with the first launch 276.914 ms. Journal preparation/application p95 were 40.870/54.985 ms.
-These measurements cover small local files, not whole-editor input/frame latency,
-large-workspace behavior, allocations or retained heap. Raw samples, archived
-source and environment metadata live under `target/plugin-validation`; reproduce
-with `scripts/profile-plugin-broker.py` after stopping other builds/fuzzing.
-
-Required next work:
-
-- Repeat native platform and universal macOS gates after editor integration.
-- Finish SDK 3 provider routing and explicit recovery/cleanup UI.
-- Validate command grant/manager, complete previews and buffer reconciliation on
-  Linux/Windows and in universal macOS packages, with sustained UI/retention probes.
-- Finish separately confined external-tool and typed LSP backends using the
-  selected native macOS sandbox with monitored memory
-  limits and documented overshoot. A native prototype is not a production tool
-  policy. Tool/LSP intents currently report unavailable; no fallback runs them.
-- Finish the author CLI, annotations/schema, installed reference integrations,
-  extracted-package tests, sustained responsiveness/retention measurements, and
-  cross-platform security/release gates. Credentials remain conditional on a
-  reference integration actually requiring them; no ambient/plaintext fallback.
-
-The Stage 3 gate remains open until the editor integration and supported-platform
-checks pass. Local backend checks do not establish completion of the whole plan.
-
-The broker foundation passed Linux, macOS, Windows and remote CI at `a83dd1b`
-(run `44900256772`) and the dedicated Windows x64/ARM64 sandbox/broker/package
-workflow (run `44900256769`). That workflow passed after retrying a save-hook
-deadline failure. Universal macOS packaging, extracted-helper checks and the
-protocol-security workflow passed at `74bb601` (run `44899794017`), before the
-Windows-only rename correction. Native CI found and fixed Linux O_PATH directory
-flushes and Windows handle-relative no-clobber recovery renames. These close the
-foundation's native test gap; the editor integration and tool/LSP gates stay open.
-
-
-### Scoped command integration
-
-Experimental manifest API 5 / SDK 3 ordinary commands now use the scoped host.
-Exact-source approval is separate from physical directory rights and exact HTTPS
-endpoint selection. Source changes prune resource grants; corrupt resource
-approval reset preserves a private backup. No document.read grant means a neutral
-empty snapshot. Installed SDK 3 providers are rejected explicitly while their
-routing is unfinished; tool/LSP requests remain unavailable.
-
-Revocation publishes a cancellation generation before waiting for the policy
-writer lock. Native notifications directly stop disclosures without UI frames;
-orphan repair and competing writers are tested. Preview pages are indexed off
-the UI thread. A generation-checked lease freezes matching clean local buffers,
-keeps independent bounded backups, reconciles partial failures, preserves Undo
-when disk is unchanged and advances revisions after replacement. Deferred opens
-reread disk off-thread; stale page/save replies cannot overwrite newer buffers.
-Unrelated buffers remain editable during an accepted workspace commit.
-
-Local default-feature workspace validation passed 1,386 tests (63 intentionally
-ignored). Native command tests cover empty-document disclosure, exact grants,
-revocation without UI frames, single-document Undo, multi-file application while
-switching focus, and source/resource reset. Broker backend validation passed 55
-tests plus the real confined-worker continuation fixture. Final command/UI
-performance, fresh platform CI, provider/recovery integration, tool/LSP backends,
-author tooling and extracted-package references remain open Stage 3 gates.
-
-
-### Explicit workspace recovery
-
-Extensions settings now lists retained journals and lets the user select the
-original physical directory for a bounded complete preview. New journals record
-the approved command/source digest in version 2; version 1 remains readable.
-Resume, restore and history deletion compare fresh authenticated state, serialize
-against plugin policy changes, freeze/reconcile this window's affected buffers,
-and preserve competing writes. Incomplete-preparation cleanup has its own strict
-replacement-only validation. No startup effects or plugin execution are involved.
-Native UI acceptance and cross-platform validation of this follow-up remain open.
-The selected macOS external-tool profile uses native confinement with monitored
-memory limits and documented overshoot; tool/LSP implementation is still pending.
-
-Recovery follow-up validation on macOS covered 1,376 tests with 62 intentional
-ignores across 50 distinct suites. The root/workspace run passed the editor,
-rendered settings and package checks; after making an existing zero-wait lock
-regression release its owner explicitly, the core, broker, plugin and remote
-suites passed in a separate native run. Strict workspace/all-target Clippy and
-static documentation/script checks passed with default features disabled.
-The settings test exercises resume, stale-preview rejection, restore, history
-cleanup and open-buffer refresh without any installed source approval. Preview
-panes now scroll within a fixed height so newline-heavy output cannot displace
-recovery actions. The preceding command integration passed full Linux/macOS/
-Windows CI (`44911549599`) and x64/ARM64 sandbox CI (`44911549544`, with a retry
-of the existing Windows Lua deadline fixture).
-
-
-### Scoped provider integration
-
-API 5 / SDK 3 providers now share exact-source authority, resource resolution,
-native cancellation and workspace commit checks with ordinary commands. The
-installed provider scheduler supports typed results, coalesced document events,
-manual document-free presentation, callbacks/cache, Stop/Resume/quarantine and
-explicit workspace previews. Automatic document events require document.read;
-manual workspace providers receive an empty snapshot even without a Lua-eligible
-active buffer. Provider approval shows its exact kind, triggers and capabilities.
-
-Background hosts/sessions are capped at 12 of 16 contexts and three of four
-active broker operations. Shared SDK 2/3 native service admission preserves one
-foreground worker slot. Cancellable waits and retries preserve the current
-callback input, never restarting a chain after host effects. Native wakeups
-replace periodic SDK 3 UI polling; settled work accounting excludes human preview
-and parked-watch dwell. Workspace refreshes carry package origin to suppress
-self-triggered document events.
-
-The initial native macOS workspace sweep passed 1,382 tests with 62 intentional
-ignores. Additional foreground admission and queue regressions were added after
-that sweep and are being validated separately. Native provider fixtures cover
-neutral snapshots, callback cache, Stop/Resume/revoke, Unicode diagnostics, stale
-results, explicit two-file review and clean-buffer reconciliation. Windows/Linux
-provider-specific editor checks, final responsiveness/retention evidence, native
-tool/LSP backends, author/reference tooling and universal packaging remain open.
-
-Final provider follow-up checks passed 108 editor extension tests (two intentional
-ignores), including automatic open/change/close lifecycle and partial-apply
-reporting, plus the complete native broker/plugin suites after the priority
-changes. All-feature/all-target workspace Clippy passed. The recovery PR's final
-signed head `9ba28a0` passed Linux/macOS/Windows/remote CI (`44915873512`) and both
-Windows sandbox architectures (`44915873326`). Its Windows cleanup fixture now
-releases per-operation protected-directory pins, matching the real editor flow.
-
-### Native tool boundary
-
-The scoped-provider head `dde0954` passed all platform checks, including Windows
-x64 and ARM64. The subsequent Windows pipe hardening uses identification-only
-client tokens and a live-client native impersonation regression; both Windows
-sandbox architectures passed at `0b76d57`.
-
-The selected macOS external-tool model is native confinement with monitored
-memory/thread limits, documented overshoot and no VM prerequisite. A host-only
-finite-filter primitive now applies a fixed deny-by-default policy before text
-delivery and exec. Native probes cover filesystem/network/descriptor isolation,
-reexec, full-size transport, resource limits and cleanup. The Lua helper's policy
-is unchanged. The broker tool/LSP intents remain unavailable pending private
-image import, source-bound grants, validated snapshot construction and verified
-Linux/Windows adapters. Persistent LSP, final author/reference tooling, sustained
-performance evidence and universal-package acceptance remain open plan gates.
-
-
-The Linux follow-up shares the Unix bootstrap and supervisor, requires Landlock
-ABI 3, and installs a default-deny syscall policy with constrained pthread
-creation. It has hard address-space/CPU/descriptor limits and monitored thread
-counts. Dedicated native CI covers Linux x64/ARM64 and macOS. Linux metadata
-visibility and fixed system-loader execution are explicit residuals. Native Linux
-validation and a trusted macOS parent-exit guardian remain pending; these are
-activation gates before tool grants, alongside the Windows tool policy and
-broker image/snapshot ownership. The existing Lua policy retains its limits.
-
-
-The Linux adapter's dedicated native probes passed on x64 and ARM64 at `1af83fd`
-(CI `44928108100`), alongside the shared macOS probe. The macOS memory fixture now
-dirties pages without exhausting its independent CPU budget first (`2c1e761`).
-The guardian follow-up uses a private liveness socket and kernel exit events,
-with the native tool as a session leader. Native tests cover editor SIGKILL,
-guardian SIGKILL, process-group/session escape attempts and cleanup. Parent-exit
-cleanup is being validated through the full plugin and platform suites before
-this gate is closed. Tool/LSP broker activation and remaining Stage 3 gates are
-still open.
-
-
-The Windows native adapter now has a separate LPAC/untrusted-integrity tool role,
-parent-side suspended-token verification, read-only snapshot ACLs, bounded native
-argument quoting and cancellable overlapped I/O. The shared native admission cap
-covers all platforms. Dedicated x64/ARM64 CI is being added for the native tool
-fixture and a writable low-integrity LPAC control; enforcement remains unverified
-until those native jobs pass. Broker tool/LSP intents remain unavailable. The
-preceding guardian head `28056e8` passed dedicated Linux x64/ARM64/macOS probes,
-full Linux/macOS/remote checks and both Windows Lua sandbox architectures; its
-Windows package job was still running when this checkpoint was recorded.
-
-
-Native image preflight and durable storage are now implemented separately from
-execution grants. Imports pin and classify the selected image without running
-it, preserve quarantine/Zone.Identifier, and stream a checked private copy.
-The durable store bounds image admission to 64 records/256 MiB, retains failed
-reservations, binds command/source/profile/recipe ownership and revalidates
-content/trust marks before use. Native macOS broker tests include interruption,
-corruption, retirement crash cleanup and repeated import/removal without growth
-of the permanent exclusion registry. Per-run image/snapshot ownership, broker
-activation, persistent LSP and final SDK/reference/performance gates remain open.
+The work remains in focused draft PRs for review. No PR was merged and no
+release was published. Future capabilities listed above require their own
+authority, native enforcement and acceptance review.

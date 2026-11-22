@@ -1035,7 +1035,7 @@ fn validate_selection_range(text: &str, range: Range<usize>) -> Result<Range<usi
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
 
     use crate::app::{extensions::tests::app_with, tests::finish_app_job, Command};

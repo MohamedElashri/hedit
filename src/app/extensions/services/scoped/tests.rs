@@ -84,6 +84,62 @@ fn pump(app: &mut HeditApp, ctx: &egui::Context, ready: impl Fn(&HeditApp) -> bo
         std::thread::sleep(Duration::from_millis(3));
     }
 }
+
+#[test]
+fn oversized_provider_snapshot_is_rejected_before_copying_document_text() {
+    let config = tempfile::tempdir().unwrap();
+    install(
+        config.path(),
+        "return function(ctx) return {intent={finish={}}} end",
+        json!(["document.read", "events.observe", "ui.present"]),
+        "presentation",
+        &["manual"],
+        None,
+    );
+    let (_session, ctx, mut app) = app_with("short", Some(config.path()));
+    let catalog = catalog::read_consistent(config.path()).unwrap();
+    app.plugin_services.install(catalog.contributions);
+    let monitor = app
+        .plugin_services
+        .policy_monitor(config.path(), &ctx)
+        .unwrap();
+    let services = std::mem::take(&mut app.plugin_services);
+    app.workspace.open[app.workspace.active].page.text = "x".repeat(1024 * 1024);
+    let tick = Tick {
+        config: config.path(),
+        monitor: &monitor,
+        target: None,
+        language: hedit::syntax::Language::PlainText,
+        selection: false,
+        manual: None,
+        saved: None,
+        origin: None,
+        now: 0,
+        allow_start: true,
+    };
+    let mut result = None;
+    let costs = crate::app::extensions::lua::tests::measured_allocations::measure(|| {
+        result = Some(Scoped::default().start(
+            &services.entries[0],
+            &app,
+            &ctx,
+            &tick,
+            service::schedule::Pending {
+                trigger: Trigger::Manual,
+                generation: 0,
+                due_ms: 0,
+            },
+        ));
+    });
+    assert!(
+        matches!(result, Some(Err(StartFailure::Failed(message))) if message.contains("snapshot limit"))
+    );
+    assert!(
+        costs.2 < plugin_runtime::MAX_SELECTION_BYTES as u64,
+        "Oversized rejection allocated {} bytes",
+        costs.2
+    );
+}
 fn status(app: &HeditApp) -> Option<&str> {
     let ready = app
         .plugin_services

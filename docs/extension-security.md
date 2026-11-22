@@ -28,12 +28,18 @@ storage resistant to an attacker with the user's full authority.
 
 ## Process and authority boundaries
 
-Every invocation executes in a fresh child process. Commands, save hooks, and CLI
-fixtures use the same engine and native isolation path. There is no shared host
-containing multiple plugins, persistent Lua state, or in-process fallback.
+Every Lua invocation or provider callback executes in a fresh child process.
+Commands, save hooks, and CLI fixtures use the same engine and native isolation
+path. SDK 3 continuations start another fresh worker with explicitly returned,
+bounded state. Lua globals do not survive. A separately approved native language
+server can persist within one source/document scope; it never hosts Lua plugins.
+There is no in-process fallback.
 
-The broker is currently the editor's catalog/consent code, command/save routing,
-and runtime supervisor. It is not a general RPC service. Legacy workers receive
+The editor owns installation, consent, routing and effect application. The shared
+`hedit-broker` crate owns scoped operations and native-service lifetimes;
+`hedit-plugin` owns the Lua engine and native process adapters; `hedit-protocol`
+owns the shared bounded JSON/LSP codec. Lua has a closed typed operation set,
+never arbitrary editor RPC. Legacy workers receive
 the selected strings (the whole eligible local buffer for a save hook), language
 ID, declared scalar settings, and source. SDK workers instead receive a bounded
 current-document snapshot, declared arguments, reviewed package resources, and
@@ -68,8 +74,13 @@ and continue the ordinary save path.
 
 The protocol in `crates/hedit-plugin/src/runtime/protocol.rs` is internal to a
 matching editor/worker build, not a public extension API. There is one request and
-one reply per process, with no callback messages. SDK replies may propose only
-bounded document edits or a separately approved private-storage update.
+one reply per process, with no interactive callbacks within a worker. SDK 1
+replies propose bounded document edits or a separately approved private-storage
+update. SDK 2 adds typed provider results. SDK 3 replies yield a typed intent or
+finish; the broker validates and performs one authorized operation before
+starting the next fresh worker. A chain allows at most 32 callbacks, ten seconds
+of active work and separately bounded disclosure/retained state. Worker-supplied
+owner IDs, paths or permission assertions cannot create broker authority.
 The editing SDK uses distinct request magic `0xfffffffd` and an independently
 checked `sdk_version`. Selection-transform requests retain their existing magic
 and payload. No fallback translates document authority into selection authority.
@@ -173,12 +184,12 @@ side channels, and correctness of permitted output remain residual risks.
 
 ### Native tool process boundary
 
-Experimental API 5 / SDK 3 filter requests use separately imported and reviewed
-native images on macOS, Linux and Windows. Source approval alone does not grant a
+API 5 / SDK 3 filter and language-server requests use separately imported and
+reviewed native images on macOS, Linux and Windows. Source approval alone does not grant a
 tool. The broker binds an approved image to the exact command/source token,
 profile and argument recipe, then constructs an admitted private invocation.
-Language-server requests remain unavailable until their protocol and lifetime
-implementation is complete.
+A filter and a persistent language server use distinct trusted launch roles and
+resource budgets. Neither role can be selected or weakened by worker JSON.
 
 Treat the selected native image as hostile code. The trusted host supplies a
 private read-only executable copy and private project snapshot, never a live
@@ -188,7 +199,7 @@ metadata. Ownership and source/digest approval remain host responsibilities.
 Workspace writers and other processes running as the user remain outside this
 boundary; private-copy integrity must be checked by the broker before launch.
 
-Before reading document input, a fresh editor process closes inherited
+On macOS, before reading document input, a fresh editor process closes inherited
 descriptors, reads at most 16 KiB of policy metadata and applies a fixed Seatbelt
 policy. Only after its ready acknowledgement does the parent deliver text. The
 image receives no ambient environment, network, filesystem writes, child-process
@@ -196,7 +207,8 @@ creation or execution of another image. It can read its own image, the snapshot
 and required system libraries. Same-image exec retains the policy and CPU limit.
 No shell or user-supplied policy text is interpreted.
 
-Four finite filters can run per editor process. Input and stdout are each capped
+The native admission limit is four processes per editor; persistent services use
+at most three, leaving a foreground slot. Input and stdout are each capped
 at 64 KiB; stderr is capped at 4 KiB and is not rendered as a trusted host error.
 Each run has a maximum ten-second wall deadline, two-second hard CPU limit,
 64-descriptor hard limit, and monitored limits of 256 MiB physical footprint and
@@ -341,8 +353,8 @@ approval. Private provider cache is bounded scalar data, scoped to a provider's
 grant and active document. It is not a persistent shared Lua VM or a filesystem
 namespace. Scope/policy changes and Stop discard cache, jobs, and results.
 
-The native service role is selected by trusted launch arguments before IPC is
-read. After isolation, it sends one fixed readiness byte. Startup has a two-second
+The Lua provider worker role is selected by trusted launch arguments before IPC
+is read. After isolation, it sends one fixed readiness byte. Startup has a two-second
 deadline; processing/EOF/exit then has a 750 ms deadline. The callback instruction
 budget is 200,000; native memory/CPU ceilings and file/network/child restrictions
 remain. Rotation prevents a long-lived VM from outliving cumulative CPU limits.
@@ -379,8 +391,9 @@ Conformance coverage includes role confusion, reply truncation/duplicates,
 foreign requests/documents/revisions, Unicode/UTF-16/CRLF boundaries, malicious UI
 fields, bounded arrays/cache, event storms, late completion after Stop/Resume,
 failure quarantine, native confinement, and revoked/stale quick-fix effects.
-The roadmap gate also requires native checks on Linux/Windows and controlled
-active-provider frame/allocation measurements before claiming Stage 2 complete.
+Native service probes run on macOS, Linux x86-64/ARM64 and Windows x64/ARM64.
+Controlled egui frame/allocation probes supplement these policy and lifecycle
+tests; they do not measure GPU presentation or OS input delivery.
 
 Provider disclosure guards use shared locks, while revocation and persistent
 storage changes require exclusive locks. Computation and publication checks share
@@ -390,23 +403,28 @@ unconsumed guard even if the window stops pumping frames. Dropping a receipt
 releases it immediately. The UI takes a live guard without blocking and consumes
 it in the authorized operation; expired receipts produce no effect. Prompt and
 preview dwell hold no authorization lock. The editing SDK's approval handoff uses
-the same receipt policy. Tests cover unpumped/expired/dropped receipts and the
+the same receipt policy. UI retention treats a busy document mutex as pending,
+not as a revision change. That hint confers no authority: host/authorization
+threads wait up to 200 ms for a verifiable revision before and after acquiring
+the approval guard. Cancellation, a changed revision, poisoned state or exhausted
+wait denies disclosure/effects. UI retention/publication checks never wait for that mutex. Atomic effect
+application still validates the actual document revision. Tests cover unpumped/expired/dropped receipts and the
 retention of a consumed guard through its authorized operation.
 
 ## Workspace and external-service implementation
 
-Manifest APIs 1–4 retain the contracts above. The integration branch also accepts
-experimental API 5 / SDK 3 commands and providers with separate, exact-source resource
-review. A document grant never supplies a workspace directory or HTTPS endpoint;
-commands without document.read receive an empty neutral snapshot.
-Its [broker threat model](plugin-broker.md) describes the scoped file, recovery,
-watch, HTTPS and host-thread boundaries, current limits and remaining gates.
+Manifest APIs 1–4 retain the contracts above. API 5 / SDK 3 commands and providers
+use separate, exact-source resource review. A document grant never supplies a
+workspace directory or HTTPS endpoint; commands without document.read receive an
+empty neutral snapshot. The [broker contract](plugin-broker.md) specifies scoped
+file, recovery, watch, HTTPS and off-thread operation limits.
+
 Explicit workspace recovery is available through Extensions settings, including
 for journals whose source has since been uninstalled. It requires fresh user
-review and preserves ambiguous data. Native filters use separate executable
-selection and final resource approval. Persistent LSP, author tooling and final
-platform/performance acceptance remain implementation gates. The scoped command path is not a declaration that
-Stage 3 or the complete roadmap is finished.
+review and preserves ambiguous data. Filters and persistent LSP use separate
+image selection and final resource approval. API conformance, installed
+references, native adversarial checks and extracted-package acceptance cover
+these routes independently.
 
 ### Native image preflight and trust marks
 
@@ -443,8 +461,8 @@ root is excluded before image bytes arrive; importing and retiring images does
 not append per-image entries to the permanent workspace exclusion registry.
 Tool storage is opened separately from ordinary broker state, so damaged tool
 storage does not disable unrelated document/workspace features. Callback setup
-checks only the selected image's bounded metadata; each execution hashes and
-copies it again. Global admission scans run when imports are added or removed,
+checks only the selected image's bounded metadata; each new native process
+hashes and copies it again. Global admission scans run when imports are added or removed,
 rather than on every rotated callback.
 
 
@@ -469,9 +487,8 @@ there is no scratch directory or live workspace mount.
 
 These are bounded logical storage budgets with explicit entry limits, not a
 filesystem block quota. OS metadata allocation and filesystem/kernel pressure
-remain availability risks. Tool grants and persistent LSP activation require
-the broker's exact-source policy and lifetime integration in addition to these
-primitives.
+remain availability risks. The broker binds tool grants and persistent LSP owners
+to exact-source policy and document lifetimes as described below.
 
 
 The resource UI presents the selected filename, digest, data scope and complete
@@ -502,10 +519,10 @@ servers retain their separate 8 MiB message budget. Both use the same validation
 The incremental decoder bounds incoming chunks to 4 KiB, scans fragmented
 headers once and permanently fails after malformed input or truncated EOF.
 
-This codec supplies no process, file, document or method authority. Persistent
-plugin LSP activation still requires a confined native owner, request correlation,
-issued-URI validation, revision checks and revocation/cleanup integration. The
-built-in server launcher does not satisfy those plugin authority requirements.
+This codec supplies no process, file, document or method authority. Plugin LSP
+activation uses the confined owner, request correlation, exact issued URI,
+revision checks and revocation/cleanup rules below. Built-in language servers
+have a separate launcher and do not confer authority on plugin processes.
 
 The host-only duplex transport uses the existing native tool policy and private
 run bundle. It reserves at most three background native owners within the shared
@@ -558,7 +575,7 @@ Server-initiated requests receive MethodNotFound. In particular, a server cannot
 invoke workspace edits, execute commands, register capabilities or request
 configuration through this controller. Diagnostic notifications remain untrusted
 data until document URI/version/range and publication authority are checked.
-This protocol layer still does not activate installed plugin LSP profiles.
+Only a sealed, source-bound broker grant can activate an installed LSP profile.
 
 Typed LSP translation uses one exact host-issued file URI, an independent positive
 LSP version and the immutable SDK document/revision. Server URIs are compared as
@@ -574,9 +591,8 @@ edit actions use the shared SDK result validator before reaching Lua. Formatting
 and actions retain the exact SDK document/revision and pass its edit/preview
 rules. Snippet/defaulted completion edits, additional completion edits, server
 commands, resource operations and cross-document actions are unsupported by this
-translator and fail closed. Hover markup is plain native-rendered text. These
-typed primitives still require persistent authority/lifecycle integration before
-installed LSP profiles can be enabled.
+translator and fail closed. Hover markup is plain native-rendered text. All
+translated data passes the shared SDK result validator again before reaching Lua.
 
 The persistent native owner drives I/O on a dedicated host thread, including
 while parked. Its one queued request and current request are bounded; UI Drop
@@ -596,9 +612,9 @@ files requires an explicit new owner.
 
 Unversioned/foreign diagnostic notifications are filtered before retention.
 Idle message/byte accounting persists across polls, so an output flood cannot
-reset its budget with every wakeup. Installed LSP activation still requires the
-source/resource binding, policy subscriptions and editor scope owner; these
-host-only lifetime primitives do not confer a plugin grant.
+reset its budget with every wakeup. Source/resource binding, policy subscriptions
+and editor scope ownership are mandatory; native lifetime primitives alone do
+not confer a plugin grant.
 
 The broker now binds cached native owners to command, exact source-approval token,
 policy epoch, opaque document, imported image handle, complete profile recipe,
@@ -615,9 +631,11 @@ Stop, scope changes, source updates and revocation end it. Policy subscriptions
 deduplicate persistent registries and are bounded to 32 entries alongside rotating
 contexts; native process/context admission limits are unchanged.
 
-Language-server recipes currently use literal startup arguments. Native UI
-selection remains gated while cancellation/reply draining, installed references
-and final author/package/performance validation are completed.
+Language-server recipes use literal startup arguments. The manager reviews the
+imported image, digest, complete recipe and data scope before granting use.
+The shipped JSON formatter/project-LSP reference exercises this installed route;
+the CLI transcript fixtures validate the same typed intents without granting real
+file, tool or network effects.
 
 Callback supersession is distinct from scope revocation. An unsent request can
 be removed; a partial frame finishes while its caller still holds disclosure
@@ -627,3 +645,34 @@ abandoned IDs can remain. A second reply for a retired ID, an unknown reply or
 exhausted tombstone budget kills the connection. The caller waits for the I/O
 acknowledgment before releasing its guard; superseded data cannot reach Lua or
 publication. Document/policy closure still kills and reaps the process.
+
+## Scoped broker effects and recovery
+
+The [broker contract](plugin-broker.md) defines the API and exact quotas for
+discovery, search, watchers, batched reads, reviewed existing-file edit plans and
+endpoint-scoped HTTPS. Resource grants are independent of source approval and
+document grants. Physical root identity, exclusions, relative-path validation,
+file identity and content versions are checked at use; a worker cannot choose an
+ambient root or turn a read into an edit.
+
+Workspace previews confer no authority. Application checks current policy and
+all file preconditions, then uses a recoverable journal and per-file receipts.
+Filesystems do not provide an atomic multi-file commit: partial failures require
+explicit recovery, and there is no global multi-file Undo. Unknown, aliased or
+corrupt recovery data is preserved rather than recursively deleted. Recovery
+does not silently overwrite externally changed files.
+
+HTTPS approval fixes the exact public URL, method, content type and upload/
+response limits. No redirects, proxy settings, arbitrary headers, cookies,
+compression or ambient credentials are exposed. DNS answers must all be public;
+the broker pins them, verifies TLS hostname and connected peer, and applies
+deadlines, rate limits and cancellation. Combining reads with network access
+explicitly discloses the data that may leave the editor. Public-endpoint trust
+and approved output correctness remain outside sandbox enforcement.
+
+Coverage-guided AddressSanitizer campaigns run separately for SDK worker replies
+and shared LSP/data JSON, retaining corpus, logs, hashes and source snapshots.
+Native adversarial probes, real editor integration and extracted-package tests
+remain required: a clean parser campaign cannot establish sandbox enforcement.
+The [broker validation guide](plugin-broker.md#external-tools-and-validation)
+describes reproduction commands and the scope of the measurements.

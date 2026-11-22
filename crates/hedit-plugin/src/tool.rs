@@ -227,7 +227,7 @@ pub struct Output {
 }
 
 /// Run a finite filter. No shell, ambient environment, network or live project
-/// directory is supplied. Other native adapters remain disabled until verified.
+/// directory is supplied. Native policy failure makes the invocation unavailable.
 pub fn run(
     launch: &Launch,
     input: &[u8],

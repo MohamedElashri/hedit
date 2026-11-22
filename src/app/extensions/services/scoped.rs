@@ -58,6 +58,8 @@ pub(super) struct Tick<'a> {
     pub config: &'a std::path::Path,
     pub monitor: &'a policy::Monitor,
     pub target: Option<&'a lua::Target>,
+    pub language: hedit::syntax::Language,
+    pub selection: bool,
     pub manual: Option<&'a str>,
     pub saved: Option<(u64, u64)>,
     pub origin: Option<&'a (u64, u64, String)>,
@@ -151,11 +153,10 @@ impl Scoped {
                 .ok()
         });
         let info = &app.active().page.info;
-        let selection = app.selections().iter().any(|s| s.anchor != s.head);
         let eligible = entry.contribution.when.matches(
-            app.active().language(),
+            tick.language,
             info.path.as_ref().map(|_| info.name.as_str()),
-            selection,
+            tick.selection,
         ) && (!reads || lifetime.is_some());
         if self
             .run
@@ -306,9 +307,9 @@ impl Scoped {
             entry.scope.as_ref()
         };
         let text = if reads && !closing {
-            app.active().page.text.clone()
+            app.active().page.text.as_str()
         } else {
-            String::new()
+            ""
         };
         if text.len() > plugin_runtime::MAX_SELECTION_BYTES {
             return Err("Document exceeds the provider snapshot limit.".into());
@@ -321,9 +322,9 @@ impl Scoped {
             } else {
                 "plain_text"
             },
-            text.clone(),
+            text.to_owned(),
             if reads && !closing {
-                lua::snapshot_selections(&text, &app.selections())
+                lua::snapshot_selections(text, &app.selections())
             } else {
                 vec![plugin_runtime::sdk::Selection { anchor: 0, head: 0 }]
             },
