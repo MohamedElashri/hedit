@@ -165,8 +165,7 @@ impl Opens {
                 let result = if request.cancel.load(Ordering::Relaxed) {
                     Ok(Action::Nothing)
                 } else {
-                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(work))
-                        .unwrap_or_else(|_| Err("The file reader stopped unexpectedly.".into()))
+                    jobs::run(work)
                 };
                 let _ = tx.send(Completed { request, result });
                 ctx.request_repaint();

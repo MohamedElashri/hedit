@@ -47,6 +47,7 @@ mod goto_tests;
 mod group_tabs;
 #[cfg(test)]
 mod interaction_tests;
+mod jobs;
 mod language_servers;
 #[cfg(test)]
 mod long_line_tests;
@@ -709,7 +710,7 @@ impl HeditApp {
         let sender = self.tx.clone();
         let ctx = ctx.clone();
         thread::spawn(move || {
-            let _ = sender.send(job());
+            let _ = sender.send(jobs::run(job));
             ctx.request_repaint();
         });
     }
@@ -732,15 +733,9 @@ impl HeditApp {
                     return;
                 }
             };
-            let generation = self.generation;
-            let sender = self.checkpoint_tx.clone();
-            let ctx = ctx.clone();
-            self.checkpoint_pending = true;
-            self.checkpoint_worker = Some(thread::spawn(move || {
-                let result = remote.metadata(Some(view)).map(|_| ());
-                let _ = sender.send(Checkpoint { generation, result });
-                ctx.request_repaint();
-            }));
+            self.checkpoint_job(ctx, self.generation, move || {
+                remote.metadata(Some(view)).map(|_| ())
+            });
             return;
         }
         let store: Arc<SessionStore> = Arc::clone(&self.workspace.store);
@@ -766,21 +761,15 @@ impl HeditApp {
                 .clone()
                 .map(|path| (path, self.project_snapshot()))
         };
-        let generation = self.generation;
-        let sender = self.checkpoint_tx.clone();
-        let ctx = ctx.clone();
-        self.checkpoint_pending = true;
-        self.checkpoint_worker = Some(thread::spawn(move || {
-            let result = store.save_snapshot(snapshot).and_then(|()| {
+        self.checkpoint_job(ctx, self.generation, move || {
+            store.save_snapshot(snapshot).and_then(|()| {
                 if let Some((path, state)) = project_state {
                     hedit::projects::atomic_json(&path.with_extension("hedit-workspace"), &state?)
                 } else {
                     Ok(())
                 }
-            });
-            let _ = sender.send(Checkpoint { generation, result });
-            ctx.request_repaint();
-        }));
+            })
+        });
     }
     fn open(&mut self, ctx: &egui::Context, path: Option<PathBuf>) {
         self.open_path(ctx, path, true);
