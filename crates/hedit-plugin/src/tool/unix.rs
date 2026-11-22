@@ -7,6 +7,8 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
     time::{Duration, Instant},
 };
+mod stream;
+pub(super) use stream::Stream;
 
 #[cfg(target_os = "linux")]
 use super::HELPER;

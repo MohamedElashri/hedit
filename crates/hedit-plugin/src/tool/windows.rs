@@ -14,6 +14,9 @@ use windows_sys::Win32::{
     System::{Threading::*, IO::*},
 };
 
+mod stream;
+pub(super) use stream::Stream;
+
 struct Pipe {
     file: File,
     event: OwnedHandle,

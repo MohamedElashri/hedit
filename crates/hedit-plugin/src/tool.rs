@@ -37,6 +37,8 @@ use linux as native;
 mod windows;
 
 static ACTIVE: AtomicUsize = AtomicUsize::new(0);
+mod stream;
+pub use stream::{Progress, Stream};
 struct Admission;
 impl Admission {
     fn acquire() -> io::Result<Self> {

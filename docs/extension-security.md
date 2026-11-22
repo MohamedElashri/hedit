@@ -504,3 +504,17 @@ This codec supplies no process, file, document or method authority. Persistent
 plugin LSP activation still requires a confined native owner, request correlation,
 issued-URI validation, revision checks and revocation/cleanup integration. The
 built-in server launcher does not satisfy those plugin authority requirements.
+
+The host-only duplex transport uses the existing native tool policy and private
+run bundle. It reserves at most three background native owners within the shared
+four-process cap. Each owner retains its image/snapshot lease until after native
+termination/reaping; cancellation, deadline, closed pipes or accounting failure
+permanently close the transport. The host must continuously drive the owner,
+including while idle. Readiness waits are bounded to 50 ms for cancellation and
+resource checks, with kernel pipe events instead of a busy loop.
+
+The native cumulative two-second user-CPU ceiling remains in force. Duplex owners
+also expire after 120 seconds and at 16 MiB in each transport direction, with a
+4 KiB lifetime stderr budget. These are fixed host limits, not worker-selected
+values. No implicit restart resets them. This transport alone does not activate
+LSP grants or establish a persistent document/service owner.
