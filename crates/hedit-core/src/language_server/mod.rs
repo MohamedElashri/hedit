@@ -3,6 +3,7 @@ mod client;
 pub mod manager;
 mod service;
 pub mod text;
+pub mod wire;
 pub mod workspace_edit;
 pub use service::{Document, Event, Feature, Operation, Reply, Service, Status};
 pub const MAX_DOCUMENT: usize = 4 * 1024 * 1024;

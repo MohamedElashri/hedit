@@ -488,3 +488,19 @@ system environment; opaque document handles do not conceal those OS paths.
 OS-managed objects and AppContainer profile cleanup after abnormal host exit
 remain availability/housekeeping concerns, distinct from protected document
 copies and kill-on-parent-exit enforcement.
+
+### Language-server framing
+
+The shared LSP codec accepts ASCII CRLF headers with one positive byte-counted
+Content-Length and an optional JSON/UTF-8 Content-Type. It rejects duplicate
+headers, duplicate JSON fields at any depth, invalid UTF-8, trailing JSON,
+ambiguous JSON-RPC envelopes and out-of-range request IDs. Scoped messages are
+limited to 256 KiB, 8,192 JSON values/keys and 64 nesting levels; built-in editor
+servers retain their separate 8 MiB message budget. Both use the same validation.
+The incremental decoder bounds incoming chunks to 4 KiB, scans fragmented
+headers once and permanently fails after malformed input or truncated EOF.
+
+This codec supplies no process, file, document or method authority. Persistent
+plugin LSP activation still requires a confined native owner, request correlation,
+issued-URI validation, revision checks and revocation/cleanup integration. The
+built-in server launcher does not satisfy those plugin authority requirements.

@@ -213,7 +213,7 @@ fn edit_batches_validate_before_mutating_and_preserve_equal_insert_order() {
 }
 #[test]
 fn bounded_frames_accept_fragmented_utf8_and_multiple_messages() {
-    let data = json!({"jsonrpc":"2.0","method":"fixture","params":"😀ع"});
+    let data = json!({"jsonrpc":"2.0","method":"fixture","params":{"text":"😀ع"}});
     let bytes = serde_json::to_vec(&data).unwrap();
     let wire = format!(
         "content-length: {}\r\nContent-Type: application/vscode-jsonrpc; charset=utf-8\r\n\r\n",

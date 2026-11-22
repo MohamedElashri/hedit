@@ -48,3 +48,10 @@ This also instruments vendored native code through `CFLAGS`/`CXXFLAGS`. On macOS
 select compatible `CC`/`CXX` explicitly if the platform's Apple Clang has a
 different sanitizer ABI from Rust. A sanitizer link failure is a failed campaign,
 not a reason to suppress ABI guards or report coverage-only evidence as sanitized.
+
+## LSP framing
+
+`cargo +nightly fuzz run lsp_wire` exercises the shared scoped LSP JSON/framing
+codec, fragmented input and encode/decode invariants. It does not launch a server
+or establish broker authority. Retain sanitizer logs and the corpus with the
+source revision when recording a campaign.

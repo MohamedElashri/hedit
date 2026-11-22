@@ -93,9 +93,13 @@ jobs:
   codec:
     if: github.event_name == 'schedule' || inputs.protocol_security
     concurrency:
-      group: plugin-security-${{ github.ref }}
+      group: plugin-security-${{ github.ref }}-${{ matrix.target }}
       cancel-in-progress: true
-    name: AddressSanitizer protocol fuzzing
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [sdk_protocol, lsp_wire]
+    name: AddressSanitizer protocol fuzzing (${{ matrix.target }})
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
@@ -110,11 +114,11 @@ jobs:
         with:
           python-version: '3.12'
       - name: Fuzz bounded requests, replies, and transactions
-        run: python scripts/fuzz-plugin-codec.py --sanitizer address --seconds 600 --out-dir target/plugin-security
+        run: python scripts/fuzz-plugin-codec.py --target ${{ matrix.target }} --sanitizer address --seconds 600 --out-dir target/plugin-security
       - name: Retain source hashes, logs, corpus, and failure artifacts
         if: always()
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: plugin-security-${{ github.run_id }}
+          name: plugin-security-${{ matrix.target }}-${{ github.run_id }}
           path: target/plugin-security
           retention-days: 14
