@@ -96,7 +96,7 @@ mod tests {
         let worker = std::thread::spawn(move || expiry.wait());
         worker.join().unwrap();
         assert!(receipt.take().is_none());
-        contender.try_lock().unwrap();
+        hedit_core::file_io::lock_with_timeout(&contender, Duration::from_secs(2)).unwrap();
         contender.unlock().unwrap();
         let locked = File::options()
             .read(true)
@@ -107,7 +107,7 @@ mod tests {
         let (receipt, expiry) = Receipt::new(locked);
         drop(receipt);
         expiry.wait();
-        contender.try_lock().unwrap();
+        hedit_core::file_io::lock_with_timeout(&contender, Duration::from_secs(2)).unwrap();
     }
     #[test]
     fn a_consumed_guard_retains_authority_until_the_authorized_operation_finishes() {
@@ -131,6 +131,8 @@ mod tests {
             Err(std::fs::TryLockError::WouldBlock)
         ));
         drop(guard);
-        contender.try_lock().unwrap();
+        // Parallel native launches can briefly inherit the open description.
+        // Keep the receipt deadline strict; only wait for OS lock cleanup here.
+        hedit_core::file_io::lock_with_timeout(&contender, Duration::from_secs(2)).unwrap();
     }
 }

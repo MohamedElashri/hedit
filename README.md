@@ -90,9 +90,9 @@ Improvements awaiting a release can be tried by [building from source](DEVELOPER
   line. Write Markdown beside a synchronized preview with local images, LaTeX
   equations, and Mermaid diagrams. [Git](USER_GUIDE.md#source-control) ·
   [Markdown](USER_GUIDE.md#markdown-preview).
-
-- **Extend local editing.** Install snippet commands and file templates, or
-  approve Lua text transforms with previews, settings, and optional save hooks.
+- **Extend local editing.** Add editing commands, language providers, syntax/theme
+  packs and scoped project integrations. Review document, folder, endpoint and
+  native-tool permissions; inspect proposed edits before applying them.
   Author and test signed bundles with the built-in CLI.
   [Extensions](USER_GUIDE.md#extensions) · [Authoring reference](docs/extensions.md).
 

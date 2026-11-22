@@ -98,7 +98,7 @@ and display latency. Keep collection/file I/O off the UI thread.
 | Shared document/filesystem/search/Git/build engine | `crates/hedit-core/` |
 | SSH transport, worker, journal, path isolation | `crates/hedit-remote/` |
 | Shared Lua runtime and native sandbox adapters | `crates/hedit-plugin/` |
-| Experimental scoped workspace/service host; not enabled for installed plugins | `crates/hedit-broker/` and [broker design](docs/plugin-broker.md) |
+| Scoped workspace/service broker and confined native LSP host | `crates/hedit-broker/` and [broker contract](docs/plugin-broker.md) |
 | Sessions, settings, syntax, editing, updates | `src/` |
 | Native frame loop and feature panels | `src/app.rs`, `src/app/` |
 | Integration tests and SSH workspace driver | `tests/`, `tests/support/` |
@@ -130,72 +130,62 @@ for consistent focus/Escape. Help resolves only explicitly bundled documents.
 
 ## Lua extension architecture and testing
 
-The GUI-independent `crates/hedit-plugin` crate owns one Lua 5.4 engine for
-commands, fixtures, multi-selection edits, and save hooks. Extension authors use
-the [manifest and Lua reference](docs/extensions.md); host integration lives in
-`src/app/extensions/`. The [extension threat model](docs/extension-security.md)
-defines trust boundaries, residual risks, and security test requirements.
+The extension platform uses one Lua 5.4 engine and small native sandbox adapters.
+The [author overview](docs/extensions.md) routes authors to the editing,
+provider and scoped-service contracts. Host integration lives in
+`src/app/extensions/`. The [threat model](docs/extension-security.md) defines
+authority, platform enforcement, resource limits and residual risks.
 
 | Component | Responsibility |
 | --- | --- |
-| `runtime.rs`, `options.rs` | Shared invocation limits, command identifiers, and scalar settings |
-| `runtime/protocol.rs` | Bounded request/reply codec, independent parent/worker validation, and exact edit-count parsing |
-| `runtime/engine.rs` | Lua library allowlist and instruction/memory limits |
-| `runtime/unix.rs`, `runtime/windows.rs` | Pipe delivery, cancellation, deadlines, and worker reaping |
-| `error.rs` | Typed runtime failures and fixed display messages; command/save activity classifies failures by type |
-| `sandbox/` | Native process confinement and resource checks; no Lua API or language policy |
-| Editor extension modules | Installation reviews, command consent, settings, previews, undoable edits, and save bindings |
+| `hedit-plugin/runtime` | Fresh Lua workers, restricted libraries, invocation limits, pipe delivery, cancellation and reaping |
+| `hedit-plugin/sdk`, `service`, `broker` | Editing, provider and continuation contracts |
+| `hedit-plugin/sandbox`, `tool` | Lua/native process confinement and resource supervision |
+| `hedit-protocol` | Shared bounded codecs; parsing alone creates no authority |
+| `hedit-broker` | Reviewed workspace/network/native effects, recoverable edits and persistent LSP ownership |
+| Editor extension modules | Installation, consent, previews, save bindings, scheduling and native result UI |
 
-Each invocation starts a fresh worker with a restricted environment. The parent
-establishes isolation before sending text; the worker checks its confinement
-before reading a request. Lua receives text and declared scalar settings, with
-no file, network, process, or editor APIs. The shared engine allows 16 MiB of Lua
-allocations and one million instructions. Normal invocations have a two-second
-deadline; save hooks have 400 ms. Native memory limits also cover allocations
-outside Lua.
-Worker failures carry fixed status codes. Lua error text stays inside the worker;
-only the corresponding typed failure and fixed display message reach the editor.
-Asynchronous command and authorization checks wake the host event loop after
-queueing their results. The UI also retains bounded fallback polling.
+The parent establishes isolation before delivering text, and workers verify
+their confinement before reading a request. Each callback uses a fresh Lua VM.
+Scoped callbacks request typed broker operations; Lua has no ambient filesystem,
+network, process or editor-internal access. A native LSP process can persist
+within its approved source/document lifetime and finite budgets.
 
-| Platform | Native boundary | Worker layout |
-| --- | --- | --- |
-| Linux x86-64 / ARM64 | seccomp syscall allowlist, descriptor restrictions, and a 256 MiB address-space limit; requires Linux 5.9 or the isolation syscalls backported | Editor executable through `/proc/self/exe` |
-| macOS universal | Signed App Sandbox helper with hardened runtime, CPU/child-process caps, and a parent-enforced 256 MiB physical-footprint limit | Nested `Contents/Helpers/hedit-plugin.app` |
-| Windows x86-64 / ARM64 | Capability-free AppContainer, private image ACL, explicit inherited handles, dynamic-code/child-process restrictions, and a job limiting memory to 256 MiB, CPU to two seconds, and active processes to one | Adjacent `hedit-plugin-worker.exe` |
+Worker failures carry fixed status codes; arbitrary Lua errors and native
+stderr do not reach the editor. Authorization and command workers publish their
+results before waking the event loop. The UI never waits for plugin IPC,
+filesystem/network work or process termination. Consent is bound to reviewed
+source bytes and capabilities; publication and effects recheck current policy
+and document identity.
 
-The macOS parent validates the running helper's identifier, signing team, and
-exact entitlement set (`com.apple.security.app-sandbox=true`). Windows validates
-the suspended token and job before resuming the worker. App Sandbox permits its
-own container and some system resources; its policy differs from Linux seccomp
-and Windows AppContainer. The Lua allowlist is identical across platforms.
+On macOS, `make dev`, `make build` and `make run` prepare the signed Lua helper.
+After a custom Cargo build, run:
 
-Consent binds a command and its capabilities to the reviewed manifest, installed
-file identity, and a fresh token. Authorization holds the extension change lock
-through input delivery and is checked again before applying an edit. Read policy
-revisions through the held handle: Windows locks reject a second open handle.
-Document revision, pane, and selections must still match. Updates install the
-reviewed bytes and revoke grants before replacing files. Unsupported approval
-storage remains untouched until an explicit reset preserves a backup.
+```sh
+python3 scripts/macos_plugin_helper.py --editor target/debug/hedit
+```
 
-On macOS, `make dev`, `make build`, and `make run` prepare the signed helper.
-After a custom Cargo build, run `python3 scripts/macos_plugin_helper.py --editor
-target/debug/hedit`. Packaging signs the nested helper before the containing app.
-On Windows, build with `--workspace` to include the adjacent headless executable.
+Packaging signs the nested helper before the containing app. Windows workspace
+builds include the adjacent headless worker. Native JSON reference tools and
+offline author resources are included in every platform package; see
+[distribution resources](#packaging-and-releases).
 
 | Check | Command |
 | --- | --- |
-| Confinement, limits, and supervision | `cargo test --locked -p hedit-plugin` |
-| Editor consent, preview, settings, and save behavior | `cargo test --locked --bin hedit app::extensions` |
-| Executable fixtures and signed distribution | `cargo test --locked --test lua_plugin_runtime --test plugin_distribution` |
+| Lua/native confinement and supervision | `cargo test --locked -p hedit-plugin` |
+| Shared wire codecs | `cargo test --locked -p hedit-protocol` |
+| Scoped authority, recovery and real native effects | `cargo test --locked -p hedit-broker` |
+| Confined JSON formatter/project LSP | `cargo test --locked -p hedit-json-tools` |
+| Editor consent, providers, previews and Save | `cargo test --locked --bin hedit app::extensions` |
+| Author fixtures and signed distribution | `cargo test --locked --test lua_plugin_runtime --test plugin_sdk --test plugin_distribution` |
 | Save conflicts and access restrictions | `cargo test --locked --test save_security` |
 
-The Windows plugin workflow runs these checks natively on x64 and ARM64 and
-executes the shipped Lua example from the extracted x64 package. Unit tests can
-select a built worker with `HEDIT_LUA_TEST_WORKER`; production ignores it.
-Native probes must demonstrate isolation failures, resource termination, and
-cleanup. Desktop presentation, clipboard, dialogs, and accessibility also need
-an interactive Windows smoke test.
+CI runs native tool probes on macOS, Linux x86-64/ARM64 and Windows x64/ARM64.
+The Windows Lua workflow also executes the shipped example from an extracted
+package. `HEDIT_LUA_TEST_WORKER` selects a worker only in tests; production ignores
+it. Follow the [broker validation guide](docs/plugin-broker.md#external-tools-and-validation)
+for isolated timing runs and extracted-package acceptance. Interactive desktop
+smoke tests still cover presentation, clipboard, dialogs and accessibility.
 
 ## SSH architecture and testing
 
@@ -216,7 +206,6 @@ an install lock serializes concurrent setup. Recovery directories remain under
 uploads use private directories under the same account's home and are removed
 on completion. No sudo, package manager, or remote download command is used.
 
-
 [User setup and limits](USER_GUIDE.md#ssh-remote-workspaces). Each connection owns
 a native window. Remote documents are memory-backed/ephemeral; local recovery
 rejects them and launch metadata excludes content/tool output. Recovery, undo,
@@ -227,10 +216,15 @@ Remote Explorer discovers concrete aliases with a bounded read-only parser in
 connection time. A zero internal port means inherit config; an explicit CLI port
 must be nonzero. Local `ssh-workspaces.json` holds connection metadata only.
 
-Keep pinned host keys, direct connections, explicit execution trust, and
-reconnect trust reset. No forwarding, multiplexed connection reuse, credentials,
-or workspace-provided SSH configuration. Validate paths with descriptor-relative,
-no-symlink operations; remote identities never grant local filesystem access.
+Keep pinned host keys at every hop, explicit execution trust and reconnect trust
+reset. Linux/macOS clients can opt into verified config jump hosts and
+connection-owned loopback TCP forwards. Ordinary helper/tool connections disable
+multiplexing; forwarding uses its own private control socket and is torn down
+with the connection. Arbitrary ProxyCommand, reverse/dynamic forwarding and
+workspace-provided SSH configuration remain forbidden. Interactive credentials
+travel through the GUI askpass pipe and are never persisted. Validate paths with
+descriptor-relative, no-symlink operations; remote identities never grant local
+filesystem access.
 
 Writer epochs fence old clients; receipts bind session, sequence, and revision.
 Replay deduplicates committed edits. Transport failures get at most five retries

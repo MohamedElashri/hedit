@@ -1,5 +1,8 @@
 //! Bounded, portable bundles for locally distributed extensions.
-use super::manifest::{self, Manifest, MAX_COMMANDS, MAX_MANIFEST_BYTES};
+use super::{
+    catalog::open_regular_leaf,
+    manifest::{self, Manifest, MAX_COMMANDS, MAX_MANIFEST_BYTES},
+};
 use crate::plugin_runtime::MAX_SOURCE_BYTES;
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use serde::{de, Deserialize, Serialize};
@@ -8,7 +11,7 @@ use std::{
     collections::BTreeMap,
     ffi::OsString,
     fmt,
-    fs::{self, File, OpenOptions},
+    fs::File,
     io::{self, Write},
     path::Path,
 };
@@ -340,28 +343,6 @@ fn read_sibling(directory: &Path, filename: &str, maximum: u64) -> Result<Vec<u8
     checked_read(file, maximum).map_err(|error| format!("Could not read {filename} ({error})."))
 }
 
-fn open_regular_leaf(path: &Path) -> io::Result<File> {
-    let metadata = fs::symlink_metadata(path)?;
-    if !metadata.is_file() {
-        return Err(io::Error::other("Choose a regular file."));
-    }
-    let mut options = OpenOptions::new();
-    options.read(true);
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    {
-        use rustix::fs::OFlags;
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags((OFlags::NOFOLLOW | OFlags::NONBLOCK).bits() as i32);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::OpenOptionsExt;
-        use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT;
-        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
-    }
-    options.open(path)
-}
-
 fn checked_read(file: File, maximum: u64) -> io::Result<Vec<u8>> {
     let properties = file.metadata()?;
     if !properties.is_file() {
@@ -550,6 +531,7 @@ mod tests {
         lua_authorization, set_lua_approved, ImportPreview, InstallChange,
     };
     use crate::app::extensions::manifest::ExtensionAction;
+    use std::fs;
 
     const AUTHOR: &str = r#"{
         "api_version": 2,

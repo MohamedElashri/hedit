@@ -14,6 +14,10 @@
 - Run Lua text transforms on macOS, Linux, and Windows x86-64 and ARM64 using one shared engine with native process isolation. Review command-scoped permissions, allow a single attempt, preview multi-selection edits, and restore changes with Undo.
 - Configure typed extension settings, explicitly enable language-specific save hooks, and inspect recent command outcomes.
 - Validate and test extensions from the CLI. Package Lua source into versioned bundles and verify publisher signatures when reviewing updates.
+- Author structured document edits and selections with the versioned editing SDK, declared inputs, reviewed modules/resources and bounded private command storage.
+- Add approved diagnostics, completion, hover, symbols, quick fixes and decorations through isolated providers and native result UI; install bounded syntax/theme packs.
+- Grant scoped workspace discovery/read/search/watch, reviewed existing-file edits with recoverable journals, fixed public HTTPS requests and exact native tool images.
+- Run confined native filters and persistent document-bound LSP services on macOS, Linux and Windows. Packages include native JSON formatting/project-LSP and scoped rename/Markdown reference plugins.
 
 ### Changed
 
@@ -26,6 +30,7 @@
 - Require worker output EOF before accepting Unix replies, and prevent native child-process creation in the macOS Lua helper.
 - Avoid repeated document scans when Lua commands read multiple selections, and remove per-character offset tables from multicursor replacements.
 - Wake the editor when Lua authorization checks and commands finish so results appear promptly.
+- Preserve scoped work during transient document-lock contention, reuse idle provider metadata and reject oversized snapshots before copying document text.
 - Preserve cached Markdown figures with different text colors during redraws.
 - Report unreadable positions in malformed paged files without stalling the open worker.
 - Use atomic creation for new Save As destinations so another file created during the save stays intact and pending edits remain available for retry.

@@ -1,5 +1,5 @@
 //! Per-invocation private copies with durable disk admission and live leases.
-use super::{projection, store, Image, Projection};
+use super::{projection, store, store::LOCK, Image, Projection};
 use crate::{
     journal::native,
     workspace::{identity, Identity, Protected},
@@ -25,7 +25,6 @@ const MAX_RUNS: usize = 4;
 const MAX_BYTES: u64 = 512 * 1024 * 1024;
 const OVERHEAD: u64 = 512 * 1024;
 const META_BYTES: u64 = 256 * 1024;
-const LOCK: &str = "index.lock";
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Record {
@@ -190,22 +189,7 @@ impl Runs {
         };
         store.current()?;
         protected.insert(store.directory.try_clone()?)?;
-        let mut options = OpenOptions::new();
-        options
-            .read(true)
-            .write(true)
-            .create(true)
-            .follow(FollowSymlinks::No)
-            .nonblock(true);
-        #[cfg(unix)]
-        {
-            use cap_std::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let file = store.directory.open_with(LOCK, &options)?;
-        identity::regular(&file)?;
-        hedit_core::private_io::verify(&file.into_std())?;
-        native::sync_dir(&store.directory)?;
+        store::prepare_index(&store.directory)?;
         // Admission and payload checks run in prepare/reap. Callback setup
         // should not traverse live project projections.
         Ok(store)

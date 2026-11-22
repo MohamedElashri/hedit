@@ -120,23 +120,13 @@ pub(super) fn enter(launch: &Launch) -> io::Result<()> {
 
 pub(super) fn prepare(role: super::Role) -> io::Result<()> {
     crate::sandbox::close_tool_descriptors()?;
-    // Lower hard limits too: a hostile image must not raise them after exec.
     for (resource, maximum) in [
         (libc::RLIMIT_CORE, 0),
         (libc::RLIMIT_CPU, role.cpu_seconds()),
         (libc::RLIMIT_NPROC, 0),
         (libc::RLIMIT_NOFILE, 64),
     ] {
-        let mut limits = std::mem::MaybeUninit::<libc::rlimit>::uninit();
-        if unsafe { libc::getrlimit(resource, limits.as_mut_ptr()) } != 0 {
-            return Err(io::Error::last_os_error());
-        }
-        let mut limits = unsafe { limits.assume_init() };
-        limits.rlim_cur = limits.rlim_cur.min(maximum);
-        limits.rlim_max = limits.rlim_max.min(maximum);
-        if unsafe { libc::setrlimit(resource, &limits) } != 0 {
-            return Err(io::Error::last_os_error());
-        }
+        super::unix::lower_limit(resource as _, maximum)?;
     }
     if unsafe { libc::setpriority(libc::PRIO_PROCESS, 0, 10) } != 0 {
         return Err(io::Error::last_os_error());

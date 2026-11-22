@@ -1,6 +1,7 @@
 # Extensions
 
-Extensions add snippet commands, file templates, or Lua 5.4 text transforms.
+Extensions add editing commands, file templates, language providers, syntax/theme
+packs and scoped project or external-service integrations using Lua 5.4.
 Install a JSON manifest or a versioned `.hedit-plugin` bundle through
 **Settings → Extensions → Install from file…**. Commands run from the Command
 Palette or a personal key binding; file templates appear under
@@ -29,11 +30,22 @@ once** or **Approve command**. Select text and run **Quote selection as Markdown
 from the Command Palette. With previews enabled, review the proposal and choose
 **Apply changes**. One Undo restores the original text and selections.
 
-API `3` adds the [document editing SDK](plugin-sdk.md) with explicit document
-permissions, structured edits, and declared command inputs. API `2` below keeps
-its selection-only contract.
+Choose the contract for the capability you need:
+
+| Manifest API / SDK | Contract |
+| --- | --- |
+| API 1 | Declarative snippets and file templates |
+| API 2 | Selection-only Lua transforms, described below |
+| API 3 / SDK 1 | [Document edits](plugin-sdk.md), selections, declared inputs and reviewed package resources |
+| API 4 / SDK 2 | [Providers](plugin-services.md), native result UI and declarative visual packs |
+| API 5 / SDK 3 | [Scoped services](plugin-broker.md), workspace operations, reviewed native tools/LSP and fixed public HTTPS endpoints |
+
+All versions remain supported. Each capability requires its own reviewed grant;
+installing or signing a bundle does not approve its commands or external tools.
 
 ## Lua API
+
+This section describes the API 2 selection-only contract.
 
 A script returns a function receiving the selected text, language ID, and declared
 settings. Return one UTF-8 replacement string without NUL characters:
@@ -65,6 +77,9 @@ worker starts for each invocation; no state persists between invocations.
 
 
 ## Manifest fields
+
+These fields describe API 1/2 manifests. Newer versions add the fields in their
+SDK references and the [manifest schema](../schemas/plugin-manifest.schema.json).
 
 | Field | Purpose |
 | --- | --- |

@@ -778,7 +778,8 @@ such as `{"python": {"tab_size": 4}}`, and custom `build_systems`.
 
 ### Extensions
 
-Extensions add snippet commands, file templates, and Lua text transforms. Open
+Extensions add editing commands, file templates, language assistance, syntax/theme
+packs and scoped project integrations. Open
 **Settings → Extensions** to install, update, disable, or uninstall them. Run
 commands from the Command Palette or assign a personal key binding. Templates
 appear under **New File from Template…**.
@@ -794,6 +795,13 @@ same page. **Lua on Save** separately enables a persistently approved command
 for a language; it can replace the whole local file when you save. Updated or
 reapproved commands need a new save binding. Failed hooks save the current editor
 text without applying the hook's proposed changes.
+
+Providers need separate persistent approval for their triggers and document
+access. Their typed results appear in native editor UI; Stop and revocation
+cancel their work. Scoped commands can request selected folders, fixed public
+endpoints or exact native tool images through additional resource reviews.
+Workspace edits require a file-by-file preview and Apply; incomplete application
+keeps a recovery record. Signing a bundle does not grant these permissions.
 
 See the [extension reference](docs/extensions.md) for installable examples, Lua
 limits, manifest fields, fixture tests, and signed bundles.

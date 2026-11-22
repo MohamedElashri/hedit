@@ -34,6 +34,29 @@ use std::{
     sync::Arc,
 };
 
+pub(super) fn open_regular_leaf(path: &Path) -> std::io::Result<File> {
+    use std::io;
+    let metadata = std::fs::symlink_metadata(path)?;
+    if !metadata.is_file() {
+        return Err(io::Error::other("Choose a regular file."));
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        use rustix::fs::OFlags;
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags((OFlags::NOFOLLOW | OFlags::NONBLOCK).bits() as i32);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    options.open(path)
+}
+
 #[derive(Default)]
 pub(super) struct Catalog {
     pub(super) contributions: Vec<Contribution>,
