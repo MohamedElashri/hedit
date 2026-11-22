@@ -328,14 +328,67 @@ pub fn validate(value: &Value) -> io::Result<()> {
     }
     Ok(())
 }
+fn structure(value: &Value, depth: usize, remaining: &mut usize) -> io::Result<()> {
+    if *remaining == 0 || depth > DEPTH {
+        return Err(invalid());
+    }
+    *remaining -= 1;
+    match value {
+        Value::Array(values) => {
+            for value in values {
+                structure(value, depth + 1, remaining)?;
+            }
+        }
+        Value::Object(values) => {
+            for value in values.values() {
+                if *remaining == 0 {
+                    return Err(invalid());
+                }
+                *remaining -= 1; // Field name, matching the duplicate-safe decoder.
+                structure(value, depth + 1, remaining)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+struct Encoded {
+    bytes: Vec<u8>,
+    maximum: usize,
+}
+impl io::Write for Encoded {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if bytes.len() > self.maximum.saturating_sub(self.bytes.len()) {
+            return Err(invalid());
+        }
+        self.bytes.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
 pub fn encode(value: &Value, limits: Limits) -> io::Result<Vec<u8>> {
     validate(value)?;
-    let bytes = serde_json::to_vec(value).map_err(|_| invalid())?;
-    // Validate depth/node bounds for host-generated nested payloads too.
-    parse_json(&bytes, limits)?;
-    let mut frame = format!("Content-Length: {}\r\n\r\n", bytes.len()).into_bytes();
-    frame.extend(bytes);
-    Ok(frame)
+    let mut remaining = limits.nodes;
+    structure(value, 0, &mut remaining)?;
+    // Reserve framing space up front. Serialization stops at the byte limit;
+    // it never reparses or clones a host-owned document just to count nodes.
+    const PREFIX: usize = 32;
+    let mut encoded = Encoded {
+        bytes: vec![0; PREFIX],
+        maximum: limits.message + PREFIX,
+    };
+    serde_json::to_writer(&mut encoded, value).map_err(|_| invalid())?;
+    let length = encoded.bytes.len() - PREFIX;
+    let header = format!("Content-Length: {length}\r\n\r\n");
+    if header.len() > PREFIX {
+        return Err(invalid());
+    }
+    encoded.bytes.copy_within(PREFIX.., header.len());
+    encoded.bytes.truncate(header.len() + length);
+    encoded.bytes[..header.len()].copy_from_slice(header.as_bytes());
+    Ok(encoded.bytes)
 }
 
 #[cfg(test)]
