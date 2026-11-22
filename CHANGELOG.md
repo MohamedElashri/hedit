@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-22
+
+### Changed
+
+- Add the [documentation website](https://melashri.net/hedit/) for editor users and plugin developers.
+- Reduce development build storage with compact debugging information, optional shared compiler intermediates, and scoped cleanup commands across worktrees.
+
+### Fixed
+
+- Remove redundant Remote Explorer and terminal controls. Keep compact navigation available when the activity bar is hidden, and apply consistent Source Control availability during background operations.
+- Avoid repeated document scans and replacement allocations when restoring split-view cursors.
+- Report panicked background operations and recovery checkpoints instead of leaving the editor busy or blocking shutdown. Keep drafts available and permit recovery retries.
+
 ## [0.7.0] - 2026-11-22
 
 ### Added
