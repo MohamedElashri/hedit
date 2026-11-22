@@ -2132,6 +2132,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "hedit-json-tools"
+version = "0.6.2"
+dependencies = [
+ "hedit-broker",
+ "hedit-plugin",
+ "hedit-protocol",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "hedit-plugin"
 version = "0.6.2"
 dependencies = [

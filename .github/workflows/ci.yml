@@ -64,6 +64,9 @@ jobs:
       - name: Verify imported images and private broker run lifecycle
         if: ${{ !cancelled() }}
         run: cargo test --locked -p hedit-broker --test native_tools
+      - name: Run the native JSON reference through the production broker
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p hedit-json-tools
       - name: Verify mandatory integrity against a writable LPAC control
         if: ${{ !cancelled() && runner.os == 'Windows' }}
         run: cargo test --locked -p hedit-plugin --lib native_tool_integrity_cannot_be_raised_or_disabled -- --nocapture
