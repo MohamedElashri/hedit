@@ -97,18 +97,8 @@ pub struct Launch {
     pub arguments: Vec<String>,
 }
 impl Launch {
-    fn validate(&self) -> io::Result<()> {
-        if self.arguments.len() > 32
-            || self.arguments.iter().any(|arg| arg.contains('\0'))
-            || self
-                .arguments
-                .iter()
-                .map(|arg| arg.len() + 1)
-                .sum::<usize>()
-                > 4096
-        {
-            return Err(invalid());
-        }
+    pub fn validate(&self) -> io::Result<()> {
+        Self::validate_arguments(&self.arguments)?;
         for path in [&self.executable, &self.snapshot] {
             if !path.is_absolute() || std::fs::canonicalize(path)? != *path {
                 return Err(invalid());
@@ -155,6 +145,20 @@ impl Launch {
                 )
             )))]
             let _ = magic;
+        }
+        Ok(())
+    }
+    pub fn validate_arguments(arguments: &[String]) -> io::Result<()> {
+        if arguments.len() > 32
+            || arguments.iter().any(|arg| arg.contains('\0'))
+            || arguments
+                .iter()
+                .try_fold(0usize, |bytes, arg| {
+                    bytes.checked_add(arg.len())?.checked_add(1)
+                })
+                .is_none_or(|bytes| bytes > 4096)
+        {
+            return Err(invalid());
         }
         Ok(())
     }

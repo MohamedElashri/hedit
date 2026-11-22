@@ -148,7 +148,7 @@ pub struct Root {
     policy: Policy,
     protected: Protected,
 }
-fn component(name: &str) -> bool {
+pub(crate) fn component(name: &str) -> bool {
     let base = name
         .split('.')
         .next()

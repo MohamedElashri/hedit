@@ -57,7 +57,7 @@ fn image_grants_bind_command_source_profile_recipe_and_pinned_content() {
     drop(store);
     let store = open(directory.path());
     assert_eq!(
-        store.resolve(id, &owner, &cancel).unwrap().bytes,
+        store.resolve(id, &owner, &cancel).unwrap().bytes(),
         bytes.len() as u64
     );
     store.remove(id, &owner).unwrap();

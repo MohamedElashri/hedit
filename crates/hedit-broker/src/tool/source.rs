@@ -32,6 +32,24 @@ fn changed() -> io::Error {
     )
 }
 impl Source {
+    pub(super) fn verified(
+        file: File,
+        path: PathBuf,
+        stamp: Stamp,
+        header: Header,
+        marks: Marks,
+    ) -> Self {
+        Self {
+            file,
+            path,
+            stamp,
+            header,
+            marks,
+        }
+    }
+    pub(super) fn into_file(self) -> File {
+        self.file
+    }
     /// Call off the UI thread after an explicit host file-picker selection.
     /// This reads headers/trust marks only and does not execute selected code.
     pub fn select(path: &Path) -> io::Result<Self> {

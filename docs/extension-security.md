@@ -439,3 +439,29 @@ not append per-image entries to the permanent workspace exclusion registry.
 Tool storage is opened separately from ordinary broker state, so damaged tool
 storage does not disable unrelated document/workspace features. Broker tool/LSP
 activation and per-invocation snapshot admission remain separate requirements.
+
+
+Per-invocation bundles reserve disk admission separately from imported images:
+at most four live or abandoned bundles and 512 MiB of reserved image/snapshot
+payload plus bookkeeping allowance. A bundle uses a distinct executable copy;
+Windows invocation ACLs never touch the persistent imported image. Its OS lease
+stays with the host I/O owner until the native supervisor has killed/reaped the
+process. Parent-death handling remains the native adapter's responsibility.
+After host death, a later admission can reclaim an unlocked bundle; unknown,
+aliased, oversized or changed-root data is preserved rather than recursively
+deleted. Durable retirement names allow cleanup to resume after interruption.
+
+Project snapshots contain the explicitly approved workspace surface: visible
+safe regular UTF-8 files, with no hidden paths, symlinks, aliases or protected
+storage. They require both discover and read approval. Projection refuses
+truncation, binary/oversized/unreadable files, more than 16 MiB retained text,
+64 KiB of relative path text or 2,000 file/directory nodes. It never presents a
+silently truncated project to a tool. Files are immutable copies; live project
+changes do not mutate a running tool's view. Native policy prohibits writes;
+there is no scratch directory or live workspace mount.
+
+These are bounded logical storage budgets with explicit entry limits, not a
+filesystem block quota. OS metadata allocation and filesystem/kernel pressure
+remain availability risks. Tool grants and persistent LSP activation require
+the broker's exact-source policy and lifetime integration in addition to these
+primitives.
