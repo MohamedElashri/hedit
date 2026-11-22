@@ -410,6 +410,22 @@ mod native {
                 1
             );
             assert_eq!(unsafe { libc::prctl(libc::PR_GET_SECCOMP, 0, 0, 0, 0) }, 2);
+            for syscall in [libc::SYS_clock_gettime, libc::SYS_clock_getres] {
+                let mut value = std::mem::MaybeUninit::<libc::timespec>::uninit();
+                for clock in [0, 1, 2, 3] {
+                    assert_eq!(
+                        unsafe { libc::syscall(syscall, clock, value.as_mut_ptr()) },
+                        0
+                    );
+                }
+                for clock in [-6, -14, -15, 99] {
+                    assert_eq!(
+                        unsafe { libc::syscall(syscall, clock, value.as_mut_ptr()) },
+                        -1
+                    );
+                    assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::EPERM));
+                }
+            }
             for flags in [
                 0,
                 libc::CLONE_VM as u64,

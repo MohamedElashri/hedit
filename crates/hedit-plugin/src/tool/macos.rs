@@ -33,7 +33,7 @@ type Initialize = unsafe extern "C" fn(
 ) -> libc::c_int;
 type FreeError = unsafe extern "C" fn(*mut libc::c_char);
 
-pub(super) fn check_resources(pid: u32) -> io::Result<()> {
+pub(super) fn check_resources(pid: u32) -> io::Result<std::time::Duration> {
     if crate::sandbox::over_memory_limit_pid(pid)? {
         return Err(io::Error::other("Tool memory limit exceeded."));
     }
@@ -50,10 +50,31 @@ pub(super) fn check_resources(pid: u32) -> io::Result<()> {
     if bytes as usize != std::mem::size_of_val(&task) {
         return Err(io::Error::last_os_error());
     }
-    if unsafe { task.assume_init() }.pti_threadnum > 32 {
+    let task = unsafe { task.assume_init() };
+    if task.pti_threadnum > 32 {
         return Err(io::Error::other("Tool thread limit exceeded."));
     }
-    Ok(())
+    // XNU fill_taskprocinfo exports Mach absolute CPU ticks, not nanoseconds.
+    let ticks = task
+        .pti_total_user
+        .checked_add(task.pti_total_system)
+        .ok_or_else(|| io::Error::other("Tool CPU accounting overflow."))?;
+    #[repr(C)]
+    struct Timebase {
+        numer: u32,
+        denom: u32,
+    }
+    unsafe extern "C" {
+        fn mach_timebase_info(info: *mut Timebase) -> libc::c_int;
+    }
+    let mut timebase = Timebase { numer: 0, denom: 0 };
+    if unsafe { mach_timebase_info(&mut timebase) } != 0 || timebase.denom == 0 {
+        return Err(io::Error::other("Tool CPU accounting unavailable."));
+    }
+    let nanos = u128::from(ticks) * u128::from(timebase.numer) / u128::from(timebase.denom);
+    Ok(std::time::Duration::from_nanos(
+        u64::try_from(nanos).map_err(|_| io::Error::other("Tool CPU accounting overflow."))?,
+    ))
 }
 
 pub(super) fn enter(launch: &Launch) -> io::Result<()> {
@@ -97,12 +118,12 @@ pub(super) fn enter(launch: &Launch) -> io::Result<()> {
     Ok(())
 }
 
-pub(super) fn prepare() -> io::Result<()> {
+pub(super) fn prepare(role: super::Role) -> io::Result<()> {
     crate::sandbox::close_tool_descriptors()?;
     // Lower hard limits too: a hostile image must not raise them after exec.
     for (resource, maximum) in [
         (libc::RLIMIT_CORE, 0),
-        (libc::RLIMIT_CPU, 2),
+        (libc::RLIMIT_CPU, role.cpu_seconds()),
         (libc::RLIMIT_NPROC, 0),
         (libc::RLIMIT_NOFILE, 64),
     ] {

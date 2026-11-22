@@ -1,6 +1,6 @@
 use super::{Pipe, Worker};
 use crate::tool::{
-    stream::{check, Progress, CHUNK},
+    stream::{check, Progress, Rate, CHUNK},
     Launch, STDERR_BYTES,
 };
 use std::{
@@ -20,6 +20,8 @@ pub(in crate::tool) struct Stream {
     output: Pipe,
     stderr: Pipe,
     errors: Vec<u8>,
+    error_rate: Rate,
+    cpu: Duration,
     error_eof: bool,
     accounting: Instant,
 }
@@ -30,7 +32,7 @@ impl Stream {
         deadline: Instant,
     ) -> io::Result<Self> {
         check(cancel, deadline)?;
-        let mut child = Worker::spawn_native(launch)?;
+        let mut child = Worker::spawn_native(launch, crate::tool::Role::Service)?;
         let input = Pipe::new(child.input.take().ok_or_else(crate::tool::invalid)?)?;
         let output = Pipe::new(child.output.take().ok_or_else(crate::tool::invalid)?)?;
         let stderr = Pipe::new(child.stderr.take().ok_or_else(crate::tool::invalid)?)?;
@@ -41,9 +43,14 @@ impl Stream {
             output,
             stderr,
             errors: Vec::new(),
+            error_rate: Rate::new(Instant::now(), STDERR_BYTES as u64),
+            cpu: Duration::ZERO,
             error_eof: false,
             accounting: Instant::now(),
         })
+    }
+    pub(in crate::tool) fn cpu_time(&self) -> Duration {
+        self.cpu
     }
     pub(in crate::tool) fn poll(
         &mut self,
@@ -54,16 +61,17 @@ impl Stream {
             return Err(io::Error::other("Native service exited."));
         }
         if self.accounting.elapsed() >= Duration::from_millis(50) {
-            if self.child.over_cpu_limit()? {
-                return Err(io::Error::other("Tool CPU limit exceeded."));
-            }
+            self.cpu = self.child.cpu_time()?;
             if self.child.over_thread_limit()? {
                 return Err(io::Error::other("Tool thread limit exceeded."));
             }
             self.accounting = Instant::now();
         }
+        self.errors.clear();
         self.stderr
             .read(&mut self.errors, STDERR_BYTES, &mut self.error_eof)?;
+        self.error_rate
+            .charge(Instant::now(), self.errors.len() as u64)?;
         let read = match self.output.transfer(None)? {
             Some(0) => {
                 return Err(io::Error::new(

@@ -69,6 +69,28 @@ impl Drop for Admission {
 }
 
 const HELPER: &str = "--hedit-tool-worker";
+const SERVICE_HELPER: &str = "--hedit-tool-service";
+/// Chosen only by trusted host launch paths, never by a Lua message/header.
+#[derive(Clone, Copy)]
+pub(crate) enum Role {
+    Filter,
+    Service,
+}
+impl Role {
+    pub(crate) fn cpu_seconds(self) -> u64 {
+        match self {
+            Self::Filter => 2,
+            Self::Service => 60,
+        }
+    }
+    #[cfg(unix)]
+    fn argument(self) -> &'static str {
+        match self {
+            Self::Filter => HELPER,
+            Self::Service => SERVICE_HELPER,
+        }
+    }
+}
 #[cfg(any(
     target_os = "macos",
     all(
@@ -223,9 +245,13 @@ pub fn run_if_requested(args: &[std::ffi::OsString]) -> Option<bool> {
     if args == [guardian::ARG] {
         return Some(guardian::run().unwrap_or(false));
     }
-    if args != [HELPER] {
+    let role = if args == [HELPER] {
+        Role::Filter
+    } else if args == [SERVICE_HELPER] {
+        Role::Service
+    } else {
         return None;
-    }
+    };
     #[cfg(any(
         target_os = "macos",
         all(
@@ -233,7 +259,7 @@ pub fn run_if_requested(args: &[std::ffi::OsString]) -> Option<bool> {
             any(target_arch = "x86_64", target_arch = "aarch64")
         )
     ))]
-    return Some(unix::bootstrap().is_ok());
+    return Some(unix::bootstrap(role).is_ok());
     #[cfg(not(any(
         target_os = "macos",
         all(
@@ -241,5 +267,8 @@ pub fn run_if_requested(args: &[std::ffi::OsString]) -> Option<bool> {
             any(target_arch = "x86_64", target_arch = "aarch64")
         )
     )))]
-    Some(false)
+    {
+        let _ = role;
+        Some(false)
+    }
 }

@@ -11,7 +11,7 @@ mod stream;
 pub(super) use stream::Stream;
 
 #[cfg(target_os = "linux")]
-use super::HELPER;
+use super::Role;
 
 #[cfg(target_os = "linux")]
 struct Process {
@@ -20,10 +20,10 @@ struct Process {
 }
 #[cfg(target_os = "linux")]
 impl Process {
-    fn spawn(launcher: &Path, _: &AtomicBool, _: Instant) -> io::Result<Self> {
+    fn spawn(launcher: &Path, _: &AtomicBool, _: Instant, role: Role) -> io::Result<Self> {
         use std::process::Stdio;
         let child = Command::new(launcher)
-            .arg(HELPER)
+            .arg(role.argument())
             .env_clear()
             .current_dir("/")
             .stdin(Stdio::piped())
@@ -101,7 +101,7 @@ pub(super) fn run(
             "Tool cancelled.",
         ));
     }
-    let mut child = Process::spawn(launcher, cancel, started + timeout)?;
+    let mut child = Process::spawn(launcher, cancel, started + timeout, super::Role::Filter)?;
     let mut stdin = Some(child.child.stdin.take().ok_or_else(super::invalid)?);
     let mut stdout = child.child.stdout.take().ok_or_else(super::invalid)?;
     let mut stderr = child.child.stderr.take().ok_or_else(super::invalid)?;
@@ -123,7 +123,7 @@ pub(super) fn run(
         }
         if child.status()?.is_none() {
             match super::native::check_resources(child.pid) {
-                Ok(()) => {}
+                Ok(_) => {}
                 Err(error) if error.raw_os_error() == Some(libc::ESRCH) => {}
                 Err(error) if child.status()?.is_none() => return Err(error),
                 Err(_) => {}
@@ -195,11 +195,11 @@ pub(super) fn run(
     }
 }
 
-pub(super) fn bootstrap() -> io::Result<()> {
+pub(super) fn bootstrap(role: super::Role) -> io::Result<()> {
     use std::os::unix::process::CommandExt;
     #[cfg(target_os = "macos")]
     super::guardian::arm()?;
-    super::native::prepare()?;
+    super::native::prepare(role)?;
     for (fd, mode) in [
         (0, libc::O_RDONLY),
         (1, libc::O_WRONLY),

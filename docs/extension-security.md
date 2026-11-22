@@ -513,13 +513,38 @@ permanently close the transport. The host must continuously drive the owner,
 including while idle. Readiness waits are bounded to 50 ms for cancellation and
 resource checks, with kernel pipe events instead of a busy loop.
 
-The native cumulative two-second user-CPU ceiling remains in force. Duplex owners
-also expire after 120 seconds and at 16 MiB in each transport direction, with a
-4 KiB lifetime stderr budget. These are fixed host limits, not worker-selected
-values. No implicit restart resets them. This transport alone does not activate
-LSP grants or establish a persistent document/service owner.
+Finite filters retain their two-second CPU and ten-second wall limits. Native
+services use a distinct host-selected launch role with these limits:
 
-The scoped JSON-RPC controller serializes at most 256 requests per connection
+| Resource | Service limit |
+| --- | --- |
+| Cumulative CPU | 60 seconds; hard native user-time ceiling on Windows, hard CPU ceiling on Unix, plus monitored user + kernel CPU on every platform |
+| Rolling CPU | Two CPU seconds in any ten-second interval |
+| Wall lifetime | 30 minutes; requests/startup still have ten-second deadlines |
+| Input / output | 8 MiB each in any ten-second interval |
+| Stderr | 4 KiB in any ten-second interval; discarded after accounting |
+| Requests | 32,768 non-reused host IDs |
+| Native memory / threads | 256 MiB / 32; same enforcement and residual overshoot as the filter policy |
+| Automatic restarts | Zero; failures and lifetime exhaustion require an explicit provider restart |
+
+Rolling counters retain three five-second buckets. This conservatively retains
+charges for ten to fifteen seconds and has constant memory. CPU sampling runs
+at most every 50 ms on the I/O thread; OS scheduling can add detection/termination
+delay. Unix counts include kernel time; Windows additionally retains the 10%
+job CPU-rate cap. CPU counters must be monotonic and accounting failures close
+the connection. Callback supersession cannot reset these counters or renew the
+hard process lifetime.
+
+The host selects the service role before native limits are installed; the JSON
+launch header and Lua intents cannot change it. On macOS, task CPU values are
+Mach absolute ticks and are converted with the system timebase. On Linux, a
+bounded /proc stat record supplies user/kernel clock ticks and thread count;
+Windows uses GetProcessTimes. Read-only image/snapshot confinement, no network
+or child creation, and source-bound grants remain identical between native roles.
+This deliberately bounded policy does not support arbitrary heavyweight language
+servers or continuous unbounded uptime.
+
+The scoped JSON-RPC controller serializes at most 32,768 requests per connection
 with non-reused host IDs. It rejects responses before full request delivery,
 foreign/duplicate/unsolicited responses and error responses. Scope cancellation, timeout, malformed frames and protocol failures destroy the
 native owner. Superseded callbacks fence delivered IDs separately, so a late

@@ -1,6 +1,6 @@
 //! macOS has no parent-death signal. A trusted, event-driven guardian watches the
 //! native process and terminates it when the editor's control socket closes.
-use super::HELPER;
+use super::Role;
 use std::{
     io::{self, Read, Write},
     os::{
@@ -24,13 +24,18 @@ pub(super) struct Process {
     finished: Option<ExitStatus>,
 }
 impl Process {
-    pub fn spawn(launcher: &Path, cancel: &AtomicBool, deadline: Instant) -> io::Result<Self> {
+    pub fn spawn(
+        launcher: &Path,
+        cancel: &AtomicBool,
+        deadline: Instant,
+        role: Role,
+    ) -> io::Result<Self> {
         let (control, inherited) = UnixStream::pair()?;
         control.set_nonblocking(true)?;
         let descriptor = inherited.as_raw_fd();
         let mut command = Command::new(launcher);
         command
-            .arg(HELPER)
+            .arg(role.argument())
             .env_clear()
             .current_dir("/")
             .stdin(Stdio::piped())

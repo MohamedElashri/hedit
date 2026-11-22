@@ -102,6 +102,7 @@ fn main() {
     empty(&config.join("extensions-broker/tool-runs"));
     cancel.store(false, Ordering::Release);
     duplex(&state, id, &owner);
+    sustained_service(&state, id, &owner);
     empty(&config.join("extensions-broker/tool-runs"));
     let peer_source = root.path().join("lsp.rs");
     std::fs::write(&peer_source, include_str!("fixtures/native_lsp.rs")).unwrap();
@@ -279,13 +280,80 @@ fn duplex(state: &State, image: Handle, binding: &Binding) {
         match noisy.poll(&[], &mut [0; 4096], &cancel, deadline) {
             Ok(_) => noisy.wait(false).unwrap(),
             Err(error) => {
-                assert_eq!(error.to_string(), "Tool output limit exceeded.");
+                assert_eq!(
+                    error.to_string(),
+                    "Native service transport budget exhausted."
+                );
                 break;
             }
         }
     }
     drop(noisy);
     println!("Duplex native transport: repeated Unicode exchanges, foreground reservation, cancellation, poison and lease cleanup passed.");
+}
+// Three CPU-bearing requests exceed the finite filter's cumulative CPU and
+// stderr caps. Continuous idle polling must retain confinement and renew only
+// the service's rolling accounting, without restarting or changing images.
+fn sustained_service(state: &State, image: Handle, binding: &Binding) {
+    use std::time::Instant;
+    let cancel = AtomicBool::new(false);
+    let run = state
+        .tool_runs()
+        .unwrap()
+        .prepare(
+            state
+                .tool_store()
+                .unwrap()
+                .resolve(image, binding, &cancel)
+                .unwrap(),
+            Projection::empty(),
+            vec!["--stream-cpu".into()],
+            &cancel,
+        )
+        .unwrap();
+    let mut service = run
+        .service(&cancel, Instant::now() + Duration::from_secs(10))
+        .unwrap();
+    for round in 0..3 {
+        if round != 0 {
+            let until = Instant::now() + Duration::from_secs(15);
+            while Instant::now() < until {
+                let progress = service
+                    .poll(
+                        &[],
+                        &mut [0; 4096],
+                        &cancel,
+                        Instant::now() + Duration::from_secs(10),
+                    )
+                    .unwrap();
+                assert_eq!(progress.read, 0);
+                service.wait(false).unwrap();
+            }
+        }
+        let text = b"service";
+        let mut request = (text.len() as u32).to_le_bytes().to_vec();
+        request.extend(text);
+        let mut sent = 0;
+        let mut response = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while response.len() < text.len() + 4 {
+            let mut buffer = [0; 4096];
+            let progress = service
+                .poll(&request[sent..], &mut buffer, &cancel, deadline)
+                .unwrap();
+            sent += progress.written;
+            response.extend_from_slice(&buffer[..progress.read]);
+            if progress.idle() {
+                service.wait(sent < request.len()).unwrap();
+            }
+        }
+        assert_eq!(sent, request.len());
+        assert_eq!(
+            response,
+            [7, 0, 0, 0, b'S', b'E', b'R', b'V', b'I', b'C', b'E']
+        );
+    }
+    drop(service);
 }
 fn empty(path: &Path) {
     let names: Vec<_> = std::fs::read_dir(path)
