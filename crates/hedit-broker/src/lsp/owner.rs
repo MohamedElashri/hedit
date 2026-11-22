@@ -20,7 +20,6 @@ struct Native {
     service: Service,
     close: Arc<Cancel>,
     scope: Arc<Cancel>,
-    request: Option<Arc<Cancel>>,
     lifetime: Option<hedit_core::lifetime::Lease>,
 }
 impl Native {
@@ -31,11 +30,8 @@ impl Native {
             .is_some_and(|lifetime| !lifetime.current())
             || self.close.is_cancelled()
             || self.scope.is_cancelled()
-            || self
-                .request
-                .as_ref()
-                .is_some_and(|cancel| cancel.is_cancelled())
         {
+            self.close.cancel();
             return Err(cancelled());
         }
         Ok(())
@@ -153,7 +149,6 @@ impl Owner {
                         service,
                         close: close.clone(),
                         scope: scope.clone(),
-                        request: None,
                         lifetime: lifetime.clone(),
                     };
                     peer::Peer::start(
@@ -189,34 +184,24 @@ impl Owner {
                     match receiver.recv_timeout(Duration::from_millis(50)) {
                         Ok(query) => {
                             let query: Query = query;
-                            if peer
-                                .connection
-                                .transport_mut()
-                                .map(|native| native.request = Some(query.cancel.clone()))
-                                .is_err()
-                            {
-                                let _ = query.reply.send(Err(failed()));
-                                return;
-                            }
                             let result = peer.request(
                                 query.snapshot,
                                 query.method,
                                 query.position,
                                 query.may_edit,
-                                close.flag(),
+                                (close.flag(), query.cancel.flag()),
                                 query.deadline,
                             );
                             let stopped = result.as_ref().is_err_and(|error| {
                                 !matches!(
                                     error.kind(),
-                                    io::ErrorKind::Unsupported | io::ErrorKind::PermissionDenied
+                                    io::ErrorKind::Unsupported
+                                        | io::ErrorKind::PermissionDenied
+                                        | io::ErrorKind::Interrupted
                                 )
                             });
-                            if let Ok(native) = peer.connection.transport_mut() {
-                                native.request = None;
-                            }
                             let _ = query.reply.send(result);
-                            if stopped {
+                            if stopped || !peer.connection.open() {
                                 return;
                             }
                         }
@@ -290,19 +275,26 @@ impl Owner {
                     "Scoped language-server owner is busy.",
                 )
             })?;
+        // Keep the caller's disclosure guard alive until the I/O thread has
+        // completed any partial frame and acknowledged the superseded ID.
         match wait(
             &receiver,
             &self.close,
             &self.scope,
-            Some(&cancel),
+            None,
             deadline,
             self.lifetime.as_ref(),
         ) {
             Ok(result) => {
+                if cancel.is_cancelled() {
+                    return Err(cancelled());
+                }
                 if result.as_ref().is_err_and(|error| {
                     !matches!(
                         error.kind(),
-                        io::ErrorKind::Unsupported | io::ErrorKind::PermissionDenied
+                        io::ErrorKind::Unsupported
+                            | io::ErrorKind::PermissionDenied
+                            | io::ErrorKind::Interrupted
                     )
                 }) {
                     self.close.cancel();

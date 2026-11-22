@@ -20,6 +20,9 @@ struct Wire {
     duplicate: bool,
     wrong: bool,
     truncate: bool,
+    supersede: Option<Arc<AtomicBool>>,
+    supersede_partial: Option<Arc<AtomicBool>>,
+    held: VecDeque<Vec<u8>>,
 }
 impl Wire {
     fn new(chunk: usize) -> Self {
@@ -32,6 +35,9 @@ impl Wire {
             duplicate: false,
             wrong: false,
             truncate: false,
+            supersede: None,
+            supersede_partial: None,
+            held: VecDeque::new(),
         }
     }
 }
@@ -54,6 +60,11 @@ impl Transport for Wire {
     ) -> io::Result<Progress> {
         let written = input.len().min(self.chunk);
         self.decoder.push(&input[..written])?;
+        if written > 0 {
+            if let Some(flag) = self.supersede_partial.take() {
+                flag.store(true, Ordering::Release);
+            }
+        }
         while let Some(request) = self.decoder.next_message()? {
             self.stats.lock().unwrap().received.push(request.clone());
             if let Some(id) = request
@@ -71,6 +82,15 @@ impl Transport for Wire {
                 }
                 let value = json!({"jsonrpc":"2.0", "id":if self.wrong { json!(999) } else { id.clone() }, "result":result});
                 let bytes = wire::encode(&value, Limits::SCOPED)?;
+                if let Some(flag) = self
+                    .supersede
+                    .as_ref()
+                    .filter(|_| request["method"] != "initialize")
+                {
+                    flag.store(true, Ordering::Release);
+                    self.held.push_back(bytes);
+                    continue;
+                }
                 self.output.extend(&bytes);
                 if self.duplicate {
                     self.output.extend(&bytes);
@@ -300,4 +320,164 @@ fn idle_flood_limits_do_not_reset_on_each_poll() {
         .idle(&AtomicBool::new(false), deadline())
         .is_err());
     assert!(connection.transport.is_none());
+}
+
+#[test]
+fn superseded_replies_are_fenced_and_cancellation_does_not_reuse_ids() {
+    let mut connection = ready(Wire::new(READ_BYTES));
+    let superseded = Arc::new(AtomicBool::new(false));
+    connection.transport.as_mut().unwrap().supersede = Some(superseded.clone());
+    assert_eq!(
+        connection
+            .request_cancellable(
+                Method::Hover,
+                json!({}),
+                &AtomicBool::new(false),
+                &superseded,
+                deadline()
+            )
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::Interrupted
+    );
+    assert!(connection.open());
+    assert_eq!(connection.retired.iter().copied().collect::<Vec<_>>(), [2]);
+    let wire = connection.transport.as_mut().unwrap();
+    wire.supersede = None;
+    let old = wire.held.pop_front().unwrap();
+    wire.output.extend(old);
+    let stats = wire.stats.clone();
+    assert_eq!(
+        connection
+            .request(
+                Method::Hover,
+                json!({}),
+                &AtomicBool::new(false),
+                deadline()
+            )
+            .unwrap(),
+        json!({"items":[]})
+    );
+    assert!(connection.retired.is_empty());
+    let received = &stats.lock().unwrap().received;
+    assert!(received
+        .iter()
+        .any(|value| value["method"] == "$/cancelRequest" && value["params"]["id"] == 2));
+    assert_eq!(received.last().unwrap()["id"], 3);
+}
+
+#[test]
+fn unsent_and_partially_sent_superseded_requests_keep_framing_consistent() {
+    for partial in [false, true] {
+        let mut connection = ready(Wire::new(if partial { 1 } else { READ_BYTES }));
+        let superseded = Arc::new(AtomicBool::new(!partial));
+        if partial {
+            connection.transport.as_mut().unwrap().supersede_partial = Some(superseded.clone());
+        }
+        assert_eq!(
+            connection
+                .request_cancellable(
+                    Method::Hover,
+                    json!({"text":"café / 東京"}),
+                    &AtomicBool::new(false),
+                    &superseded,
+                    deadline()
+                )
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::Interrupted
+        );
+        assert!(connection.open());
+        assert_eq!(
+            connection
+                .request(
+                    Method::Hover,
+                    json!({}),
+                    &AtomicBool::new(false),
+                    deadline()
+                )
+                .unwrap(),
+            json!({"items":[]})
+        );
+    }
+}
+
+#[test]
+fn abandoned_id_budget_and_hard_cancellation_still_destroy_the_owner() {
+    let mut connection = ready(Wire::new(READ_BYTES));
+    let superseded = Arc::new(AtomicBool::new(false));
+    for _ in 0..16 {
+        superseded.store(false, Ordering::Release);
+        connection.transport.as_mut().unwrap().supersede = Some(superseded.clone());
+        assert_eq!(
+            connection
+                .request_cancellable(
+                    Method::Hover,
+                    json!({}),
+                    &AtomicBool::new(false),
+                    &superseded,
+                    deadline()
+                )
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::Interrupted
+        );
+        assert!(connection.open());
+    }
+    superseded.store(false, Ordering::Release);
+    assert!(connection
+        .request_cancellable(
+            Method::Hover,
+            json!({}),
+            &AtomicBool::new(false),
+            &superseded,
+            deadline()
+        )
+        .is_err());
+    assert!(!connection.open());
+    let mut connection = ready(Wire::new(READ_BYTES));
+    assert!(connection
+        .request_cancellable(
+            Method::Hover,
+            json!({}),
+            &AtomicBool::new(true),
+            &AtomicBool::new(true),
+            deadline()
+        )
+        .is_err());
+    assert!(!connection.open());
+}
+
+#[test]
+fn retired_error_responses_are_discarded_once_and_duplicates_fail_closed() {
+    let mut connection = ready(Wire::new(READ_BYTES));
+    let superseded = Arc::new(AtomicBool::new(false));
+    connection.transport.as_mut().unwrap().supersede = Some(superseded.clone());
+    assert!(connection
+        .request_cancellable(
+            Method::Hover,
+            json!({}),
+            &AtomicBool::new(false),
+            &superseded,
+            deadline()
+        )
+        .is_err());
+    let error = wire::encode(
+        &json!({"jsonrpc":"2.0","id":2,"error":{"code":-32800,"message":"Cancelled"}}),
+        Limits::SCOPED,
+    )
+    .unwrap();
+    let wire = connection.transport.as_mut().unwrap();
+    wire.supersede = None;
+    wire.held.clear();
+    wire.output.extend(&error);
+    connection
+        .idle(&AtomicBool::new(false), deadline())
+        .unwrap();
+    assert!(connection.retired.is_empty() && connection.open());
+    connection.transport.as_mut().unwrap().output.extend(error);
+    assert!(connection
+        .idle(&AtomicBool::new(false), deadline())
+        .is_err());
+    assert!(!connection.open());
 }

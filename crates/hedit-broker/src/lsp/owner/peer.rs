@@ -139,10 +139,23 @@ impl<T: Transport> Peer<T> {
         method: Method,
         position: usize,
         may_edit: bool,
-        cancel: &AtomicBool,
+        signals: (&AtomicBool, &AtomicBool),
         deadline: Instant,
     ) -> io::Result<ResultSet> {
+        let (cancel, superseded) = signals;
+        if superseded.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "Scoped language-server callback superseded.",
+            ));
+        }
         self.update(snapshot, cancel, deadline)?;
+        if superseded.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "Scoped language-server callback superseded.",
+            ));
+        }
         let position_value = self.document.position(position)?;
         if !may_edit
             && matches!(
@@ -165,6 +178,12 @@ impl<T: Transport> Peer<T> {
         };
         if matches!(method, Method::Diagnostics) && !supports(&self.capabilities[capability]) {
             for _ in 0..1024 {
+                if superseded.load(std::sync::atomic::Ordering::Acquire) {
+                    return Err(io::Error::new(
+                        io::ErrorKind::Interrupted,
+                        "Scoped language-server callback superseded.",
+                    ));
+                }
                 if let Some(result) = &self.diagnostics {
                     return Ok(result.clone());
                 }
@@ -189,7 +208,9 @@ impl<T: Transport> Peer<T> {
                 json!({"textDocument":document,"range":{"start":position_value,"end":position_value},"context":{"diagnostics":[]}})
             }
         };
-        let value = self.connection.request(method, params, cancel, deadline)?;
+        let value = self
+            .connection
+            .request_cancellable(method, params, cancel, superseded, deadline)?;
         self.capture()?;
         self.document.translate(method, &value, position, may_edit)
     }

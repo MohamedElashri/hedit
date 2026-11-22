@@ -209,7 +209,7 @@ fn owner(state: &State, image: Handle, binding: &Binding) {
     );
     assert!(owner.running());
     drop(owner);
-    let owner = make("stall");
+    let owner = make("late");
     let request_cancel = Arc::new(Cancel::default());
     let trigger = request_cancel.clone();
     let thread = std::thread::spawn(move || {
@@ -231,11 +231,25 @@ fn owner(state: &State, image: Handle, binding: &Binding) {
         io::ErrorKind::Interrupted
     );
     thread.join().unwrap();
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while !owner.settled() && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    assert!(owner.settled());
+    assert!(owner.running());
+    let mut latest = snapshot.clone();
+    latest.revision = "43".into();
+    latest.text = "latest café / 東京 / 😀".into();
+    let ResultSet::Hover(hover) = owner
+        .request(
+            &latest,
+            Method::Hover,
+            0,
+            false,
+            Arc::new(Cancel::default()),
+            Instant::now() + Duration::from_secs(10),
+        )
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(hover.text, latest.text);
+    assert!(owner.running());
     drop(owner);
     let owner = make("normal");
     // The owner observes scope revocation while parked, without UI polling.

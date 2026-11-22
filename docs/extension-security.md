@@ -521,9 +521,9 @@ LSP grants or establish a persistent document/service owner.
 
 The scoped JSON-RPC controller serializes at most 256 requests per connection
 with non-reused host IDs. It rejects responses before full request delivery,
-foreign/duplicate/unsolicited responses and error responses. Any cancellation,
-timeout, malformed frame or protocol failure destroys the native owner, so a
-late response cannot attach to a replacement request. Each exchange bounds
+foreign/duplicate/unsolicited responses and error responses. Scope cancellation, timeout, malformed frames and protocol failures destroy the
+native owner. Superseded callbacks fence delivered IDs separately, so a late
+response cannot attach to a replacement request. Each exchange bounds
 traffic to 2 MiB and 64 incoming messages; outgoing frames and retained raw
 diagnostics have separate count/byte budgets.
 
@@ -591,3 +591,12 @@ contexts; native process/context admission limits are unchanged.
 Language-server recipes currently use literal startup arguments. Native UI
 selection remains gated while cancellation/reply draining, installed references
 and final author/package/performance validation are completed.
+
+Callback supersession is distinct from scope revocation. An unsent request can
+be removed; a partial frame finishes while its caller still holds disclosure
+authority. A delivered request receives $/cancelRequest and retains a bounded
+tombstone until its reply is discarded. IDs are never reused; at most 16
+abandoned IDs can remain. A second reply for a retired ID, an unknown reply or
+exhausted tombstone budget kills the connection. The caller waits for the I/O
+acknowledgment before releasing its guard; superseded data cannot reach Lua or
+publication. Document/policy closure still kills and reaps the process.
