@@ -747,6 +747,7 @@ confirms no production code changed after the universal build. The final
 plan-only commit records this evidence; it does not change runtime or packaged
 resources.
 
-The work remains in focused draft PRs for review. No PR was merged and no
-release was published. Future capabilities listed above require their own
-authority, native enforcement and acceptance review.
+The three-stage implementation is merged into `main`. The source versions above
+identify the stage-gate evidence; they are not release tags. Future capabilities
+listed above require their own authority, native enforcement and acceptance
+review.

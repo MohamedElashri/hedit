@@ -10,6 +10,21 @@ use std::{
 mod stream;
 pub(super) use stream::Stream;
 
+pub(super) fn lower_limit(resource: libc::c_int, maximum: libc::rlim_t) -> io::Result<()> {
+    let mut limits = std::mem::MaybeUninit::<libc::rlimit>::uninit();
+    if unsafe { libc::getrlimit(resource as _, limits.as_mut_ptr()) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let mut limits = unsafe { limits.assume_init() };
+    // Lower hard limits too: a hostile image must not raise them after exec.
+    limits.rlim_cur = limits.rlim_cur.min(maximum);
+    limits.rlim_max = limits.rlim_max.min(maximum);
+    if unsafe { libc::setrlimit(resource as _, &limits) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
 #[cfg(target_os = "linux")]
 use super::Role;
 

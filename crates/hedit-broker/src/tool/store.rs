@@ -22,7 +22,7 @@ const MAX_IMAGES: usize = 64;
 const MAX_STORE_BYTES: u64 = 256 * 1024 * 1024;
 const OVERHEAD: u64 = 128 * 1024;
 const MAX_RECORD_BYTES: u64 = 8192;
-const LOCK: &str = "index.lock";
+pub(super) const LOCK: &str = "index.lock";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -207,6 +207,24 @@ fn write<T: Serialize>(directory: &Dir, name: &str, value: &T) -> io::Result<()>
     file.sync_all()?;
     native::sync_dir(directory)
 }
+pub(super) fn prepare_index(directory: &Dir) -> io::Result<()> {
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
+        .write(true)
+        .create(true)
+        .follow(FollowSymlinks::No)
+        .nonblock(true);
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let file = directory.open_with(LOCK, &options)?;
+    identity::regular(&file)?;
+    hedit_core::private_io::verify(&file.into_std())?;
+    native::sync_dir(directory)
+}
 impl Store {
     /// The host supplies a dedicated private directory and its canonical path.
     /// Exclude this stable root before writing images; per-import identity
@@ -221,22 +239,7 @@ impl Store {
         };
         store.current()?;
         protected.insert(store.directory.try_clone()?)?;
-        let mut options = OpenOptions::new();
-        options
-            .read(true)
-            .write(true)
-            .create(true)
-            .follow(FollowSymlinks::No)
-            .nonblock(true);
-        #[cfg(unix)]
-        {
-            use cap_std::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let file = store.directory.open_with(LOCK, &options)?;
-        identity::regular(&file)?;
-        hedit_core::private_io::verify(&file.into_std())?;
-        native::sync_dir(&store.directory)?;
+        prepare_index(&store.directory)?;
         // Import/list/removal validate global admission. Opening a store for
         // one bound execution must not walk every unrelated image.
         Ok(store)

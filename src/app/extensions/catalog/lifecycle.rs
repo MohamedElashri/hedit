@@ -11,7 +11,7 @@ use hedit::projects;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs::{self, Metadata, OpenOptions},
+    fs::{self, Metadata},
     io::{self, Read, Write},
     path::{Path, PathBuf},
 };
@@ -89,24 +89,7 @@ pub(super) fn extensions_dir(config: &Path) -> Result<PathBuf, String> {
 
 fn read_installed(path: &Path) -> Result<(Vec<u8>, FileIdentity), String> {
     fn snapshot(path: &Path) -> io::Result<(Vec<u8>, FileIdentity)> {
-        let mut options = OpenOptions::new();
-        options.read(true);
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
-        {
-            use rustix::fs::OFlags;
-            use std::os::unix::fs::OpenOptionsExt;
-            options.custom_flags((OFlags::NOFOLLOW | OFlags::NONBLOCK).bits() as i32);
-        }
-        #[cfg(windows)]
-        {
-            use std::os::windows::fs::OpenOptionsExt;
-            use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT;
-            options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
-        }
-        if !fs::symlink_metadata(path)?.is_file() {
-            return Err(io::Error::other("Choose a regular manifest file."));
-        }
-        let mut file = options.open(path)?;
+        let mut file = super::open_regular_leaf(path)?;
         let metadata = file.metadata()?;
         if !metadata.is_file() {
             return Err(io::Error::other("Choose a regular manifest file."));
