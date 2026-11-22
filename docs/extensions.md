@@ -149,3 +149,18 @@ remain a separate approval.
 Provider API 4 / SDK 2 and declarative language/theme packs are described in the
 [provider reference](plugin-services.md). Their native and load-test stage gates
 remain explicit in `plugin_plan.md`.
+
+## Workspace recovery
+
+On the experimental API 5 branch, **Settings → Extensions → Workspace recovery…**
+shows retained workspace edits. Select the original directory, inspect each file's
+complete original and replacement text, then choose **Resume reviewed edit**,
+**Restore originals**, or **Delete recovery history**. Deleting history keeps the
+current files. Restoring is an explicit filesystem operation, not editor Undo.
+
+Recovery works after uninstalling the originating extension and never runs its
+source. Save affected dirty buffers first. Missing or conflicting files, damaged
+journals, and unknown private data remain preserved for review. **Clean up
+incomplete preparation** only accepts verified preparation data with no captured
+originals. Nothing resumes automatically at startup. See the
+[broker threat model](plugin-broker.md#workspace-edits-and-recovery) for limits.

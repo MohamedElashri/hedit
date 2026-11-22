@@ -1,9 +1,9 @@
 //! Index complete previews during plan preparation, never while drawing frames.
-pub(super) struct Pages(Vec<usize>);
-pub(super) const INDEX_BYTES: usize =
+pub(crate) struct Pages(Vec<usize>);
+pub(crate) const INDEX_BYTES: usize =
     2 * super::MAX_FILE_BYTES.div_ceil(1024) * std::mem::size_of::<usize>();
 impl Pages {
-    pub(super) fn new(text: &str) -> Self {
+    pub(crate) fn new(text: &str) -> Self {
         let mut offsets = Vec::with_capacity(text.len().div_ceil(1024).max(1));
         offsets.push(0);
         let mut count = 0;
@@ -18,7 +18,7 @@ impl Pages {
         }
         Self(offsets)
     }
-    pub(super) fn get<'a>(&self, text: &'a str, page: usize) -> (&'a str, usize) {
+    pub(crate) fn get<'a>(&self, text: &'a str, page: usize) -> (&'a str, usize) {
         let page = page.min(self.0.len() - 1);
         let start = self.0[page];
         let end = self.0.get(page + 1).copied().unwrap_or(text.len());

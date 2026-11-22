@@ -293,6 +293,12 @@ impl Root {
                 break;
             }
             budget.charge(read)?;
+            if bytes.len().saturating_add(read) > before.bytes as usize {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Workspace file changed while reading.",
+                ));
+            }
             bytes.extend_from_slice(&chunk[..read]);
         }
         budget.check()?;

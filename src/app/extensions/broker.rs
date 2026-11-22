@@ -1,5 +1,5 @@
 //! Installed SDK 3 commands use a scoped host, never the legacy document worker.
-mod commit;
+pub(super) mod commit;
 mod deferred;
 mod limit;
 use super::{
@@ -194,6 +194,10 @@ impl BrokerCommand {
                 let mut package = setup.package.clone();
                 package.arguments = arguments;
                 Ok(hedit_broker::session::Config {
+                    owner: Some(hedit_broker::journal::Owner {
+                        command: setup.command.clone(),
+                        digest: setup.plugin.grant.digest().into(),
+                    }),
                     package,
                     provider: request,
                     cache,
@@ -691,7 +695,7 @@ fn failure(code: plugin_runtime::broker::FailureCode) -> &'static str {
         Failed => "host operation failed",
     }
 }
-fn display_path(path: &str) -> String {
+pub(super) fn display_path(path: &str) -> String {
     let mut visible = String::with_capacity(path.len());
     for ch in path.chars() {
         if ch.is_control()

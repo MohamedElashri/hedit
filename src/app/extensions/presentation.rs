@@ -35,7 +35,13 @@ pub(super) fn plain(ui: &mut egui::Ui, text: &str, page: &mut usize) {
 }
 pub(super) fn indexed_page(ui: &mut egui::Ui, text: &str, page: &mut usize, pages: usize) {
     *page = (*page).min(pages.max(1) - 1);
-    ui.monospace(text);
+    egui::ScrollArea::both()
+        .id_salt(ui.next_auto_id())
+        .max_height(160.0)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            ui.monospace(text);
+        });
     if pages > 1 {
         ui.horizontal(|ui| {
             if ui

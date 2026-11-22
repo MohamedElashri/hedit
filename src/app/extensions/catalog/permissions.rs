@@ -34,6 +34,9 @@ pub(in crate::app::extensions) struct Grant {
 }
 
 impl Grant {
+    pub(in crate::app::extensions) fn digest(&self) -> &str {
+        &self.digest
+    }
     pub(super) fn new(command: String, installed: &InstalledManifest) -> Result<Self, String> {
         let manifest = installed
             .path

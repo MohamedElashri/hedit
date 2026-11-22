@@ -1,5 +1,5 @@
 //! Immutable multi-file proposals. Preparing a preview never mutates files.
-mod pages;
+pub(crate) mod pages;
 use crate::{
     resources::{Resource, Resources},
     workspace::{Budget, Right, MAX_FILE_BYTES},

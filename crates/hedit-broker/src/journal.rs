@@ -10,6 +10,8 @@ use cap_std::fs::{Dir, File};
 use sha2::{Digest, Sha256};
 use std::io::{self, Read, Write};
 mod incomplete;
+mod inspect;
+pub use inspect::{Current, FileView, View};
 pub(crate) mod native;
 const MAX_LEDGER: usize = 128 * 1024;
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -29,6 +31,28 @@ struct Ledger {
     root: Identity,
     stage: Identity,
     files: Vec<Item>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    owner: Option<Owner>,
+}
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Owner {
+    pub command: String,
+    pub digest: String,
+}
+impl Owner {
+    pub fn validate(&self) -> io::Result<()> {
+        if !hedit_plugin::options::valid_command_id(&self.command)
+            || self.digest.len() != 64
+            || !self
+                .digest
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(mismatch());
+        }
+        Ok(())
+    }
 }
 /// Host-owned object: never construct a stage name or recovery authority from Lua.
 pub struct Journal {
@@ -146,6 +170,25 @@ impl Journal {
         budget: &mut Budget<'_>,
         store: &crate::recovery_store::RecoveryStore,
     ) -> io::Result<Self> {
+        Self::prepare_inner(resources, plan, budget, store, None)
+    }
+    pub fn prepare_owned(
+        resources: &Resources,
+        plan: &Plan,
+        budget: &mut Budget<'_>,
+        store: &crate::recovery_store::RecoveryStore,
+        owner: &Owner,
+    ) -> io::Result<Self> {
+        owner.validate()?;
+        Self::prepare_inner(resources, plan, budget, store, Some(owner.clone()))
+    }
+    fn prepare_inner(
+        resources: &Resources,
+        plan: &Plan,
+        budget: &mut Budget<'_>,
+        store: &crate::recovery_store::RecoveryStore,
+        owner: Option<Owner>,
+    ) -> io::Result<Self> {
         if !plan.live() {
             return Err(conflict());
         }
@@ -194,11 +237,12 @@ impl Journal {
             });
         }
         let ledger = Ledger {
-            version: 1,
+            version: if owner.is_some() { 2 } else { 1 },
             plan: plan.id(),
             root: root.identity(),
             stage,
             files,
+            owner,
         };
         let bytes = serde_json::to_vec(&ledger).map_err(|_| mismatch())?;
         if bytes.len() > MAX_LEDGER {
@@ -260,13 +304,18 @@ impl Journal {
         workspace::identity::regular(&file)?;
         let bytes = hedit_core::file_io::read_bounded(file.into_std(), MAX_LEDGER as u64)?;
         let ledger: Ledger = serde_json::from_slice(&bytes).map_err(|_| mismatch())?;
-        if ledger.version != 1
-            || ledger.root != root.identity()
+        if !matches!(
+            (ledger.version, ledger.owner.is_some()),
+            (1, false) | (2, true)
+        ) || ledger.root != root.identity()
             || ledger.stage != stage
             || ledger.files.is_empty()
             || ledger.files.len() > crate::plan::MAX_PLAN_FILES
         {
             return Err(mismatch());
+        }
+        if let Some(owner) = &ledger.owner {
+            owner.validate()?;
         }
         let mut paths = std::collections::BTreeSet::new();
         let mut identities = std::collections::BTreeSet::new();

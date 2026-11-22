@@ -28,9 +28,51 @@ struct Buffer {
     document: SharedDocument,
     backup: Document,
     file: usize,
+    was_before: bool,
+    identity: Option<workspace::Identity>,
+}
+enum Changes {
+    Plan(Arc<Plan>),
+    Recovery(Arc<hedit_broker::journal::View>, std::path::PathBuf),
+}
+struct Change<'a> {
+    before: &'a str,
+    after: &'a str,
+    identities: [workspace::Identity; 2],
+    path: Option<std::path::PathBuf>,
+}
+impl Changes {
+    fn len(&self) -> usize {
+        match self {
+            Self::Plan(plan) => plan.files().len(),
+            Self::Recovery(view, _) => view.files.len(),
+        }
+    }
+    fn file(&self, index: usize) -> Change<'_> {
+        match self {
+            Self::Plan(plan) => {
+                let f = &plan.files()[index];
+                Change {
+                    before: f.before(),
+                    after: f.after(),
+                    identities: [f.identity(); 2],
+                    path: None,
+                }
+            }
+            Self::Recovery(view, root) => {
+                let f = &view.files[index];
+                Change {
+                    before: f.before(),
+                    after: f.after(),
+                    identities: [f.original, f.replacement],
+                    path: Some(root.join(&f.relative)),
+                }
+            }
+        }
+    }
 }
 struct Commit {
-    plan: Arc<Plan>,
+    changes: Changes,
     entries: Vec<Buffer>,
     freeze: Option<WorkspaceFreeze>,
     reservations: Vec<Reservation>,
@@ -55,6 +97,45 @@ fn error(message: impl Into<String>) -> io::Error {
 pub(super) fn prepare(
     editor: &Arc<Editor>,
     plan: &Arc<Plan>,
+    cancel: &AtomicBool,
+    sender: Sender<Result<Action, String>>,
+    wake: eframe::egui::Context,
+    following: &std::collections::BTreeSet<u64>,
+    signals: Signals,
+) -> io::Result<Box<dyn hedit_broker::host::WorkspaceCommit>> {
+    prepare_changes(
+        editor,
+        Changes::Plan(plan.clone()),
+        cancel,
+        sender,
+        wake,
+        following,
+        signals,
+    )
+}
+pub(in crate::app::extensions) fn prepare_recovery(
+    editor: &Arc<Editor>,
+    view: Arc<hedit_broker::journal::View>,
+    root: std::path::PathBuf,
+    cancel: &AtomicBool,
+    sender: Sender<Result<Action, String>>,
+    wake: eframe::egui::Context,
+    following: &std::collections::BTreeSet<u64>,
+) -> io::Result<Box<dyn hedit_broker::host::WorkspaceCommit>> {
+    prepare_changes(
+        editor,
+        Changes::Recovery(view, root),
+        cancel,
+        sender,
+        wake,
+        following,
+        Signals::default(),
+    )
+}
+#[allow(clippy::too_many_arguments)]
+fn prepare_changes(
+    editor: &Arc<Editor>,
+    changes: Changes,
     cancel: &AtomicBool,
     sender: Sender<Result<Action, String>>,
     wake: eframe::egui::Context,
@@ -101,14 +182,17 @@ pub(super) fn prepare(
             .source_file()
             .map(workspace::local_file_identity)
             .transpose()?;
-        let matches: Vec<_> = plan
-            .files()
-            .iter()
-            .enumerate()
-            .filter(|(_, file)| {
-                Some(file.identity()) == path_id || Some(file.identity()) == source_id
+        let matches: Vec<_> = (0..changes.len())
+            .filter(|&index| {
+                let file = changes.file(index);
+                file.identities
+                    .iter()
+                    .any(|id| Some(*id) == path_id || Some(*id) == source_id)
+                    || file
+                        .path
+                        .as_deref()
+                        .is_some_and(|expected| path == Some(expected))
             })
-            .map(|(i, _)| i)
             .collect();
         let Some(&file) = matches.first() else {
             continue;
@@ -126,13 +210,22 @@ pub(super) fn prepare(
         let text = snapshot
             .text(workspace::MAX_FILE_BYTES as u64)
             .map_err(error)?;
-        let before = plan.files()[file].before();
+        let reviewed = changes.file(file);
+        let before = reviewed.before;
         let expected_text = if info.bom {
             before.strip_prefix('\u{feff}')
         } else {
             Some(before)
         };
-        if expected_text != Some(text.as_str()) {
+        let was_before = expected_text == Some(text.as_str());
+        let after = if info.bom {
+            reviewed.after.strip_prefix('\u{feff}')
+        } else {
+            Some(reviewed.after)
+        };
+        if !was_before
+            && !(matches!(changes, Changes::Recovery(..)) && after == Some(text.as_str()))
+        {
             return Err(error(
                 "An affected buffer differs from the workspace preview.",
             ));
@@ -140,7 +233,7 @@ pub(super) fn prepare(
         reservations.push(Reservation::reserve(
             &BACKUP_BYTES,
             text.len()
-                .max(plan.files()[file].after().len())
+                .max(reviewed.after.len())
                 .saturating_mul(3)
                 .saturating_add(8192),
             MAX_BACKUPS,
@@ -153,6 +246,8 @@ pub(super) fn prepare(
             document,
             backup,
             file,
+            was_before,
+            identity: path_id,
         });
     }
     let mut nonce = [0; 16];
@@ -162,7 +257,7 @@ pub(super) fn prepare(
         .freeze_workspace(generation, lease, &expected)
         .map_err(error)?;
     Ok(Box::new(Commit {
-        plan: plan.clone(),
+        changes,
         entries,
         freeze: Some(freeze),
         reservations,
@@ -178,7 +273,7 @@ impl Drop for Commit {
         let mut conflicts = false;
         let mut changed = 0;
         for entry in &mut self.entries {
-            let file = &self.plan.files()[entry.file];
+            let file = self.changes.file(entry.file);
             let info = entry.backup.info();
             let Some(path) = entry.backup.local_path() else {
                 conflicts = true;
@@ -195,15 +290,23 @@ impl Drop for Commit {
                 } else {
                     page.text.clone()
                 };
-                if text != file.before() && text != file.after() {
+                if text != file.before && text != file.after {
                     return Err("Workspace file changed during commit.".into());
                 }
-                Ok((document, page, text == file.before()))
+                Ok((
+                    document,
+                    page,
+                    if entry.was_before {
+                        text == file.before
+                    } else {
+                        text == file.after
+                    },
+                ))
             });
             let outcome = match fresh {
                 Ok((document, page, unchanged)) => {
-                    let same_object =
-                        workspace::local_path_identity(path).is_ok_and(|id| id == file.identity());
+                    let same_object = workspace::local_path_identity(path)
+                        .is_ok_and(|id| Some(id) == entry.identity);
                     let same_source = entry
                         .document
                         .lock()
@@ -247,7 +350,7 @@ impl Drop for Commit {
             conflicts,
             changed,
             applied: self.signals.applied.load(Ordering::Acquire),
-            files: self.plan.files().len(),
+            files: self.changes.len(),
             _reservations: std::mem::take(&mut self.reservations),
         };
         let _ = self.sender.send(Ok(Action::ExtensionWorkspace(refresh)));
@@ -311,6 +414,140 @@ mod tests {
         document.page(0).unwrap();
         editor.insert(document).unwrap();
         (directory, editor, resources, plan, state)
+    }
+    #[test]
+    fn explicit_recovery_freezes_stale_and_missing_file_buffers_then_reconciles_originals() {
+        for missing in [false, true] {
+            let (_directory, editor, resources, plan, state) = fixture();
+            let cancel = AtomicBool::new(false);
+            let root = resources.root(plan.scope()).unwrap();
+            let mut budget = Budget::new(
+                &cancel,
+                std::time::Duration::from_secs(10),
+                64 * 1024 * 1024,
+            );
+            let journal = hedit_broker::journal::Journal::prepare(
+                &resources,
+                &plan,
+                &mut budget,
+                &state.recovery(),
+            )
+            .unwrap();
+            if missing {
+                std::fs::rename(
+                    root.locator().join("text.txt"),
+                    root.locator().join(journal.name()).join("0.old"),
+                )
+                .unwrap();
+            } else {
+                journal.apply(root, &mut budget, || Ok(())).unwrap();
+            }
+            let view = Arc::new(journal.inspect(root, &mut budget).unwrap());
+            let (sender, receiver) = std::sync::mpsc::channel();
+            let revision = editor.get(1).unwrap().lock().unwrap().info().revision;
+            let guard = prepare_recovery(
+                &editor,
+                view,
+                root.locator().to_owned(),
+                &cancel,
+                sender,
+                Default::default(),
+                &Default::default(),
+            )
+            .unwrap();
+            assert!(editor.workspace_document_frozen(1));
+            assert!(editor
+                .get(1)
+                .unwrap()
+                .lock()
+                .unwrap()
+                .replace(0, 3, "own".into(), 0)
+                .is_err());
+            journal.restore(root, &mut budget, || Ok(())).unwrap();
+            drop(guard);
+            assert!(!editor.workspace_document_frozen(1));
+            let doc = editor.get(1).unwrap();
+            let doc = doc.lock().unwrap();
+            assert_eq!(doc.text(1024).unwrap(), "old café / 東京\r\n");
+            assert!(!doc.info().dirty);
+            assert!(doc.info().revision > revision);
+            assert!(matches!(
+                receiver.try_recv().unwrap(),
+                Ok(Action::ExtensionWorkspace(_))
+            ));
+        }
+    }
+    #[test]
+    fn recovery_refuses_dirty_buffers_and_preserves_text_when_a_writer_races_restore() {
+        let (_directory, editor, resources, plan, state) = fixture();
+        let cancel = AtomicBool::new(false);
+        let root = resources.root(plan.scope()).unwrap();
+        let mut budget = Budget::new(
+            &cancel,
+            std::time::Duration::from_secs(10),
+            64 * 1024 * 1024,
+        );
+        let journal = hedit_broker::journal::Journal::prepare(
+            &resources,
+            &plan,
+            &mut budget,
+            &state.recovery(),
+        )
+        .unwrap();
+        let view = Arc::new(journal.inspect(root, &mut budget).unwrap());
+        editor
+            .get(1)
+            .unwrap()
+            .lock()
+            .unwrap()
+            .replace(0, 3, "own".into(), 0)
+            .unwrap();
+        let (sender, _) = std::sync::mpsc::channel();
+        assert!(prepare_recovery(
+            &editor,
+            view.clone(),
+            root.locator().to_owned(),
+            &cancel,
+            sender,
+            Default::default(),
+            &Default::default()
+        )
+        .is_err());
+        assert!(!editor.workspace_document_frozen(1));
+        {
+            let doc = editor.get(1).unwrap();
+            let mut doc = doc.lock().unwrap();
+            let revision = doc.info().revision;
+            doc.history(false, 0, revision).unwrap();
+        }
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let guard = prepare_recovery(
+            &editor,
+            view,
+            root.locator().to_owned(),
+            &cancel,
+            sender,
+            Default::default(),
+            &Default::default(),
+        )
+        .unwrap();
+        journal.apply(root, &mut budget, || Ok(())).unwrap();
+        std::fs::write(root.locator().join("text.txt"), "external writer").unwrap();
+        assert!(journal.restore(root, &mut budget, || Ok(())).is_err());
+        drop(guard);
+        assert!(!editor.workspace_document_frozen(1));
+        let doc = editor.get(1).unwrap();
+        let doc = doc.lock().unwrap();
+        assert_eq!(doc.text(1024).unwrap(), "old café / 東京\r\n");
+        assert!(doc.info().dirty);
+        assert_eq!(
+            std::fs::read_to_string(root.locator().join("text.txt")).unwrap(),
+            "external writer"
+        );
+        let Ok(Action::ExtensionWorkspace(refresh)) = receiver.try_recv().unwrap() else {
+            panic!("missing reconciliation")
+        };
+        assert!(refresh.conflicts);
     }
     #[cfg(target_os = "linux")]
     #[test]

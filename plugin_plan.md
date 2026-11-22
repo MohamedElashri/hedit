@@ -797,3 +797,30 @@ switching focus, and source/resource reset. Broker backend validation passed 55
 tests plus the real confined-worker continuation fixture. Final command/UI
 performance, fresh platform CI, provider/recovery integration, tool/LSP backends,
 author tooling and extracted-package references remain open Stage 3 gates.
+
+
+### Explicit workspace recovery
+
+Extensions settings now lists retained journals and lets the user select the
+original physical directory for a bounded complete preview. New journals record
+the approved command/source digest in version 2; version 1 remains readable.
+Resume, restore and history deletion compare fresh authenticated state, serialize
+against plugin policy changes, freeze/reconcile this window's affected buffers,
+and preserve competing writes. Incomplete-preparation cleanup has its own strict
+replacement-only validation. No startup effects or plugin execution are involved.
+Native UI acceptance and cross-platform validation of this follow-up remain open.
+The selected macOS external-tool profile uses native confinement with monitored
+memory limits and documented overshoot; tool/LSP implementation is still pending.
+
+Recovery follow-up validation on macOS covered 1,376 tests with 62 intentional
+ignores across 50 distinct suites. The root/workspace run passed the editor,
+rendered settings and package checks; after making an existing zero-wait lock
+regression release its owner explicitly, the core, broker, plugin and remote
+suites passed in a separate native run. Strict workspace/all-target Clippy and
+static documentation/script checks passed with default features disabled.
+The settings test exercises resume, stale-preview rejection, restore, history
+cleanup and open-buffer refresh without any installed source approval. Preview
+panes now scroll within a fixed height so newline-heavy output cannot displace
+recovery actions. The preceding command integration passed full Linux/macOS/
+Windows CI (`44911549599`) and x64/ARM64 sandbox CI (`44911549544`, with a retry
+of the existing Windows Lua deadline fixture).
