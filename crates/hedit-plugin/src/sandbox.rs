@@ -13,6 +13,8 @@ pub(crate) const SUPPORTED: bool = cfg!(all(
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
+pub(crate) use macos::close_tool_descriptors;
+#[cfg(target_os = "macos")]
 pub(crate) use macos::{enter, over_memory_limit, verify_child, worker_executable};
 
 #[cfg(all(unix, not(target_os = "macos")))]

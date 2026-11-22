@@ -6,6 +6,7 @@ mod sandbox;
 pub mod sdk;
 pub mod service;
 pub mod telemetry;
+pub mod tool;
 
 pub use error::Error;
 pub use runtime::{

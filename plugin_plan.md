@@ -859,3 +859,20 @@ changes. All-feature/all-target workspace Clippy passed. The recovery PR's final
 signed head `9ba28a0` passed Linux/macOS/Windows/remote CI (`44915873512`) and both
 Windows sandbox architectures (`44915873326`). Its Windows cleanup fixture now
 releases per-operation protected-directory pins, matching the real editor flow.
+
+### Native tool boundary
+
+The scoped-provider head `dde0954` passed all platform checks, including Windows
+x64 and ARM64. The subsequent Windows pipe hardening uses identification-only
+client tokens and a live-client native impersonation regression; both Windows
+sandbox architectures passed at `0b76d57`.
+
+The selected macOS external-tool model is native confinement with monitored
+memory/thread limits, documented overshoot and no VM prerequisite. A host-only
+finite-filter primitive now applies a fixed deny-by-default policy before text
+delivery and exec. Native probes cover filesystem/network/descriptor isolation,
+reexec, full-size transport, resource limits and cleanup. The Lua helper's policy
+is unchanged. The broker tool/LSP intents remain unavailable pending private
+image import, source-bound grants, validated snapshot construction and verified
+Linux/Windows adapters. Persistent LSP, final author/reference tooling, sustained
+performance evidence and universal-package acceptance remain open plan gates.

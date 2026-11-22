@@ -11,6 +11,9 @@ use hedit_plugin as plugin_runtime;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args: Vec<_> = std::env::args_os().skip(1).collect();
+    if let Some(completed) = plugin_runtime::tool::run_if_requested(&args) {
+        std::process::exit(i32::from(!completed));
+    }
     if let Some(completed) = plugin_runtime::run_if_requested(&args) {
         std::process::exit(i32::from(!completed));
     }
