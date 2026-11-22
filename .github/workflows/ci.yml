@@ -34,10 +34,12 @@ jobs:
     name: Native tool boundary (${{ matrix.runner }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
+    env:
+      RUSTFLAGS: ${{ startsWith(matrix.runner, 'windows-') && '-C target-feature=+crt-static' || '' }}
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15]
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, windows-2025, windows-11-arm]
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@master
@@ -51,7 +53,14 @@ jobs:
       - name: Lint the shared supervisor and native policy
         run: cargo clippy --locked -p hedit-plugin --all-targets -- -D warnings
       - name: Probe hostile native images through the production boundary
+        if: ${{ !cancelled() }}
         run: cargo test --locked -p hedit-plugin --test native_tool
+      - name: Verify throttled native CPU time independently of the wall deadline
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        run: cargo test --locked -p hedit-plugin --lib native_tool_cpu_rate_and_time_limits -- --nocapture
+      - name: Verify mandatory integrity against a writable LPAC control
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        run: cargo test --locked -p hedit-plugin --lib native_tool_integrity_cannot_be_raised_or_disabled -- --nocapture
 
   windows:
     name: Windows

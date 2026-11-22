@@ -173,11 +173,11 @@ struct Profile {
     sid: PSID,
 }
 impl Profile {
-    fn new() -> io::Result<Self> {
+    fn new(role: &str) -> io::Result<Self> {
         let api = ProfileApi::new()?;
         let mut random = [0u8; 16];
         getrandom::fill(&mut random).map_err(io::Error::other)?;
-        let name = wide(format!("hedit.lua.{}", hex::encode(random)));
+        let name = wide(format!("hedit.{role}.{}", hex::encode(random)));
         let mut sid = ptr::null_mut();
         let status = unsafe {
             (api.create)(
@@ -284,6 +284,9 @@ impl Drop for Acl {
     }
 }
 fn private_acl(sid: Option<PSID>) -> io::Result<Acl> {
+    private_acl_rights(sid.map(|sid| (sid, FILE_GENERIC_READ | FILE_GENERIC_EXECUTE)))
+}
+fn private_acl_rights(sid: Option<(PSID, u32)>) -> io::Result<Acl> {
     let token = token(unsafe { GetCurrentProcess() })?;
     let user = token_information(&token, TokenUser)?;
     let owner = unsafe { &*user.as_ptr().cast::<TOKEN_USER>() }.User.Sid;
@@ -299,8 +302,8 @@ fn private_acl(sid: Option<PSID>) -> io::Result<Acl> {
         },
     };
     let mut entries = vec![entry(owner, FILE_ALL_ACCESS)];
-    if let Some(sid) = sid {
-        entries.push(entry(sid, FILE_GENERIC_READ | FILE_GENERIC_EXECUTE));
+    if let Some((sid, rights)) = sid {
+        entries.push(entry(sid, rights));
     }
     let mut acl = ptr::null_mut();
     let status = unsafe {
@@ -379,6 +382,13 @@ impl Drop for Attributes {
 }
 
 fn pipe() -> io::Result<(OwnedHandle, OwnedHandle)> {
+    connection(PIPE_ACCESS_INBOUND, 0, FILE_WRITE_DATA | SYNCHRONIZE)
+}
+fn connection(
+    server_access: u32,
+    server_flags: u32,
+    client_access: u32,
+) -> io::Result<(OwnedHandle, OwnedHandle)> {
     // A child receives the server/read end of stdin. Bound the client's token
     // to identification so that end cannot impersonate the editor's authority.
     // https://learn.microsoft.com/en-us/windows/win32/ipc/impersonating-a-named-pipe-client
@@ -409,7 +419,7 @@ fn pipe() -> io::Result<(OwnedHandle, OwnedHandle)> {
     let read = unsafe {
         owned(CreateNamedPipeW(
             name.as_ptr(),
-            PIPE_ACCESS_INBOUND | FILE_FLAG_FIRST_PIPE_INSTANCE,
+            server_access | server_flags | FILE_FLAG_FIRST_PIPE_INSTANCE,
             PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
             1,
             64 * 1024,
@@ -423,7 +433,7 @@ fn pipe() -> io::Result<(OwnedHandle, OwnedHandle)> {
     let write = unsafe {
         owned(CreateFileW(
             name.as_ptr(),
-            FILE_WRITE_DATA | SYNCHRONIZE,
+            client_access,
             0,
             &security,
             OPEN_EXISTING,
@@ -431,18 +441,67 @@ fn pipe() -> io::Result<(OwnedHandle, OwnedHandle)> {
             ptr::null_mut(),
         ))
     }?;
-    if unsafe { ConnectNamedPipe(read.as_raw_handle(), ptr::null_mut()) } == 0
-        && unsafe { GetLastError() } != ERROR_PIPE_CONNECTED
-    {
-        return Err(io::Error::last_os_error());
+    let mut operation = windows_sys::Win32::System::IO::OVERLAPPED::default();
+    let event = if server_flags & FILE_FLAG_OVERLAPPED != 0 {
+        Some(unsafe { owned(CreateEventW(ptr::null(), 1, 0, ptr::null())) }?)
+    } else {
+        None
+    };
+    operation.hEvent = event
+        .as_ref()
+        .map_or(ptr::null_mut(), |event| event.as_raw_handle());
+    let overlapped = if event.is_some() {
+        &mut operation
+    } else {
+        ptr::null_mut()
+    };
+    if unsafe { ConnectNamedPipe(read.as_raw_handle(), overlapped) } == 0 {
+        match unsafe { GetLastError() } {
+            ERROR_PIPE_CONNECTED => {}
+            ERROR_IO_PENDING if event.is_some() => {
+                if unsafe { WaitForSingleObject(operation.hEvent, 1000) } != WAIT_OBJECT_0 {
+                    unsafe {
+                        windows_sys::Win32::System::IO::CancelIoEx(read.as_raw_handle(), &operation)
+                    };
+                    let mut bytes = 0;
+                    unsafe {
+                        windows_sys::Win32::System::IO::GetOverlappedResult(
+                            read.as_raw_handle(),
+                            &operation,
+                            &mut bytes,
+                            1,
+                        )
+                    };
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "Tool pipe connection timed out.",
+                    ));
+                }
+                let mut bytes = 0;
+                check(unsafe {
+                    windows_sys::Win32::System::IO::GetOverlappedResult(
+                        read.as_raw_handle(),
+                        &operation,
+                        &mut bytes,
+                        0,
+                    )
+                })?;
+            }
+            error => return Err(io::Error::from_raw_os_error(error as i32)),
+        }
     }
     Ok((read, write))
 }
 
-fn job(service: bool) -> io::Result<OwnedHandle> {
+fn job(service: bool, native: bool) -> io::Result<OwnedHandle> {
     let handle = unsafe { owned(CreateJobObjectW(ptr::null(), ptr::null())) }?;
     let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-    limits.BasicLimitInformation.LimitFlags = LIMITS;
+    limits.BasicLimitInformation.LimitFlags = LIMITS
+        | if native {
+            JOB_OBJECT_LIMIT_JOB_MEMORY
+        } else {
+            0
+        };
     if service {
         limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_PRIORITY_CLASS;
         limits.BasicLimitInformation.PriorityClass = BELOW_NORMAL_PRIORITY_CLASS;
@@ -450,6 +509,9 @@ fn job(service: bool) -> io::Result<OwnedHandle> {
     limits.BasicLimitInformation.ActiveProcessLimit = 1;
     limits.BasicLimitInformation.PerProcessUserTimeLimit = CPU_TICKS;
     limits.ProcessMemoryLimit = PROCESS_BYTES;
+    if native {
+        limits.JobMemoryLimit = PROCESS_BYTES;
+    }
     check(unsafe {
         SetInformationJobObject(
             handle.as_raw_handle(),
@@ -501,23 +563,77 @@ fn require_job(handle: HANDLE) -> io::Result<()> {
 pub(crate) struct Worker {
     process: OwnedHandle,
     job: OwnedHandle,
-    _image: tempfile::TempDir,
+    _image: Option<tempfile::TempDir>,
     _profile: Profile,
     pub(crate) input: Option<File>,
     pub(crate) output: Option<File>,
+    pub(crate) stderr: Option<File>,
 }
 impl Worker {
     pub(crate) fn spawn(executable: &Path, arguments: &[&str]) -> io::Result<Self> {
-        let profile = Profile::new()?;
+        let profile = Profile::new("lua")?;
         let image = tempfile::tempdir()?;
         image_permissions(image.path(), profile.sid)?;
         let copied = image.path().join("hedit-worker.exe");
         std::fs::copy(executable, &copied)?;
         // Do not rely on the source file's permissions or copy semantics.
         image_permissions(&copied, profile.sid)?;
-        let job = job(arguments == [crate::runtime::SERVICE_HELPER_ARG])?;
-        let (input, input_writer) = pipe()?;
-        let (output_reader, output) = pipe()?;
+        Self::launch(
+            &copied,
+            arguments,
+            working_directory()?,
+            profile,
+            Some(image),
+            native::Mode::Lua,
+        )
+    }
+    pub(crate) fn spawn_native(launch: &crate::tool::Launch) -> io::Result<Self> {
+        let profile = Profile::new("tool")?;
+        image_permissions(&launch.executable, profile.sid)?;
+        native::snapshot_permissions(&launch.snapshot, profile.sid)?;
+        let arguments: Vec<_> = launch.arguments.iter().map(String::as_str).collect();
+        Self::launch(
+            &launch.executable,
+            &arguments,
+            wide(&launch.snapshot),
+            profile,
+            None,
+            native::Mode::Tool,
+        )
+    }
+    fn launch(
+        copied: &Path,
+        arguments: &[&str],
+        current_directory: Vec<u16>,
+        profile: Profile,
+        image: Option<tempfile::TempDir>,
+        mode: native::Mode,
+    ) -> io::Result<Self> {
+        let native = mode != native::Mode::Lua;
+        let job = job(
+            native || arguments == [crate::runtime::SERVICE_HELPER_ARG],
+            native,
+        )?;
+        let asynchronous = mode == native::Mode::Tool;
+        let (input, input_writer) = if asynchronous {
+            let (parent, child) = connection(
+                PIPE_ACCESS_OUTBOUND,
+                FILE_FLAG_OVERLAPPED,
+                FILE_READ_DATA | SYNCHRONIZE,
+            )?;
+            (child, parent)
+        } else {
+            pipe()?
+        };
+        let (output_reader, output) = if asynchronous {
+            connection(
+                PIPE_ACCESS_INBOUND,
+                FILE_FLAG_OVERLAPPED,
+                FILE_WRITE_DATA | SYNCHRONIZE,
+            )?
+        } else {
+            pipe()?
+        };
         for handle in [&input_writer, &output_reader] {
             check(unsafe { SetHandleInformation(handle.as_raw_handle(), HANDLE_FLAG_INHERIT, 0) })?;
         }
@@ -526,17 +642,27 @@ impl Worker {
             lpSecurityDescriptor: ptr::null_mut(),
             bInheritHandle: 1,
         };
-        let stderr = unsafe {
-            owned(CreateFileW(
-                wide("NUL").as_ptr(),
-                GENERIC_WRITE,
-                FILE_SHARE_READ | FILE_SHARE_WRITE,
-                &security,
-                OPEN_EXISTING,
-                FILE_ATTRIBUTE_NORMAL,
-                ptr::null_mut(),
-            ))
-        }?;
+        let (stderr_reader, stderr) = if asynchronous {
+            let (read, write) = connection(
+                PIPE_ACCESS_INBOUND,
+                FILE_FLAG_OVERLAPPED,
+                FILE_WRITE_DATA | SYNCHRONIZE,
+            )?;
+            check(unsafe { SetHandleInformation(read.as_raw_handle(), HANDLE_FLAG_INHERIT, 0) })?;
+            (Some(read), write)
+        } else {
+            (None, unsafe {
+                owned(CreateFileW(
+                    wide("NUL").as_ptr(),
+                    GENERIC_WRITE,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE,
+                    &security,
+                    OPEN_EXISTING,
+                    FILE_ATTRIBUTE_NORMAL,
+                    ptr::null_mut(),
+                ))
+            }?)
+        };
         let handles = [
             input.as_raw_handle(),
             output.as_raw_handle(),
@@ -550,12 +676,20 @@ impl Worker {
         };
         let child_policy = 1u32; // PROCESS_CREATION_CHILD_PROCESS_RESTRICTED
         let jobs = [job.as_raw_handle()];
-        let mut attributes = Attributes::new(5)?;
+        let mut attributes = Attributes::new(if native { 6 } else { 5 })?;
+        let packages = 1u32; // PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT
+        if native {
+            attributes.set(
+                PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY,
+                &packages,
+            )?;
+        }
         attributes.set(PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, &capabilities)?;
         attributes.set(PROC_THREAD_ATTRIBUTE_HANDLE_LIST, &handles)?;
         attributes.set(PROC_THREAD_ATTRIBUTE_JOB_LIST, &jobs)?;
         attributes.set(PROC_THREAD_ATTRIBUTE_CHILD_PROCESS_POLICY, &child_policy)?;
-        attributes.set(PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY, &MITIGATIONS)?;
+        let mitigations = MITIGATIONS | if native { 1u64 << 28 } else { 0 };
+        attributes.set(PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY, &mitigations)?;
         let startup = STARTUPINFOEXW {
             StartupInfo: STARTUPINFOW {
                 cb: mem::size_of::<STARTUPINFOEXW>() as u32,
@@ -567,29 +701,64 @@ impl Worker {
             },
             lpAttributeList: attributes.pointer(),
         };
-        // The executable path is explicit; fixed internal arguments never contain
-        // quotes. Windows filenames cannot contain a double quote.
-        let mut command = wide(format!("\"{}\" {}", copied.display(), arguments.join(" ")));
+        let mut command = native::command_line(copied, arguments)?;
         let environment = environment()?;
-        let current_directory = working_directory()?;
         let mut information = PROCESS_INFORMATION::default();
         // Console initialization can require a helper process and conflicts
         // with the child-process restriction. All worker I/O uses these pipes.
+        let write_token = if mode == native::Mode::Tool || {
+            #[cfg(test)]
+            {
+                mode == native::Mode::ToolProbe
+            }
+            #[cfg(not(test))]
+            {
+                false
+            }
+        } {
+            Some(native::WriteToken::create()?)
+        } else {
+            None
+        };
+        let flags = CREATE_SUSPENDED
+            | DETACHED_PROCESS
+            | CREATE_UNICODE_ENVIRONMENT
+            | EXTENDED_STARTUPINFO_PRESENT;
+        let application = wide(copied);
         check(unsafe {
-            CreateProcessW(
-                wide(&copied).as_ptr(),
-                command.as_mut_ptr(),
-                ptr::null(),
-                ptr::null(),
-                1,
-                CREATE_SUSPENDED
-                    | DETACHED_PROCESS
-                    | CREATE_UNICODE_ENVIRONMENT
-                    | EXTENDED_STARTUPINFO_PRESENT,
-                environment.as_ptr().cast(),
-                current_directory.as_ptr(),
-                &startup.StartupInfo,
-                &mut information,
+            if let Some(token) = &write_token {
+                CreateProcessAsUserW(
+                    token.token.as_raw_handle(),
+                    application.as_ptr(),
+                    command.as_mut_ptr(),
+                    ptr::null(),
+                    ptr::null(),
+                    1,
+                    flags,
+                    environment.as_ptr().cast(),
+                    current_directory.as_ptr(),
+                    &startup.StartupInfo,
+                    &mut information,
+                )
+            } else {
+                CreateProcessW(
+                    application.as_ptr(),
+                    command.as_mut_ptr(),
+                    ptr::null(),
+                    ptr::null(),
+                    1,
+                    flags,
+                    environment.as_ptr().cast(),
+                    current_directory.as_ptr(),
+                    &startup.StartupInfo,
+                    &mut information,
+                )
+            }
+        })
+        .map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!("Confined process creation failed: {error}"),
             )
         })?;
         let process = unsafe { owned(information.hProcess) }?;
@@ -601,10 +770,49 @@ impl Worker {
             _profile: profile,
             input: Some(File::from(input_writer)),
             output: Some(File::from(output_reader)),
+            stderr: stderr_reader.map(File::from),
         };
         // RAII owns the kill-on-close job before any verification can fail.
-        require_token(worker.process.as_raw_handle(), Some(worker._profile.sid))?;
-        require_job(worker.job.as_raw_handle())?;
+        require_token(worker.process.as_raw_handle(), Some(worker._profile.sid)).map_err(
+            |error| {
+                if native {
+                    io::Error::new(
+                        error.kind(),
+                        format!("Native tool AppContainer verification failed: {error}"),
+                    )
+                } else {
+                    error
+                }
+            },
+        )?;
+        if let Some(token) = &write_token {
+            token.verify(worker.process.as_raw_handle())?;
+        }
+        if native {
+            native::lower_integrity(worker.process.as_raw_handle(), mode)?;
+            native::require_token(worker.process.as_raw_handle(), mode).map_err(|error| {
+                io::Error::new(
+                    error.kind(),
+                    format!("Native tool token verification failed: {error}"),
+                )
+            })?;
+            native::require_job(worker.job.as_raw_handle()).map_err(|error| {
+                io::Error::new(
+                    error.kind(),
+                    format!("Native tool job verification failed: {error}"),
+                )
+            })?;
+        }
+        require_job(worker.job.as_raw_handle()).map_err(|error| {
+            if native {
+                io::Error::new(
+                    error.kind(),
+                    format!("Native tool process-limit verification failed: {error}"),
+                )
+            } else {
+                error
+            }
+        })?;
         let mut included = 0;
         check(unsafe {
             IsProcessInJob(
@@ -621,6 +829,34 @@ impl Worker {
         }
         Ok(worker)
     }
+    pub(crate) fn over_thread_limit(&self) -> io::Result<bool> {
+        use windows_sys::Win32::System::Diagnostics::ToolHelp::*;
+        let snapshot = unsafe { owned(CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0)) }?;
+        let mut entry = THREADENTRY32 {
+            dwSize: mem::size_of::<THREADENTRY32>() as u32,
+            ..Default::default()
+        };
+        check(unsafe { Thread32First(snapshot.as_raw_handle(), &mut entry) })?;
+        let mut count = 0;
+        let process = unsafe { GetProcessId(self.process.as_raw_handle()) };
+        for _ in 0..65536 {
+            if entry.th32OwnerProcessID == process {
+                count += 1;
+                if count > 32 {
+                    return Ok(true);
+                }
+            }
+            if unsafe { Thread32Next(snapshot.as_raw_handle(), &mut entry) } == 0 {
+                if unsafe { GetLastError() } != ERROR_NO_MORE_FILES {
+                    return Err(io::Error::last_os_error());
+                }
+                return Ok(false);
+            }
+        }
+        Err(io::Error::other(
+            "Tool thread accounting exceeded its limit.",
+        ))
+    }
     pub(crate) fn finished(&self, wait_ms: u32) -> io::Result<bool> {
         match unsafe { WaitForSingleObject(self.process.as_raw_handle(), wait_ms) } {
             WAIT_OBJECT_0 => Ok(true),
@@ -628,10 +864,30 @@ impl Worker {
             _ => Err(io::Error::last_os_error()),
         }
     }
+    pub(crate) fn over_cpu_limit(&self) -> io::Result<bool> {
+        let mut created = FILETIME::default();
+        let mut exited = FILETIME::default();
+        let mut kernel = FILETIME::default();
+        let mut user = FILETIME::default();
+        check(unsafe {
+            GetProcessTimes(
+                self.process.as_raw_handle(),
+                &mut created,
+                &mut exited,
+                &mut kernel,
+                &mut user,
+            )
+        })?;
+        let ticks = u64::from(user.dwHighDateTime) << 32 | u64::from(user.dwLowDateTime);
+        Ok(ticks >= CPU_TICKS as u64)
+    }
     pub(crate) fn success(&self) -> io::Result<bool> {
+        Ok(self.exit_code()? == 0)
+    }
+    pub(crate) fn exit_code(&self) -> io::Result<u32> {
         let mut code = 0;
         check(unsafe { GetExitCodeProcess(self.process.as_raw_handle(), &mut code) })?;
-        Ok(code == 0)
+        Ok(code)
     }
     pub(crate) fn terminate(&self) {
         unsafe {
@@ -711,3 +967,5 @@ pub(crate) fn require_service_priority() -> io::Result<()> {
     }
     Ok(())
 }
+
+mod native;

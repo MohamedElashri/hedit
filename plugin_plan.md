@@ -897,3 +897,14 @@ guardian SIGKILL, process-group/session escape attempts and cleanup. Parent-exit
 cleanup is being validated through the full plugin and platform suites before
 this gate is closed. Tool/LSP broker activation and remaining Stage 3 gates are
 still open.
+
+
+The Windows native adapter now has a separate LPAC/untrusted-integrity tool role,
+parent-side suspended-token verification, read-only snapshot ACLs, bounded native
+argument quoting and cancellable overlapped I/O. The shared native admission cap
+covers all platforms. Dedicated x64/ARM64 CI is being added for the native tool
+fixture and a writable low-integrity LPAC control; enforcement remains unverified
+until those native jobs pass. Broker tool/LSP intents remain unavailable. The
+preceding guardian head `28056e8` passed dedicated Linux x64/ARM64/macOS probes,
+full Linux/macOS/remote checks and both Windows Lua sandbox architectures; its
+Windows package job was still running when this checkpoint was recorded.

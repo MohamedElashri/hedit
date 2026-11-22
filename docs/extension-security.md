@@ -240,6 +240,55 @@ processes. No untrusted tool holds a guardian control descriptor. Native tests
 kill the simulated editor and guardian separately and verify both processes are
 gone. No broker tool grants are enabled by this implementation.
 
+The Windows native-tool path uses the existing launcher with a distinct role:
+a capability-free less-privileged AppContainer (LPAC), an untrusted integrity
+label with no-write-up policy, a separate write-restricted primary token, Win32k lockdown, child-process restrictions,
+explicit inherited handles and a kill-on-close single-process job. Parent-side
+checks run while the image is suspended; only after token, mitigation and job
+verification does it resume. The job limits private and job-wide committed
+memory to 256 MiB, user CPU time to two seconds and CPU rate to 10%. Thread count
+is monitored with a bounded host-side scan. The host also samples user CPU time
+every 50 ms because Windows enforces job CPU-time limits periodically; the
+configured two seconds is not a promise of zero overshoot. The finite ten-second
+wall deadline is independent of CPU throttling. Kernel objects, system services and
+shared OS resource pressure remain residual denial-of-service risks.
+
+Native stdin/stdout/stderr use parent-owned overlapped pipe ends. Cancellation
+terminates the job and cancels pending local pipe operations while keeping their
+buffers/events alive through completion. No blocked I/O thread is abandoned.
+Client tokens retain identification-only quality of service and individual
+access rights. MSVCRT argument quoting is tested by an actual native executable;
+no shell interpolation is used. Snapshot trees are validated for regular files,
+reparse points, entry count and aggregate size before ACL propagation. The host
+must supply immutable private image/snapshot copies and retain their ownership.
+
+Before resuming the suspended process, the host verifies LPAC authorization
+semantics with `AccessCheck` on an identification duplicate of its token:
+Everyone alone and Everyone plus ALL_APPLICATION_PACKAGES must deny read;
+Everyone plus ALL_RESTRICTED_APPLICATION_PACKAGES must grant it. This uses the
+[documented LPAC definition](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ne-winnt-token_information_class)
+and [AccessCheck](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-accesscheck),
+with both positive and negative controls. The class-46 token query is rejected
+by the tested Windows kernels and is not used as an authority check.
+
+The host creates a restricted version of its own primary token with privileges
+removed and a fresh, ungranted restricting SID, then uses `CreateProcessAsUserW`
+with the LPAC attributes. The restricting SID must survive in the suspended
+child's token. This extra restriction is necessary: a native control demonstrated
+that lowering the AppContainer token label alone did not prevent writes through
+explicit package-SID grants. The integrity label is defense in depth, not the
+sole enforcement of read-only snapshots or profile storage.
+
+Native Windows validation is an activation gate. A low-integrity LPAC control
+receives write access to a synthetic low-labelled file; the untrusted tool token
+must fail the same write and must fail attempts to raise its integrity or disable
+mandatory policy. Dedicated x64/ARM64 probes additionally check token identity,
+read-only snapshots, private-file denial, network/child restrictions, memory,
+output, thread/CPU limits, Unicode arguments, full-size overlapped transport and
+cancellation. These checks must pass before the broker enables any tool grants.
+See Microsoft's [AppContainer launch guidance](https://learn.microsoft.com/en-us/windows/win32/secauthz/implementing-an-appcontainer)
+and [mandatory integrity model](https://learn.microsoft.com/en-us/windows/win32/secauthz/mandatory-integrity-control).
+
 `crates/hedit-plugin/tests/native_tool.rs` runs the actual native image through
 the production boundary: Unicode/full-size input, literal policy parameters,
 outside reads and symlink escapes, writes and metadata changes, inherited
