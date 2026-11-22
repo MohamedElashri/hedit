@@ -475,15 +475,37 @@ fn render(key: &Key) -> Result<Raster, String> {
 }
 
 fn rasterize(svg: &str) -> Result<Raster, String> {
+    rasterize_with_fonts(svg, || {
+        use resvg::usvg;
+        static FONTS: std::sync::OnceLock<Arc<usvg::fontdb::Database>> = std::sync::OnceLock::new();
+        FONTS
+            .get_or_init(|| {
+                let mut fonts = usvg::fontdb::Database::new();
+                fonts.load_system_fonts();
+                Arc::new(fonts)
+            })
+            .clone()
+    })
+}
+
+fn rasterize_with_fonts(
+    svg: &str,
+    load_fonts: impl Fn() -> Arc<resvg::usvg::fontdb::Database> + Send + Sync,
+) -> Result<Raster, String> {
     use resvg::{tiny_skia, usvg};
-    static FONTS: std::sync::OnceLock<Arc<usvg::fontdb::Database>> = std::sync::OnceLock::new();
-    let fonts = FONTS.get_or_init(|| {
-        let mut fonts = usvg::fontdb::Database::new();
-        fonts.load_system_fonts();
-        Arc::new(fonts)
-    });
+    let select_font = usvg::FontResolver::default_font_selector();
     let options = usvg::Options {
-        fontdb: fonts.clone(),
+        font_resolver: usvg::FontResolver {
+            select_font: Box::new(move |font, database| {
+                // Outlined equations need no host fonts. Populate the empty
+                // SVG database only when actual text requests a font.
+                if database.is_empty() {
+                    *database = load_fonts();
+                }
+                select_font(font, database)
+            }),
+            ..Default::default()
+        },
         image_href_resolver: usvg::ImageHrefResolver {
             resolve_string: Box::new(|_, _| None),
             ..Default::default()
@@ -519,6 +541,36 @@ fn rasterize(svg: &str) -> Result<Raster, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn outlined_svg_renders_without_requesting_system_fonts() {
+        let loads = std::sync::atomic::AtomicUsize::new(0);
+        let raster = rasterize_with_fonts(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><path d="M2 2h12v12H2z" fill="black"/></svg>"#,
+            || {
+                loads.fetch_add(1, Ordering::Relaxed);
+                Arc::new(resvg::usvg::fontdb::Database::new())
+            },
+        ).unwrap();
+        assert_eq!(loads.load(Ordering::Relaxed), 0);
+        assert!(raster.image.pixels.iter().any(|pixel| pixel.a() > 0));
+    }
+
+    #[test]
+    fn svg_text_loads_fonts_once_and_keeps_visible_labels() {
+        let loads = std::sync::atomic::AtomicUsize::new(0);
+        let raster = rasterize_with_fonts(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="80" height="48"><text x="2" y="18" font-family="Ubuntu">First</text><text x="2" y="38" font-family="Ubuntu">Second</text></svg>"#,
+            || {
+                loads.fetch_add(1, Ordering::Relaxed);
+                let mut fonts = resvg::usvg::fontdb::Database::new();
+                fonts.load_font_data(egui::FontDefinitions::default().font_data["Ubuntu-Light"].font.to_vec());
+                Arc::new(fonts)
+            },
+        ).unwrap();
+        assert_eq!(loads.load(Ordering::Relaxed), 1);
+        assert!(raster.image.pixels.iter().any(|pixel| pixel.a() > 0));
+    }
 
     #[test]
     fn warm_figures_with_different_text_colors_keep_their_cached_results() {
