@@ -87,27 +87,58 @@ impl Context {
     }
 }
 impl Context {
-    pub(in crate::app::extensions) fn current(&self) -> bool {
+    fn scope_current(&self) -> bool {
         self.live.load(Ordering::Acquire)
             && self.generation.get().is_none_or(|(_, sequence)| {
                 self.monitor.sequence.load(Ordering::Acquire) == *sequence
             })
             && (self.commit.committing.load(Ordering::Acquire)
-                || self.target.as_ref().is_none_or(|target| {
-                    self.lifetime
-                        .as_ref()
-                        .is_some_and(hedit::lifetime::Lease::current)
-                        && self
-                            .editor
-                            .get(target.document())
-                            .ok()
-                            .and_then(|doc| {
-                                doc.try_lock()
-                                    .ok()
-                                    .map(|doc| doc.info().revision == target.revision())
-                            })
-                            .unwrap_or(false)
-                }))
+                || self.target.is_none()
+                || self
+                    .lifetime
+                    .as_ref()
+                    .is_some_and(hedit::lifetime::Lease::current))
+    }
+    fn revision_current(&self) -> Option<bool> {
+        if self.commit.committing.load(Ordering::Acquire) {
+            return Some(true);
+        }
+        let Some(target) = &self.target else {
+            return Some(true);
+        };
+        let Ok(document) = self.editor.get(target.document()) else {
+            return Some(false);
+        };
+        let result = match document.try_lock() {
+            Ok(document) => Some(document.info().revision == target.revision()),
+            Err(std::sync::TryLockError::WouldBlock) => None,
+            Err(std::sync::TryLockError::Poisoned(_)) => Some(false),
+        };
+        result
+    }
+    /// Retain UI state during contention. This does not authorize disclosure or effects.
+    pub(in crate::app::extensions) fn retained(&self) -> bool {
+        self.scope_current() && self.revision_current() != Some(false)
+    }
+    /// A nonblocking revision check for publication and explicit UI decisions.
+    pub(in crate::app::extensions) fn current(&self) -> bool {
+        self.scope_current() && self.revision_current() == Some(true)
+    }
+    /// Called only on host/authorization threads, never while pumping the UI.
+    fn verified_current(&self, cancelled: &AtomicBool) -> bool {
+        let deadline = Instant::now() + Duration::from_millis(200);
+        loop {
+            if cancelled.load(Ordering::Acquire) || !self.scope_current() {
+                return false;
+            }
+            match self.revision_current() {
+                Some(current) => return current,
+                None if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                None => return false,
+            }
+        }
     }
     pub(super) fn approved_plugin(&self) -> LuaPlugin {
         let mut plugin = self.plugin.clone();
@@ -118,12 +149,12 @@ impl Context {
         plugin
     }
     pub(in crate::app::extensions) fn authorize(&self, cancelled: &AtomicBool) -> io::Result<File> {
-        if cancelled.load(Ordering::Acquire) || !self.current() {
+        if !self.verified_current(cancelled) {
             return Err(denied());
         }
         let guard = catalog::broker_authorization(&self.config, &self.approved_plugin())
             .ok_or_else(denied)?;
-        if cancelled.load(Ordering::Acquire) || !self.current() {
+        if !self.verified_current(cancelled) {
             return Err(denied());
         }
         Ok(guard)

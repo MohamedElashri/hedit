@@ -75,15 +75,8 @@ class WindowsPackage(unittest.TestCase):
                 self.assertNotIn(prefix + 'install.sh', bundle.namelist())
                 examples = {name[len(prefix):] for name in bundle.namelist()
                             if name.startswith(prefix + 'examples/')}
-                self.assertEqual(examples, {'examples/cuda/vector_add.cu',
-                                            'examples/extensions/markdown-task.json',
-                                            'examples/extensions/markdown-quote.json',
-                                            'examples/extensions/document-assist.json',
-                                            'examples/extensions/document-assist.fixtures.json',
-                                            'examples/extensions/demo-visuals.json',
-                                            *{f'examples/extensions/sdk-{name}{suffix}.json'
-                                              for name in ['markdown', 'table', 'trim']
-                                              for suffix in ['', '.fixtures']}})
+                self.assertEqual(examples, {'examples/cuda/vector_add.cu'} |
+                                 {name for name in documents if name.startswith('examples/')})
             checksum = archive.with_name(archive.name + '.sha256').read_bytes()
             digest = hashlib.sha256(archive.read_bytes()).hexdigest()
             self.assertEqual(checksum, f'{digest}  {archive.name}\n'.encode())

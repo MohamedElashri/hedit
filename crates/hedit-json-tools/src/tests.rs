@@ -154,3 +154,19 @@ fn protocol_round_trip_correlates_ids_and_rejects_truncated_frames() {
     let frame = lsp::encode(&messages[0], Limits::SCOPED).unwrap();
     assert!(serve(&frame[..frame.len() - 1], Vec::new()).is_err());
 }
+
+#[test]
+fn project_summary_is_bounded_and_ignores_unrelated_text() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("first.json"), "{}").unwrap();
+    std::fs::write(directory.path().join("second.json"), "invalid").unwrap();
+    std::fs::write(directory.path().join("secret.txt"), "not JSON").unwrap();
+    assert_eq!(
+        project_summary(directory.path()).unwrap(),
+        "Approved project: 2 top-level JSON files (1 valid)"
+    );
+    for index in 0..31 {
+        std::fs::write(directory.path().join(format!("{index}.json")), "{}").unwrap();
+    }
+    assert!(project_summary(directory.path()).is_err());
+}

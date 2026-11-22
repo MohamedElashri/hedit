@@ -206,7 +206,7 @@ impl HeditApp {
             return;
         };
         let context = command.context.clone();
-        if !context.current()
+        if !context.retained()
             || (!context.commit.committing.load(Ordering::Acquire)
                 && context
                     .target

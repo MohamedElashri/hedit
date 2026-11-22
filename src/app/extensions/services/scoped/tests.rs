@@ -296,3 +296,5 @@ fn native_workspace_provider_requires_explicit_preview_and_refreshes_clean_buffe
         .any(|b| b.page.info.id == id && b.page.text == "new café / 東京\r\n"));
     assert_eq!(app.workspace.open[0].page.text, "unrelated unsaved work");
 }
+
+mod references;

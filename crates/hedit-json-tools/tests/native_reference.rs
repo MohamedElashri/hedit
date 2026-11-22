@@ -77,7 +77,7 @@ fn main() {
         .filter(br#"{"a":1,"a":2}"#, &cancel, Duration::from_secs(10))
         .is_err());
     images.remove(image, &filter).unwrap();
-    let server = binding("language_server", "server", "--lsp");
+    let server = binding("language_server", "server", "--project-lsp");
     let image = images
         .import(Source::select(binary).unwrap(), server.clone(), &cancel)
         .unwrap();
@@ -95,7 +95,7 @@ fn main() {
         .prepare(
             images.resolve(image, &server, &cancel).unwrap(),
             projection,
-            vec!["--lsp".into()],
+            vec!["--project-lsp".into()],
             &cancel,
         )
         .unwrap();
@@ -130,7 +130,10 @@ fn main() {
         let ResultSet::Hover(hover) = request(&snapshot, Method::Hover, false) else {
             panic!()
         };
-        assert_eq!(hover.text, "JSON object with 2 properties");
+        assert_eq!(
+            hover.text,
+            "JSON object with 2 properties\nApproved project: 1 top-level JSON files (1 valid)"
+        );
         let ResultSet::Diagnostics(diagnostics) = request(&snapshot, Method::Diagnostics, false)
         else {
             panic!()
@@ -164,7 +167,10 @@ fn main() {
     let ResultSet::Hover(hover) = request(&snapshot, Method::Hover, false) else {
         panic!()
     };
-    assert_eq!(hover.text, "JSON array with 0 elements");
+    assert_eq!(
+        hover.text,
+        "JSON array with 0 elements\nApproved project: 1 top-level JSON files (1 valid)"
+    );
     assert!(owner.running());
     scope.cancel();
     let until = Instant::now() + Duration::from_secs(3);

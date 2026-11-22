@@ -1,0 +1,110 @@
+[
+  {
+    "command": "scoped-rename.replace",
+    "input": "unrelated private document",
+    "expected": "unrelated private document",
+    "broker": {
+      "scope": true,
+      "exchanges": [
+        {
+          "intent": {
+            "search": {
+              "scope": "cccccccccccccccccccccccccccccccc",
+              "query": "old_name"
+            }
+          },
+          "response": {
+            "searched": {
+              "matches": [
+                {
+                  "relative": "a.txt",
+                  "start": 6,
+                  "finish": 14,
+                  "excerpt": "café old_name\r\n"
+                },
+                {
+                  "relative": "b.txt",
+                  "start": 0,
+                  "finish": 8,
+                  "excerpt": "old_name / 東京\n"
+                }
+              ],
+              "truncated": false
+            }
+          }
+        },
+        {
+          "intent": {
+            "open_many": {
+              "scope": "cccccccccccccccccccccccccccccccc",
+              "paths": [
+                "a.txt",
+                "b.txt"
+              ]
+            }
+          },
+          "response": {
+            "opened_many": {
+              "files": [
+                {
+                  "resource": {
+                    "resource": "dddddddddddddddddddddddddddddddd",
+                    "version": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    "relative": "a.txt",
+                    "bytes": 16
+                  },
+                  "text": "café old_name\r\n"
+                },
+                {
+                  "resource": {
+                    "resource": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                    "version": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "relative": "b.txt",
+                    "bytes": 18
+                  },
+                  "text": "old_name / 東京\n"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "intent": {
+            "review_edits": {
+              "scope": "cccccccccccccccccccccccccccccccc",
+              "changes": [
+                {
+                  "resource": "dddddddddddddddddddddddddddddddd",
+                  "version": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  "edits": [
+                    {
+                      "start": 6,
+                      "finish": 14,
+                      "text": "new_name"
+                    }
+                  ]
+                },
+                {
+                  "resource": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                  "version": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "edits": [
+                    {
+                      "start": 0,
+                      "finish": 8,
+                      "text": "new_name"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "response": {
+            "edited": {
+              "files": 2
+            }
+          }
+        }
+      ]
+    }
+  }
+]
