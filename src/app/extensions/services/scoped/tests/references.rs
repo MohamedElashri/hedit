@@ -215,6 +215,24 @@ fn usage() -> Usage {
 #[ignore = "controlled scoped/native LSP frame and retention probe; writes HEDIT_PLUGIN_UI_PROBE_OUT"]
 fn profile_scoped_native_frames() {
     use crate::app::extensions::lua::tests::measured_allocations::measure;
+    let mut initial_qos = libc::qos_class_t::QOS_CLASS_UNSPECIFIED;
+    let mut initial_priority = 0;
+    assert_eq!(
+        unsafe {
+            libc::pthread_get_qos_class_np(
+                libc::pthread_self(),
+                &mut initial_qos,
+                &mut initial_priority,
+            )
+        },
+        0
+    );
+    assert_eq!(
+        unsafe {
+            libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE, 0)
+        },
+        0
+    );
     let output =
         std::env::var_os("HEDIT_PLUGIN_UI_PROBE_OUT").expect("Set HEDIT_PLUGIN_UI_PROBE_OUT");
     let frames = std::env::var("HEDIT_PLUGIN_UI_PROBE_FRAMES")
@@ -425,6 +443,7 @@ fn profile_scoped_native_frames() {
     }
     std::fs::write(output,serde_json::to_vec_pretty(&json!({
         "os":std::env::consts::OS,"arch":std::env::consts::ARCH,"debug_assertions":cfg!(debug_assertions),
+        "ui_thread_qos":{"initial_class":initial_qos as u32,"initial_priority":initial_priority,"requested":"user_interactive","relative_priority":0},
         "scope":"Same-build instrumented egui CPU frames and UI-thread allocation traffic. Three source-approved native LSP profiles use real rotated Lua callbacks and private project snapshots. Approximately 60 KiB Unicode JSON; typing at one event per ten 16-ms frames. Physical host footprint, self CPU and context switches exclude child usage. No GPU/OS input/presentation latency or total-process-tree memory claim. Raw text/paths are not recorded.",
         "workloads":workloads})).unwrap()).unwrap();
 }

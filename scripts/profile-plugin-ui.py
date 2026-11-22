@@ -109,7 +109,7 @@ def main():
                     ['RUSTFLAGS', 'CARGO_TARGET_DIR', 'CARGO_PROFILE_RELEASE_LTO', 'CARGO_INCREMENTAL']},
                 'test_executable_sha256': hashlib.sha256(Path(executables[0]).read_bytes()).hexdigest(),
                 'summary': summary, 'p95_regression_fraction': comparisons,
-                'scope': report['scope']}
+                'ui_thread_qos': report['ui_thread_qos'], 'scope': report['scope']}
     (output/'metadata.json').write_text(json.dumps(metadata, indent=2)+'\n')
     print(json.dumps({'summary': summary, 'p95_regression_fraction': comparisons}, indent=2))
 
