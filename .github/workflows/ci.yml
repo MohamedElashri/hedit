@@ -3,7 +3,23 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - 'website/**'
+      - 'scripts/build-docs.py'
+      - 'scripts/check-docs-site.py'
+      - 'scripts/setup-nida.py'
+      - 'scripts/test-docs-site.py'
+      - '.github/workflows/pages.yml'
+      - '.github/workflows/actions.lock'
   pull_request:
+    paths-ignore:
+      - 'website/**'
+      - 'scripts/build-docs.py'
+      - 'scripts/check-docs-site.py'
+      - 'scripts/setup-nida.py'
+      - 'scripts/test-docs-site.py'
+      - '.github/workflows/pages.yml'
+      - '.github/workflows/actions.lock'
   workflow_dispatch:
     inputs:
       validation_only:

@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Exercise shared-document routing, complete rendered links, and the docs-only JS exception."""
 import importlib.util
+from contextlib import redirect_stdout
+import io
 import json
 from pathlib import Path
 import tempfile
+import tomllib
 import unittest
 from unittest.mock import patch
 
@@ -21,6 +24,15 @@ policy = module('native_policy', 'check-native.py')
 
 
 class Imports(unittest.TestCase):
+    def test_deployment_url_updates_only_the_assembled_configuration(self):
+        original = (build.SITE / 'config.toml').read_bytes()
+        with tempfile.TemporaryDirectory() as directory, patch.object(build, 'OUTPUT', Path(directory) / 'site'):
+            with redirect_stdout(io.StringIO()):
+                output = build.prepare('https://example.com/manual')
+            configuration = tomllib.loads((output / 'config.toml').read_text())
+            self.assertEqual(configuration['base_url'], 'https://example.com/manual/')
+            self.assertEqual((build.SITE / 'config.toml').read_bytes(), original)
+
     def test_fences_do_not_create_sections_and_duplicates_keep_source_anchors(self):
         text = '# Guide\n\n```md\n## Not a heading\n```\n\n## Repeat\ntext\n## Repeat\nother\n'
         self.assertEqual([r[3] for r in build.headings(text)], ['guide', 'repeat', 'repeat-1'])
