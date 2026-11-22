@@ -2,45 +2,36 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-22
+
 ### Added
 
-- Open a keyboard-first SSH connection picker from the Command Palette. Connect by alias or hostname, or reopen a specific saved workspace with its recovery settings. Setup errors identify the failed phase and suggest what to check.
-- Browse folders by keyboard within the connected SSH workspace. Add a folder to Files while keeping the active connection and recovery root.
-- Import selected SSH aliases into Remote Explorer or sync all hosts. The sidebar follows changes to SSH config and included files.
-- Opt into verified SSH config jump hosts and session-scoped localhost port forwarding on Linux and macOS clients.
-- Reopen recent workspaces by SSH host or preview a remote folder before opening it. SSH Output records connection stages and offers diagnostic and recovery actions.
-- Enable masked interactive SSH authentication per connection profile on Linux and macOS.
-- Install local JSON extensions for snippets, contextual commands, and new-file templates with syntax and tab stops. Manage them in Settings and assign personal shortcuts.
-- Run Lua text transforms on macOS, Linux, and Windows x86-64 and ARM64 using one shared engine with native process isolation. Review command-scoped permissions, allow a single attempt, preview multi-selection edits, and restore changes with Undo.
-- Configure typed extension settings, explicitly enable language-specific save hooks, and inspect recent command outcomes.
-- Validate and test extensions from the CLI. Package Lua source into versioned bundles and verify publisher signatures when reviewing updates.
-- Author structured document edits and selections with the versioned editing SDK, declared inputs, reviewed modules/resources and bounded private command storage.
-- Add approved diagnostics, completion, hover, symbols, quick fixes and decorations through isolated providers and native result UI; install bounded syntax/theme packs.
-- Grant scoped workspace discovery/read/search/watch, reviewed existing-file edits with recoverable journals, fixed public HTTPS requests and exact native tool images.
-- Run confined native filters and persistent document-bound LSP services on macOS, Linux and Windows. Packages include native JSON formatting/project-LSP and scoped rename/Markdown reference plugins.
+- Install local extensions for snippets, file templates and Lua editing commands on macOS, Linux and Windows x86-64/ARM64. Review command permissions, preview changes, and restore document edits with Undo.
+- Author structured document edits and selections through the versioned SDK, with declared inputs/settings, reviewed modules/resources and bounded private command storage.
+- Add approved diagnostics, completion, hover, symbols, quick fixes and decorations through isolated providers and native result UI; install syntax/theme packs.
+- Grant scoped workspace discovery, read, search and watch access. Review existing-file edit plans with conflict checks and recoverable journals.
+- Run reviewed native filters and persistent document-bound LSP services inside OS sandboxes, or request fixed public HTTPS endpoints. Packages include native JSON formatting/project-LSP and scoped identifier-replacement/Markdown reference plugins.
+- Validate and test extensions from the CLI, distribute versioned signed bundles, bind approved language-specific Save hooks, and inspect recent command activity.
+- Open a keyboard-first SSH connection picker with clearer setup diagnostics, recent workspaces and optional masked interactive authentication on Linux/macOS clients.
+- Browse remote folders by keyboard and retain saved workspace recovery settings. Import selected SSH aliases or synchronize discovered hosts.
+- Opt into verified SSH-config jump hosts and connection-scoped localhost TCP forwarding on Linux/macOS clients.
 
 ### Changed
 
-- Stop local Git marker scheduling in remote windows and when change markers are off. Release derived editor and Git caches for closed tabs and splits.
-- Reuse the validated SSH handshake reply and wake disconnected sessions only for a scheduled retry or user action.
+- Stop local Git marker scheduling in remote windows and when change markers are off; release derived editor/Git caches for closed tabs and splits.
+- Reuse validated SSH handshake replies and wake disconnected sessions only for scheduled retries or user actions.
 
 ### Fixed
 
-- Reject excess Lua worker edits before deserializing them, and enforce decoded replacement limits while parsing replies.
-- Require worker output EOF before accepting Unix replies, and prevent native child-process creation in the macOS Lua helper.
-- Avoid repeated document scans when Lua commands read multiple selections, and remove per-character offset tables from multicursor replacements.
-- Wake the editor when Lua authorization checks and commands finish so results appear promptly.
-- Preserve scoped work during transient document-lock contention, reuse idle provider metadata and reject oversized snapshots before copying document text.
-- Preserve cached Markdown figures with different text colors during redraws.
-- Load system fonts only when SVG text needs them, so outlined Markdown equations do not wait for platform font discovery.
-- Report unreadable positions in malformed paged files without stalling the open worker.
-- Use atomic creation for new Save As destinations so another file created during the save stays intact and pending edits remain available for retry.
-- Preserve competing writes during existing-file saves and detect replacements with matching length and modification time. Validate UTF-8 before advancing a page past a partial character.
-- Read only regular, bounded files for Mini Diff comparisons against disk.
-- Prefer a typed SSH address over partial alias matches. Restore added folders and their expansion state with saved workspaces, replace edited connection profiles after successful setup, and let users retry after a background worker exits.
-- Keep SSH change checks on schedule under continuous activity, age only unacknowledged edits, and serialize execution-trust updates with reconnects. Stop pending-edit repaint timers while offline.
-- Preserve Windows atomic-save behavior while retaining the saved file identity, and read consent revisions through the handle that holds the policy lock.
-- Reject NUL characters and overflowing snippet field numbers in extension manifests. Match exact command IDs before titles and preserve the final caret marker during expansion.
+- Validate bounded Lua replies before accepting edits, require output EOF, and prevent native child creation in the macOS Lua helper.
+- Wake the editor when extension authorization and commands finish; preserve scoped work during transient document-lock contention.
+- Avoid repeated document scans and offset tables for multi-selection commands, reuse idle provider metadata, and reject oversized snapshots before copying text.
+- Preserve cached Markdown figures across text-color changes and defer system-font discovery until SVG text needs it.
+- Detect competing writes and same-size file replacements during Save. Create new Save As targets atomically, preserve pending edits on conflicts, and reject unsafe or unreadable input files.
+- Validate UTF-8 before advancing paged reads and report malformed-file positions without stalling the open worker.
+- Match typed SSH addresses before partial aliases, restore remote folders and connection profiles, keep change checks scheduled during editing, and stop retry repaint timers while disconnected.
+- Preserve Windows atomic-save identities and read consent revisions through the held policy-lock handle.
+- Reject NUL characters and overflowing snippet fields in manifests; match exact command IDs before titles and preserve snippet caret markers.
 
 ## [0.6.2] - 2026-11-19
 
