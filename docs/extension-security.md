@@ -532,3 +532,21 @@ invoke workspace edits, execute commands, register capabilities or request
 configuration through this controller. Diagnostic notifications remain untrusted
 data until document URI/version/range and publication authority are checked.
 This protocol layer still does not activate installed plugin LSP profiles.
+
+Typed LSP translation uses one exact host-issued file URI, an independent positive
+LSP version and the immutable SDK document/revision. Server URIs are compared as
+keys and never opened, canonicalized or passed to built-in workspace edit code.
+Published diagnostics require the exact issued version; unversioned, stale or
+foreign-document notifications cannot produce a result. Pull diagnostics reject
+cross-document reports. UTF-8/16/32 offsets use an index of valid snapshot
+boundaries; surrogate, byte and CRLF-interior splits fail without rescanning the
+document for every returned item.
+
+Diagnostics, plain completions, hover, symbols, formatting and current-document
+edit actions use the shared SDK result validator before reaching Lua. Formatting
+and actions retain the exact SDK document/revision and pass its edit/preview
+rules. Snippet/defaulted completion edits, additional completion edits, server
+commands, resource operations and cross-document actions are unsupported by this
+translator and fail closed. Hover markup is plain native-rendered text. These
+typed primitives still require persistent authority/lifecycle integration before
+installed LSP profiles can be enabled.

@@ -123,3 +123,15 @@ fn bounded_mutation_corpus_never_panics_or_accepts_partial_frames() {
         }
     }
 }
+
+#[test]
+fn numeric_normalization_has_an_independent_encoding_budget() {
+    let mut body = br#"{"jsonrpc":"2.0","id":1,"result":[1e10,""#.to_vec();
+    let end = br#""]}"#;
+    body.resize(Limits::SCOPED.message_bytes() - end.len(), b'x');
+    body.extend(end);
+    let value = parse_json(&body, Limits::SCOPED).unwrap();
+    // 1e10 serializes as 10000000000.0, exceeding an already full frame.
+    assert!(encode(&value, Limits::SCOPED).is_err());
+    assert!(decode(&frame(&body), READ_BYTES).is_ok());
+}

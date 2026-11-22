@@ -1,4 +1,48 @@
 use super::*;
+#[test]
+fn language_results_validate_against_host_snapshot_before_reaching_lua() {
+    let mut request = input();
+    request.response = Some(Response::LanguageServer {
+        result: Box::new(service::ResultSet::Hover(service::Hover {
+            range: service::Range {
+                start: 0,
+                finish: 5,
+            },
+            text: "café".into(),
+        })),
+    });
+    request.validate().unwrap();
+    if let Some(Response::LanguageServer { result }) = &mut request.response {
+        let service::ResultSet::Hover(hover) = result.as_mut() else {
+            panic!()
+        };
+        hover.range.finish = 4; // Split the UTF-8 é.
+    }
+    assert!(request.validate().is_err());
+    request.response = Some(Response::LanguageServer {
+        result: Box::new(service::ResultSet::Formatting(sdk::Transaction {
+            document: request.package.snapshot.document.clone(),
+            revision: "41".into(),
+            edits: vec![],
+            selections: None,
+            storage: None,
+        })),
+    });
+    assert!(request.validate().is_err());
+    if let Some(Response::LanguageServer { result }) = &mut request.response {
+        let service::ResultSet::Formatting(transaction) = result.as_mut() else {
+            panic!()
+        };
+        transaction.revision = "42".into();
+    }
+    request.validate().unwrap();
+    request.may_edit = false;
+    assert!(request.validate().is_err());
+    request.response = Some(Response::LanguageServer {
+        result: Box::new(service::ResultSet::Presentation(Default::default())),
+    });
+    assert!(request.validate().is_err());
+}
 pub(crate) fn input() -> Input {
     Input{protocol_version:VERSION,request:Handle::fresh().unwrap(),step:0,package:sdk::Input{sdk_version:sdk::VERSION,source:"return function(ctx) return {intent={discover={scope=ctx.broker.scope,query=''}},cache={step=1}} end".into(),modules:Default::default(),resources:Default::default(),snapshot:sdk::Snapshot{document:"0123456789abcdef0123456789abcdef".into(),revision:"42".into(),language:"text".into(),text:"café / 東京\r\n🦀".into(),selections:vec![sdk::Selection{anchor:0,head:0}],crlf:true},settings:Default::default(),arguments:Default::default(),storage:None},scope:Some(Handle::fresh().unwrap()),may_edit:true,workspace_edit:true,may_present:true,provider:None,response:None,cache:Default::default()}
 }
