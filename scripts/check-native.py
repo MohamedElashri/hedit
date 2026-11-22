@@ -9,6 +9,8 @@ forbidden_names = {"package.json", "package-lock.json", "yarn.lock", "pnpm-lock.
 
 def scan(directory):
     for path in directory.iterdir():
+        if path == root / '.worktrees':
+            continue
         if path.name in {".git", "target", ".agents", ".codex", ".aws", "__pycache__"}:
             continue
         documentation_script = (path.suffix == '.js' and

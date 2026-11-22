@@ -78,13 +78,15 @@ class NativePolicy(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             for name in ['website/static/js/docs.js', 'src/app.js', 'website/package.json',
-                         'website/static/js/component.ts', 'website/content/extra.js']:
+                         'website/static/js/component.ts', 'website/content/extra.js',
+                         '.worktrees/other/website/static/js/docs.js', 'src/.worktrees/hidden.js']:
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.touch()
             with patch.object(policy, 'root', root):
                 self.assertEqual(set(map(str, policy.scan(root))), {'src/app.js', 'website/package.json',
-                                 'website/static/js/component.ts', 'website/content/extra.js'})
+                                 'website/static/js/component.ts', 'website/content/extra.js',
+                                 'src/.worktrees/hidden.js'})
 
 
 if __name__ == '__main__':
