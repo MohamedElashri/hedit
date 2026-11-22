@@ -785,9 +785,10 @@ commands from the Command Palette or assign a personal key binding. Templates
 appear under **New File from Template…**.
 
 Lua runs in local buffers on supported macOS, Linux, and Windows builds. Review
-each command's text-read and replacement permissions, then choose **Allow once**
-or **Approve command**. With edit previews enabled, inspect the proposed changes
-before applying them; one Undo restores the original text and selections.
+each command's declared permissions before approving it. Where offered,
+**Allow once** authorizes a single invocation. With edit previews enabled,
+inspect the proposed changes before applying them; one Undo restores the
+original text and selections.
 Disabling or updating an extension revokes its approvals.
 
 Configure declared plugin settings and review **Recent Lua activity** in the
