@@ -6,7 +6,7 @@ use std::fs::File;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 
-mod engine;
+pub(crate) mod engine;
 mod protocol;
 #[cfg(unix)]
 #[path = "runtime/unix.rs"]
@@ -27,6 +27,17 @@ mod supervisor {
 
     pub(super) fn executable() -> Result<PathBuf, Error> {
         Err(Error::Sandbox)
+    }
+
+    pub(super) fn supervise_profiled(
+        _: &Path,
+        _: Vec<u8>,
+        _: &AtomicBool,
+        _: Duration,
+        _: Option<File>,
+        _: &crate::telemetry::Recorder,
+    ) -> Result<Vec<u8>, Error> {
+        Err(Error::Unavailable)
     }
 
     pub(super) fn supervise(
@@ -56,33 +67,41 @@ pub struct Input {
 
 pub const HELPER_ARG: &str = "--hedit-plugin-worker";
 
-pub struct RunningPlugin {
-    receiver: mpsc::Receiver<Result<Vec<String>, Error>>,
+pub type RunningPlugin = Running<Vec<String>>;
+pub type RunningSdk = Running<crate::sdk::Transaction, crate::sdk::Failure>;
+
+pub struct Running<T, E = Error> {
+    receiver: mpsc::Receiver<Result<T, E>>,
     cancelled: Arc<AtomicBool>,
+    trace: crate::telemetry::Recorder,
 }
 
-impl RunningPlugin {
-    pub fn try_result(&mut self) -> Option<Result<Vec<String>, Error>> {
+impl<T, E: From<Error>> Running<T, E> {
+    pub fn timings(&self) -> crate::telemetry::Recorder {
+        self.trace.clone()
+    }
+    pub fn try_result(&mut self) -> Option<Result<T, E>> {
         match self.receiver.try_recv() {
             Ok(result) => Some(result),
             Err(mpsc::TryRecvError::Empty) => None,
-            Err(mpsc::TryRecvError::Disconnected) => Some(Err(Error::Stopped)),
+            Err(mpsc::TryRecvError::Disconnected) => Some(Err(Error::Stopped.into())),
         }
     }
 
     #[cfg(any(test, feature = "test-support"))]
     #[doc(hidden)]
-    pub fn from_test_result(result: Result<Vec<String>, Error>) -> Self {
+    pub fn from_test_result(result: Result<T, E>) -> Self {
         let (sender, receiver) = mpsc::channel();
         sender.send(result).unwrap();
         Self {
             receiver,
             cancelled: Arc::new(AtomicBool::new(false)),
+            trace: Default::default(),
         }
     }
 }
 
-impl Drop for RunningPlugin {
+impl<T, E> Drop for Running<T, E> {
     fn drop(&mut self) {
         self.cancelled.store(true, Ordering::Relaxed);
     }
@@ -94,21 +113,84 @@ pub fn start(
     approval: File,
     wake: impl FnOnce() + Send + 'static,
 ) -> Result<RunningPlugin, Error> {
+    launch(approval, wake, move |approval, cancelled, _trace| {
+        run(input, Some(approval), cancelled, false)
+    })
+}
+
+pub fn start_sdk(
+    input: crate::sdk::Input,
+    approval: File,
+    wake: impl FnOnce() + Send + 'static,
+) -> Result<RunningSdk, Error> {
+    launch(approval, wake, move |approval, cancelled, trace| {
+        engine::run_sdk_profiled(input, Some(approval), cancelled, false, trace)
+    })
+}
+
+fn launch<T: Send + 'static, E: Send + 'static>(
+    approval: File,
+    wake: impl FnOnce() + Send + 'static,
+    run: impl FnOnce(File, &AtomicBool, &crate::telemetry::Recorder) -> Result<T, E> + Send + 'static,
+) -> Result<Running<T, E>, Error> {
     let (sender, receiver) = mpsc::channel();
     let cancelled = Arc::new(AtomicBool::new(false));
     let thread_cancelled = cancelled.clone();
+    let trace = crate::telemetry::Recorder::default();
+    let thread_trace = trace.clone();
     std::thread::Builder::new()
         .name("hedit-lua-worker".into())
         .spawn(move || {
-            let result = run(input, Some(approval), &thread_cancelled, false);
+            let result = run(approval, &thread_cancelled, &thread_trace);
             let _ = sender.send(result);
             wake();
         })
         .map_err(|_| Error::Startup)?;
-    Ok(RunningPlugin {
+    Ok(Running {
         receiver,
         cancelled,
+        trace,
     })
+}
+
+fn run_sdk(
+    input: crate::sdk::Input,
+    approval: Option<File>,
+    cancelled: &AtomicBool,
+    save: bool,
+) -> Result<crate::sdk::Transaction, crate::sdk::Failure> {
+    if !SUPPORTED {
+        return Err(Error::Unavailable.into());
+    }
+    engine::run_sdk(input, approval, cancelled, save)
+}
+
+pub fn run_sdk_fixture(
+    input: crate::sdk::Input,
+) -> Result<crate::sdk::Prepared, crate::sdk::Failure> {
+    run_sdk_fixture_traced(input, &Default::default())
+}
+pub fn run_sdk_fixture_traced(
+    input: crate::sdk::Input,
+    trace: &crate::telemetry::Recorder,
+) -> Result<crate::sdk::Prepared, crate::sdk::Failure> {
+    let snapshot = input.snapshot.clone();
+    Ok(
+        engine::run_sdk_profiled(input, None, &AtomicBool::new(false), false, trace)?
+            .prepare(&snapshot)?,
+    )
+}
+
+pub fn run_sdk_save(
+    input: crate::sdk::Input,
+    approval: File,
+) -> Result<String, crate::sdk::Failure> {
+    let snapshot = input.snapshot.clone();
+    Ok(
+        run_sdk(input, Some(approval), &AtomicBool::new(false), true)?
+            .prepare(&snapshot)?
+            .text,
+    )
 }
 
 pub fn run_fixture(input: Input) -> Result<String, Error> {
@@ -148,6 +230,37 @@ pub fn run_if_requested(args: &[OsString]) -> Option<bool> {
     // Install the OS boundary before the worker touches its request pipes.
     let isolated = crate::sandbox::enter().is_ok();
     Some(engine::run_helper(isolated))
+}
+
+#[cfg(feature = "fuzzing")]
+pub(crate) fn fuzz_protocol(bytes: &[u8]) {
+    if bytes.len() > 1024 * 1024 {
+        return;
+    }
+    let _ = protocol::decode_invocation(bytes);
+    let _ = protocol::decode_edits(bytes, 1);
+    let snapshot = crate::sdk::Snapshot {
+        document: "0123456789abcdef0123456789abcdef".into(),
+        revision: "42".into(),
+        language: "markdown".into(),
+        text: "café / 東京\r\n🦀".into(),
+        selections: vec![crate::sdk::Selection { anchor: 0, head: 0 }],
+        crlf: true,
+    };
+    if let Ok(transaction) = serde_json::from_slice::<crate::sdk::Transaction>(bytes) {
+        let _ = transaction.prepare(&snapshot);
+    }
+    let input = crate::sdk::Input {
+        sdk_version: 1,
+        source: "return function(ctx) return hedit.transaction({}) end".into(),
+        modules: Default::default(),
+        resources: Default::default(),
+        snapshot,
+        settings: Default::default(),
+        arguments: Default::default(),
+        storage: None,
+    };
+    let _ = engine::decode_sdk_reply(&input, bytes);
 }
 
 #[cfg(test)]

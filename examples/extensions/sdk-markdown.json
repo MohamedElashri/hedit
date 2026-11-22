@@ -1,0 +1,35 @@
+{
+  "api_version": 3,
+  "sdk_version": 1,
+  "id": "sdk-markdown",
+  "permissions": [
+    "document.read",
+    "document.edit"
+  ],
+  "commands": [
+    {
+      "id": "prefix",
+      "title": "Prefix document",
+      "action": {
+        "kind": "lua",
+        "source": "prefix.lua"
+      },
+      "arguments": {
+        "prefix": {
+          "label": "Prefix",
+          "default": "> ",
+          "choices": [
+            "> ",
+            "→ "
+          ]
+        }
+      }
+    }
+  ],
+  "scripts": {
+    "prefix.lua": "local markdown = hedit.import(\"markdown.lua\")\nreturn function(ctx)\n  return hedit.replace(markdown.prefix(ctx.document.text, ctx.arguments.prefix))\nend"
+  },
+  "modules": {
+    "markdown.lua": "return {prefix = function(text, prefix) return prefix .. text end}"
+  }
+}

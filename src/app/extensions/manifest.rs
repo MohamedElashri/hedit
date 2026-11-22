@@ -14,9 +14,11 @@ use std::{
 
 const DECLARATIVE_API_VERSION: u32 = 1;
 const LUA_API_VERSION: u32 = 2;
+const SDK_API_VERSION: u32 = 3;
 pub(super) const MAX_DIRECTORY_ENTRIES: usize = 256;
 pub(super) const MAX_MANIFESTS: usize = 32;
 pub(super) const MAX_MANIFEST_BYTES: u64 = 32 * 1024;
+pub(super) const MAX_SDK_MANIFEST_BYTES: u64 = 128 * 1024;
 pub(super) const MAX_COMMANDS: usize = 16;
 const MAX_TITLE_BYTES: usize = 128;
 const MAX_BODY_BYTES: usize = 2048;
@@ -141,6 +143,34 @@ struct LuaDefinition {
     settings: SettingDefinitions,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SdkDefinition {
+    api_version: u32,
+    sdk_version: u32,
+    id: String,
+    commands: Vec<Command>,
+    permissions: Vec<Permission>,
+    #[serde(deserialize_with = "unique_scripts")]
+    scripts: BTreeMap<String, Arc<str>>,
+    #[serde(default, deserialize_with = "unique_object")]
+    settings: SettingDefinitions,
+    #[serde(default, deserialize_with = "unique_scripts")]
+    modules: BTreeMap<String, Arc<str>>,
+    #[serde(default, deserialize_with = "unique_object")]
+    resources: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Argument {
+    pub(super) label: String,
+    pub(super) default: SettingValue,
+    #[serde(default)]
+    pub(super) choices: Vec<SettingValue>,
+}
+pub(super) type Arguments = BTreeMap<String, Argument>;
+
 pub(super) type SettingDefinitions = BTreeMap<String, PluginSetting>;
 
 #[derive(Clone, Deserialize)]
@@ -156,10 +186,28 @@ pub(super) enum Permission {
     ReadSelection,
     #[serde(rename = "selection.replace")]
     ReplaceSelection,
+    #[serde(rename = "document.read")]
+    ReadDocument,
+    #[serde(rename = "document.edit")]
+    EditDocument,
+    #[serde(rename = "storage.private")]
+    PrivateStorage,
 }
 
 pub(super) const LUA_CAPABILITIES: [Permission; 2] =
     [Permission::ReadSelection, Permission::ReplaceSelection];
+pub(super) const SDK_CAPABILITIES: [Permission; 2] =
+    [Permission::ReadDocument, Permission::EditDocument];
+pub(super) fn valid_capabilities(capabilities: &[Permission]) -> bool {
+    capabilities == LUA_CAPABILITIES
+        || capabilities == SDK_CAPABILITIES
+        || capabilities
+            == [
+                Permission::ReadDocument,
+                Permission::EditDocument,
+                Permission::PrivateStorage,
+            ]
+}
 
 pub(super) struct Manifest {
     pub(super) id: String,
@@ -167,9 +215,40 @@ pub(super) struct Manifest {
     scripts: BTreeMap<String, Arc<str>>,
     pub(super) lua_digest: Option<String>,
     settings: Arc<SettingDefinitions>,
+    pub(super) sdk: bool,
+    pub(super) modules: Arc<BTreeMap<String, Arc<str>>>,
+    pub(super) resources: Arc<BTreeMap<String, String>>,
+    pub(super) capabilities: Option<Vec<Permission>>,
 }
 
 impl Manifest {
+    pub(super) fn permission_map(&self) -> BTreeMap<String, Vec<Permission>> {
+        self.commands
+            .iter()
+            .filter(|command| matches!(command.action, ActionDefinition::Lua { .. }))
+            .map(|command| {
+                let mut capabilities = if self.sdk {
+                    SDK_CAPABILITIES.to_vec()
+                } else {
+                    LUA_CAPABILITIES.to_vec()
+                };
+                if command.private_storage.unwrap_or(false) {
+                    capabilities.push(Permission::PrivateStorage);
+                }
+                (format!("{}.{}", self.id, command.id), capabilities)
+            })
+            .collect()
+    }
+    pub(super) fn uses_storage(&self, command: &str) -> bool {
+        command.split_once('.').is_some_and(|(owner, name)| {
+            owner == self.id
+                && self
+                    .commands
+                    .iter()
+                    .any(|c| c.id == name && c.private_storage.unwrap_or(false))
+        })
+    }
+
     pub(super) fn command_labels(&self) -> Vec<(String, String)> {
         self.commands
             .iter()
@@ -196,6 +275,37 @@ impl Manifest {
         Ok(settings)
     }
 
+    pub(super) fn fixture_arguments(
+        &self,
+        command: &str,
+        overrides: &BTreeMap<String, SettingValue>,
+    ) -> Result<BTreeMap<String, SettingValue>, String> {
+        let command = self
+            .commands
+            .iter()
+            .find(|c| format!("{}.{}", self.id, c.id) == command)
+            .ok_or("Unknown fixture command.")?;
+        let definitions = command.arguments.as_ref();
+        let mut values: BTreeMap<_, _> = definitions
+            .into_iter()
+            .flatten()
+            .map(|(key, definition)| (key.clone(), definition.default.clone()))
+            .collect();
+        for (key, value) in overrides {
+            let definition = definitions
+                .and_then(|d| d.get(key))
+                .ok_or("Unknown command argument.")?;
+            if !value.valid()
+                || !value.same_type(&definition.default)
+                || (!definition.choices.is_empty() && !definition.choices.contains(value))
+            {
+                return Err("Invalid command argument.".into());
+            }
+            values.insert(key.clone(), value.clone());
+        }
+        Ok(values)
+    }
+
     pub(super) fn lua_source(&self, id: &str) -> Option<&str> {
         let (extension, name) = id.split_once('.')?;
         if extension != self.id {
@@ -212,6 +322,16 @@ impl Manifest {
         self.scripts
             .iter()
             .map(|(name, source)| (name.clone(), digest(source.as_bytes())))
+            .chain(
+                self.modules
+                    .iter()
+                    .map(|(name, source)| (format!("module:{name}"), digest(source.as_bytes()))),
+            )
+            .chain(
+                self.resources
+                    .iter()
+                    .map(|(name, text)| (format!("resource:{name}"), digest(text.as_bytes()))),
+            )
             .collect()
     }
 
@@ -247,6 +367,11 @@ impl Manifest {
                     installed_path: installed_path.clone(),
                     grant: Arc::new(grants.remove(&id)?),
                     one_time: None,
+                    sdk: self.sdk,
+                    storage: command.private_storage.unwrap_or(false),
+                    modules: self.modules.clone(),
+                    resources: self.resources.clone(),
+                    arguments: Arc::new(command.arguments.unwrap_or_default()),
                 }),
             };
             Some(Contribution {
@@ -269,6 +394,10 @@ struct Command {
     when: Context,
     #[serde(default)]
     on_save: bool,
+    #[serde(default, deserialize_with = "optional_arguments")]
+    arguments: Option<Arguments>,
+    #[serde(default, deserialize_with = "optional_private_storage")]
+    private_storage: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -302,6 +431,11 @@ pub(in crate::app) enum ExtensionAction {
 #[derive(Clone)]
 pub(in crate::app) struct LuaPlugin {
     pub source: Arc<str>,
+    pub(super) sdk: bool,
+    pub(super) storage: bool,
+    pub(super) modules: Arc<BTreeMap<String, Arc<str>>>,
+    pub(super) resources: Arc<BTreeMap<String, String>>,
+    pub(super) arguments: Arc<Arguments>,
     pub(super) plugin_id: String,
     pub(super) settings: Arc<SettingDefinitions>,
     pub(super) on_save: bool,
@@ -318,6 +452,39 @@ impl LuaPlugin {
     pub(super) fn approval_id(&self) -> Option<String> {
         (!self.is_one_time()).then(|| self.grant.approval_id())
     }
+}
+
+fn optional_private_storage<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<bool>, D::Error> {
+    bool::deserialize(d).map(Some)
+}
+fn optional_arguments<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<Arguments>, D::Error> {
+    unique_object(d).map(Some)
+}
+fn unique_object<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
+    d: D,
+) -> Result<BTreeMap<String, T>, D::Error> {
+    struct Object<T>(std::marker::PhantomData<T>);
+    impl<'de, T: Deserialize<'de>> de::Visitor<'de> for Object<T> {
+        type Value = BTreeMap<String, T>;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("unique bounded named entries")
+        }
+        fn visit_map<A: de::MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+            let mut values = BTreeMap::new();
+            while let Some(key) = map.next_key::<String>()? {
+                if values.len() == MAX_SETTINGS || !valid_id(&key) || values.contains_key(&key) {
+                    return Err(de::Error::custom("invalid or duplicate entry"));
+                }
+                values.insert(key, map.next_value()?);
+            }
+            Ok(values)
+        }
+    }
+    d.deserialize_map(Object::<T>(std::marker::PhantomData))
 }
 
 fn unique_scripts<'de, D: serde::Deserializer<'de>>(
@@ -446,12 +613,26 @@ pub(super) fn digest(text: impl AsRef<[u8]>) -> String {
 }
 
 pub(super) fn parse_manifest(text: &str) -> Result<Manifest, String> {
-    if text.len() as u64 > MAX_MANIFEST_BYTES {
+    if text.len() as u64 > MAX_SDK_MANIFEST_BYTES {
+        return Err(format!(
+            "Manifest exceeds the {MAX_SDK_MANIFEST_BYTES}-byte limit."
+        ));
+    }
+    let version: Version = serde_json::from_str(text).map_err(|error| {
+        if text.len() as u64 > MAX_MANIFEST_BYTES {
+            format!("Manifest exceeds the {MAX_MANIFEST_BYTES}-byte limit.")
+        } else {
+            error.to_string()
+        }
+    })?;
+    if version.api_version != SDK_API_VERSION && text.len() as u64 > MAX_MANIFEST_BYTES {
         return Err(format!(
             "Manifest exceeds the {MAX_MANIFEST_BYTES}-byte limit."
         ));
     }
-    let version: Version = serde_json::from_str(text).map_err(|error| error.to_string())?;
+    let mut capabilities = None;
+    let mut modules = Arc::new(BTreeMap::new());
+    let mut resources = Arc::new(BTreeMap::new());
     let (id, commands, scripts, lua_digest, settings) = match version.api_version {
         DECLARATIVE_API_VERSION => {
             let definition: DeclarativeDefinition =
@@ -476,6 +657,61 @@ pub(super) fn parse_manifest(text: &str) -> Result<Manifest, String> {
             {
                 return Err("Lua plugins must request selection.read and selection.replace exactly once each.".into());
             }
+            capabilities = Some(LUA_CAPABILITIES.to_vec());
+            (
+                definition.id,
+                definition.commands,
+                definition.scripts,
+                Some(digest(text)),
+                definition.settings,
+            )
+        }
+        SDK_API_VERSION => {
+            let definition: SdkDefinition =
+                serde_json::from_str(text).map_err(|error| error.to_string())?;
+            if definition.api_version != SDK_API_VERSION
+                || definition.sdk_version != crate::plugin_runtime::sdk::VERSION
+            {
+                return Err("Unsupported editing SDK version.".into());
+            }
+            let storage = definition.permissions.contains(&Permission::PrivateStorage);
+            let mut expected = SDK_CAPABILITIES.to_vec();
+            if storage {
+                expected.push(Permission::PrivateStorage);
+            }
+            if definition.permissions.len() != expected.len()
+                || !expected.iter().all(|p| definition.permissions.contains(p))
+            {
+                return Err("Editing SDK commands require document.read and document.edit, with optional storage.private.".into());
+            }
+            capabilities = Some(expected);
+            let plain_modules = definition
+                .modules
+                .iter()
+                .map(|(k, v)| (k.clone(), v.to_string()))
+                .collect();
+            if !crate::plugin_runtime::sdk::valid_resources(&plain_modules, &definition.resources)
+                || definition
+                    .scripts
+                    .values()
+                    .chain(definition.modules.values())
+                    .map(|v| v.len())
+                    .sum::<usize>()
+                    + definition
+                        .resources
+                        .values()
+                        .map(String::len)
+                        .sum::<usize>()
+                    > crate::plugin_runtime::sdk::MAX_PACKAGE_BYTES
+                || definition
+                    .modules
+                    .keys()
+                    .any(|key| definition.scripts.contains_key(key))
+            {
+                return Err("Invalid or excessive SDK package resources.".into());
+            }
+            modules = Arc::new(definition.modules);
+            resources = Arc::new(definition.resources);
             (
                 definition.id,
                 definition.commands,
@@ -486,8 +722,8 @@ pub(super) fn parse_manifest(text: &str) -> Result<Manifest, String> {
         }
         version => {
             return Err(format!(
-                "API version {version} is unsupported. This editor supports versions {DECLARATIVE_API_VERSION} and {LUA_API_VERSION}."
-            ));
+                "API version {version} is unsupported. This editor supports versions 1, 2, and 3."
+            ))
         }
     };
     if !valid_id(&id) {
@@ -511,6 +747,47 @@ pub(super) fn parse_manifest(text: &str) -> Result<Manifest, String> {
     let mut command_ids = HashSet::new();
     let mut used_scripts = HashSet::new();
     for command in &commands {
+        if command.private_storage.is_some() && version.api_version != SDK_API_VERSION {
+            return Err("Private storage requires API version 3.".into());
+        }
+        if command.private_storage.unwrap_or(false)
+            && (!matches!(command.action, ActionDefinition::Lua { .. })
+                || !capabilities
+                    .as_ref()
+                    .is_some_and(|c| c.contains(&Permission::PrivateStorage)))
+        {
+            return Err("Private storage commands must declare storage.private.".into());
+        }
+        if let Some(arguments) = &command.arguments {
+            if version.api_version != SDK_API_VERSION
+                || !matches!(command.action, ActionDefinition::Lua { .. })
+                || arguments.len() > MAX_SETTINGS
+                || arguments.iter().any(|(key, definition)| {
+                    !valid_id(key)
+                        || definition.label.is_empty()
+                        || definition.label.len() > MAX_TITLE_BYTES
+                        || definition.label.trim() != definition.label
+                        || definition.label.chars().any(char::is_control)
+                        || !definition.default.valid()
+                        || definition.choices.len() > 16
+                        || definition
+                            .choices
+                            .iter()
+                            .any(|choice| !choice.valid() || !choice.same_type(&definition.default))
+                        || (!definition.choices.is_empty()
+                            && !definition.choices.contains(&definition.default))
+                        || definition
+                            .choices
+                            .iter()
+                            .enumerate()
+                            .any(|(at, value)| definition.choices[..at].contains(value))
+                })
+            {
+                return Err(
+                    "Invalid command arguments or unsupported manifest API version.".into(),
+                );
+            }
+        }
         if !valid_id(&command.id) {
             return Err(format!("Invalid command ID {:?}. Use 1–48 lowercase letters, digits, or hyphens, starting with a letter.", command.id));
         }
@@ -524,6 +801,9 @@ pub(super) fn parse_manifest(text: &str) -> Result<Manifest, String> {
         {
             return Err(format!("Command {} needs a title of 1–{MAX_TITLE_BYTES} bytes without surrounding whitespace or control characters.", command.id));
         }
+        if command.on_save && command.private_storage.unwrap_or(false) {
+            return Err("Private storage commands cannot run on Save.".into());
+        }
         if command.on_save && !matches!(command.action, ActionDefinition::Lua { .. }) {
             return Err("Only Lua commands can support save hooks.".into());
         }
@@ -532,7 +812,7 @@ pub(super) fn parse_manifest(text: &str) -> Result<Manifest, String> {
             ActionDefinition::NewFile { body, .. } => validate_body(&command.id, body, false)?,
             ActionDefinition::Lua { source } => {
                 if lua_digest.is_none() {
-                    return Err("Lua commands require API version 2.".into());
+                    return Err("Lua commands require API version 2 or 3.".into());
                 }
                 if !scripts.contains_key(source) {
                     return Err(format!(
@@ -545,14 +825,25 @@ pub(super) fn parse_manifest(text: &str) -> Result<Manifest, String> {
         }
     }
     if lua_digest.is_some() && (used_scripts.is_empty() || used_scripts.len() != scripts.len()) {
-        return Err("An API version 2 manifest needs a Lua command, and every declared Lua script needs a command.".into());
+        return Err("An executable manifest needs a Lua command, and every declared command script needs a command.".into());
+    }
+    if capabilities
+        .as_ref()
+        .is_some_and(|c| c.contains(&Permission::PrivateStorage))
+        && !commands.iter().any(|c| c.private_storage.unwrap_or(false))
+    {
+        return Err("storage.private must be requested by a Lua command.".into());
     }
     Ok(Manifest {
         id,
         commands,
         scripts,
-        lua_digest,
+        lua_digest: lua_digest.clone(),
         settings: Arc::new(settings),
+        modules,
+        resources,
+        sdk: version.api_version == SDK_API_VERSION,
+        capabilities,
     })
 }
 
@@ -677,7 +968,7 @@ mod tests {
             panic!("Lua was accepted in a v1 manifest");
         };
         assert!(
-            error.contains("Lua commands require API version 2."),
+            error.contains("Lua commands require API version 2 or 3."),
             "{error}"
         );
     }
@@ -694,7 +985,7 @@ mod tests {
             ("c-broken.json", "{".into()),
             (
                 "d-future.json",
-                r#"{"api_version":3,"future_schema":true}"#.into(),
+                r#"{"api_version":999,"future_schema":true}"#.into(),
             ),
             (
                 "e-oversized.json",
@@ -727,7 +1018,7 @@ mod tests {
         for (error, expected) in errors.iter().zip([
             "duplicate extension ID",
             "c-broken.json",
-            "API version 3 is unsupported",
+            "API version 999 is unsupported",
             "exceeds",
             "Duplicate command ID",
             "unknown variant",
@@ -827,5 +1118,58 @@ mod tests {
         ] {
             assert!(serde_json::from_value::<Context>(invalid).is_err());
         }
+    }
+    #[test]
+    fn sdk_manifest_inputs_versions_and_private_capabilities_fail_closed() {
+        let valid: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../examples/extensions/sdk-markdown.json"
+        ))
+        .unwrap();
+        assert!(parse_manifest(&valid.to_string()).is_ok());
+        for (field, value) in [
+            ("sdk_version", json!(2)),
+            (
+                "permissions",
+                json!(["selection.read", "selection.replace"]),
+            ),
+            ("modules", json!({"../outside.lua":"return true"})),
+            ("resources", json!({"../outside":"text"})),
+        ] {
+            let mut invalid = valid.clone();
+            invalid[field] = value;
+            assert!(parse_manifest(&invalid.to_string()).is_err(), "{field}");
+        }
+        for value in [
+            json!({"label":"Prefix","default":"ok","choices":["ok",1]}),
+            json!({"label":"Prefix","default":"absent","choices":["ok"]}),
+            json!({"label":"Prefix","default":"ok","choices":["ok","ok"]}),
+            json!({"label":"Prefix","default":"x".repeat(257)}),
+            json!({"label":"  Prefix","default":"ok"}),
+        ] {
+            let mut invalid = valid.clone();
+            invalid["commands"][0]["arguments"]["prefix"] = value;
+            assert!(parse_manifest(&invalid.to_string()).is_err());
+        }
+        let mut invalid = valid.clone();
+        invalid["commands"][0]["private_storage"] = true.into();
+        assert!(parse_manifest(&invalid.to_string()).is_err());
+        let mut unused = valid.clone();
+        unused["permissions"]
+            .as_array_mut()
+            .unwrap()
+            .push("storage.private".into());
+        assert!(parse_manifest(&unused.to_string()).is_err());
+        unused["commands"][0]["private_storage"] = true.into();
+        let parsed = parse_manifest(&unused.to_string()).unwrap();
+        assert_eq!(
+            parsed.permission_map()["sdk-markdown.prefix"],
+            vec![
+                Permission::ReadDocument,
+                Permission::EditDocument,
+                Permission::PrivateStorage
+            ]
+        );
+        unused["commands"][0]["on_save"] = true.into();
+        assert!(parse_manifest(&unused.to_string()).is_err());
     }
 }

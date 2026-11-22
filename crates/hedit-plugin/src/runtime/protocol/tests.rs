@@ -311,3 +311,38 @@ fn deterministic_mutation_corpus_preserves_the_protocol_invariants() {
         }
     }
 }
+
+#[test]
+fn sdk_framing_refuses_truncation_trailing_bytes_and_version_confusion() {
+    let input: crate::sdk::Input = serde_json::from_slice(
+        include_bytes!("../../../../../fuzz/corpus/sdk_protocol/request")
+            .get(8..)
+            .unwrap(),
+    )
+    .unwrap();
+    let bytes = encode_sdk(&input).unwrap();
+    assert!(matches!(
+        decode_invocation(bytes.as_slice()),
+        Ok(Invocation::Sdk(_))
+    ));
+    for end in 0..bytes.len() {
+        assert!(decode_invocation(&bytes[..end]).is_err());
+    }
+    let mut trailing = bytes.clone();
+    trailing.push(0);
+    assert!(decode_invocation(trailing.as_slice()).is_err());
+    let mut wrong = bytes.clone();
+    wrong[..4].copy_from_slice(&REQUEST_MAGIC.to_le_bytes());
+    assert!(decode_invocation(wrong.as_slice()).is_err());
+    let mut wrong_version = serde_json::to_value(&input).unwrap();
+    wrong_version["sdk_version"] = 2.into();
+    let body = serde_json::to_vec(&wrong_version).unwrap();
+    let mut packet = SDK_MAGIC.to_le_bytes().to_vec();
+    packet.extend((body.len() as u32).to_le_bytes());
+    packet.extend(body);
+    assert!(decode_invocation(packet.as_slice()).is_err());
+    let mut huge = SDK_MAGIC.to_le_bytes().to_vec();
+    huge.extend(u32::MAX.to_le_bytes());
+    assert!(decode_invocation(huge.as_slice()).is_err());
+    assert!(decode_request(bytes.as_slice()).is_err());
+}

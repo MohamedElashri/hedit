@@ -50,7 +50,12 @@ class WindowsPackage(unittest.TestCase):
             for directory in ['assets', 'themes', 'docs/images', 'examples/cuda']:
                 shutil.copytree(packager.ROOT / directory, project / directory)
             documents = ['vendor/egui_commonmark/PATCH.md', 'vendor/libghostty-vt-sys/PATCH.md',
-                         'docs/extensions.md', 'docs/extension-security.md', 'examples/extensions/markdown-task.json',
+                         'docs/extensions.md', 'docs/extension-security.md', 'docs/plugin-sdk.md',
+                         'schemas/plugin-manifest.schema.json', 'schemas/hedit-sdk.lua',
+                         'examples/extensions/sdk-markdown.json', 'examples/extensions/sdk-markdown.fixtures.json',
+                         'examples/extensions/sdk-table.json', 'examples/extensions/sdk-table.fixtures.json',
+                         'examples/extensions/sdk-trim.json', 'examples/extensions/sdk-trim.fixtures.json',
+                         'examples/extensions/markdown-task.json',
                          'examples/extensions/markdown-quote.json']
             for relative in documents:
                 (project / relative).parent.mkdir(parents=True, exist_ok=True)
@@ -78,7 +83,10 @@ class WindowsPackage(unittest.TestCase):
                             if name.startswith(prefix + 'examples/')}
                 self.assertEqual(examples, {'examples/cuda/vector_add.cu',
                                             'examples/extensions/markdown-task.json',
-                                            'examples/extensions/markdown-quote.json'})
+                                            'examples/extensions/markdown-quote.json',
+                                            *{f'examples/extensions/sdk-{name}{suffix}.json'
+                                              for name in ['markdown', 'table', 'trim']
+                                              for suffix in ['', '.fixtures']}})
             checksum = archive.with_name(archive.name + '.sha256').read_bytes()
             digest = hashlib.sha256(archive.read_bytes()).hexdigest()
             self.assertEqual(checksum, f'{digest}  {archive.name}\n'.encode())
@@ -106,11 +114,19 @@ class WindowsPackage(unittest.TestCase):
                     output = f'hedit-plugin-worker {packager.version()}\r\n'.encode()
                 elif arguments[1] == 'plugin':
                     self.assertEqual(arguments[2], 'test')
-                    self.assertEqual(Path(arguments[3]), executable.parent / 'examples/extensions/markdown-quote.json')
-                    self.assertEqual(json.loads(Path(arguments[4]).read_text(encoding='utf-8')), [{
-                        'command': 'markdown-quote.quote',
-                        'input': 'café / 東京', 'expected': '> café / 東京',
-                    }])
+                    manifest = Path(arguments[3])
+                    if manifest.name == 'markdown-quote.json':
+                        self.assertEqual(manifest, executable.parent / 'examples/extensions/markdown-quote.json')
+                        self.assertEqual(json.loads(Path(arguments[4]).read_text(encoding='utf-8')), [{
+                            'command': 'markdown-quote.quote',
+                            'input': 'café / 東京', 'expected': '> café / 東京',
+                        }])
+                    else:
+                        self.assertIn(manifest.stem, {'sdk-markdown', 'sdk-table', 'sdk-trim'})
+                        self.assertEqual(manifest.parent, executable.parent / 'examples/extensions')
+                        self.assertEqual(Path(arguments[4]), manifest.with_suffix('.fixtures.json'))
+                        self.assertEqual(json.loads(manifest.read_text())['api_version'], 3)
+                        self.assertTrue(json.loads(Path(arguments[4]).read_text(encoding="utf-8")))
                     output = b''
                 else:
                     output = f'hedit {packager.version()}\r\n'.encode() if arguments[1] == '--version' else b'Usage: hedit\r\n'
@@ -120,7 +136,7 @@ class WindowsPackage(unittest.TestCase):
                 packager.smoke(archive)
             self.assertEqual(calls, [
                 ('hedit.exe', '--version'), ('hedit-plugin-worker.exe', '--version'),
-                ('hedit.exe', '--help'), ('hedit.exe', 'plugin'),
+                ('hedit.exe', '--help'), *[('hedit.exe', 'plugin')] * 4,
             ])
             with patch.object(packager.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, stdout=b'hedit 0.0.0\n')):
                 with self.assertRaisesRegex(ValueError, 'version does not match'):

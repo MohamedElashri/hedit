@@ -8,7 +8,11 @@ def copy_documentation(root, destination):
     destination.mkdir(parents=True, exist_ok=True)
     for filename in ['README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md', 'CHANGELOG.md', 'LICENSE',
                      'vendor/egui_commonmark/PATCH.md', 'vendor/libghostty-vt-sys/PATCH.md',
-                     'docs/extensions.md', 'docs/extension-security.md',
+                     'docs/extensions.md', 'docs/extension-security.md', 'docs/plugin-sdk.md',
+                     'schemas/plugin-manifest.schema.json', 'schemas/hedit-sdk.lua',
+                     'examples/extensions/sdk-markdown.json', 'examples/extensions/sdk-markdown.fixtures.json',
+                     'examples/extensions/sdk-table.json', 'examples/extensions/sdk-table.fixtures.json',
+                     'examples/extensions/sdk-trim.json', 'examples/extensions/sdk-trim.fixtures.json',
                      'examples/extensions/markdown-task.json',
                      'examples/extensions/markdown-quote.json']:
         target = destination / filename

@@ -1,4 +1,4 @@
-//! A script gets selected text and can propose one normal editor edit.
+//! Confined Lua proposals, host review, authorization rechecks, and atomic effects.
 use super::{
     activity::{Invocation, InvocationOutcome},
     catalog,
@@ -28,26 +28,97 @@ pub(in crate::app) struct LuaTransform {
 
 impl LuaTransform {
     pub(in crate::app) fn needs_poll(&self) -> bool {
-        !matches!(self.phase, Phase::Preview { .. })
+        !matches!(self.phase, Phase::Preview { .. } | Phase::Arguments)
     }
 }
 
+#[derive(Debug)]
+struct Authority {
+    file: File,
+    storage: Option<plugin_runtime::sdk::Storage>,
+    elapsed: std::time::Duration,
+}
+type ApprovalReceiver = Receiver<Result<Option<Authority>, String>>;
+
 enum Phase {
-    Checking(Receiver<Option<File>>),
+    Arguments,
+    Persisting(Receiver<Result<(), String>>),
+    SdkRunning(plugin_runtime::RunningSdk),
+    Checking(ApprovalReceiver),
     Running(RunningPlugin),
     Preview {
-        diff: Vec<DiffLine>,
-        replacements: Vec<String>,
+        diff: Diff,
+        output: Output,
     },
     Committing {
-        approval: Receiver<Option<File>>,
-        replacements: Vec<String>,
+        approval: ApprovalReceiver,
+        output: Output,
     },
 }
 
-struct DiffLine {
+struct Output {
+    replacements: Vec<String>,
+    selections: Option<Vec<Selection>>,
+    storage: Option<plugin_runtime::sdk::Storage>,
+}
+
+#[derive(Default)]
+struct Diff {
+    blocks: Vec<DiffBlock>,
+    rows: usize,
+}
+
+struct DiffBlock {
     added: bool,
     text: String,
+    starts: Vec<usize>,
+}
+
+impl Diff {
+    fn push(&mut self, added: bool, text: String) {
+        if text.is_empty() {
+            return;
+        }
+        let mut starts = vec![0];
+        starts.extend(
+            text.match_indices('\n')
+                .filter_map(|(at, _)| (at + 1 < text.len()).then_some(at + 1)),
+        );
+        self.rows += starts.len();
+        self.blocks.push(DiffBlock {
+            added,
+            text,
+            starts,
+        });
+    }
+
+    fn is_empty(&self) -> bool {
+        self.rows == 0
+    }
+
+    fn row(&self, mut index: usize) -> Option<(bool, String)> {
+        for block in &self.blocks {
+            if index < block.starts.len() {
+                let end = block
+                    .starts
+                    .get(index + 1)
+                    .copied()
+                    .unwrap_or(block.text.len());
+                let line = &block.text[block.starts[index]..end];
+                let line = line
+                    .strip_suffix("\r\n")
+                    .or_else(|| line.strip_suffix('\n'))
+                    .unwrap_or(line)
+                    .replace('\r', "␍");
+                return Some((
+                    block.added,
+                    format!("{} {line}", if block.added { '+' } else { '−' }),
+                ));
+            }
+            index -= block.starts.len();
+        }
+        None
+    }
 }
 
 struct Proposal {
@@ -55,6 +126,9 @@ struct Proposal {
     ranges: Vec<Range<usize>>,
     plugin: LuaPlugin,
     invocation: Invocation,
+    snapshot: Option<plugin_runtime::sdk::Snapshot>,
+    storage: Option<plugin_runtime::sdk::Storage>,
+    arguments: std::collections::BTreeMap<String, hedit::plugin_options::Value>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -92,6 +166,15 @@ impl From<plugin_runtime::Error> for TransformFailure {
     }
 }
 
+impl From<plugin_runtime::sdk::Failure> for TransformFailure {
+    fn from(error: plugin_runtime::sdk::Failure) -> Self {
+        Self {
+            message: error.to_string(),
+            outcome: InvocationOutcome::worker_failure(error.kind),
+        }
+    }
+}
+
 impl HeditApp {
     fn lua_target(&self) -> Option<Target> {
         let editor = self.active();
@@ -108,12 +191,6 @@ impl HeditApp {
             || self.workspace.remote.is_some()
             || editor.follow
             || info.paged
-            || (primary.anchor == primary.head
-                && editor
-                    .view
-                    .selections
-                    .iter()
-                    .all(|range| range.anchor == range.head))
         {
             return None;
         }
@@ -136,6 +213,14 @@ impl HeditApp {
     ) {
         let proposal = self.lua_proposal(command, plugin);
         match proposal {
+            Ok(proposal) if !proposal.plugin.arguments.is_empty() => {
+                proposal.invocation.begin_wait();
+                self.lua_transform = Some(LuaTransform {
+                    proposal,
+                    phase: Phase::Arguments,
+                });
+                ctx.request_repaint();
+            }
             Ok(proposal) => match self.request_lua_approval(ctx, &proposal.plugin) {
                 Ok(approval) => {
                     self.lua_transform = Some(LuaTransform {
@@ -159,15 +244,55 @@ impl HeditApp {
     }
 
     fn lua_proposal(&self, command: &str, plugin: LuaPlugin) -> Result<Proposal, String> {
+        let started = std::time::Instant::now();
         let target = self
             .lua_target()
             .ok_or("Select text in a local editable buffer.")?;
-        let ranges = selected_ranges(&self.active().page.text, self.selections())?;
+        let snapshot = if plugin.sdk {
+            let text = &self.active().page.text;
+            if text.len() > plugin_runtime::MAX_SELECTION_BYTES {
+                return Err("Document exceeds the 64 KiB editing SDK input limit.".into());
+            }
+            let selections = snapshot_selections(text, &self.selections());
+            let mut snapshot = options::sdk_snapshot(
+                target.language,
+                text.clone(),
+                selections,
+                self.active().page.info.eol == "CRLF",
+            )
+            .map_err(|e| e.to_string())?;
+            snapshot.revision = target.revision.to_string();
+            Some(snapshot)
+        } else {
+            None
+        };
+        let ranges = if plugin.sdk {
+            std::iter::once(0..self.active().page.text.len()).collect()
+        } else {
+            selected_ranges(&self.active().page.text, self.selections())?
+        };
+        let arguments = plugin
+            .arguments
+            .iter()
+            .map(|(key, definition)| (key.clone(), definition.default.clone()))
+            .collect();
+        let invocation = if plugin.sdk {
+            Invocation::document(command, plugin.storage)
+        } else {
+            Invocation::new(command)
+        };
+        invocation.trace.record(
+            plugin_runtime::telemetry::Phase::Proposal,
+            started.elapsed(),
+        );
         Ok(Proposal {
             target,
             ranges,
             plugin,
-            invocation: Invocation::new(command),
+            invocation,
+            snapshot,
+            storage: None,
+            arguments,
         })
     }
 
@@ -175,7 +300,7 @@ impl HeditApp {
         &self,
         ctx: &egui::Context,
         plugin: &LuaPlugin,
-    ) -> Result<Receiver<Option<File>>, String> {
+    ) -> Result<ApprovalReceiver, String> {
         let config = self
             .settings_files
             .dir
@@ -187,7 +312,23 @@ impl HeditApp {
         thread::Builder::new()
             .name("hedit-lua-approval".into())
             .spawn(move || {
-                let _ = sender.send(catalog::lua_authorization(&config, &plugin));
+                let started = std::time::Instant::now();
+                let result = (|| {
+                    let Some(file) = catalog::lua_authorization(&config, &plugin) else {
+                        return Ok(None);
+                    };
+                    let storage = if plugin.storage {
+                        Some(catalog::read_state(&config, &plugin)?)
+                    } else {
+                        None
+                    };
+                    Ok(Some(Authority {
+                        file,
+                        storage,
+                        elapsed: started.elapsed(),
+                    }))
+                })();
+                let _ = sender.send(result);
                 ctx.request_repaint();
             })
             .map_err(|_| "The extension approval check could not start.")?;
@@ -198,7 +339,20 @@ impl HeditApp {
         let Some(mut job) = self.lua_transform.take() else {
             return;
         };
-        if self.lua_target().as_ref() != Some(&job.proposal.target) {
+        if !matches!(job.phase, Phase::Persisting(_))
+            && self.lua_target().as_ref() != Some(&job.proposal.target)
+        {
+            match job.phase {
+                Phase::Arguments => job
+                    .proposal
+                    .invocation
+                    .end_wait(plugin_runtime::telemetry::Phase::Prompt),
+                Phase::Preview { .. } => job
+                    .proposal
+                    .invocation
+                    .end_wait(plugin_runtime::telemetry::Phase::Preview),
+                _ => {}
+            }
             self.extension_manager
                 .record(job.proposal.invocation, InvocationOutcome::Cancelled);
             self.notice = "Extension command canceled because the editor context changed.".into();
@@ -223,71 +377,238 @@ impl HeditApp {
         ctx: &egui::Context,
         job: &mut LuaTransform,
     ) -> Result<Option<InvocationOutcome>, TransformFailure> {
-        let proposal = &job.proposal;
+        let proposal = &mut job.proposal;
         match &mut job.phase {
+            Phase::Persisting(result) => match result.try_recv() {
+                Ok(Ok(())) => {
+                    self.notice = "Private command storage updated.".into();
+                    return Ok(Some(InvocationOutcome::Applied));
+                }
+                Ok(Err(_)) => {
+                    return Err(TransformFailure::failed(
+                        "Private command storage could not be updated.",
+                    ))
+                }
+                Err(TryRecvError::Disconnected) => {
+                    return Err(TransformFailure::failed("Private storage worker stopped."))
+                }
+                Err(TryRecvError::Empty) => {}
+            },
+            Phase::Arguments => {
+                match show_arguments(ctx, &proposal.plugin, &mut proposal.arguments) {
+                    Some(true) => {
+                        proposal
+                            .invocation
+                            .end_wait(plugin_runtime::telemetry::Phase::Prompt);
+                        job.phase = Phase::Checking(
+                            self.request_lua_approval(ctx, &proposal.plugin)
+                                .map_err(TransformFailure::failed)?,
+                        )
+                    }
+                    Some(false) => {
+                        proposal
+                            .invocation
+                            .end_wait(plugin_runtime::telemetry::Phase::Prompt);
+                        return Ok(Some(InvocationOutcome::Discarded));
+                    }
+                    None => {}
+                }
+            }
             Phase::Checking(approval) => {
                 if let Some(approval) = receive_approval(approval)? {
-                    let selection = proposal
-                        .ranges
-                        .iter()
-                        .map(|range| self.active().page.text[range.clone()].to_owned())
-                        .collect();
-                    let input = options::input(
-                        &self.settings.extensions,
-                        &proposal.plugin,
-                        proposal.target.language,
-                        selection,
+                    proposal.invocation.trace.record(
+                        plugin_runtime::telemetry::Phase::Authorization,
+                        approval.elapsed,
                     );
                     let wake = ctx.clone();
-                    job.phase =
-                        Phase::Running(plugin_runtime::start(input, approval, move || {
-                            wake.request_repaint();
-                        })?);
+                    proposal.storage = approval.storage.clone();
+                    job.phase = if let Some(snapshot) = &proposal.snapshot {
+                        Phase::SdkRunning(plugin_runtime::start_sdk(
+                            options::sdk_input(
+                                &self.settings.extensions,
+                                &proposal.plugin,
+                                snapshot.clone(),
+                                proposal.arguments.clone(),
+                                approval.storage,
+                            ),
+                            approval.file,
+                            move || wake.request_repaint(),
+                        )?)
+                    } else {
+                        let selection = proposal
+                            .ranges
+                            .iter()
+                            .map(|range| self.active().page.text[range.clone()].to_owned())
+                            .collect();
+                        let input = options::input(
+                            &self.settings.extensions,
+                            &proposal.plugin,
+                            proposal.target.language,
+                            selection,
+                        );
+                        Phase::Running(plugin_runtime::start(input, approval.file, move || {
+                            wake.request_repaint()
+                        })?)
+                    };
                 }
             }
             Phase::Running(worker) => {
                 if let Some(replacements) = worker.try_result() {
                     let replacements = replacements?;
-                    if self.settings.extensions.preview_edits {
-                        let diff = edit_diff(self.active(), &proposal.ranges, &replacements);
-                        if diff.is_empty() {
-                            self.notice = "The extension proposed no changes.".into();
-                            return Ok(Some(InvocationOutcome::Applied));
-                        }
-                        job.phase = Phase::Preview { diff, replacements };
-                        ctx.request_repaint();
-                    } else {
-                        job.phase = Phase::Committing {
-                            replacements,
-                            approval: self
-                                .request_lua_approval(ctx, &proposal.plugin)
-                                .map_err(TransformFailure::failed)?,
-                        };
+                    let output = Output {
+                        replacements,
+                        selections: None,
+                        storage: None,
+                    };
+                    let crlf = self.active().page.info.eol == "CRLF";
+                    if proposal.ranges.iter().zip(&output.replacements).all(
+                        |(range, replacement)| {
+                            self.active().page.text[range.clone()]
+                                == clipboard_lines::line_endings(replacement, crlf)
+                        },
+                    ) {
+                        self.notice = "The extension proposed no changes.".into();
+                        return Ok(Some(InvocationOutcome::Applied));
                     }
+                    job.phase = self.review_lua_output(ctx, proposal, output)?;
                 }
             }
-            Phase::Preview { diff, replacements } => match show_preview(ctx, diff) {
+            Phase::SdkRunning(worker) => {
+                if let Some(transaction) = worker.try_result() {
+                    let snapshot = proposal
+                        .snapshot
+                        .as_ref()
+                        .ok_or_else(|| TransformFailure::failed("Missing document snapshot."))?;
+                    for sample in worker.timings().snapshot() {
+                        proposal.invocation.trace.record(
+                            sample.phase,
+                            std::time::Duration::from_micros(sample.total_us),
+                        );
+                    }
+                    let transaction = transaction?;
+                    if transaction.storage.is_some() && !proposal.plugin.storage {
+                        return Err(plugin_runtime::Error::Worker.into());
+                    }
+                    let prepared = transaction.prepare(snapshot)?;
+                    let selections = byte_selections(&prepared.text, &prepared.selections);
+                    if prepared.storage.is_none()
+                        && prepared.text == self.active().page.text
+                        && selections == self.selections()
+                    {
+                        self.notice = "The extension proposed no changes.".into();
+                        return Ok(Some(InvocationOutcome::Applied));
+                    }
+                    job.phase = self.review_lua_output(
+                        ctx,
+                        proposal,
+                        Output {
+                            replacements: vec![prepared.text],
+                            selections: Some(selections),
+                            storage: prepared.storage,
+                        },
+                    )?;
+                }
+            }
+            Phase::Preview { diff, output } => match show_preview(ctx, diff) {
                 Some(true) => {
+                    proposal
+                        .invocation
+                        .end_wait(plugin_runtime::telemetry::Phase::Preview);
                     job.phase = Phase::Committing {
-                        replacements: std::mem::take(replacements),
+                        output: Output {
+                            replacements: std::mem::take(&mut output.replacements),
+                            selections: output.selections.take(),
+                            storage: output.storage.take(),
+                        },
                         approval: self
                             .request_lua_approval(ctx, &proposal.plugin)
                             .map_err(TransformFailure::failed)?,
-                    };
+                    }
                 }
                 Some(false) => {
+                    proposal
+                        .invocation
+                        .end_wait(plugin_runtime::telemetry::Phase::Preview);
                     self.notice = "Extension changes discarded.".into();
                     self.focus_editor = true;
                     return Ok(Some(InvocationOutcome::Discarded));
                 }
                 None => {}
             },
-            Phase::Committing {
-                approval,
-                replacements,
-            } => {
-                if let Some(_approval) = receive_approval(approval)? {
-                    let result = self.apply_lua_replacements(&proposal.ranges, replacements);
+            Phase::Committing { approval, output } => {
+                if let Some(authority) = receive_approval(approval)? {
+                    proposal.invocation.trace.record(
+                        plugin_runtime::telemetry::Phase::Authorization,
+                        authority.elapsed,
+                    );
+                    let commit_started = std::time::Instant::now();
+                    if authority.storage != proposal.storage {
+                        return Err(TransformFailure::failed(
+                            "Private command storage changed; run the command again.",
+                        ));
+                    }
+                    if let Some(storage) = output.storage.take() {
+                        if !proposal.plugin.storage {
+                            return Err(plugin_runtime::Error::Worker.into());
+                        }
+                        let config = self.settings_files.dir.clone().ok_or_else(|| {
+                            TransformFailure::failed("Missing extension configuration.")
+                        })?;
+                        let plugin = proposal.plugin.clone();
+                        let trace = proposal.invocation.trace.clone();
+                        let wake = ctx.clone();
+                        let (sender, receiver) = mpsc::channel();
+                        thread::Builder::new()
+                            .name("hedit-plugin-storage".into())
+                            .spawn(move || {
+                                let _authority = authority;
+                                let _ = sender.send(
+                                    trace.measure(plugin_runtime::telemetry::Phase::Commit, || {
+                                        catalog::write_state(&config, &plugin, &storage)
+                                    }),
+                                );
+                                wake.request_repaint();
+                            })
+                            .map_err(|_| {
+                                TransformFailure::failed("Private storage worker could not start.")
+                            })?;
+                        job.phase = Phase::Persisting(receiver);
+                        return Ok(None);
+                    }
+                    let _authority = authority;
+                    let result = if let Some(selections) = &output.selections {
+                        let text = output
+                            .replacements
+                            .first()
+                            .ok_or_else(|| TransformFailure::failed("Missing edit proposal."))?;
+                        let cursor = selections.last().map_or(0, |s| s.head);
+                        if text == &self.active().page.text {
+                            self.set_selections(selections.clone());
+                            true
+                        } else if self.apply_edit(
+                            editing::Edit {
+                                text: text.clone(),
+                                anchor: cursor,
+                                head: cursor,
+                            },
+                            None,
+                        ) {
+                            self.set_selections(selections.clone());
+                            self.snippet = None;
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        self.apply_lua_replacements(&proposal.ranges, &output.replacements)
+                    };
+                    if result {
+                        self.notice = "Extension command finished.".into();
+                    }
+                    proposal.invocation.trace.record(
+                        plugin_runtime::telemetry::Phase::Commit,
+                        commit_started.elapsed(),
+                    );
                     return Ok(Some(if result {
                         InvocationOutcome::Applied
                     } else {
@@ -297,6 +618,33 @@ impl HeditApp {
             }
         }
         Ok(None)
+    }
+
+    fn review_lua_output(
+        &self,
+        ctx: &egui::Context,
+        proposal: &Proposal,
+        output: Output,
+    ) -> Result<Phase, TransformFailure> {
+        if self.settings.extensions.preview_edits {
+            let mut diff = edit_diff(self.active(), &proposal.ranges, &output.replacements);
+            if output.storage.is_some() {
+                diff.push(true, "Update private command storage".into());
+            }
+            if diff.is_empty() {
+                diff.push(true, "Update editor selections".into());
+            }
+            ctx.request_repaint();
+            proposal.invocation.begin_wait();
+            Ok(Phase::Preview { diff, output })
+        } else {
+            Ok(Phase::Committing {
+                output,
+                approval: self
+                    .request_lua_approval(ctx, &proposal.plugin)
+                    .map_err(TransformFailure::failed)?,
+            })
+        }
     }
 
     fn apply_lua_replacements(&mut self, ranges: &[Range<usize>], replacements: &[String]) -> bool {
@@ -322,6 +670,121 @@ impl HeditApp {
             return true;
         }
         false
+    }
+}
+
+fn snapshot_selections(
+    text: &str,
+    selections: &[Selection],
+) -> Vec<plugin_runtime::sdk::Selection> {
+    let mut positions: Vec<_> = selections.iter().flat_map(|s| [s.anchor, s.head]).collect();
+    positions.sort_unstable();
+    positions.dedup();
+    let mut chars = text.char_indices().peekable();
+    let mut count = 0;
+    let mut mapped = std::collections::BTreeMap::new();
+    for position in positions {
+        while count < position && chars.peek().is_some() {
+            chars.next();
+            count += 1;
+        }
+        mapped.insert(position, chars.peek().map_or(text.len(), |(byte, _)| *byte));
+    }
+    selections
+        .iter()
+        .map(|s| {
+            let snap = |at: usize| {
+                if at > 0 && text.as_bytes().get(at - 1..=at) == Some(b"\r\n") {
+                    at - 1
+                } else {
+                    at
+                }
+            };
+            plugin_runtime::sdk::Selection {
+                anchor: snap(mapped[&s.anchor]),
+                head: snap(mapped[&s.head]),
+            }
+        })
+        .collect()
+}
+
+fn byte_selections(text: &str, selections: &[plugin_runtime::sdk::Selection]) -> Vec<Selection> {
+    let mut positions: Vec<_> = selections.iter().flat_map(|s| [s.anchor, s.head]).collect();
+    positions.sort_unstable();
+    positions.dedup();
+    let mut indices = text.char_indices().peekable();
+    let mut characters = 0;
+    let mut mapped = std::collections::BTreeMap::new();
+    for byte in positions {
+        while indices.peek().is_some_and(|(at, _)| *at < byte) {
+            indices.next();
+            characters += 1;
+        }
+        mapped.insert(byte, characters);
+    }
+    selections
+        .iter()
+        .map(|s| Selection {
+            anchor: mapped[&s.anchor],
+            head: mapped[&s.head],
+        })
+        .collect()
+}
+
+fn show_arguments(
+    ctx: &egui::Context,
+    plugin: &LuaPlugin,
+    values: &mut std::collections::BTreeMap<String, hedit::plugin_options::Value>,
+) -> Option<bool> {
+    use hedit::plugin_options::Value;
+    let response = egui::Modal::new(egui::Id::new("extension-command-inputs")).show(ctx, |ui| {
+        ui.heading("Extension command inputs");
+        ui.set_max_width((ctx.screen_rect().width() - 48.0).clamp(180.0, 480.0));
+        egui::ScrollArea::vertical()
+            .max_height((ctx.screen_rect().height() - 180.0).max(80.0))
+            .show(ui, |ui| {
+                for (key, definition) in plugin.arguments.iter() {
+                    ui.push_id(key, |ui| {
+                        let value = values.get_mut(key).unwrap();
+                        if definition.choices.is_empty() {
+                            options::setting_control(ui, &definition.label, value);
+                        } else {
+                            let label = |v: &Value| match v {
+                                Value::Boolean(v) => v.to_string(),
+                                Value::Integer(v) => v.to_string(),
+                                Value::Text(v) => v.clone(),
+                            };
+                            ui.label(&definition.label);
+                            egui::ComboBox::from_id_salt(key)
+                                .selected_text(label(value))
+                                .show_ui(ui, |ui| {
+                                    for choice in &definition.choices {
+                                        ui.selectable_value(value, choice.clone(), label(choice));
+                                    }
+                                });
+                        }
+                    });
+                }
+            });
+        let valid = values.values().all(Value::valid);
+        ui.horizontal(|ui| {
+            if ui.button("Cancel").clicked() {
+                Some(false)
+            } else if ui
+                .add_enabled(valid, egui::Button::new("Run command"))
+                .clicked()
+            {
+                Some(true)
+            } else {
+                None
+            }
+        })
+        .inner
+    });
+    if response.should_close() {
+        Some(false)
+    } else {
+        response.inner
     }
 }
 
@@ -352,48 +815,39 @@ fn edit_diff(
     buffer: &hedit::workspace::Buffer,
     ranges: &[Range<usize>],
     replacements: &[String],
-) -> Vec<DiffLine> {
+) -> Diff {
     let crlf = buffer.page.info.eol == "CRLF";
-    let mut diff = Vec::new();
+    let mut diff = Diff::default();
     for (range, replacement) in ranges.iter().zip(replacements) {
         let original = &buffer.page.text[range.clone()];
         let replacement = clipboard_lines::line_endings(replacement, crlf);
         if original != replacement {
-            for (added, text) in [(false, original), (true, replacement.as_str())] {
-                for line in text.split_inclusive('\n') {
-                    let line = line
-                        .strip_suffix("\r\n")
-                        .or_else(|| line.strip_suffix('\n'))
-                        .unwrap_or(line)
-                        .replace('\r', "␍");
-                    let prefix = if added { '+' } else { '−' };
-                    diff.push(DiffLine {
-                        added,
-                        text: format!("{prefix} {line}"),
-                    });
-                }
-            }
+            diff.push(false, original.to_owned());
+            diff.push(true, replacement);
         }
     }
     diff
 }
 
-fn show_preview(ctx: &egui::Context, diff: &[DiffLine]) -> Option<bool> {
+fn show_preview(ctx: &egui::Context, diff: &Diff) -> Option<bool> {
     let modal = egui::Modal::new(egui::Id::new("lua-edit-preview")).show(ctx, |ui| {
         ui.set_width((ctx.screen_rect().width() - 64.0).clamp(224.0, 740.0));
         ui.heading("Extension edit preview");
         let height = ui.text_style_height(&egui::TextStyle::Monospace);
         egui::ScrollArea::both()
             .max_height((ctx.screen_rect().height() * 0.52).max(70.0))
-            .show_rows(ui, height, diff.len(), |ui, lines| {
-                for line in &diff[lines] {
-                    let color = if line.added {
+            .show_rows(ui, height, diff.rows, |ui, lines| {
+                for row in lines {
+                    let Some((added, text)) = diff.row(row) else {
+                        continue;
+                    };
+                    let color = if added {
                         ui.visuals().strong_text_color()
                     } else {
                         ui.visuals().weak_text_color()
                     };
                     ui.add(
-                        egui::Label::new(egui::RichText::new(&line.text).monospace().color(color))
+                        egui::Label::new(egui::RichText::new(text).monospace().color(color))
                             .extend(),
                     );
                 }
@@ -418,10 +872,13 @@ fn show_preview(ctx: &egui::Context, diff: &[DiffLine]) -> Option<bool> {
 }
 
 // The returned lock serializes delivery or application with a revocation.
-fn receive_approval(approval: &Receiver<Option<File>>) -> Result<Option<File>, TransformFailure> {
+fn receive_approval(approval: &ApprovalReceiver) -> Result<Option<Authority>, TransformFailure> {
     match approval.try_recv() {
-        Ok(Some(guard)) => Ok(Some(guard)),
-        Ok(None) => Err(TransformFailure {
+        Ok(Ok(Some(guard))) => Ok(Some(guard)),
+        Ok(Err(_)) => Err(TransformFailure::failed(
+            "Private command storage could not be read. Revoke approval to clear it.",
+        )),
+        Ok(Ok(None)) => Err(TransformFailure {
             message: "Extension approval changed. Review it in Settings → Extensions.".into(),
             outcome: InvocationOutcome::Denied,
         }),
@@ -545,6 +1002,208 @@ mod tests {
         }
     }
 
+    fn sdk_app(config: &Path, text: &str) -> (tempfile::TempDir, egui::Context, HeditApp) {
+        let directory = config.join("extensions");
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("sdk-markdown.json");
+        let manifest = include_str!("../../../examples/extensions/sdk-markdown.json");
+        std::fs::write(&path, manifest).unwrap();
+        catalog::set_lua_approved(
+            config,
+            &path,
+            "sdk-markdown",
+            "sdk-markdown.prefix",
+            &super::super::manifest::digest(manifest),
+            true,
+        )
+        .unwrap();
+        let (session, ctx, mut app) = app_with(text, Some(config));
+        app.settings.extensions.preview_edits = false;
+        (session, ctx, app)
+    }
+    fn sdk_result(
+        app: &mut HeditApp,
+        edits: Vec<plugin_runtime::sdk::Edit>,
+        selections: Option<Vec<plugin_runtime::sdk::Selection>>,
+        forged: bool,
+    ) {
+        let super::super::ExtensionAction::Lua(plugin) = &app.extensions[0].action else {
+            unreachable!()
+        };
+        let proposal = app
+            .lua_proposal("sdk-markdown.prefix", plugin.clone())
+            .unwrap();
+        let snapshot = proposal.snapshot.as_ref().unwrap();
+        let transaction = plugin_runtime::sdk::Transaction {
+            document: if forged {
+                "f".repeat(32)
+            } else {
+                snapshot.document.clone()
+            },
+            revision: snapshot.revision.clone(),
+            edits,
+            selections,
+            storage: None,
+        };
+        app.lua_transform = Some(LuaTransform {
+            proposal,
+            phase: Phase::SdkRunning(plugin_runtime::RunningSdk::from_test_result(Ok(
+                transaction,
+            ))),
+        });
+    }
+    #[test]
+    fn sdk_storage_only_transactions_persist_without_mutating_document_or_revision() {
+        for conflicting in [false, true] {
+            let config = tempfile::tempdir().unwrap();
+            let (_session, ctx, mut app) = sdk_app(config.path(), "private fixture");
+            let path = config.path().join("extensions/sdk-markdown.json");
+            let mut manifest: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            manifest["permissions"]
+                .as_array_mut()
+                .unwrap()
+                .push("storage.private".into());
+            manifest["commands"][0]["private_storage"] = true.into();
+            std::fs::write(&path, manifest.to_string()).unwrap();
+            let catalog = catalog::set_lua_approved(
+                config.path(),
+                &path,
+                "sdk-markdown",
+                "sdk-markdown.prefix",
+                &super::super::manifest::digest(manifest.to_string()),
+                true,
+            )
+            .unwrap();
+            app.extensions = catalog.contributions;
+            let super::super::ExtensionAction::Lua(plugin) = &app.extensions[0].action else {
+                unreachable!()
+            };
+            let plugin = plugin.clone();
+            let revision = app.active().page.info.revision;
+            let mut proposal = app
+                .lua_proposal("sdk-markdown.prefix", plugin.clone())
+                .unwrap();
+            proposal.storage = Some(catalog::read_state(config.path(), &plugin).unwrap());
+            let snapshot = proposal.snapshot.as_ref().unwrap();
+            let values = plugin_runtime::sdk::Storage(
+                [("count".into(), hedit::plugin_options::Value::Integer(1))].into(),
+            );
+            let transaction = plugin_runtime::sdk::Transaction {
+                document: snapshot.document.clone(),
+                revision: snapshot.revision.clone(),
+                edits: vec![],
+                selections: None,
+                storage: Some(values.clone()),
+            };
+            app.lua_transform = Some(LuaTransform {
+                proposal,
+                phase: Phase::SdkRunning(plugin_runtime::RunningSdk::from_test_result(Ok(
+                    transaction,
+                ))),
+            });
+            let concurrent = plugin_runtime::sdk::Storage(
+                [("count".into(), hedit::plugin_options::Value::Integer(99))].into(),
+            );
+            if conflicting {
+                let _authority = catalog::lua_authorization(config.path(), &plugin).unwrap();
+                catalog::write_state(config.path(), &plugin, &concurrent).unwrap();
+            }
+            finish_transform(&mut app, &ctx);
+            assert_eq!(app.active().page.text, "private fixture");
+            assert_eq!(app.active().page.info.revision, revision);
+            assert_eq!(
+                catalog::read_state(config.path(), &plugin).unwrap(),
+                if conflicting { concurrent } else { values }
+            );
+            if conflicting {
+                assert!(app.error.as_ref().unwrap().contains("storage changed"));
+            }
+        }
+    }
+
+    #[test]
+    fn sdk_document_transactions_apply_multiple_unicode_edits_and_undo_once() {
+        let config = tempfile::tempdir().unwrap();
+        let (_session, ctx, mut app) = sdk_app(config.path(), "λ\n東京");
+        app.edit_command(editing::Operation::ToCrlf);
+        let original = app.active().page.text.clone();
+        assert!(app.extension_available_by_id("sdk-markdown.prefix"));
+        sdk_result(
+            &mut app,
+            vec![
+                plugin_runtime::sdk::Edit {
+                    start: 0,
+                    finish: 2,
+                    text: "α".into(),
+                },
+                plugin_runtime::sdk::Edit {
+                    start: 4,
+                    finish: 10,
+                    text: "β".into(),
+                },
+            ],
+            Some(vec![plugin_runtime::sdk::Selection { anchor: 4, head: 6 }]),
+            false,
+        );
+        finish_transform(&mut app, &ctx);
+        assert_eq!(app.active().page.text, "α\r\nβ");
+        assert_eq!(app.selections(), [Selection { anchor: 3, head: 4 }]);
+        app.execute(&ctx, Command::Undo);
+        finish_app_job(&mut app, &ctx);
+        assert_eq!(app.active().page.text, original);
+    }
+    #[test]
+    fn sdk_forged_transaction_does_not_edit_or_create_an_undo_entry() {
+        let config = tempfile::tempdir().unwrap();
+        let (_session, ctx, mut app) = sdk_app(config.path(), "private fixture");
+        let revision = app.active().page.info.revision;
+        sdk_result(
+            &mut app,
+            vec![plugin_runtime::sdk::Edit {
+                start: 0,
+                finish: 0,
+                text: "bad".into(),
+            }],
+            None,
+            true,
+        );
+        finish_transform(&mut app, &ctx);
+        assert_eq!(app.active().page.text, "private fixture");
+        assert_eq!(app.active().page.info.revision, revision);
+        assert!(app.error.is_some());
+    }
+    #[test]
+    fn sdk_selection_only_changes_preserve_document_revision() {
+        let config = tempfile::tempdir().unwrap();
+        let (_session, ctx, mut app) = sdk_app(config.path(), "λ");
+        let revision = app.active().page.info.revision;
+        sdk_result(
+            &mut app,
+            vec![],
+            Some(vec![plugin_runtime::sdk::Selection { anchor: 0, head: 2 }]),
+            false,
+        );
+        finish_transform(&mut app, &ctx);
+        assert_eq!(app.selections(), [Selection { anchor: 0, head: 1 }]);
+        assert_eq!(app.active().page.info.revision, revision);
+    }
+    #[test]
+    fn sdk_collects_arguments_before_start_and_cancellation_preserves_text() {
+        use crate::app::tests::{click_label, frame};
+        let config = tempfile::tempdir().unwrap();
+        let (_session, ctx, mut app) = sdk_app(config.path(), "private fixture");
+        assert!(app.run_extension_by_id(&ctx, "sdk-markdown.prefix"));
+        frame(&ctx, &mut app, vec![]);
+        assert!(matches!(
+            app.lua_transform.as_ref().unwrap().phase,
+            Phase::Arguments
+        ));
+        click_label(&ctx, &mut app, "Cancel");
+        assert!(app.lua_transform.is_none());
+        assert_eq!(app.active().page.text, "private fixture");
+    }
+
     #[test]
     fn approval_completion_wakes_an_idle_ui_with_the_authority_ready() {
         let config = tempfile::tempdir().unwrap();
@@ -573,7 +1232,7 @@ mod tests {
     #[test]
     fn approval_denial_and_worker_limits_preserve_the_document() {
         let (sender, receiver) = mpsc::channel();
-        sender.send(None).unwrap();
+        sender.send(Ok(None)).unwrap();
         assert_eq!(
             receive_approval(&receiver).unwrap_err().outcome,
             InvocationOutcome::Denied
@@ -727,7 +1386,7 @@ mod tests {
                 Phase::Checking(_)
             ));
             if !disconnected {
-                sender.send(None).unwrap();
+                sender.send(Ok(None)).unwrap();
             }
             drop(sender);
             app.poll_lua_transform(&ctx);
@@ -882,4 +1541,28 @@ mod tests {
         )
         .is_err());
     }
+    #[test]
+    fn compact_preview_rows_match_unicode_and_crlf_without_per_line_strings() {
+        let mut diff = Diff::default();
+        diff.push(false, "café\r\n東京\r\n\nend\r".into());
+        diff.push(true, "→ 東京\n".into());
+        assert_eq!(diff.rows, 5);
+        let expected = [
+            (false, "− café"),
+            (false, "− 東京"),
+            (false, "− "),
+            (false, "− end␍"),
+            (true, "+ → 東京"),
+        ];
+        for (row, (added, text)) in expected.into_iter().enumerate() {
+            assert_eq!(diff.row(row).unwrap(), (added, text.into()));
+        }
+        assert!(diff.row(5).is_none());
+        let mut large = Diff::default();
+        large.push(true, "\n".repeat(plugin_runtime::sdk::MAX_OUTPUT_BYTES));
+        assert_eq!(large.rows, plugin_runtime::sdk::MAX_OUTPUT_BYTES);
+        assert_eq!(large.blocks.len(), 1);
+        assert_eq!(large.row(large.rows - 1).unwrap(), (true, "+ ".into()));
+    }
+    include!("lua/performance.rs");
 }

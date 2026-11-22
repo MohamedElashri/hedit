@@ -12,11 +12,15 @@ pub(in crate::app) struct Invocation {
     command: String,
     started: Instant,
     scope: Scope,
+    wait_started: std::cell::Cell<Option<Instant>>,
+    pub(super) trace: crate::plugin_runtime::telemetry::Recorder,
 }
 
 #[derive(Clone, Copy)]
 enum Scope {
     Selection,
+    Document,
+    DocumentAndStorage,
     Save,
 }
 
@@ -24,17 +28,40 @@ impl Scope {
     fn label(self) -> &'static str {
         match self {
             Self::Selection => "Read and replace selection",
+            Self::Document => "Read and edit current document",
+            Self::DocumentAndStorage => "Current document and private command storage",
             Self::Save => "Read and replace document on save",
         }
     }
 }
 
 impl Invocation {
+    pub(super) fn begin_wait(&self) {
+        self.wait_started.set(Some(Instant::now()));
+    }
+    pub(super) fn end_wait(&self, phase: crate::plugin_runtime::telemetry::Phase) {
+        if let Some(started) = self.wait_started.take() {
+            self.trace.record(phase, started.elapsed());
+        }
+    }
     pub(in crate::app) fn new(command_id: &str) -> Self {
         Self {
             command: command_id.to_owned(),
             started: Instant::now(),
             scope: Scope::Selection,
+            trace: Default::default(),
+            wait_started: std::cell::Cell::new(None),
+        }
+    }
+
+    pub(in crate::app) fn document(command_id: &str, private_storage: bool) -> Self {
+        Self {
+            scope: if private_storage {
+                Scope::DocumentAndStorage
+            } else {
+                Scope::Document
+            },
+            ..Self::new(command_id)
         }
     }
 
@@ -126,6 +153,17 @@ impl Activity {
                                 run.invocation.scope.label(),
                             ));
                         });
+                        let samples = run.invocation.trace.snapshot();
+                        if !samples.is_empty() {
+                            ui.collapsing("Phase timings", |ui| {
+                                for sample in samples {
+                                    ui.weak(format!(
+                                        "{:?}: {} µs ({} samples)",
+                                        sample.phase, sample.total_us, sample.count
+                                    ));
+                                }
+                            });
+                        }
                     }
                 });
         });

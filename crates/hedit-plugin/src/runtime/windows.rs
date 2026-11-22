@@ -37,6 +37,24 @@ pub(super) fn supervise(
     )
 }
 
+pub(super) fn supervise_profiled(
+    executable: &Path,
+    request: Vec<u8>,
+    cancelled: &AtomicBool,
+    timeout: Duration,
+    approval: Option<File>,
+    trace: &crate::telemetry::Recorder,
+) -> Result<Vec<u8>, Error> {
+    supervise_traced(
+        executable,
+        &[super::HELPER_ARG],
+        request,
+        cancelled,
+        timeout,
+        approval,
+        trace,
+    )
+}
 fn supervise_arguments(
     executable: &Path,
     arguments: &[&str],
@@ -45,11 +63,34 @@ fn supervise_arguments(
     timeout: Duration,
     approval: Option<File>,
 ) -> Result<Vec<u8>, Error> {
+    supervise_traced(
+        executable,
+        arguments,
+        request,
+        cancelled,
+        timeout,
+        approval,
+        &Default::default(),
+    )
+}
+fn supervise_traced(
+    executable: &Path,
+    arguments: &[&str],
+    request: Vec<u8>,
+    cancelled: &AtomicBool,
+    timeout: Duration,
+    approval: Option<File>,
+    trace: &crate::telemetry::Recorder,
+) -> Result<Vec<u8>, Error> {
+    use crate::telemetry::Phase;
+    let started = Instant::now();
     if cancelled.load(Ordering::Relaxed) {
         return Err(Error::Cancelled);
     }
     let deadline = Instant::now() + timeout;
     let mut child = Worker::spawn(executable, arguments).map_err(|_| Error::Sandbox)?;
+    trace.record(Phase::Startup, started.elapsed());
+    let transfer_started = Instant::now();
     let mut input = child.input.take().ok_or(Error::Worker)?;
     let output = child.output.take().ok_or(Error::Worker)?;
     thread::scope(|scope| {
@@ -60,7 +101,8 @@ fn supervise_arguments(
             let delivered = input.write_all(&request).is_ok();
             drop(input);
             drop(approval);
-            delivered
+            trace.record(Phase::Delivery, transfer_started.elapsed());
+            (delivered, Instant::now())
         });
         let (sender, receiver) = mpsc::channel();
         let reader = scope.spawn(move || {
@@ -103,7 +145,8 @@ fn supervise_arguments(
             }
         })();
         child.terminate();
-        let delivered = writer.join().map_err(|_| Error::Worker)?;
+        let (delivered, finished_delivery) = writer.join().map_err(|_| Error::Worker)?;
+        trace.record(Phase::Transport, finished_delivery.elapsed());
         reader.join().map_err(|_| Error::Worker)?;
         protocol::worker_reply(result?, delivered)
     })

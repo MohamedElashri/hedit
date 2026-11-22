@@ -1,0 +1,600 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:hedit:extension-manifest",
+  "title": "hedit extension manifest",
+  "description": "Authoring schema. The CLI additionally checks UTF-8 byte limits, source references, line counts, argument choices, and known languages.",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": [
+        "api_version",
+        "id",
+        "commands"
+      ],
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "title",
+              "action"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/id"
+              },
+              "title": {
+                "$ref": "#/$defs/label"
+              },
+              "action": {
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/snippetAction"
+                  },
+                  {
+                    "$ref": "#/$defs/fileAction"
+                  }
+                ]
+              },
+              "when": {
+                "$ref": "#/$defs/context"
+              },
+              "on_save": {
+                "const": false
+              }
+            },
+            "additionalProperties": false
+          },
+          "minItems": 1,
+          "maxItems": 16
+        }
+      },
+      "additionalProperties": false,
+      "x-maxUtf8Bytes": 32768
+    },
+    {
+      "type": "object",
+      "required": [
+        "api_version",
+        "id",
+        "commands",
+        "permissions"
+      ],
+      "properties": {
+        "api_version": {
+          "const": 2
+        },
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "title",
+              "action"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/id"
+              },
+              "title": {
+                "$ref": "#/$defs/label"
+              },
+              "action": {
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/snippetAction"
+                  },
+                  {
+                    "$ref": "#/$defs/fileAction"
+                  },
+                  {
+                    "$ref": "#/$defs/luaAction"
+                  }
+                ]
+              },
+              "when": {
+                "$ref": "#/$defs/context"
+              },
+              "on_save": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
+          "minItems": 1,
+          "maxItems": 16
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "selection.read",
+              "selection.replace"
+            ]
+          },
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true
+        },
+        "scripts": {
+          "$ref": "#/$defs/luaSources"
+        },
+        "script_files": {
+          "$ref": "#/$defs/luaFiles"
+        },
+        "settings": {
+          "$ref": "#/$defs/settings"
+        }
+      },
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "scripts"
+          ],
+          "not": {
+            "required": [
+              "script_files"
+            ]
+          }
+        },
+        {
+          "required": [
+            "script_files"
+          ],
+          "not": {
+            "required": [
+              "scripts"
+            ]
+          }
+        }
+      ],
+      "x-maxUtf8Bytes": 32768
+    },
+    {
+      "type": "object",
+      "required": [
+        "api_version",
+        "id",
+        "commands",
+        "permissions",
+        "sdk_version"
+      ],
+      "properties": {
+        "api_version": {
+          "const": 3
+        },
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "title",
+              "action"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/id"
+              },
+              "title": {
+                "$ref": "#/$defs/label"
+              },
+              "action": {
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/snippetAction"
+                  },
+                  {
+                    "$ref": "#/$defs/fileAction"
+                  },
+                  {
+                    "$ref": "#/$defs/luaAction"
+                  }
+                ]
+              },
+              "when": {
+                "$ref": "#/$defs/context"
+              },
+              "on_save": {
+                "type": "boolean"
+              },
+              "arguments": {
+                "type": "object",
+                "propertyNames": {
+                  "$ref": "#/$defs/id"
+                },
+                "maxProperties": 16,
+                "additionalProperties": {
+                  "$ref": "#/$defs/argument"
+                }
+              },
+              "private_storage": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "required": [
+                    "arguments"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "action": {
+                      "properties": {
+                        "kind": {
+                          "const": "lua"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "required": [
+                    "private_storage"
+                  ],
+                  "properties": {
+                    "private_storage": {
+                      "const": true
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "action": {
+                      "properties": {
+                        "kind": {
+                          "const": "lua"
+                        }
+                      }
+                    },
+                    "on_save": {
+                      "const": false
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "minItems": 1,
+          "maxItems": 16
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "document.read",
+              "document.edit",
+              "storage.private"
+            ]
+          },
+          "minItems": 2,
+          "maxItems": 3,
+          "uniqueItems": true,
+          "allOf": [
+            {
+              "contains": {
+                "const": "document.read"
+              }
+            },
+            {
+              "contains": {
+                "const": "document.edit"
+              }
+            }
+          ]
+        },
+        "scripts": {
+          "$ref": "#/$defs/luaSources"
+        },
+        "script_files": {
+          "$ref": "#/$defs/luaFiles"
+        },
+        "settings": {
+          "$ref": "#/$defs/settings"
+        },
+        "sdk_version": {
+          "const": 1
+        },
+        "modules": {
+          "$ref": "#/$defs/luaSources"
+        },
+        "module_files": {
+          "$ref": "#/$defs/luaFiles"
+        },
+        "resources": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/id"
+          },
+          "maxProperties": 16,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 16384,
+            "x-maxUtf8Bytes": 16384
+          }
+        },
+        "resource_files": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/id"
+          },
+          "maxProperties": 16,
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,47}\\.(txt|md|json|csv)$"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "scripts"
+          ],
+          "not": {
+            "required": [
+              "script_files"
+            ]
+          }
+        },
+        {
+          "required": [
+            "script_files"
+          ],
+          "not": {
+            "required": [
+              "scripts"
+            ]
+          }
+        }
+      ],
+      "allOf": [
+        {
+          "not": {
+            "required": [
+              "modules",
+              "module_files"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "resources",
+              "resource_files"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "permissions": {
+                "contains": {
+                  "const": "storage.private"
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "commands": {
+                "contains": {
+                  "required": [
+                    "private_storage"
+                  ],
+                  "properties": {
+                    "private_storage": {
+                      "const": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "x-maxUtf8Bytes": 131072
+    }
+  ],
+  "$defs": {
+    "scalar": {
+      "oneOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        {
+          "type": "string",
+          "maxLength": 256,
+          "pattern": "^[^\\u0000]*$",
+          "x-maxUtf8Bytes": 256
+        }
+      ]
+    },
+    "setting": {
+      "type": "object",
+      "required": [
+        "label",
+        "default"
+      ],
+      "properties": {
+        "label": {
+          "$ref": "#/$defs/label"
+        },
+        "default": {
+          "$ref": "#/$defs/scalar"
+        }
+      },
+      "additionalProperties": false
+    },
+    "argument": {
+      "type": "object",
+      "required": [
+        "label",
+        "default"
+      ],
+      "properties": {
+        "label": {
+          "$ref": "#/$defs/label"
+        },
+        "default": {
+          "$ref": "#/$defs/scalar"
+        },
+        "choices": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/scalar"
+          },
+          "maxItems": 16,
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,47}$"
+    },
+    "label": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "context": {
+      "type": "object",
+      "properties": {
+        "languages": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 16
+        },
+        "filename": {
+          "$ref": "#/$defs/label"
+        },
+        "selection": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "snippetAction": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "insert_snippet"
+        },
+        "body": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "x-maxUtf8Bytes": 2048,
+          "x-maxLines": 16
+        }
+      },
+      "required": [
+        "kind",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    "fileAction": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "new_file"
+        },
+        "body": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "x-maxUtf8Bytes": 2048,
+          "x-maxLines": 16
+        },
+        "language": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "body"
+      ],
+      "additionalProperties": false
+    },
+    "luaAction": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "lua"
+        },
+        "source": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,47}\\.lua$"
+        }
+      },
+      "required": [
+        "kind",
+        "source"
+      ],
+      "additionalProperties": false
+    },
+    "luaSources": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9-]{0,47}\\.lua$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "maxLength": 16384,
+        "x-maxUtf8Bytes": 16384
+      },
+      "maxProperties": 16
+    },
+    "luaFiles": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9-]{0,47}\\.lua$"
+      },
+      "minItems": 1,
+      "maxItems": 16,
+      "uniqueItems": true
+    },
+    "settings": {
+      "type": "object",
+      "propertyNames": {
+        "$ref": "#/$defs/id"
+      },
+      "maxProperties": 16,
+      "additionalProperties": {
+        "$ref": "#/$defs/setting"
+      }
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "api_version": 3,
+  "sdk_version": 1,
+  "id": "sdk-trim",
+  "permissions": [
+    "document.read",
+    "document.edit"
+  ],
+  "commands": [
+    {
+      "id": "trim",
+      "title": "Trim document whitespace",
+      "on_save": true,
+      "action": {
+        "kind": "lua",
+        "source": "trim.lua"
+      }
+    }
+  ],
+  "settings": {
+    "final-newline": {
+      "label": "Keep a final newline",
+      "default": true
+    }
+  },
+  "scripts": {
+    "trim.lua": "return function(ctx)\n  local text = ctx.document.text:gsub(\"[ \\t]+(\\r?\\n)\", \"%1\"):gsub(\"[ \\t]+$\", \"\")\n  if ctx.settings[\"final-newline\"] and text:sub(-1) ~= \"\\n\" then text = text .. \"\\n\" end\n  return hedit.replace(text)\nend"
+  }
+}

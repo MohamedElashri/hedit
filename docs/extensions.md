@@ -29,6 +29,10 @@ once** or **Approve command**. Select text and run **Quote selection as Markdown
 from the Command Palette. With previews enabled, review the proposal and choose
 **Apply changes**. One Undo restores the original text and selections.
 
+API `3` adds the [document editing SDK](plugin-sdk.md) with explicit document
+permissions, structured edits, and declared command inputs. API `2` below keeps
+its selection-only contract.
+
 ## Lua API
 
 A script returns a function receiving the selected text, language ID, and declared

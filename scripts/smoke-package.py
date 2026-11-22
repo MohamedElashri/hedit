@@ -66,7 +66,10 @@ def main():
         assert {path.relative_to(package).as_posix() for path in (package / 'examples').rglob('*')
                 if path.is_file()} == {
                     'examples/cuda/vector_add.cu', 'examples/extensions/markdown-task.json',
-                    'examples/extensions/markdown-quote.json',
+                    'examples/extensions/markdown-quote.json', 'examples/extensions/sdk-markdown.json',
+                    'examples/extensions/sdk-markdown.fixtures.json', 'examples/extensions/sdk-table.json',
+                    'examples/extensions/sdk-table.fixtures.json', 'examples/extensions/sdk-trim.json',
+                    'examples/extensions/sdk-trim.fixtures.json',
                 }
         documents = ['CHANGELOG.md', 'vendor/egui_commonmark/PATCH.md', 'vendor/libghostty-vt-sys/PATCH.md',
                      'docs/extensions.md', 'docs/extension-security.md', 'examples/extensions/markdown-task.json',
@@ -75,6 +78,11 @@ def main():
         for relative in documents + images:
             assert (package / relative).read_bytes() == (ROOT / relative).read_bytes(), relative
             assert (prefix / 'share/doc/hedit' / relative).read_bytes() == (ROOT / relative).read_bytes(), relative
+        resources = prefix / 'share/doc/hedit/examples/extensions'
+        for name in ['sdk-markdown', 'sdk-table', 'sdk-trim']:
+            subprocess.run([str(prefix / 'bin/hedit'), 'plugin', 'test',
+                            str(resources / f'{name}.json'), str(resources / f'{name}.fixtures.json')],
+                           check=True, capture_output=True, timeout=30)
     print('Linux package checksum, extraction, installation, and executable smoke test passed.')
 
 

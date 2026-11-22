@@ -9,6 +9,12 @@ pub(super) const MAX_REPLACEMENT_BYTES: usize = 256 * 1024;
 const MAX_BATCH_REQUEST_BYTES: usize = 1024 * 1024;
 pub(super) const MAX_BATCH_REPLY_BYTES: usize = 2 * 1024 * 1024;
 const REQUEST_MAGIC: u32 = u32::MAX - 1;
+const SDK_MAGIC: u32 = u32::MAX - 2;
+
+pub(super) enum Invocation {
+    Legacy(Input),
+    Sdk(crate::sdk::Input),
+}
 
 impl Input {
     fn validate(&self) -> Result<(), Error> {
@@ -41,10 +47,31 @@ pub(super) fn encode_request(input: &Input) -> Result<Vec<u8>, Error> {
     Ok(bytes)
 }
 
-pub(super) fn decode_request(mut input: impl Read) -> Result<Input, Error> {
+pub(super) fn encode_sdk(input: &crate::sdk::Input) -> Result<Vec<u8>, Error> {
+    input.validate()?;
+    let payload = serde_json::to_vec(input).map_err(|_| Error::Request)?;
+    if payload.len() > MAX_BATCH_REQUEST_BYTES {
+        return Err(Error::Request);
+    }
+    let mut bytes = SDK_MAGIC.to_le_bytes().to_vec();
+    bytes.extend((payload.len() as u32).to_le_bytes());
+    bytes.extend(payload);
+    Ok(bytes)
+}
+
+#[cfg(test)]
+fn decode_request(input: impl Read) -> Result<Input, Error> {
+    match decode_invocation(input)? {
+        Invocation::Legacy(input) => Ok(input),
+        Invocation::Sdk(_) => Err(Error::Request),
+    }
+}
+
+pub(super) fn decode_invocation(mut input: impl Read) -> Result<Invocation, Error> {
     let mut header = [0; 8];
     input.read_exact(&mut header).map_err(|_| Error::Request)?;
-    if u32::from_le_bytes(header[..4].try_into().unwrap()) != REQUEST_MAGIC {
+    let magic = u32::from_le_bytes(header[..4].try_into().unwrap());
+    if magic != REQUEST_MAGIC && magic != SDK_MAGIC {
         return Err(Error::Request);
     }
     let size = u32::from_le_bytes(header[4..].try_into().unwrap()) as usize;
@@ -56,9 +83,16 @@ pub(super) fn decode_request(mut input: impl Read) -> Result<Input, Error> {
     if input.read(&mut [0; 1]).map_err(|_| Error::Request)? != 0 {
         return Err(Error::Request);
     }
-    let request: Input = serde_json::from_slice(&payload).map_err(|_| Error::Request)?;
-    request.validate()?;
-    Ok(request)
+    if magic == SDK_MAGIC {
+        let request: crate::sdk::Input =
+            serde_json::from_slice(&payload).map_err(|_| Error::Request)?;
+        request.validate()?;
+        Ok(Invocation::Sdk(request))
+    } else {
+        let request: Input = serde_json::from_slice(&payload).map_err(|_| Error::Request)?;
+        request.validate()?;
+        Ok(Invocation::Legacy(request))
+    }
 }
 
 #[cfg(any(unix, windows))]
