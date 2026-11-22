@@ -403,3 +403,21 @@ review and preserves ambiguous data. Native tool declarations currently fail
 unavailable. Tool/LSP enforcement, author tooling and fresh platform acceptance
 remain implementation gates. The scoped command path is not a declaration that
 Stage 3 or the complete roadmap is finished.
+
+### Native image preflight and trust marks
+
+Host file selection pins a regular native executable and classifies bounded ELF,
+PE or Mach-O headers, including macOS universal slices. Classification reads at
+most 64 KiB of headers from an image capped at 64 MiB; it does not load code,
+validate signatures or run a version command. The native OS loader performs
+complete validation only inside the tool boundary. Scripts, shared libraries,
+unsupported architectures and inconsistent universal slice tables are rejected.
+
+Import streams bytes into a newly created, owner-only, single-link destination,
+hashes the copy and rejects source identity, timestamp, length or trust metadata
+changes. Original images are never modified. macOS `com.apple.quarantine` and
+Windows `Zone.Identifier` are preserved byte for byte, capped at 64 KiB. Source
+ACLs and positive sandbox grants are not copied. Destination pathname identity is
+checked before named-stream operations. These primitives require a host-owned,
+excluded parent and prior storage admission; they do not grant execution authority
+or yet enable broker tool/LSP requests.

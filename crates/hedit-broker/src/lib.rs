@@ -19,3 +19,4 @@ pub mod declaration;
 pub mod host;
 pub mod recovery_store;
 pub mod state;
+pub mod tool;

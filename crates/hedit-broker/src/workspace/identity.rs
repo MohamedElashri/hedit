@@ -66,26 +66,31 @@ pub(crate) fn directory(directory: &Dir) -> io::Result<Identity> {
     }
 }
 pub(crate) fn regular(file: &File) -> io::Result<Stamp> {
+    let (stamp, links) = regular_descriptor(&file.try_clone()?.into_std())?;
+    if links != 1 {
+        return Err(denied());
+    }
+    Ok(stamp)
+}
+/// Host-selected image sources may have aliases; scoped workspace/private
+/// reads still require a single link through regular(). No authority is granted.
+pub(crate) fn regular_descriptor(file: &std::fs::File) -> io::Result<(Stamp, u64)> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        let file = file.try_clone()?.into_std();
         let metadata = file.metadata()?;
-        if !metadata.is_file() || metadata.nlink() != 1 {
+        if !metadata.is_file() {
             return Err(denied());
         }
-        Ok(stamp(&metadata))
+        Ok((stamp(&metadata), metadata.nlink()))
     }
     #[cfg(windows)]
     {
-        let file = file.try_clone()?.into_std();
-        let (stamp, attributes, links) = windows(&file)?;
-        if attributes & windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_DIRECTORY != 0
-            || links != 1
-        {
+        let (stamp, attributes, links) = windows(file)?;
+        if attributes & windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_DIRECTORY != 0 {
             return Err(denied());
         }
-        Ok(stamp)
+        Ok((stamp, u64::from(links)))
     }
 }
 #[cfg(windows)]
