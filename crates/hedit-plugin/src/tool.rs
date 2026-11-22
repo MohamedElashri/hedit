@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use std::{io, path::PathBuf, sync::atomic::AtomicBool, time::Duration};
 
 #[cfg(target_os = "macos")]
+mod guardian;
+#[cfg(target_os = "macos")]
 mod macos;
 #[cfg(any(
     target_os = "macos",
@@ -169,6 +171,10 @@ pub fn run(
 /// Dispatch before editor initialization. Only policy metadata is read before
 /// native confinement; document input is sent after the ready acknowledgement.
 pub fn run_if_requested(args: &[std::ffi::OsString]) -> Option<bool> {
+    #[cfg(target_os = "macos")]
+    if args == [guardian::ARG] {
+        return Some(guardian::run().unwrap_or(false));
+    }
     if args != [HELPER] {
         return None;
     }

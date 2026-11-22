@@ -1,12 +1,15 @@
-use super::{Launch, Output, HEADER_BYTES, HELPER, OUTPUT_BYTES, READY, STDERR_BYTES};
+use super::{Launch, Output, HEADER_BYTES, OUTPUT_BYTES, READY, STDERR_BYTES};
 use std::{
     io::{self, Read, Write},
     os::fd::{AsFd, AsRawFd},
     path::Path,
-    process::{Child, Command, Stdio},
+    process::Command,
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     time::{Duration, Instant},
 };
+
+#[cfg(target_os = "linux")]
+use super::HELPER;
 
 static ACTIVE: AtomicUsize = AtomicUsize::new(0);
 struct Admission;
@@ -15,13 +18,39 @@ impl Drop for Admission {
         ACTIVE.fetch_sub(1, Ordering::AcqRel);
     }
 }
-struct Reap(Child);
-impl Drop for Reap {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+#[cfg(target_os = "linux")]
+struct Process {
+    child: std::process::Child,
+    pid: u32,
+}
+#[cfg(target_os = "linux")]
+impl Process {
+    fn spawn(launcher: &Path, _: &AtomicBool, _: Instant) -> io::Result<Self> {
+        use std::process::Stdio;
+        let child = Command::new(launcher)
+            .arg(HELPER)
+            .env_clear()
+            .current_dir("/")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        let pid = child.id();
+        Ok(Self { child, pid })
+    }
+    fn status(&mut self) -> io::Result<Option<std::process::ExitStatus>> {
+        self.child.try_wait()
     }
 }
+#[cfg(target_os = "linux")]
+impl Drop for Process {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+#[cfg(target_os = "macos")]
+use super::guardian::Process;
 fn nonblocking(pipe: &impl AsFd) -> io::Result<()> {
     let fd = pipe.as_fd().as_raw_fd();
     let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
@@ -92,19 +121,10 @@ pub(super) fn run(
             "Tool cancelled.",
         ));
     }
-    let mut child = Reap(
-        Command::new(launcher)
-            .arg(HELPER)
-            .env_clear()
-            .current_dir("/")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?,
-    );
-    let mut stdin = Some(child.0.stdin.take().ok_or_else(super::invalid)?);
-    let mut stdout = child.0.stdout.take().ok_or_else(super::invalid)?;
-    let mut stderr = child.0.stderr.take().ok_or_else(super::invalid)?;
+    let mut child = Process::spawn(launcher, cancel, started + timeout)?;
+    let mut stdin = Some(child.child.stdin.take().ok_or_else(super::invalid)?);
+    let mut stdout = child.child.stdout.take().ok_or_else(super::invalid)?;
+    let mut stderr = child.child.stderr.take().ok_or_else(super::invalid)?;
     nonblocking(stdin.as_ref().unwrap())?;
     nonblocking(&stdout)?;
     nonblocking(&stderr)?;
@@ -121,10 +141,11 @@ pub(super) fn run(
         if started.elapsed() >= timeout {
             return Err(io::Error::new(io::ErrorKind::TimedOut, "Tool timed out."));
         }
-        if child.0.try_wait()?.is_none() {
-            match super::native::check_resources(&child.0) {
+        if child.status()?.is_none() {
+            match super::native::check_resources(child.pid) {
                 Ok(()) => {}
-                Err(error) if child.0.try_wait()?.is_none() => return Err(error),
+                Err(error) if error.raw_os_error() == Some(libc::ESRCH) => {}
+                Err(error) if child.status()?.is_none() => return Err(error),
                 Err(_) => {}
             }
         }
@@ -174,7 +195,7 @@ pub(super) fn run(
                 stdin.take();
             }
         }
-        if let Some(status) = child.0.try_wait()? {
+        if let Some(status) = child.status()? {
             if !status.success() {
                 return Err(io::Error::other("Isolated tool failed."));
             }
@@ -196,6 +217,8 @@ pub(super) fn run(
 
 pub(super) fn bootstrap() -> io::Result<()> {
     use std::os::unix::process::CommandExt;
+    #[cfg(target_os = "macos")]
+    super::guardian::arm()?;
     super::native::prepare()?;
     for (fd, mode) in [
         (0, libc::O_RDONLY),

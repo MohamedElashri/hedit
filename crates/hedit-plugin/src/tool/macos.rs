@@ -33,14 +33,14 @@ type Initialize = unsafe extern "C" fn(
 ) -> libc::c_int;
 type FreeError = unsafe extern "C" fn(*mut libc::c_char);
 
-pub(super) fn check_resources(child: &std::process::Child) -> io::Result<()> {
-    if crate::sandbox::over_memory_limit(child)? {
+pub(super) fn check_resources(pid: u32) -> io::Result<()> {
+    if crate::sandbox::over_memory_limit_pid(pid)? {
         return Err(io::Error::other("Tool memory limit exceeded."));
     }
     let mut task = std::mem::MaybeUninit::<libc::proc_taskinfo>::uninit();
     let bytes = unsafe {
         libc::proc_pidinfo(
-            child.id() as i32,
+            pid as i32,
             libc::PROC_PIDTASKINFO,
             0,
             task.as_mut_ptr().cast(),

@@ -886,3 +886,14 @@ visibility and fixed system-loader execution are explicit residuals. Native Linu
 validation and a trusted macOS parent-exit guardian remain pending; these are
 activation gates before tool grants, alongside the Windows tool policy and
 broker image/snapshot ownership. The existing Lua policy retains its limits.
+
+
+The Linux adapter's dedicated native probes passed on x64 and ARM64 at `1af83fd`
+(CI `44928108100`), alongside the shared macOS probe. The macOS memory fixture now
+dirties pages without exhausting its independent CPU budget first (`2c1e761`).
+The guardian follow-up uses a private liveness socket and kernel exit events,
+with the native tool as a session leader. Native tests cover editor SIGKILL,
+guardian SIGKILL, process-group/session escape attempts and cleanup. Parent-exit
+cleanup is being validated through the full plugin and platform suites before
+this gate is closed. Tool/LSP broker activation and remaining Stage 3 gates are
+still open.
