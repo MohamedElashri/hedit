@@ -1,10 +1,121 @@
 # Workspace and service broker
 
-SDK 3 is under implementation. This integration branch accepts experimental
-manifest API 5 / SDK 3 commands and providers; APIs 1–4 retain their existing meanings.
-The types in `hedit-plugin::broker` and `hedit-broker` are internal development
-interfaces, not a released author contract. See the [current SDK](plugin-sdk.md)
-and [security model](extension-security.md) for supported functionality.
+Manifest API 5 / SDK 3 adds scoped workspace operations, HTTPS and supervised
+native tools to the shared Lua engine. Commands and providers use the same
+continuation contract. APIs 1–4 retain their existing meanings. Native LSP manager
+activation and final package/reference gates remain under validation on this branch.
+See the [security model](extension-security.md) for enforcement and residuals.
+
+## Author contract
+
+An API 5 command declares a `broker` object with explicit `capabilities`,
+optional `tools`, and optional `endpoints`. There is no package-wide permission
+inheritance. Omit legacy `private_storage` and Save-hook fields; automatic work
+uses a provider event. Command arguments, settings, package-local modules and
+text resources retain their SDK 1 forms. Providers use scalar `cache` instead
+of command arguments or legacy private storage.
+
+```json
+{
+  "api_version": 5,
+  "sdk_version": 3,
+  "id": "scoped-format",
+  "commands": [{
+    "id": "format",
+    "title": "Format with reviewed tool",
+    "broker": {
+      "capabilities": ["document.read", "document.edit", "tools.run"],
+      "tools": {
+        "formatter": {
+          "protocol": "filter",
+          "workspace": false,
+          "arguments": [{"literal": "--format"}]
+        }
+      }
+    },
+    "action": {"kind": "lua", "source": "format.lua"}
+  }],
+  "script_files": ["format.lua"]
+}
+```
+
+The user selects/imports the exact native image and separately grants execution.
+The manifest cannot select executable paths. Filter arguments may reference
+finite declared `choices`; language-server arguments are literal only. A project
+snapshot (`workspace: true`) also requires workspace discovery/read capabilities
+and a user-selected physical directory.
+
+```lua
+return function(ctx)
+  if ctx.broker.step == 0 then
+    return {intent = {tool = {
+      profile = "formatter", input = ctx.document.text, arguments = {}
+    }}}
+  end
+  local reply = ctx.broker.response
+  if reply.failed then return {intent = {finish = {}}} end
+  assert(reply.tool.status == 0)
+  return {intent = {finish = {
+    transaction = hedit.replace(reply.tool.output)
+  }}}
+end
+```
+
+The first callback has `ctx.broker.step == 0` and no response. Return exactly one
+intent and optional scalar `cache`; the VM exits before any host operation.
+A fresh confined callback receives `ctx.broker.response`, incremented step and
+cache. Only that cache persists. `ctx.request` is present for providers with the
+same kind/event/position/action fields as SDK 2. A final `finish` contains a
+document transaction, a typed result, or neither for an ordinary no-op command.
+Close callbacks return `result = "closed"` and receive empty document text/cache
+without I/O or edit authority.
+
+| Intent | Required capability | Response |
+| --- | --- | --- |
+| `discover` | `workspace.discover` | `discovered`: entries and truncation flag |
+| `search` | `workspace.read` | `searched`: bounded literal matches |
+| `open`, `open_many`, `read` | `workspace.read` | `opened`, `opened_many`, `read` |
+| `release` | Existing resource | `released` |
+| `stage_edits`, `review_edits` | `workspace.edit` | `staged`, `edited`: file count |
+| `watch`, `wait_changes`, `unwatch` | `workspace.watch` | `watching`, `changed`, `unwatched` |
+| `tool` | `tools.run` and exact filter profile | `tool`: status and UTF-8 output |
+| `language_server` | `tools.run`, `document.read` and exact server profile | `language_server`: typed SDK result |
+| `https` | `network.https` and exact endpoint | `https`: status and bounded body |
+| `finish` | Corresponding edit/presentation authority | Terminal |
+
+The [Lua annotations](../schemas/hedit-sdk.lua) specify intent/response fields.
+The [manifest schema](../schemas/plugin-manifest.schema.json) checks authoring
+structure; `hedit plugin check` also validates capability dependencies, argument
+choices, protocol constraints, resources and byte limits. Missing/revoked
+resources produce fixed `failed.code` values: `unavailable`, `denied`, `changed`,
+`cancelled`, `limit` or `failed`. Never apply incomplete/truncated edit plans.
+
+SDK 3 also provides bounded `hedit.json_encode`, `hedit.json_decode`,
+`hedit.json_array` and `hedit.json_null`. They preserve JSON array/null identity
+and reject duplicate keys, non-finite values, cycles and metatable execution.
+They supply no network/filesystem access. SDK 2's Lua UTF-16 helpers are specific
+to SDK 2; the SDK 3 LSP host converts protocol positions to snapshot byte ranges.
+
+### Offline author fixtures
+
+Use `hedit plugin test MANIFEST FIXTURES.json --timings` for API 5 and earlier
+APIs. Cases retain `command`, `input`, `expected`, optional settings/arguments/
+selections/cache and expected cache/result. Add `broker.exchanges`, an ordered
+array of exact `{intent, response}` pairs. Each exchange runs a fresh confined
+worker and compares its complete intent before supplying the fixture response.
+Wrong response kinds, undeclared profiles/capabilities, missing/extra exchanges,
+invalid typed results and wrong cache/text fail the case.
+
+At most 31 exchanges precede the final callback, with a ten-second active-work
+limit. `broker.scope: true` supplies a synthetic workspace handle for a declared
+workspace capability. Fixtures use document `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`,
+revision `"0"`, request `ffffffffffffffffffffffffffffffff` and synthetic scope
+`cccccccccccccccccccccccccccccccc`. Production handles are random/session-local.
+
+Transcripts perform no filesystem effects, HTTPS requests, tool launches or
+approval-store writes. Responses and resource identities are synthetic fixture
+data. Native broker/installed/extracted-package tests separately establish
+confinement and resource-policy behavior.
 
 ## Implementation boundary
 
@@ -28,10 +139,10 @@ The editor routes ordinary scoped commands through exact-source approval and
 separate directory/endpoint review, complete paged workspace previews, clean
 buffer preflight, and off-thread reconciliation. Providers share the same source,
 resource, revocation and commit checks. Explicit recovery is available in
-Extensions settings. Author CLI and extracted-package references remain open.
+Extensions settings. The CLI supports offline continuation transcripts; extracted-package references remain open.
 Native filters require separate image selection and final exact-source resource
-approval. Language-server requests remain unavailable while their persistent
-protocol/lifetime support is implemented. There is no unsandboxed fallback.
+approval. Language-server requests use persistent source/document-bound owners in the host;
+the manager picker stays gated until final installed-reference acceptance. There is no unsandboxed fallback.
 
 ## Authority and threat model
 

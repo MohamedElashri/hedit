@@ -280,8 +280,15 @@ pub fn start_broker_prioritized(
 pub fn run_broker_fixture(
     input: crate::broker::Input,
 ) -> Result<crate::broker::Output, crate::sdk::Failure> {
+    run_broker_fixture_traced(input, &Default::default())
+}
+/// Offline author fixture: fresh confined worker, no resource effects or grants.
+pub fn run_broker_fixture_traced(
+    input: crate::broker::Input,
+    trace: &crate::telemetry::Recorder,
+) -> Result<crate::broker::Output, crate::sdk::Failure> {
     let _permit = SERVICES.reserve(false)?;
-    engine::run_broker(input, None, &AtomicBool::new(false), &Default::default())
+    engine::run_broker(input, None, &AtomicBool::new(false), trace)
 }
 
 fn launch<T: Send + 'static, E: Send + 'static>(

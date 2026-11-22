@@ -1,9 +1,18 @@
 # Editing SDK
 
-Manifest API `3` with `sdk_version: 1` adds document editing commands to the shared
-Lua runtime. APIs `1` and `2` retain their existing contracts. This is the first
-editing SDK increment; providers, background services, filesystem access, external
-tools, and networking are not enabled by this API.
+Choose the SDK for the capabilities your extension needs. Each manifest version
+has an exact SDK version; unsupported combinations fail before evaluation.
+
+| Manifest API | SDK | Contract |
+| --- | --- | --- |
+| 1 | none | Declarative contributions |
+| 2 | none | Selection-only Lua transforms |
+| 3 | 1 | [Document editing](#command-contract) |
+| 4 | 2 | [Typed providers, events and presentation](plugin-services.md) |
+| 5 | 3 | [Scoped workspace, tools, LSP and HTTPS](plugin-broker.md#author-contract) |
+
+The editing helpers below remain SDK 1's contract and are shared by later SDKs.
+A newer SDK does not inherit earlier approval grants or gain undeclared authority.
 
 ## Permissions and compatibility
 
@@ -156,12 +165,14 @@ An unexpected storage proposal or a mismatch fails the fixture.
 ## Compatibility policy
 
 Manifest API, SDK, portable bundle, and private wire versions are separate.
-SDK 1 is an integer-versioned contract: new required helpers, changed coordinate
-semantics, or additional worker roles require a new supported SDK version rather
-than silently changing SDK 1. Keep existing version implementations and conformance
-fixtures when adding a version; publish migrations before retiring one. Signing
+SDK versions are integer contracts. Changed coordinates, callback/result shapes
+or authority semantics require a new supported SDK version. Additional optional
+helpers can be additive when existing sources retain identical behavior and
+limits; the manifest checker remains the availability check. Keep existing
+conformance fixtures and publish migrations before retiring a version.
+APIs 1–4 remain supported; none is deprecated by API 5. Signing
 does not grant capabilities, and a supported version never bypasses permission
-review. Future background/provider/tool APIs are separate stage gates.
+review. Bundle format 1 and private protocol versions are independent of SDK numbers.
 
 The documented helper set and manifest schema are the contract; application
 internals and private worker framing are not extension APIs. The first reference
