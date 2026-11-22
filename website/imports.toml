@@ -208,13 +208,6 @@ description = "Trust boundaries, consent, protocol validation, OS enforcement, r
 weight = 50
 
 [[pages]]
-source = "DEVELOPER_GUIDE.md"
-path = "project/contributing.md"
-title = "Build and contribute"
-description = "Build hedit, run the platform checks, and navigate the native application architecture."
-weight = 10
-
-[[pages]]
 source = "CHANGELOG.md"
 path = "project/release-notes.md"
 title = "Release notes"
