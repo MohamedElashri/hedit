@@ -28,7 +28,8 @@ def payload(root, helper):
     assert subprocess.check_output([str(prefix / 'bin/hedit-remote'), '--version'], text=True).strip() == f'hedit-remote {VERSION}'
     assert (prefix / 'share/hedit/package-managed').is_file()
     documents = ['README.md', 'USER_GUIDE.md', 'DEVELOPER_GUIDE.md', 'CHANGELOG.md', 'LICENSE',
-                 'docs/extensions.md', 'examples/extensions/markdown-task.json']
+                 'docs/extensions.md', 'examples/extensions/markdown-task.json',
+                 'examples/extensions/markdown-quote.json']
     images = [p.relative_to(ROOT).as_posix() for p in (ROOT / 'docs/images').iterdir() if p.is_file()]
     for relative in documents + images:
         assert (prefix / 'share/doc/hedit' / relative).read_bytes() == (ROOT / relative).read_bytes(), relative

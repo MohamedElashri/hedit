@@ -113,6 +113,8 @@ install: build ## Install under PREFIX; supports a DESTDIR staging directory
 	install -d "$(DESTDIR)$(PREFIX)/share/doc/hedit"
 	install -m644 README.md USER_GUIDE.md DEVELOPER_GUIDE.md CHANGELOG.md LICENSE "$(DESTDIR)$(PREFIX)/share/doc/hedit/"
 	cp -R assets docs "$(DESTDIR)$(PREFIX)/share/doc/hedit/"
+	install -d "$(DESTDIR)$(PREFIX)/share/doc/hedit/examples/extensions"
+	install -m644 examples/extensions/*.json "$(DESTDIR)$(PREFIX)/share/doc/hedit/examples/extensions/"
 	for path in vendor/egui_commonmark/PATCH.md vendor/libghostty-vt-sys/PATCH.md; do install -Dm644 "$$path" "$(DESTDIR)$(PREFIX)/share/doc/hedit/$$path"; done
 
 release-check: ## Check RELEASE_TAG=vX.Y.Z against the version in Cargo.toml

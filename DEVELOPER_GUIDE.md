@@ -125,6 +125,31 @@ for consistent focus/Escape. Help resolves only explicitly bundled documents.
   build-local SDK view, never installed Apple tools. Changes to compiler selection
   or wrappers require `scripts/test-zig-setup.py` and `scripts/test-run-zig.py`.
 
+## Lua extension architecture and testing
+
+Version 2 manifests bundle text source and declare the selection capabilities.
+Each approval binds one Lua command and its capabilities to the exact installed
+manifest, file identity, and a fresh token. hedit validates the grant before
+sending the selection to a worker and again before applying an edit. Both steps
+hold the same lock used by approval changes and extension management. The editor
+also checks the document revision, pane, and selection.
+
+Install and update use the reviewed input bytes. Update and uninstall compare
+the current installed snapshot with the reviewed copy and durably clear its Lua
+approvals before replacing or removing it. Unsupported approval files require an explicit reset before fresh consent. See the [extension guide](docs/extensions.md).
+
+The Linux x86-64 editor launches a fresh worker with clean environment and
+bounded anonymous pipes. The worker drops inherited descriptors and installs
+kernel process restrictions before reading the request. Lua runs with a text
+loader, a small standard library, and memory, instruction, and wall-clock
+limits. The worker reports fixed error messages and exits after one command.
+See the [Lua and mlua licenses](assets/licenses/lua-MIT.txt).
+
+Run `cargo test --locked --test lua_plugin_runtime` for executable and sample
+coverage and `cargo test --locked --bin hedit plugin_` for isolation and
+supervisor regressions. Run `cargo test --locked --bin hedit app::extensions`
+for manifest, consent, and editor regressions.
+
 ## SSH architecture and testing
 
 Managed SSH connections use a bounded bootstrap before opening the RPC transport.

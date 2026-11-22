@@ -98,7 +98,8 @@ def package(arm64, intel, output, identity='-', helper_arm64=None, helper_intel=
         for directory in ['assets', 'docs/images']:
             shutil.copytree(ROOT / directory, docs / directory)
         for relative in ['vendor/egui_commonmark/PATCH.md', 'vendor/libghostty-vt-sys/PATCH.md',
-                         'docs/extensions.md', 'examples/extensions/markdown-task.json']:
+                         'docs/extensions.md', 'examples/extensions/markdown-task.json',
+                         'examples/extensions/markdown-quote.json']:
             (docs / relative).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / relative, docs / relative)
         signing = ['codesign', '--force', '--sign', identity]

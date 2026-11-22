@@ -1,5 +1,6 @@
 //! Local extension manifests contribute commands to the Command Palette.
 mod catalog;
+mod lua;
 mod manager;
 mod manifest;
 mod templates;
@@ -9,6 +10,7 @@ use eframe::egui;
 use hedit::intelligence;
 use std::path::Path;
 
+pub(super) use lua::LuaTransform;
 pub(super) use manager::Manager;
 use manifest::ExtensionAction;
 pub(super) use manifest::{load, Contribution};
@@ -54,6 +56,13 @@ impl HeditApp {
             let enabled = match command.action {
                 ExtensionAction::InsertSnippet { .. } => editable,
                 ExtensionAction::NewFile { .. } => available,
+                ExtensionAction::Lua(_) => {
+                    editable
+                        && selection
+                        && self.workspace.remote.is_none()
+                        && self.lua_transform.is_none()
+                        && crate::plugin_runtime::SUPPORTED
+                }
             };
             enabled && command.when.matches(language, filename, selection)
         })
@@ -85,6 +94,7 @@ impl HeditApp {
         };
         match action {
             ExtensionAction::InsertSnippet { body } => self.run_extension_snippet(&body),
+            ExtensionAction::Lua(plugin) => self.start_lua_transform(plugin),
             ExtensionAction::NewFile { body, language } => {
                 self.run_extension_template(ctx, &body, language)
             }
@@ -140,7 +150,10 @@ mod tests {
     use hedit::{advanced::Selection, editing::Operation, workspace::Workspace};
     use std::path::Path;
 
-    fn app_with(text: &str, config: Option<&Path>) -> (tempfile::TempDir, egui::Context, HeditApp) {
+    pub(super) fn app_with(
+        text: &str,
+        config: Option<&Path>,
+    ) -> (tempfile::TempDir, egui::Context, HeditApp) {
         let session = tempfile::tempdir().unwrap();
         let (mut workspace, _) = Workspace::restore(session.path().into()).unwrap();
         workspace.open[0].page.text = text.into();

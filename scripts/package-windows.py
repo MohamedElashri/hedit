@@ -43,7 +43,8 @@ def package(binary, out_dir):
         for directory in ['assets', 'themes', 'docs/images']:
             shutil.copytree(ROOT / directory, stage / directory)
         for relative in ['vendor/egui_commonmark/PATCH.md', 'vendor/libghostty-vt-sys/PATCH.md',
-                         'docs/extensions.md', 'examples/extensions/markdown-task.json']:
+                         'docs/extensions.md', 'examples/extensions/markdown-task.json',
+                         'examples/extensions/markdown-quote.json']:
             (stage / relative).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / relative, stage / relative)
         shutil.copytree(ROOT / 'examples/cuda', stage / 'examples/cuda')
@@ -71,7 +72,8 @@ def smoke(archive):
         for relative in ['hedit.exe', 'LICENSE', 'USER_GUIDE.md',
                          'themes/hedit-ink.json', 'assets/dictionaries/en_US-LICENSE.txt',
                          'examples/cuda/vector_add.cu', 'docs/extensions.md',
-                         'examples/extensions/markdown-task.json']:
+                         'examples/extensions/markdown-task.json',
+                         'examples/extensions/markdown-quote.json']:
             if not (root / relative).is_file():
                 raise ValueError(f'Missing package resource: {relative}')
         binary = root / 'hedit.exe'
