@@ -45,7 +45,8 @@ stylesheets, downloads, and search routes under the configured path prefix.
 | --- | --- |
 | User reference pages | [USER_GUIDE.md](../USER_GUIDE.md) |
 | API contracts and threat model | Markdown files in [docs](../docs/) |
-| Contributor reference | [DEVELOPER_GUIDE.md](../DEVELOPER_GUIDE.md) |
+| Contributor introduction | [content/project/contributing.md](content/project/contributing.md) |
+| Detailed maintainer reference | [DEVELOPER_GUIDE.md](../DEVELOPER_GUIDE.md), linked from the contributor introduction |
 | Release history | [CHANGELOG.md](../CHANGELOG.md) |
 | Web introductions and plugin tutorials | [content](content/) |
 | Page boundaries, titles, summaries, and order | [imports.toml](imports.toml) and authored front matter |
