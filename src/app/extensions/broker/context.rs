@@ -11,9 +11,20 @@ pub(in crate::app::extensions) struct Context {
     pub(super) generation: OnceLock<(Vec<u8>, u64)>,
     pub(super) directory: OnceLock<PathBuf>,
     pub(super) live: AtomicBool,
+    native_services: OnceLock<Arc<hedit_broker::lsp::Registry>>,
+    native_shared: AtomicBool,
+    lifetime: Option<hedit::lifetime::Lease>,
     pub(super) commit: commit::Signals,
 }
 impl Context {
+    pub(in crate::app::extensions) fn share_services(
+        &self,
+        services: Arc<hedit_broker::lsp::Registry>,
+    ) -> io::Result<()> {
+        self.native_services.set(services).map_err(|_| denied())?;
+        self.native_shared.store(true, Ordering::Release);
+        Ok(())
+    }
     pub(in crate::app::extensions) fn snapshot(&self) -> &sdk::Snapshot {
         &self.package.snapshot
     }
@@ -83,15 +94,19 @@ impl Context {
             })
             && (self.commit.committing.load(Ordering::Acquire)
                 || self.target.as_ref().is_none_or(|target| {
-                    self.editor
-                        .get(target.document())
-                        .ok()
-                        .and_then(|doc| {
-                            doc.try_lock()
-                                .ok()
-                                .map(|doc| doc.info().revision == target.revision())
-                        })
-                        .unwrap_or(false)
+                    self.lifetime
+                        .as_ref()
+                        .is_some_and(hedit::lifetime::Lease::current)
+                        && self
+                            .editor
+                            .get(target.document())
+                            .ok()
+                            .and_then(|doc| {
+                                doc.try_lock()
+                                    .ok()
+                                    .map(|doc| doc.info().revision == target.revision())
+                            })
+                            .unwrap_or(false)
                 }))
     }
     pub(super) fn approved_plugin(&self) -> LuaPlugin {
@@ -125,6 +140,9 @@ impl Context {
         monitor: Monitor,
     ) -> Arc<Self> {
         let owner = Some(plugin.plugin_id.clone());
+        let lifetime = target
+            .as_ref()
+            .and_then(|target| editor.document_lifetime(target.document()).ok());
         Arc::new(Self {
             config,
             command,
@@ -136,6 +154,9 @@ impl Context {
             generation: OnceLock::new(),
             directory: OnceLock::new(),
             live: AtomicBool::new(true),
+            native_services: OnceLock::new(),
+            native_shared: AtomicBool::new(false),
+            lifetime,
             commit: commit::Signals {
                 owner,
                 ..Default::default()
@@ -144,6 +165,11 @@ impl Context {
     }
     pub(in crate::app::extensions) fn close(&self) {
         self.live.store(false, Ordering::Release);
+        if !self.native_shared.load(Ordering::Acquire) {
+            if let Some(services) = self.native_services.get() {
+                services.stop();
+            }
+        }
     }
     pub(in crate::app::extensions) fn start(
         self: &Arc<Self>,
@@ -190,6 +216,47 @@ impl Context {
             let token = serde_json::from_value(setup.plugin.grant.approval_id().into())
                 .map_err(|_| denied())?;
             let resolved = state.resolve(&setup.command, token, &definition)?;
+            let services = setup.native_services.get_or_init(Default::default).clone();
+            let server = definition.tools.iter().any(|(profile, tool)| {
+                tool.protocol == hedit_broker::declaration::ToolProtocol::LanguageServer
+                    && resolved.tools.contains_key(profile)
+            });
+            if server
+                && !request
+                    .as_ref()
+                    .is_some_and(|request| request.trigger == service::Trigger::Close)
+            {
+                services.bind_lifetime(setup.lifetime.as_ref().ok_or_else(denied)?)?;
+                if setup.monitor.register(&services.cancellation())? != sequence {
+                    services.stop();
+                    return Err(denied());
+                }
+            }
+            let document_relative = resolved.resources.as_ref().and_then(|resources| {
+                let path = setup
+                    .target
+                    .as_ref()
+                    .and_then(|target| setup.editor.get(target.document()).ok())
+                    .and_then(|doc| {
+                        doc.try_lock()
+                            .ok()
+                            .and_then(|doc| doc.local_path().map(std::path::Path::to_owned))
+                    })?;
+                let path = path.canonicalize().ok()?;
+                let root = resources.root(resources.scope()).ok()?;
+                let relative = path.strip_prefix(root.locator()).ok()?;
+                let parts = relative
+                    .components()
+                    .map(|component| {
+                        let std::path::Component::Normal(part) = component else {
+                            return None;
+                        };
+                        part.to_str()
+                            .filter(|part| !part.starts_with('.') && !part.contains('\\'))
+                    })
+                    .collect::<Option<Vec<_>>>()?;
+                Some(parts.join("/"))
+            });
             if let Some(resources) = &resolved.resources {
                 let path = resources.root(resources.scope())?.locator().to_owned();
                 if setup.directory.get().is_some_and(|known| known != &path) {
@@ -200,6 +267,9 @@ impl Context {
             let mut package = setup.package.clone();
             package.arguments = arguments;
             Ok(hedit_broker::session::Config {
+                services,
+                scope_epoch: setup.generation.get().map(|(epoch, _)| epoch.clone()),
+                document_relative,
                 source_token: Some(token),
                 tools: resolved.tools,
                 owner: Some(hedit_broker::journal::Owner {

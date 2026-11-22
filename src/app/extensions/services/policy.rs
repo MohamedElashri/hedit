@@ -78,7 +78,15 @@ impl Monitor {
             .lock()
             .unwrap_or_else(|p| p.into_inner());
         listeners.retain(|listener| listener.strong_count() != 0);
-        if listeners.len() >= 16 {
+        if listeners
+            .iter()
+            .any(|listener| listener.ptr_eq(&Arc::downgrade(cancel)))
+        {
+            return Ok(self.sequence.load(Ordering::Acquire));
+        }
+        // Rotating host contexts and document-owned native registries have
+        // separate lifetimes, while native process admission remains capped.
+        if listeners.len() >= 32 {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::WouldBlock,
                 "Policy subscription limit reached.",
@@ -197,6 +205,24 @@ impl Controller {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn persistent_scope_subscriptions_do_not_grow_with_callbacks() {
+        let monitor = Monitor {
+            state: Arc::new(MonitorState {
+                listeners: Mutex::new(vec![]),
+                ready: Mutex::new(Some(true)),
+                changed: Condvar::new(),
+            }),
+            sequence: Arc::new(AtomicU64::new(0)),
+        };
+        let cancel = Arc::new(hedit_broker::cancel::Cancel::default());
+        for _ in 0..128 {
+            assert_eq!(monitor.register(&cancel).unwrap(), 0);
+        }
+        assert_eq!(monitor.state.listeners.lock().unwrap().len(), 1);
+        monitor.invalidate();
+        assert!(cancel.is_cancelled());
+    }
     #[test]
     fn journal_metadata_is_not_policy_and_renamed_policy_namespaces_are() {
         use notify::{

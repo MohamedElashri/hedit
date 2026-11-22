@@ -33,6 +33,21 @@ fn edit(app: &mut HeditApp, text: &str) {
 }
 
 #[test]
+fn shelving_and_reopening_rotate_document_lifetimes_without_a_ui_frame() {
+    let (_directory, _ctx, mut app, _path, id) = disk_app();
+    let old = app.workspace.editor.document_lifetime(id).unwrap();
+    app.workspace.close(app.workspace.active).unwrap();
+    assert!(!old.current());
+    assert!(app.workspace.editor.get(id).is_ok()); // The recovery shelf keeps text.
+    app.workspace.reopen().unwrap();
+    let reopened = app.workspace.editor.document_lifetime(id).unwrap();
+    assert!(reopened.current() && !reopened.same(&old));
+    app.workspace.forget(app.workspace.active).unwrap();
+    assert!(!reopened.current());
+    assert!(app.workspace.editor.get(id).is_err());
+}
+
+#[test]
 fn last_blank_tab_has_no_close_button_and_ignores_close_actions() {
     let directory = tempfile::tempdir().unwrap();
     let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();

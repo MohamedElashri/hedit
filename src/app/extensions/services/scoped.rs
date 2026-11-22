@@ -13,6 +13,8 @@ pub(super) struct Scoped {
     initialized: bool,
     run: Option<Run>,
     ready: Option<Ready>,
+    native_services: Arc<hedit_broker::lsp::Registry>,
+    lifetime: Option<hedit::lifetime::Lease>,
 }
 struct Preview {
     plan: Arc<Plan>,
@@ -108,6 +110,11 @@ impl Scoped {
             .map_or(&[], |ready| &ready.decorations)
     }
     pub(super) fn stop(&mut self, app: &mut HeditApp) {
+        self.native_services.stop();
+        self.native_services = Default::default();
+        self.stop_run(app);
+    }
+    fn stop_run(&mut self, app: &mut HeditApp) {
         if let Some(mut run) = self.run.take() {
             if let Some(invocation) = run.invocation.take() {
                 app.extension_manager.record(
@@ -137,13 +144,19 @@ impl Scoped {
             .unwrap()
             .has(Capability::DocumentRead);
         let target = tick.target.filter(|_| reads);
+        let lifetime = target.and_then(|target| {
+            app.workspace
+                .editor
+                .document_lifetime(target.document())
+                .ok()
+        });
         let info = &app.active().page.info;
         let selection = app.selections().iter().any(|s| s.anchor != s.head);
         let eligible = entry.contribution.when.matches(
             app.active().language(),
             info.path.as_ref().map(|_| info.name.as_str()),
             selection,
-        ) && (!reads || target.is_some());
+        ) && (!reads || lifetime.is_some());
         if self
             .run
             .as_ref()
@@ -153,7 +166,13 @@ impl Scoped {
             self.poll_run(entry, app, ctx, now);
             return;
         }
+        let same_lifetime = match (&self.lifetime, &lifetime) {
+            (Some(old), Some(new)) => old.same(new),
+            (None, None) => true,
+            _ => false,
+        };
         let changed = !self.initialized
+            || !same_lifetime
             || match (&entry.scope, target.filter(|_| eligible)) {
                 (Some(old), Some(new)) => !old.same_document(new),
                 (None, None) => false,
@@ -176,6 +195,7 @@ impl Scoped {
                     return;
                 }
             };
+            self.lifetime = lifetime;
             self.initialized = true;
             if entry.close.is_some() {
                 entry.state.queue(Trigger::Close, now, 0);
@@ -187,7 +207,7 @@ impl Scoped {
         } else if entry.close.is_none() {
             if let (Some(old), Some(current)) = (&entry.scope, target) {
                 if old.revision() != current.revision() {
-                    self.stop(app);
+                    self.stop_run(app);
                     entry.state.invalidate_request(now);
                     entry.choice = None;
                     if !own(tick, current, &entry.plugin.plugin_id)
@@ -199,7 +219,7 @@ impl Scoped {
                     }
                 } else if old != current {
                     if sensitive(entry.definition.kind) {
-                        self.stop(app);
+                        self.stop_run(app);
                         entry.state.invalidate_request(now);
                     }
                     if entry.definition.events.contains(&Trigger::Selection) {
@@ -233,7 +253,7 @@ impl Scoped {
             }
         }
         if entry.state.superseded() {
-            self.stop(app);
+            self.stop_run(app);
             entry.state.cancel(now);
         }
         entry.state.expire_idle(now);
@@ -346,6 +366,7 @@ impl Scoped {
             app.workspace.editor.clone(),
             tick.monitor.clone(),
         );
+        context.share_services(self.native_services.clone())?;
         let host = context.start(
             app,
             ctx,

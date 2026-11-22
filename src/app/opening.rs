@@ -344,6 +344,10 @@ impl HeditApp {
             return;
         }
         if let Some(index) = self.workspace.closed.iter().position(|view| view.id == id) {
+            if let Err(error) = self.workspace.editor.open_document_lifetime(id) {
+                self.error = Some(error);
+                return;
+            }
             let view = self.workspace.closed.remove(index);
             self.workspace.open.push(Buffer::new(page, Some(view)));
             self.workspace.active = self.workspace.open.len() - 1;

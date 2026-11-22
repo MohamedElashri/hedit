@@ -572,3 +572,22 @@ Idle message/byte accounting persists across polls, so an output flood cannot
 reset its budget with every wakeup. Installed LSP activation still requires the
 source/resource binding, policy subscriptions and editor scope owner; these
 host-only lifetime primitives do not confer a plugin grant.
+
+The broker now binds cached native owners to command, exact source-approval token,
+policy epoch, opaque document, imported image handle, complete profile recipe,
+physical workspace identity and projected document name. A different image or
+scope cannot reuse a cached process, even if a caller supplies an old epoch.
+New owners reverify/copy the image; warm requests do not repeatedly hash/copy it.
+Failed native starts leave bounded tombstones until explicit scope restart.
+
+Editor document leases close when a tab is shelved, forgotten or replaced, even
+without UI polling. Reopening creates a distinct lease and cannot revive old
+callbacks. Policy cancellation and document leases are independent inputs to the
+native I/O owner. Providers keep their registry across callbacks for one document;
+Stop, scope changes, source updates and revocation end it. Policy subscriptions
+deduplicate persistent registries and are bounded to 32 entries alongside rotating
+contexts; native process/context admission limits are unchanged.
+
+Language-server recipes currently use literal startup arguments. Native UI
+selection remains gated while cancellation/reply draining, installed references
+and final author/package/performance validation are completed.

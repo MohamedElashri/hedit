@@ -5,3 +5,6 @@ mod document;
 pub use document::Document;
 mod owner;
 pub use owner::Owner;
+mod registry;
+pub use registry::Registry;
+pub(crate) use registry::Request;
