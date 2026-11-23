@@ -344,11 +344,18 @@ impl HeditApp {
                     );
                     ui.add_space(8.0);
                     ui.label("A native text and log editor with durable recovery, Git, and SSH workspaces.");
+                    ui.add_space(4.0);
+                    let tip = egui::Button::new(
+                        egui::RichText::new(format!("♥ {}", controls::TIP_LABEL)).strong(),
+                    );
+                    if ui.add(tip).clicked() {
+                        ui.ctx().open_url(egui::OpenUrl::new_tab(controls::TIP_URL));
+                    }
                     ui.add_space(8.0);
                     ui.separator();
                     ui.add_space(4.0);
                     ui.horizontal_wrapped(|ui| {
-                        ui.hyperlink_to("Project website", "https://melashri.net/soft/hedit/");
+                        ui.hyperlink_to("Project website", "https://melashri.net/software/hedit/");
                         ui.hyperlink_to("Source code", "https://github.com/MohamedElashri/hedit");
                         ui.hyperlink_to(
                             "Report an issue",
@@ -367,13 +374,10 @@ impl HeditApp {
                     });
                     ui.add_space(8.0);
                     ui.separator();
-                    ui.horizontal(|ui| {
-                        ui.hyperlink_to("Support on Ko-fi", "https://ko-fi.com/melashri");
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            close = ui
-                                .add_sized([72.0, 28.0], egui::Button::new("Close"))
-                                .clicked();
-                        });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        close = ui
+                            .add_sized([72.0, 28.0], egui::Button::new("Close"))
+                            .clicked();
                     });
                 });
             self.about_open = open && !close;
