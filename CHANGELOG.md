@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-11-23
+
+- Refresh About with project links and an optional Ko-fi tip link.
+
 ## [0.7.1] - 2026-11-22
 
 ### Changed
