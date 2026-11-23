@@ -343,19 +343,32 @@ impl HeditApp {
                         false,
                     );
                     ui.add_space(8.0);
-                    ui.weak("Keep your train of thought.");
+                    ui.label("A native text and log editor with durable recovery, Git, and SSH workspaces.");
                     ui.add_space(8.0);
                     ui.separator();
                     ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        guide = ui.link("User guide").clicked();
-                        ui.weak("·");
-                        ui.hyperlink_to("GitHub", "https://github.com/MohamedElashri/hedit");
-                        ui.weak("·");
+                    ui.horizontal_wrapped(|ui| {
+                        ui.hyperlink_to("Project website", "https://melashri.net/soft/hedit/");
+                        ui.hyperlink_to("Source code", "https://github.com/MohamedElashri/hedit");
                         ui.hyperlink_to(
-                            "MIT License",
+                            "Report an issue",
+                            "https://github.com/MohamedElashri/hedit/issues",
+                        );
+                        ui.hyperlink_to("Release notes", hedit::update::RELEASES_URL);
+                    });
+                    guide = ui.link("User guide").clicked();
+                    ui.add_space(8.0);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.weak("Maintained by Mohamed Elashri");
+                        ui.hyperlink_to(
+                            "MIT license",
                             "https://github.com/MohamedElashri/hedit/blob/main/LICENSE",
                         );
+                    });
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        ui.hyperlink_to("Support on Ko-fi", "https://ko-fi.com/melashri");
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             close = ui
                                 .add_sized([72.0, 28.0], egui::Button::new("Close"))

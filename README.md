@@ -147,6 +147,10 @@ recovery checkpoint. [Recovery behavior](USER_GUIDE.md#recovery).
 [Plugin development](https://melashri.net/hedit/plugins/) · [Build and contribute](DEVELOPER_GUIDE.md) ·
 [Report an issue](https://github.com/MohamedElashri/hedit/issues)
 
+## Support
+
+Visit the [project website](https://melashri.net/soft/hedit/) for downloads and links. [Support on Ko-fi](https://ko-fi.com/melashri) if you’d like to leave an optional tip.
+
 ## Licence
 
 Free and open source under the [MIT licence](LICENSE).
