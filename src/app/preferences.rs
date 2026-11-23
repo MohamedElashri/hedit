@@ -355,8 +355,8 @@ impl HeditApp {
                             "https://github.com/MohamedElashri/hedit/issues",
                         );
                         ui.hyperlink_to("Release notes", hedit::update::RELEASES_URL);
-                        guide = ui.link("User guide").clicked();
                     });
+                    guide = ui.link("User guide").clicked();
                     ui.add_space(8.0);
                     ui.horizontal_wrapped(|ui| {
                         ui.weak("Maintained by Mohamed Elashri");
