@@ -354,7 +354,7 @@ impl HeditApp {
                             "Report an issue",
                             "https://github.com/MohamedElashri/hedit/issues",
                         );
-                        ui.hyperlink_to("Release notes", crate::update::RELEASES_URL);
+                        ui.hyperlink_to("Release notes", hedit::update::RELEASES_URL);
                         guide = ui.link("User guide").clicked();
                     });
                     ui.add_space(8.0);
