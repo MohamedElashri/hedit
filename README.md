@@ -8,11 +8,13 @@
 <p align="center">Code, technical notes, large logs, and remote projects. Free and open source.</p>
 <p align="center">
   <a href="https://github.com/MohamedElashri/hedit/releases/latest"><img src="https://img.shields.io/github/v/release/MohamedElashri/hedit?label=Download%20stable&amp;style=for-the-badge&amp;color=196f55" alt="Download the latest stable release"></a>
+  <a href="https://ko-fi.com/melashri"><img src="https://img.shields.io/badge/Ko--fi-Leave%20a%20tip-913F51?style=for-the-badge&amp;logo=ko-fi&amp;logoColor=white" alt="Leave a tip on Ko-fi"></a>
 </p>
 <p align="center">
   <a href="https://github.com/MohamedElashri/hedit/actions/workflows/ci.yml?query=branch%3Amain"><img src="https://github.com/MohamedElashri/hedit/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI on main"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/licence-MIT-196f55" alt="MIT licence"></a>
 </p>
+
 <p align="center">
   <a href="#install">Install</a> ·
   <a href="#quick-start">Quick start</a> ·
@@ -149,7 +151,9 @@ recovery checkpoint. [Recovery behavior](USER_GUIDE.md#recovery).
 
 ## Support
 
-Visit the [project website](https://melashri.net/soft/hedit/) for downloads and links. [Support on Ko-fi](https://ko-fi.com/melashri) if you’d like to leave an optional tip.
+Tips are optional and help maintain the project.
+
+**[Leave a tip on Ko-fi](https://ko-fi.com/melashri)** · [Project website](https://melashri.net/software/hedit/)
 
 ## Licence
 

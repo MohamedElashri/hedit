@@ -252,6 +252,15 @@ impl HeditApp {
                                     }
                                 }
                             }
+                            if title == "Help" {
+                                ui.separator();
+                                if ui
+                                    .hyperlink_to(controls::TIP_LABEL, controls::TIP_URL)
+                                    .clicked()
+                                {
+                                    ui.close_menu();
+                                }
+                            }
                         });
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

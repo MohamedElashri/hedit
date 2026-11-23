@@ -2,6 +2,9 @@
 //! cancelling look and behave the same everywhere.
 use super::*;
 
+pub(super) const TIP_LABEL: &str = "Leave a tip on Ko-fi";
+pub(super) const TIP_URL: &str = "https://ko-fi.com/melashri";
+
 /// A font-independent split-pane icon that remains available when the sidebar
 /// is hidden. Use a regular button for keyboard activation and focus feedback.
 pub(super) fn sidebar_button(
