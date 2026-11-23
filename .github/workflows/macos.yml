@@ -2,6 +2,10 @@ name: Universal macOS and protocol security
 on:
   workflow_dispatch:
     inputs:
+      release_tag:
+        description: Rebuild the universal package for an existing release tag
+        type: string
+        required: false
       protocol_security:
         description: Run the protocol sanitizer campaign instead of packaging
         type: boolean
@@ -18,7 +22,7 @@ jobs:
     if: github.event_name != 'schedule' && !inputs.protocol_security
     name: Universal macOS app
     runs-on: macos-15
-    timeout-minutes: 40
+    timeout-minutes: 65
     env:
       MACOSX_DEPLOYMENT_TARGET: '11.0'
       CARGO_TERM_COLOR: always
@@ -27,6 +31,13 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: 0
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.sha }}
+      - name: Validate the requested release tag
+        if: inputs.release_tag
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: make release-check
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.99.1
