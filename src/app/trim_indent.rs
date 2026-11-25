@@ -106,7 +106,7 @@ impl HeditApp {
         let Some((text, start, removed)) = trimmed else {
             return;
         };
-        let shift = |p: usize| if p > start { p - removed } else { p };
+        let shift = |p: usize| p - p.saturating_sub(start).min(removed);
         let (anchor, head) = (shift(anchor), shift(head));
         self.apply_edit(hedit::editing::Edit { text, anchor, head }, None);
     }
