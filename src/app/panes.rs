@@ -910,7 +910,10 @@ mod group_tests {
     fn cancelling_a_preview_restores_its_group_without_moving_another_cursor() {
         let (_dir, ctx, mut app) = app();
         app.split(1);
-        app.preview_line(&ctx, 1, Some(4));
+        app.preview_line(
+            &ctx,
+            crate::app::goto_anything::PickerLine::File(1, Some(4)),
+        );
         frame(&ctx, &mut app, vec![]);
         app.focus_group(1, false);
         app.set_selections(vec![hedit::advanced::Selection::caret(5)]);

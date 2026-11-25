@@ -11,6 +11,12 @@ pub(super) enum Target {
     Text(String),
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum PickerLine {
+    File(usize, Option<usize>),
+    Page(usize),
+}
+
 /// Split `app.rs@save` into the file query and what to go to inside it.
 pub(super) fn parse(query: &str) -> (&str, Option<Target>) {
     let Some(at) = query.find(['@', ':', '#']) else {
@@ -94,12 +100,17 @@ pub(super) struct Origin {
 impl HeditApp {
     /// Move the cursor to a 1-based line and column in the active file.
     pub(super) fn jump_to_line(&mut self, ctx: &egui::Context, line: usize, column: Option<usize>) {
-        self.reveal_markdown_source(ctx);
         if self.active().page.info.paged {
+            self.reveal_markdown_source(ctx);
             self.goto = line.to_string();
             self.goto_location(ctx, line.max(1) as u64, column.unwrap_or(1).max(1) as u64);
             return;
         }
+        self.jump_to_page_line(ctx, line, column);
+    }
+
+    fn jump_to_page_line(&mut self, ctx: &egui::Context, line: usize, column: Option<usize>) {
+        self.reveal_markdown_source(ctx);
         let index = self.workspace.active;
         let b = &mut self.workspace.open[index];
         let text = &b.page.text;
@@ -124,8 +135,16 @@ impl HeditApp {
         b.restore_cursor = true;
         self.changed();
     }
+
+    pub(super) fn jump_to_picker_line(&mut self, ctx: &egui::Context, line: PickerLine) {
+        match line {
+            PickerLine::File(line, column) => self.jump_to_line(ctx, line, column),
+            PickerLine::Page(line) => self.jump_to_page_line(ctx, line, None),
+        }
+    }
+
     /// Preview a line while choosing, remembering where the cursor was.
-    pub(super) fn preview_line(&mut self, ctx: &egui::Context, line: usize, column: Option<usize>) {
+    pub(super) fn preview_line(&mut self, ctx: &egui::Context, line: PickerLine) {
         if self.goto_origin.is_none() {
             let b = self.active();
             self.goto_origin = Some(Origin {
@@ -139,7 +158,7 @@ impl HeditApp {
                 markdown_view: b.view.markdown_view,
             });
         }
-        self.jump_to_line(ctx, line, column);
+        self.jump_to_picker_line(ctx, line);
         ctx.request_repaint();
     }
     /// Put the cursor back after a cancelled preview.
