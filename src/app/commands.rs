@@ -2357,8 +2357,7 @@ impl HeditApp {
                     self.jump_to_line(ctx, line, column);
                 }
                 Item::Buffer(index) => {
-                    self.workspace.active = index;
-                    self.changed();
+                    self.select_tab(index);
                     if let Some(target) = target {
                         self.go_to_target(ctx, None, target);
                     }
