@@ -1575,17 +1575,25 @@ fn copy_and_cut_without_a_selection_take_whole_lines() {
 #[test]
 fn paste_and_indent_fits_lines_to_the_cursor_line() {
     assert_eq!(
-        clipboard_lines::reindent_paste("if x {\n        y();\n\n    }\n", "    ", false),
+        clipboard_lines::reindent_paste("if x {\n        y();\n\n    }\n", "    ", false, 4),
         "if x {\n        y();\n\n    }\n"
     );
     assert_eq!(
-        clipboard_lines::reindent_paste("a\n\t\tb\n\t\t\tc", "  ", false),
+        clipboard_lines::reindent_paste("a\n\t\tb\n\t\t\tc", "  ", false, 4),
         "a\n  b\n  \tc"
     );
     // Whole lines keep their nesting relative to the first.
     assert_eq!(
-        clipboard_lines::reindent_paste("    if x:\n        y\n", "  ", true),
+        clipboard_lines::reindent_paste("    if x:\n        y\n", "  ", true, 4),
         "  if x:\n      y\n"
+    );
+    assert_eq!(
+        clipboard_lines::reindent_paste("\tparent\n        child\n", "    ", true, 4),
+        "    parent\n        child\n"
+    );
+    assert_eq!(
+        clipboard_lines::reindent_paste("  parent\n\tchild\n", "  ", true, 8),
+        "  parent\n        child\n"
     );
     let (_directory, ctx, mut app) = app_with("fn f() {\n    \n}\n");
     app.set_selections(vec![hedit::advanced::Selection::caret(13)]);

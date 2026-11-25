@@ -171,15 +171,20 @@ impl egui::TextBuffer for EditorText<'_> {
 /// on every line, the first included. Otherwise it goes after other text on
 /// the line, so its first line (often copied from mid-line) is left out of
 /// the common indentation and pasted as it is, without leading spaces.
-pub(super) fn reindent_paste(text: &str, target: &str, whole: bool) -> String {
+pub(super) fn reindent_paste(text: &str, target: &str, whole: bool, tab_width: usize) -> String {
     let lines: Vec<&str> = text.split_inclusive('\n').collect();
-    let common = lines
+    let mut indents = lines
         .iter()
         .skip(usize::from(!whole))
         .filter(|l| !l.trim().is_empty())
-        .map(|l| indentation(l))
-        .min_by_key(|i| i.len())
+        .map(|l| indentation(l));
+    let columns = |indent: &str| advanced::line_column(indent, indent.len(), tab_width.max(1)).1;
+    let common = indents
+        .clone()
+        .min_by_key(|indent| columns(indent))
         .unwrap_or("");
+    let shared_prefix = indents.all(|indent| indent.starts_with(common));
+    let baseline = columns(common);
     let mut out = String::with_capacity(text.len());
     for (n, line) in lines.iter().enumerate() {
         if n == 0 && !whole {
@@ -189,10 +194,13 @@ pub(super) fn reindent_paste(text: &str, target: &str, whole: bool) -> String {
             out.push_str(&line[line.trim_end_matches(['\r', '\n']).len()..]);
         } else {
             out.push_str(target);
-            out.push_str(
-                line.strip_prefix(common)
-                    .unwrap_or(line.trim_start_matches([' ', '\t'])),
-            );
+            if shared_prefix {
+                out.push_str(&line[common.len()..]);
+            } else {
+                let indent = indentation(line);
+                out.extend(std::iter::repeat_n(' ', columns(indent) - baseline));
+                out.push_str(&line[indent.len()..]);
+            }
         }
     }
     out
@@ -287,7 +295,8 @@ impl HeditApp {
         let target = indentation(&b.page.text[line..]).to_owned();
         // Only indentation before a single cursor: the text replaces it.
         let whole = selections.len() == 1 && b.page.text[line..at].trim().is_empty();
-        let pasted = reindent_paste(text, &target, whole);
+        let width = b.view.tab_size.unwrap_or(4) as usize;
+        let pasted = reindent_paste(text, &target, whole, width);
         let pasted = line_endings(&pasted, b.page.info.eol == "CRLF");
         let ranges = if whole {
             vec![Selection {
