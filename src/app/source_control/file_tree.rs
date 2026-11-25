@@ -210,6 +210,10 @@ impl HeditApp {
                                     tree_row::Row {
                                         name: &format!("{}  ({})", row.name, row.count),
                                         path: &row.path.to_string_lossy(),
+                                        icon_name: row
+                                            .name
+                                            .split_once('/')
+                                            .map_or(&row.name, |(first, _)| first),
                                         directory: true,
                                         expanded,
                                         selected: false,

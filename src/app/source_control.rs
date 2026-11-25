@@ -904,6 +904,8 @@ impl HeditApp {
         depth: usize,
         list: bool,
     ) {
+        use hedit::icons::{FileIcon, FILE_ICON_SIZE};
+
         let selection = Selection {
             path: file.path.clone(),
             kind: kind.clone(),
@@ -933,12 +935,8 @@ impl HeditApp {
                         _ => "Modified",
                     });
                 let width = (ui.available_width() - 38.0).max(60.0);
-                let label = if list {
-                    file.path.as_os_str()
-                } else {
-                    file.path.file_name().unwrap_or(file.path.as_os_str())
-                }
-                .to_string_lossy();
+                let name = file.path.file_name().unwrap_or(file.path.as_os_str());
+                let label = if list { file.path.as_os_str() } else { name }.to_string_lossy();
                 let (rect, row) =
                     ui.allocate_exact_size(egui::vec2(width, 23.0), egui::Sense::click());
                 if selected || row.hovered() {
@@ -952,6 +950,15 @@ impl HeditApp {
                         },
                     );
                 }
+                let icon_rect = egui::Rect::from_min_size(
+                    egui::pos2(rect.left() + 5.0, rect.center().y - FILE_ICON_SIZE / 2.0),
+                    egui::Vec2::splat(FILE_ICON_SIZE),
+                );
+                FileIcon::for_name(&name.to_string_lossy()).paint(
+                    ui,
+                    icon_rect,
+                    self.theme.muted.color(),
+                );
                 let galley = ui.painter().layout(
                     label.to_string(),
                     FontId::proportional(13.0),
@@ -961,7 +968,10 @@ impl HeditApp {
                 ui.painter()
                     .with_clip_rect(rect.intersect(ui.clip_rect()))
                     .galley(
-                        egui::pos2(rect.left() + 5.0, rect.center().y - galley.size().y / 2.0),
+                        egui::pos2(
+                            icon_rect.right() + 5.0,
+                            rect.center().y - galley.size().y / 2.0,
+                        ),
                         galley,
                         ui.visuals().text_color(),
                     );

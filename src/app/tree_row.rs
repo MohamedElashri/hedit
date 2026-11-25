@@ -1,9 +1,11 @@
 //! Native tree rows with small vector icons, independent of installed fonts.
 use super::*;
+use hedit::icons::{FileIcon, FolderIcon, Icon, FILE_ICON_SIZE};
 
 pub(super) struct Row<'a> {
     pub name: &'a str,
     pub path: &'a str,
+    pub icon_name: &'a str,
     pub directory: bool,
     pub expanded: bool,
     pub selected: bool,
@@ -46,7 +48,6 @@ pub(super) fn show(ui: &mut egui::Ui, theme: &Theme, row: Row<'_>) -> egui::Resp
             let left = rect.left() + row.depth.min(32) as f32 * 12.0;
             let cy = rect.center().y;
             let color = theme.muted.color();
-            use hedit::icons::Icon;
             if row.directory {
                 (if row.expanded {
                     Icon::ChevronDown
@@ -59,27 +60,20 @@ pub(super) fn show(ui: &mut egui::Ui, theme: &Theme, row: Row<'_>) -> egui::Resp
                     color,
                 );
             }
-            let icon = if row.directory {
-                if row.expanded {
-                    Icon::FolderOpen
-                } else {
-                    Icon::Folder
-                }
-            } else {
-                Icon::File
-            };
-            icon.paint(
-                ui,
-                egui::Rect::from_min_size(
-                    egui::pos2(left + 14.0, cy - 8.0),
-                    egui::vec2(16.0, 16.0),
-                ),
-                if row.selected {
-                    theme.text.color()
-                } else {
-                    color
-                },
+            let icon_rect = egui::Rect::from_center_size(
+                egui::pos2(left + 22.0, cy),
+                egui::Vec2::splat(FILE_ICON_SIZE),
             );
+            let icon_color = if row.selected {
+                theme.text.color()
+            } else {
+                color
+            };
+            if row.directory {
+                FolderIcon::for_name(row.icon_name).paint(ui, icon_rect, row.expanded, icon_color);
+            } else {
+                FileIcon::for_name(row.icon_name).paint(ui, icon_rect, icon_color);
+            }
             let name = hedit::bidi::display(row.name);
             let name = if row.symlink {
                 format!("{name} ↗")
