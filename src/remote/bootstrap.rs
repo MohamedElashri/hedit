@@ -16,8 +16,7 @@ use std::{
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const LIMIT: u64 = 64 * 1024;
-const PROBE: &str =
-    "set -eu; printf 'HEDIT_SETUP_V1\\n'; id -u; uname -s; uname -m; printf '%s\\n' \"$HOME\"";
+const CACHE_MISS: &str = "HEDIT_CACHE_MISS";
 
 #[derive(Debug)]
 struct Account {
@@ -120,6 +119,68 @@ fn quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
+/// Probe the authenticated account and check its cached helper in one
+/// SSH session. The client validates the account header and setup receipt
+/// before using any of their paths.
+fn cached_probe(config: &Config) -> String {
+    format!(
+        r#"set -eu
+uid=$(id -u)
+os=$(uname -s)
+arch=$(uname -m)
+home=$HOME
+printf 'HEDIT_SETUP_V1\n%s\n%s\n%s\n%s\n' "$uid" "$os" "$arch" "$home"
+miss() {{ printf '%s\n' '{cache_miss}'; exit 0; }}
+case "$uid" in 0|*[!0-9]*|'') miss ;; esac
+case "$os" in Linux) platform=linux ;; Darwin) platform=macos ;; *) miss ;; esac
+case "$arch" in x86_64|amd64) arch=x86_64 ;; aarch64|arm64) arch=aarch64 ;; *) miss ;; esac
+case "$home" in /*) ;; *) miss ;; esac
+case "$home/" in *'/../'*|*'/./'*) miss ;; esac
+nl='
+'
+cr=$(printf '\r')
+case "$home" in /|*/|*"$nl"*|*"$cr"*) miss ;; esac
+LC_ALL=C
+export LC_ALL
+test "${{#home}}" -le 4096 || miss
+path="$home"
+for part in .local share hedit remote {version} "$platform-$arch"; do
+    test -d "$path" && test ! -L "$path" || miss
+    test -n "$(find "$path" -prune -user "$uid" ! -perm -0020 ! -perm -0002)" || miss
+    path="$path/$part"
+done
+test -d "$path" && test ! -L "$path" || miss
+test -n "$(find "$path" -prune -type d -user "$uid" -perm 0700)" || miss
+helper="$path/hedit-remote"
+test -f "$helper" && test -x "$helper" && test ! -L "$helper" || miss
+test -n "$(find "$helper" -prune -type f -user "$uid" -perm 0700)" || miss
+test "$("$helper" --version)" = {expected} || miss
+test "$("$helper" --setup-version)" = {setup_version} || miss
+exec "$helper" setup --workspace {workspace} --state {state}
+"#,
+        cache_miss = CACHE_MISS,
+        version = quote(VERSION),
+        expected = quote(&format!("hedit-remote {VERSION}")),
+        workspace = quote(&config.root),
+        state = quote(&config.target.state),
+        setup_version = SETUP_VERSION,
+    )
+}
+
+fn read_probe(output: &str) -> Result<(Account, Option<&str>), String> {
+    let (header, split) = output
+        .match_indices('\n')
+        .nth(4)
+        .map(|(at, _)| output.split_at(at))
+        .ok_or("Cannot identify the SSH account or read the setup response.")?;
+    let account = Account::parse(header)?;
+    let setup = split.trim();
+    if setup.is_empty() {
+        return Err("The SSH setup response was empty.".into());
+    }
+    Ok((account, (setup != CACHE_MISS).then_some(setup)))
+}
+
 /// Install into the SSH user's private home directory; never invokes sudo or a package manager.
 pub fn prepare(
     config: Config,
@@ -137,51 +198,15 @@ pub fn prepare(
         absolute(&config.target.state)?;
     }
     progress(SetupPhase::Connect);
-    let (status, output) = run(config.setup_command(PROBE)?, None, cancel)?;
+    let (status, output) = run(config.setup_command(&cached_probe(&config))?, None, cancel)?;
     if !status.success() {
         return Err(output);
     }
-    let account = Account::parse(output.trim_end_matches(['\r', '\n']))?;
     progress(SetupPhase::CheckHelper);
-    let helper = account.helper();
-    // Only execute a cached helper below non-symlink, user-owned directories.
-    // The Rust installer repeats descriptor-relative validation before writing.
-    let cached = format!(
-        r#"set -eu
-uid=$(id -u)
-test "$uid" = {uid} || exit 1
-test "$HOME" = {home} || exit 1
-path="$HOME"
-for part in .local share hedit remote {version} {platform}; do
-    test -d "$path" && test ! -L "$path" || exit 78
-    test -n "$(find "$path" -prune -user "$uid" ! -perm -0020 ! -perm -0002)" || exit 78
-    path="$path/$part"
-done
-test -d "$path" && test ! -L "$path" || exit 78
-test -n "$(find "$path" -prune -type d -user "$uid" -perm 0700)" || exit 78
-test -f {helper} && test -x {helper} && test ! -L {helper} || exit 78
-test -n "$(find {helper} -prune -type f -user "$uid" -perm 0700)" || exit 78
-test "$({helper} --version)" = {expected} || exit 78
-test "$({helper} --setup-version)" = {setup_version} || exit 78
-exec {helper} setup --workspace {workspace} --state {state}
-"#,
-        uid = account.uid,
-        home = quote(&account.home),
-        version = quote(VERSION),
-        platform = quote(&format!("{}-{}", account.os, account.arch)),
-        helper = quote(&helper),
-        expected = quote(&format!("hedit-remote {VERSION}")),
-        workspace = quote(&config.root),
-        state = quote(&config.target.state),
-        setup_version = SETUP_VERSION,
-    );
-    let (status, output) = run(config.setup_command(&cached)?, None, cancel)?;
-    if status.success() {
+    let (account, setup) = read_probe(&output)?;
+    if let Some(setup) = setup {
         progress(SetupPhase::OpenWorkspace);
-        return account.resolve(config, &output);
-    }
-    if status.code() != Some(78) {
-        return Err(output);
+        return account.resolve(config, setup);
     }
 
     let mut temporary = tempfile::Builder::new();
