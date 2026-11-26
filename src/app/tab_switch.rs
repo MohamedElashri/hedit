@@ -125,6 +125,11 @@ impl HeditApp {
     pub(super) fn cycle_recent(&mut self, back: bool) {
         self.sync_groups();
         let local = self.group_tab_ids(self.panes.focused);
+        if self.tab_cycle.step.is_none() {
+            let active = self.active().view.id;
+            self.tab_cycle.recent.retain(|id| *id != active);
+            self.tab_cycle.recent.insert(0, active);
+        }
         let recent: Vec<_> = self
             .tab_cycle
             .recent

@@ -1596,7 +1596,7 @@ fn paste_and_indent_fits_lines_to_the_cursor_line() {
     );
     assert_eq!(
         clipboard_lines::reindent_paste("a\n\t\tb\n\t\t\tc", "  ", false, 4),
-        "a\n  b\n  \tc"
+        "a\n  b\n      c"
     );
     // Whole lines keep their nesting relative to the first.
     assert_eq!(

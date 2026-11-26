@@ -1071,7 +1071,7 @@ impl HeditApp {
                         }
                         let shared = editor.get(*id)?;
                         let mut doc = shared.lock().map_err(|e| e.to_string())?;
-                        if doc.text(search::FILE_LIMIT)? != plan.before {
+                        if doc.text(hedit::text_encoding::DECODE_LIMIT)? != plan.before {
                             return Err(format!(
                                 "{}: open text differs from the preview.",
                                 plan.path.display()
@@ -1418,12 +1418,24 @@ impl HeditApp {
         {
             self.navigation_mark();
         }
-        let next = if forward {
-            self.quality.navigation_index + 1
-        } else {
-            self.quality.navigation_index.saturating_sub(1)
+        let available = |&(_, (id, _)): &(usize, &(u64, u64))| {
+            self.workspace
+                .open
+                .iter()
+                .any(|buffer| buffer.view.id == *id)
+                || self.workspace.closed.iter().any(|view| view.id == *id)
         };
-        let Some(&(id, offset)) = self.quality.navigation.get(next) else {
+        let mut navigation = self.quality.navigation.iter().enumerate();
+        let target = if forward {
+            navigation.nth(self.quality.navigation_index);
+            navigation.find(available)
+        } else {
+            navigation
+                .take(self.quality.navigation_index)
+                .rev()
+                .find(available)
+        };
+        let Some((next, &(id, offset))) = target else {
             return;
         };
         self.quality.navigation_index = next;

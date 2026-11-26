@@ -1,6 +1,8 @@
 //! Words offered while typing: an index built away from the editor, and a
 //! ranking of its words against what was typed so far.
 
+use unicode_properties::{GeneralCategoryGroup, UnicodeGeneralCategory};
+
 /// The most distinct words kept, so ranking stays fast on every keystroke.
 pub const MAX_WORDS: usize = 100_000;
 /// Bytes read from each file; larger files are indexed only up to here.
@@ -9,7 +11,9 @@ pub const MAX_TEXT: usize = 4 * 1024 * 1024;
 pub const MAX_INDEX_BYTES: usize = 8 * 1024 * 1024;
 
 pub fn is_word_char(c: char) -> bool {
-    c.is_alphanumeric() || c == '_'
+    c.is_alphanumeric()
+        || c == '_'
+        || (!c.is_ascii() && c.general_category_group() == GeneralCategoryGroup::Mark)
 }
 
 /// One indexed word, with its lowercase form for matching.
@@ -212,16 +216,16 @@ pub fn typed_word_at(text: &str, end: usize, cursor: usize) -> Option<(usize, St
 /// The start of the word that ends at `cursor` (a character index), and that
 /// word.
 pub fn typed_word(text: &str, cursor: usize) -> (usize, String) {
-    let end = text
-        .char_indices()
-        .nth(cursor)
-        .map_or(text.len(), |(i, _)| i);
-    let mut word: Vec<char> = text[..end]
-        .chars()
-        .rev()
-        .take_while(|c| is_word_char(*c))
-        .collect();
-    word.reverse();
-    let cursor = cursor.min(text[..end].chars().count());
-    (cursor - word.len(), word.into_iter().collect())
+    let position = if cursor < text.len() {
+        text.char_indices().nth(cursor)
+    } else {
+        None
+    };
+    let (end, cursor) = match position {
+        Some((end, _)) => (end, cursor),
+        None => (text.len(), text.chars().count()),
+    };
+    let before = &text[..end];
+    let word = &before[before.trim_end_matches(is_word_char).len()..];
+    (cursor - word.chars().count(), word.to_owned())
 }

@@ -59,13 +59,19 @@ impl HeditApp {
             return;
         }
         // In “selection only” mode, matches inside the captured selection.
-        let scope = match self.quality.scope {
-            Some((id, a, z)) if self.quality.selection_only && id == b.view.id => {
-                let start = b.page.start as usize;
-                a.saturating_sub(start).min(b.page.text.len())
-                    ..z.saturating_sub(start).min(b.page.text.len())
-            }
-            _ => 0..b.page.text.len(),
+        let scope = if self.quality.selection_only {
+            let Some((_, start, end)) = self.quality.scope.filter(|(view, start, end)| {
+                *view == b.view.id
+                    && start < end
+                    && b.page.text.is_char_boundary(*start)
+                    && b.page.text.is_char_boundary(*end)
+            }) else {
+                self.notice = "Select text in this tab before selecting its matches.".into();
+                return;
+            };
+            start..end
+        } else {
+            0..b.page.text.len()
         };
         match search::matches(&b.page.text, &self.query, &self.quality.options, scope) {
             Ok(found) if found.is_empty() => self.notice = "No matches found.".into(),
@@ -122,23 +128,23 @@ impl HeditApp {
             self.set_selections(vec![range]);
             return;
         }
-        let options = search::Options {
-            regex: false,
-            case_sensitive: true,
-            whole_word: false,
-        };
         let text = &b.page.text;
-        let Ok(found) = search::matches(text, &needle, &options, 0..text.len()) else {
-            return;
-        };
-        let here = advanced::byte(text, range.start());
+        let start = advanced::byte(text, range.start());
+        let end = start + advanced::byte(&text[start..], range.end() - range.start());
         let next = if forward {
-            found.iter().find(|m| m.start > here).or(found.first())
+            text[end..]
+                .find(&needle)
+                .map(|hit| end + hit)
+                .or_else(|| text.find(&needle))
         } else {
-            found.iter().rev().find(|m| m.start < here).or(found.last())
+            text[..start].rfind(&needle).or_else(|| text.rfind(&needle))
         };
-        if let Some(next) = next.cloned() {
-            let selected = char_ranges(text, &[next]);
+        if let Some(next) = next {
+            let anchor = text[..next].chars().count();
+            let selected = vec![Selection {
+                anchor,
+                head: anchor + needle.chars().count(),
+            }];
             self.query = self.literal_query(&needle);
             self.navigation_mark();
             self.set_selections(selected);

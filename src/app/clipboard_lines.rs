@@ -194,34 +194,52 @@ impl egui::TextBuffer for EditorText<'_, '_> {
 /// the common indentation and pasted as it is, without leading spaces.
 pub(super) fn reindent_paste(text: &str, target: &str, whole: bool, tab_width: usize) -> String {
     let lines: Vec<&str> = text.split_inclusive('\n').collect();
-    let mut indents = lines
+    let blank = |line: &str| {
+        let content = line
+            .strip_suffix("\r\n")
+            .or_else(|| line.strip_suffix('\n'))
+            .unwrap_or(line);
+        content.bytes().all(|byte| matches!(byte, b' ' | b'\t'))
+    };
+    let indents = lines
         .iter()
         .skip(usize::from(!whole))
-        .filter(|l| !l.trim().is_empty())
+        .filter(|line| !blank(line))
         .map(|l| indentation(l));
-    let columns = |indent: &str| advanced::line_column(indent, indent.len(), tab_width.max(1)).1;
+    let tab_width = tab_width.max(1);
+    let column_after = |start, indent: &str| {
+        indent.bytes().fold(start, |column, byte| {
+            column
+                + if byte == b'\t' {
+                    tab_width - column % tab_width
+                } else {
+                    1
+                }
+        })
+    };
     let common = indents
         .clone()
-        .min_by_key(|indent| columns(indent))
+        .min_by_key(|indent| column_after(0, indent))
         .unwrap_or("");
-    let shared_prefix = indents.all(|indent| indent.starts_with(common));
-    let baseline = columns(common);
+    let baseline = column_after(0, common);
+    let target_column = column_after(0, target);
     let mut out = String::with_capacity(text.len());
     for (n, line) in lines.iter().enumerate() {
-        if n == 0 && !whole {
+        if (n == 0 && !whole) || blank(line) {
             out.push_str(line.trim_start_matches([' ', '\t']));
-        } else if line.trim().is_empty() {
-            // Blank lines keep only their line break.
-            out.push_str(&line[line.trim_end_matches(['\r', '\n']).len()..]);
         } else {
             out.push_str(target);
-            if shared_prefix {
-                out.push_str(&line[common.len()..]);
+            let indent = indentation(line);
+            let relative = column_after(0, indent) - baseline;
+            if let Some(suffix) = indent
+                .strip_prefix(common)
+                .filter(|suffix| column_after(target_column, suffix) == target_column + relative)
+            {
+                out.push_str(suffix);
             } else {
-                let indent = indentation(line);
-                out.extend(std::iter::repeat_n(' ', columns(indent) - baseline));
-                out.push_str(&line[indent.len()..]);
+                out.extend(std::iter::repeat_n(' ', relative));
             }
+            out.push_str(&line[indent.len()..]);
         }
     }
     out

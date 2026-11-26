@@ -27,6 +27,8 @@ mod editor_interaction;
 mod editor_layout;
 mod explorer;
 mod extensions;
+#[cfg(test)]
+mod third_audit;
 pub(crate) use extensions::run_plugin_cli;
 mod file_reference;
 #[cfg(test)]

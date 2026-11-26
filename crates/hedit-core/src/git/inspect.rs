@@ -91,7 +91,25 @@ impl Git {
             validate_relative(path)?;
             arguments.push(path.as_os_str().into());
         }
-        let bytes = self.checked(root, &arguments, None, false)?;
+        let bytes = match self.checked(root, &arguments, None, false) {
+            Ok(bytes) => bytes,
+            Err(error) if scope.reference.is_none() => {
+                // In an unborn worktree there may still be branches or tags.
+                // Retry without HEAD only when Git confirms it is missing.
+                let head = self.run(
+                    root,
+                    &args(&["rev-parse", "--verify", "--quiet", "HEAD"]),
+                    None,
+                    false,
+                )?;
+                if head.success {
+                    return Err(error);
+                }
+                arguments.retain(|argument| argument != "HEAD");
+                self.checked(root, &arguments, None, false)?
+            }
+            Err(error) => return Err(error),
+        };
         Ok(Self::parse_history(&String::from_utf8_lossy(&bytes)))
     }
     /// Merge-base mode reviews only the head branch's contribution since its fork.
@@ -184,7 +202,8 @@ impl Git {
         }
 
         let text = self.command(root, &["for-each-ref", "--sort=-creatordate", "--format=%(refname:strip=2)%00%(objectname)%00%(objecttype)%00%(*objectname)%00%(*objecttype)", "refs/tags"])?;
-        Ok(text
+        let mut nested = Vec::new();
+        let mut tags: Vec<_> = text
             .lines()
             .filter_map(|line| {
                 let fields: Vec<_> = line.split('\0').collect();
@@ -196,13 +215,37 @@ impl Git {
                     (_, "commit") => Some(fields[3].into()),
                     _ => None,
                 };
+                if fields[4] == "tag" {
+                    nested.push(fields[1]);
+                }
                 Some(Tag {
                     name: fields[0].into(),
                     object: fields[1].into(),
                     commit,
                 })
             })
-            .collect())
+            .collect();
+        if !nested.is_empty() {
+            let input: String = nested.iter().map(|oid| format!("{oid}^{{}}\n")).collect();
+            let output = self.checked(
+                root,
+                &args(&["cat-file", "--batch-check=%(objectname) %(objecttype)"]),
+                Some(input.as_bytes()),
+                false,
+            )?;
+            let peeled = String::from_utf8_lossy(&output);
+            let commits: std::collections::HashMap<_, _> =
+                nested.into_iter().zip(peeled.lines()).collect();
+            for tag in &mut tags {
+                if let Some(oid) = commits
+                    .get(tag.object.as_str())
+                    .and_then(|result| result.strip_suffix(" commit"))
+                {
+                    tag.commit = Some(oid.to_owned());
+                }
+            }
+        }
+        Ok(tags)
     }
     pub fn reflog(&self, root: &Path, limit: usize) -> Result<Vec<ReflogEntry>> {
         if let Some(result) = self.remote(root, crate::backend::GitQuery::Reflog(limit)) {

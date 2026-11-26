@@ -50,6 +50,13 @@ pub fn at(text: &str, selection: Selection) -> Option<String> {
         return None;
     }
     let position = start - line_start;
+    let include_open = line
+        .trim_start()
+        .strip_prefix('#')
+        .and_then(|s| s.trim_start().strip_prefix("include"))
+        .map(str::trim_start)
+        .filter(|s| s.starts_with('<'))
+        .map(|s| line.len() - s.len());
     let mut quoted = None;
     for (offset, ch) in line.char_indices() {
         match quoted {
@@ -62,10 +69,13 @@ pub fn at(text: &str, selection: Selection) -> Option<String> {
                     .trim_end_matches(':');
                 let suffix = location_suffix(suffix).unwrap_or_default();
                 let end = after_quote + suffix.len();
-                if begin <= position && position <= end {
+                if begin - 1 <= position && position <= end {
                     return clean(&format!("{}{suffix}", &line[begin..offset]));
                 }
                 quoted = None;
+            }
+            None if include_open == Some(offset) => {
+                quoted = Some(('>', offset + 1));
             }
             None if matches!(ch, '\'' | '"' | '`')
                 && line[..offset]

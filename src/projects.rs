@@ -324,11 +324,9 @@ fn resolve_formatting(
     let mut values = BTreeMap::new();
     let mut origins = sources.is_some().then(BTreeMap::<String, PathBuf>::new);
     for (parent, text) in configs.into_iter().rev() {
-        let relative = path
-            .strip_prefix(&parent)
-            .unwrap_or(path)
-            .to_string_lossy()
-            .replace('\\', "/");
+        let relative = path.strip_prefix(&parent).unwrap_or(path).to_string_lossy();
+        #[cfg(windows)]
+        let relative = relative.replace('\\', "/");
         let mut applies = false;
         for line in text.lines() {
             let line = line.trim();
@@ -338,7 +336,7 @@ fn resolve_formatting(
             if line.starts_with('[') && line.ends_with(']') {
                 let pattern = &line[1..line.len() - 1];
                 let target = if pattern.contains('/') {
-                    relative.as_str()
+                    &relative[..]
                 } else {
                     relative.rsplit('/').next().unwrap_or(&relative)
                 };

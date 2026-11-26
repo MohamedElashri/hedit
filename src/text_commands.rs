@@ -668,14 +668,15 @@ struct Brackets {
     leading_closers: isize,
     /// Opening minus closing brackets.
     net: isize,
-    /// The line starts inside a block comment.
-    in_comment: bool,
+    /// Indentation belongs to a multiline string or a block comment.
+    preserve_indent: bool,
 }
 
 /// Bracket counts for each line, skipping strings and comments.
 fn scan_brackets(chars: &[char]) -> Vec<Brackets> {
     let mut lines = vec![Brackets::default()];
     let mut in_comment = false;
+    let mut in_template = false;
     let mut leading = true;
     let mut i = 0;
     while i < chars.len() {
@@ -683,11 +684,23 @@ fn scan_brackets(chars: &[char]) -> Vec<Brackets> {
         let line = lines.last_mut().unwrap();
         if c == '\n' {
             lines.push(Brackets {
-                in_comment,
+                preserve_indent: in_comment || in_template,
                 ..Default::default()
             });
             leading = true;
             i += 1;
+            continue;
+        }
+        if in_template {
+            if c == '`' {
+                in_template = false;
+            }
+            leading = false;
+            i += if c == '\\' && chars.get(i + 1).is_some_and(|&next| next != '\n') {
+                2
+            } else {
+                1
+            };
             continue;
         }
         if in_comment {
@@ -715,7 +728,11 @@ fn scan_brackets(chars: &[char]) -> Vec<Brackets> {
             // A quote that does not close soon is a Rust lifetime or an
             // apostrophe, not a character literal.
             '\'' if !char_literal(chars, i) => leading = false,
-            '"' | '\'' | '`' => {
+            '`' => {
+                leading = false;
+                in_template = true;
+            }
+            '"' | '\'' => {
                 leading = false;
                 i += 1;
                 // A string ends at its closing quote or, unclosed, at the end
@@ -809,25 +826,34 @@ pub fn reindent(text: &str, selections: &[Selection], tab_width: usize, tabs: bo
     }
     let mut changes = vec![];
     for (first, last, caret) in runs {
-        let mut level = match (0..first).rev().find(|&l| !is_blank(l)) {
-            Some(above) => {
-                let (start, end) = indent_of(above);
-                let own = (columns(&chars[start..end], width) / width) as isize;
-                step(own, brackets.get(above).copied().unwrap_or_default())
+        let mut level = 0;
+        let mut from = 0;
+        if let Some(above) = (0..first)
+            .rev()
+            .find(|&l| !brackets[l].preserve_indent && !is_blank(l))
+        {
+            let (start, end) = indent_of(above);
+            let own = (columns(&chars[start..end], width) / width) as isize;
+            level = step(own, brackets[above]);
+            from = above + 1;
+        }
+        for b in &brackets[from..first] {
+            if b.preserve_indent {
+                level = (level + b.net.clamp(-1, 1)).max(0);
             }
-            None => 0,
-        };
+        }
         let mut output = String::new();
         for line in first..=last {
             let (start, end) = indent_of(line);
             let stop = line_end(&chars, start);
             let b = brackets.get(line).copied().unwrap_or_default();
-            if !b.in_comment && !is_blank(line) {
+            if !b.preserve_indent && !is_blank(line) {
                 let own = (level - isize::from(b.leading_closers > 0)).max(0);
                 output.push_str(&unit.repeat(own as usize));
                 level = step(own, b);
-            } else if b.in_comment {
+            } else if b.preserve_indent {
                 output.extend(&chars[start..end]);
+                level = (level + b.net.clamp(-1, 1)).max(0);
             }
             output.extend(&chars[end..stop]);
             if line < last {

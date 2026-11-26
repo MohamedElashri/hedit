@@ -69,7 +69,10 @@ fn line_of(app: &HeditApp) -> usize {
 fn regression_goto_keeps_a_windows_drive_prefix() {
     assert_eq!(
         super::goto_anything::parse_file_query(r"c:\work\note.txt:17:4"),
-        (r"c:\work\note.txt", Some(Target::Line(Some(17), Some(4))))
+        (
+            r"c:\work\note.txt".into(),
+            Some(Target::Line(Some(17), Some(4)))
+        )
     );
 }
 
