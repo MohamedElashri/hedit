@@ -111,9 +111,11 @@ fn read_bytes(path: &Path, limit: u64) -> Result<Vec<u8>, String> {
     crate::file_io::read_bounded(file, limit).map_err(|e| e.to_string())
 }
 pub fn workspace_path(project: &Path) -> PathBuf {
-    let companion = project.with_extension("hedit-workspace");
-    if companion != project {
-        return companion;
+    let reserved_extension = project
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("hedit-workspace"));
+    if !reserved_extension {
+        return project.with_extension("hedit-workspace");
     }
     let mut distinct = project.as_os_str().to_owned();
     distinct.push(".hedit-workspace");
