@@ -579,6 +579,8 @@ Enable **Preferences → Settings → Terminal**, then **Tools → Toggle termin
 or **Ctrl+`** (**Control+`** on macOS). It is disabled by default. Shells start in
 the active project/file directory, or the launch directory; SSH shells run on the
 trusted host. Drag the panel edge to resize it.
+In Explorer, right-click a folder or file and choose **Open Terminal Here** to
+start a new shell in that folder or the file's parent folder.
 
 | Control | Action |
 | --- | --- |

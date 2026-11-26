@@ -446,6 +446,10 @@ impl HeditApp {
     }
 
     pub(super) fn new_terminal(&mut self, ctx: &egui::Context) {
+        self.new_terminal_in(ctx, None);
+    }
+
+    pub(super) fn new_terminal_in(&mut self, ctx: &egui::Context, directory: Option<PathBuf>) {
         if !self.settings.terminal_enabled {
             return;
         }
@@ -457,9 +461,8 @@ impl HeditApp {
                 return;
             }
             let wake = ctx.clone();
-            match hedit::terminal::Session::start(&self.terminal_directory(), move || {
-                wake.request_repaint()
-            }) {
+            let directory = directory.unwrap_or_else(|| self.terminal_directory());
+            match hedit::terminal::Session::start(&directory, move || wake.request_repaint()) {
                 Ok(session) => {
                     if let Some(tab) = self.terminal.tabs.get_mut(self.terminal.active) {
                         tab.preedit.clear();
@@ -486,7 +489,7 @@ impl HeditApp {
             }
         }
         #[cfg(not(feature = "terminal"))]
-        let _ = ctx;
+        let _ = (ctx, directory);
     }
 
     #[cfg(feature = "terminal")]
@@ -1366,6 +1369,24 @@ mod surface {
 #[cfg(all(test, feature = "terminal"))]
 mod directory_tests {
     use super::*;
+
+    #[test]
+    fn terminal_uses_the_explicit_directory_for_a_new_tab() {
+        let directory = tempfile::tempdir().unwrap();
+        let work = directory.path().join("nested folder");
+        std::fs::create_dir(&work).unwrap();
+        let ctx = egui::Context::default();
+        let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        app.set_folder(hedit::folder::read_directory(directory.path().to_owned()).unwrap());
+        app.new_terminal_in(&ctx, Some(work.clone()));
+        assert!(app.terminal.tabs.is_empty());
+
+        app.settings.terminal_enabled = true;
+        app.new_terminal_in(&ctx, Some(work.clone()));
+        assert_eq!(app.terminal.active_session().unwrap().directory, work);
+        assert!(app.terminal.open && app.terminal.focus);
+    }
 
     #[test]
     fn terminals_use_the_innermost_project_folder_in_any_root_order() {
