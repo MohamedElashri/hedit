@@ -167,7 +167,7 @@ async fn resolve(endpoint: &Endpoint) -> io::Result<Vec<SocketAddr>> {
             options.attempts = 1;
             options.cache_size = 0;
             options.ip_strategy = LookupIpStrategy::Ipv4AndIpv6;
-            let resolver = builder.build();
+            let resolver = builder.build().map_err(|_| failed())?;
             let lookup = tokio::time::timeout(
                 Duration::from_secs(3),
                 resolver.lookup_ip(format!("{host}.")),
