@@ -219,6 +219,7 @@ pub struct Settings {
     pub explorer_compact_folders: bool,
     pub explorer_git_badges: bool,
     pub explorer_diagnostic_badges: bool,
+    pub confirm_trash: bool,
     pub show_folders: bool,
     /// Allow the integrated terminal. A shell starts only when its panel opens.
     pub terminal_enabled: bool,
@@ -316,6 +317,7 @@ impl Default for Settings {
             explorer_compact_folders: false,
             explorer_git_badges: true,
             explorer_diagnostic_badges: true,
+            confirm_trash: true,
             show_folders: true,
             terminal_enabled: false,
             terminal_bidi: true,

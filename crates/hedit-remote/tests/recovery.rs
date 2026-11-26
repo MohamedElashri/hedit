@@ -1,5 +1,7 @@
 #![cfg(unix)]
+use hedit_core::backend::FsQuery;
 use hedit_remote::{
+    files::Files,
     host,
     journal::Journal,
     protocol::{Action, Error, MAX_DOCUMENT, MAX_INSERT},
@@ -10,7 +12,8 @@ use std::{
         ffi::OsStrExt,
         fs::{symlink, PermissionsExt},
     },
-    path::PathBuf,
+    path::{Path, PathBuf},
+    sync::atomic::AtomicBool,
 };
 
 struct Fixture {
@@ -86,6 +89,37 @@ fn recovery_and_undo_survive_missing_source_and_all_client_state() {
     let mut j = Journal::open(&f.state).unwrap();
     j.apply(id, 3, 2, &Action::Redo {}).unwrap();
     assert_eq!(contents(&mut j, id), edited);
+}
+
+#[test]
+fn permanently_removing_remote_entries_preserves_the_journal_and_symlink_targets() {
+    let f = Fixture::new();
+    let (mut j, id) = f.open("on disk");
+    j.apply(id, 1, 0, &insert("edited ")).unwrap();
+    let files = Files {
+        root: j.root_file().unwrap(),
+        path: f.root.clone(),
+        state: f.state.clone(),
+    };
+    let cancel = AtomicBool::new(false);
+    let delete = |name| files.call(Path::new(name), FsQuery::Delete, &cancel);
+    delete("file").unwrap();
+    assert!(!f.root.join("file").exists());
+
+    let outside = f.root.with_file_name("outside");
+    fs::write(&outside, "keep").unwrap();
+    fs::create_dir(f.root.join("nested")).unwrap();
+    fs::write(f.root.join("nested/file"), "remove").unwrap();
+    symlink(&outside, f.root.join("nested/link")).unwrap();
+    assert!(delete("").is_err());
+    assert!(delete("../outside").is_err());
+    delete("nested").unwrap();
+    assert!(!f.root.join("nested").exists());
+    assert_eq!(fs::read_to_string(outside).unwrap(), "keep");
+
+    drop(j);
+    let mut j = Journal::open(&f.state).unwrap();
+    assert_eq!(contents(&mut j, id), "edited on disk");
 }
 
 #[test]

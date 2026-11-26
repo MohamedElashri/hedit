@@ -363,26 +363,58 @@ impl HeditApp {
         }
     }
     fn file_action_window(&mut self, ctx: &egui::Context) {
-        let (path, operation) = self.quality.file_action.clone().unwrap();
+        let Some(action) = &mut self.quality.file_action else {
+            return;
+        };
         let mut open = true;
         let mut choice = controls::Choice::None;
-        let title = match operation {
+        let title = match action.operation {
             FileOperation::Rename => "Rename",
             FileOperation::Move => "Move",
             FileOperation::Duplicate => "Duplicate",
-            FileOperation::Trash => "Move to system trash",
+            FileOperation::Trash => "Move to Trash",
+            FileOperation::Delete => "Delete permanently",
         };
-        egui::Window::new(title).open(&mut open).max_width((ctx.screen_rect().width()-32.0).max(300.0)).max_height((ctx.screen_rect().height()-32.0).max(220.0)).vscroll(true).collapsible(false).show(ctx,|ui|{
-            ui.label(path.display().to_string());
-            let mut enter=false;
-            if matches!(operation,FileOperation::Rename|FileOperation::Duplicate){
-                if self.workspace.remote.is_some()&&operation==FileOperation::Move {ui.label("Destination file path relative to the SSH workspace");}
-                let response=ui.text_edit_singleline(&mut self.quality.file_name);
-                enter=response.lost_focus()&&ui.input(|i|i.key_pressed(Key::Enter));
-            }
-            if operation==FileOperation::Trash{ui.label("Open buffers stay recoverable. Restore the disk file using your system trash.");}
-            choice=controls::dialog_buttons(ui,&self.theme,title,!self.busy,enter);
-        });
+        egui::Window::new(title)
+            .open(&mut open)
+            .max_width((ctx.screen_rect().width() - 32.0).max(300.0))
+            .max_height((ctx.screen_rect().height() - 32.0).max(220.0))
+            .vscroll(true)
+            .collapsible(false)
+            .show(ctx, |ui| {
+                ui.label(action.path.display().to_string());
+                let mut enter = false;
+                match action.operation {
+                    FileOperation::Rename | FileOperation::Duplicate => {
+                        let response = ui.text_edit_singleline(&mut self.quality.file_name);
+                        enter = response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                    }
+                    FileOperation::Trash => {
+                        ui.label(if self.workspace.remote.is_some() {
+                            "This moves the item to the SSH host's trash. Open buffers stay recoverable."
+                        } else {
+                            "You can restore the item from your system trash. Open buffers stay recoverable."
+                        });
+                        ui.checkbox(&mut action.skip_trash_confirmation, "Don't show again");
+                    }
+                    FileOperation::Delete => {
+                        ui.label("This permanently deletes the item and any files it contains. Open buffers stay recoverable.");
+                    }
+                    FileOperation::Move => {}
+                }
+                let confirm = if action.operation == FileOperation::Delete {
+                    "Delete"
+                } else {
+                    title
+                };
+                choice = controls::dialog_buttons(
+                    ui,
+                    &self.theme,
+                    confirm,
+                    !self.busy && !self.closing,
+                    enter,
+                );
+            });
         if !open || choice == controls::Choice::Cancel {
             self.quality.file_action = None;
         } else if choice == controls::Choice::Confirm {

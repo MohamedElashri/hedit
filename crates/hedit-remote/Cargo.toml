@@ -21,6 +21,7 @@ getrandom = "0.4"
 regex = "1"
 
 [target.'cfg(unix)'.dependencies]
+cap-std = "4"
 libc = "0.2"
 rustix = { version = "1", features = ["fs", "process", "net"] }
 rusqlite = { version = "=0.41.1", features = ["bundled", "limits"] }

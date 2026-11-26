@@ -127,7 +127,7 @@ pub(super) struct Quality {
     /// The text each view's change markers compare against.
     pub git_base: std::collections::BTreeMap<u64, String>,
     pub git_lines: std::collections::BTreeMap<u64, std::collections::BTreeSet<usize>>,
-    pub file_action: Option<(PathBuf, FileOperation)>,
+    pub file_action: Option<FileAction>,
     pub file_name: String,
     pub config: Config,
     pub paste_requested: bool,
@@ -191,6 +191,12 @@ pub(super) enum FileOperation {
     Move,
     Duplicate,
     Trash,
+    Delete,
+}
+pub(super) struct FileAction {
+    pub path: PathBuf,
+    pub operation: FileOperation,
+    pub skip_trash_confirmation: bool,
 }
 pub(super) enum Event {
     /// Change markers: view, revision, mode, diff, and the text compared against.
@@ -1417,7 +1423,15 @@ impl HeditApp {
             false
         }
     }
-    pub(super) fn begin_file_action(&mut self, path: PathBuf, operation: FileOperation) {
+    pub(super) fn begin_file_action(
+        &mut self,
+        ctx: &egui::Context,
+        path: PathBuf,
+        operation: FileOperation,
+    ) {
+        if self.busy || self.closing {
+            return;
+        }
         self.quality.file_name = path
             .file_name()
             .unwrap_or_default()
@@ -1432,16 +1446,35 @@ impl HeditApp {
                     .into_owned()
             };
         }
-        self.quality.file_action = Some((path, operation));
+        self.quality.file_action = Some(FileAction {
+            path,
+            operation,
+            skip_trash_confirmation: false,
+        });
+        if operation == FileOperation::Trash && !self.settings.confirm_trash {
+            self.perform_file_action(ctx);
+        }
     }
     pub(super) fn perform_file_action(&mut self, ctx: &egui::Context) {
+        if self.busy || self.closing {
+            return;
+        }
         if let Err(error) = self.workspace.editor.check_membership_writable() {
             self.error = Some(error);
             return;
         }
-        let Some((path, operation)) = self.quality.file_action.take() else {
+        let Some(FileAction {
+            path,
+            operation,
+            skip_trash_confirmation,
+        }) = self.quality.file_action.take()
+        else {
             return;
         };
+        if operation == FileOperation::Trash && skip_trash_confirmation {
+            self.settings.confirm_trash = false;
+            self.flush_settings();
+        }
         if operation != FileOperation::Duplicate {
             self.opens.cancel();
         }
@@ -1470,6 +1503,10 @@ impl HeditApp {
                         hedit::folder::trash_path(&path)?;
                         None
                     }
+                    FileOperation::Delete => {
+                        hedit::folder::delete_path(&path)?;
+                        None
+                    }
                 };
                 Ok(Action::Quality(Box::new(Event::FileChanged(path, to))))
             });
@@ -1484,8 +1521,19 @@ impl HeditApp {
                 return;
             }
         };
+        if operation == FileOperation::Delete
+            && self
+                .workspace
+                .store
+                .directory()
+                .canonicalize()
+                .is_ok_and(|dir| dir.starts_with(&path) || path.starts_with(&dir))
+        {
+            self.error = Some("This deletion would remove the active recovery data.".into());
+            return;
+        }
         let name = self.quality.file_name.clone();
-        if operation == FileOperation::Trash {
+        if matches!(operation, FileOperation::Trash | FileOperation::Delete) {
             for view in self
                 .workspace
                 .open
@@ -1515,7 +1563,7 @@ impl HeditApp {
             }
             self.changed();
         }
-        // Snapshot first: moving/trashing a source must never invalidate unsaved pieces.
+        // Snapshot first so moving or removing a source preserves recoverable buffers.
         if let Err(e) = self.workspace.checkpoint() {
             self.error = Some(e);
             return;
@@ -1547,6 +1595,10 @@ impl HeditApp {
                 }
                 FileOperation::Trash => {
                     hedit::folder::trash_path(&path)?;
+                    None
+                }
+                FileOperation::Delete => {
+                    hedit::folder::delete_path(&path)?;
                     None
                 }
             };

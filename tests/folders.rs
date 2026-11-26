@@ -23,6 +23,42 @@ fn listing_is_lazy_sorted_and_includes_hidden_files() {
 }
 
 #[test]
+fn permanent_delete_removes_files_and_nested_folders() {
+    let root = tempfile::tempdir().unwrap();
+    let file = root.path().join("file");
+    fs::write(&file, "remove").unwrap();
+    folder::delete_path(&file).unwrap();
+    assert!(!file.exists());
+
+    let tree = root.path().join("tree");
+    fs::create_dir_all(tree.join("nested")).unwrap();
+    fs::write(tree.join("nested/file"), "remove").unwrap();
+    folder::delete_path(&tree).unwrap();
+    assert!(!tree.exists());
+    assert!(root.path().is_dir());
+    assert!(folder::delete_path(&root.path().join(".")).is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn permanent_delete_removes_symlinks_without_removing_their_targets() {
+    let root = tempfile::tempdir().unwrap();
+    let keep = root.path().join("keep");
+    fs::create_dir(&keep).unwrap();
+    fs::write(keep.join("file"), "keep").unwrap();
+    let link = root.path().join("link");
+    std::os::unix::fs::symlink(&keep, &link).unwrap();
+    folder::delete_path(&link).unwrap();
+    assert!(fs::symlink_metadata(&link).is_err());
+
+    let tree = root.path().join("tree");
+    fs::create_dir(&tree).unwrap();
+    std::os::unix::fs::symlink(&keep, tree.join("link")).unwrap();
+    folder::delete_path(&tree).unwrap();
+    assert_eq!(fs::read_to_string(keep.join("file")).unwrap(), "keep");
+}
+
+#[test]
 fn fuzzy_search_finds_nested_paths_and_skips_generated_trees() {
     let root = tempfile::tempdir().unwrap();
     for name in ["src", ".git", "node_modules", "target", ".venv"] {
