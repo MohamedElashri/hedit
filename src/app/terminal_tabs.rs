@@ -25,7 +25,7 @@ pub(super) fn bar(ui: &mut egui::Ui, state: &mut TerminalState, theme: &Theme) -
     );
     ui.interact(
         rect,
-        egui::Id::new("terminal-tab-bar"),
+        egui::Id::unique("terminal-tab-bar"),
         egui::Sense::hover(),
     );
     ui.painter().rect_filled(rect, 0.0, theme.panel.color());
@@ -129,54 +129,54 @@ pub(super) fn bar(ui: &mut egui::Ui, state: &mut TerminalState, theme: &Theme) -
         ui.spacing_mut().interact_size = egui::vec2(control, control);
         ui.visuals_mut().widgets.inactive.weak_bg_fill = egui::Color32::TRANSPARENT;
         ui.visuals_mut().widgets.inactive.bg_stroke = egui::Stroke::NONE;
-        let response = egui::menu::menu_custom_button(
-            ui,
+        let response = egui::menu::MenuButton::from_button(
             egui::Button::new("")
                 .frame(false)
                 .min_size(egui::vec2(control, control)),
-            |ui| {
-                ui.set_max_width(300.0);
-                ui.weak("Terminal tabs");
-                egui::ScrollArea::vertical()
-                    .id_salt("terminal-tab-menu-list")
-                    .max_height((ui.ctx().screen_rect().height() * 0.35).clamp(80.0, 240.0))
-                    .show(ui, |ui| {
-                        for (index, tab) in state.tabs.iter().enumerate() {
-                            if ui
-                                .selectable_label(
-                                    index == state.active,
-                                    hedit::bidi::display(&title(tab)),
-                                )
-                                .clicked()
-                            {
-                                actions.activate = Some(index);
-                                ui.close_menu();
-                            }
-                        }
-                    });
-                ui.separator();
-                if let Some(tab) = state.tabs.get_mut(state.active) {
-                    tab_menu(ui, tab, state.active, &mut actions);
-                    ui.separator();
-                    if ui.button("Copy selection").clicked() {
-                        actions.copy = true;
-                        ui.close_menu();
-                    }
-                }
-                if ui.button("Hide terminal").clicked() {
-                    actions.hide = true;
-                    ui.close_menu();
-                }
-            },
         )
-        .response;
+        .ui(ui, |ui| {
+            ui.set_max_width(300.0);
+            let height = (ui.ctx().content_rect().height() * 0.38).clamp(80.0, 240.0);
+            egui::ScrollArea::vertical()
+                .id_salt("terminal-tab-menu-list")
+                .max_height(height)
+                .show(ui, |ui| {
+                    ui.weak("Terminal tabs");
+                    for (index, tab) in state.tabs.iter().enumerate() {
+                        if ui
+                            .selectable_label(
+                                index == state.active,
+                                hedit::bidi::display(&title(tab)),
+                            )
+                            .clicked()
+                        {
+                            actions.activate = Some(index);
+                            ui.close();
+                        }
+                    }
+                    ui.separator();
+                    if let Some(tab) = state.tabs.get_mut(state.active) {
+                        tab_menu(ui, tab, state.active, &mut actions);
+                        ui.separator();
+                        if ui.button("Copy selection").clicked() {
+                            actions.copy = true;
+                            ui.close();
+                        }
+                    }
+                });
+            if ui.button("Hide terminal").clicked() {
+                actions.hide = true;
+                ui.close();
+            }
+        })
+        .0;
         Icon::More.paint(
             ui,
             egui::Rect::from_center_size(response.rect.center(), egui::vec2(16.0, 16.0)),
             theme.muted.color(),
         );
         response.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Terminal actions")
+            egui::WidgetInfo::labeled(egui::Role::Button, true, "Terminal actions")
         });
         response.on_hover_text("Terminal actions and all tabs");
     });
@@ -218,19 +218,21 @@ fn tab_button(
     } = view;
     let metrics = hedit::ui_style::Metrics::for_ui(ui);
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, metrics.tab), egui::Sense::hover());
+    let center_y = rect
+        .center()
+        .y
+        .min(ui.clip_rect().bottom() - metrics.control / 2.0);
     let close_rect = egui::Rect::from_center_size(
-        egui::pos2(rect.right() - metrics.control / 2.0 - 4.0, rect.center().y),
+        egui::pos2(rect.right() - metrics.control / 2.0 - 4.0, center_y),
         egui::vec2(metrics.control, metrics.control),
     );
     let body = egui::Rect::from_min_max(rect.min, egui::pos2(close_rect.left(), rect.bottom()));
     let response = ui.interact(
         body,
-        egui::Id::new(("terminal-tab", tab.id)),
+        egui::Id::unique(("terminal-tab", tab.id)),
         egui::Sense::click_and_drag(),
     );
-    response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, active, title)
-    });
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::ListItem, true, active, title));
     let hovered = ui.rect_contains_pointer(rect);
     let background = egui::Rect::from_min_max(
         rect.min + egui::vec2(1.0, 3.0),
@@ -299,7 +301,7 @@ fn tab_button(
     job.wrap.max_width = (body.width() - 26.0).max(1.0);
     job.wrap.max_rows = 1;
     job.wrap.break_anywhere = true;
-    let galley = ui.fonts(|fonts| fonts.layout_job(job));
+    let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
     ui.painter().galley(
         egui::pos2(
             rect.left() + 20.0,
@@ -314,11 +316,11 @@ fn tab_button(
     if active || hovered || response.has_focus() {
         let close = ui.interact(
             close_rect,
-            egui::Id::new(("terminal-tab-close", tab.id)),
+            egui::Id::unique(("terminal-tab-close", tab.id)),
             egui::Sense::click(),
         );
         close.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("Close {title}"))
+            egui::WidgetInfo::labeled(egui::Role::Button, true, format!("Close {title}"))
         });
         if close.hovered() || close.has_focus() {
             ui.painter()
@@ -363,25 +365,25 @@ fn tab_menu(ui: &mut egui::Ui, tab: &mut TerminalTab, index: usize, actions: &mu
     );
     if rename.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
         actions.focus = true;
-        ui.close_menu();
+        ui.close();
     }
     if !tab.name.is_empty() && ui.button("Use shell title").clicked() {
         tab.name.clear();
         actions.focus = true;
-        ui.close_menu();
+        ui.close();
     }
     ui.separator();
     if ui.button("Restart shell").clicked() {
         actions.restart = Some(index);
-        ui.close_menu();
+        ui.close();
     }
     if tab.session.running && ui.button("Stop shell").clicked() {
         actions.stop = Some(index);
-        ui.close_menu();
+        ui.close();
     }
     if ui.button("Close tab").clicked() {
         actions.close = Some(index);
-        ui.close_menu();
+        ui.close();
     }
 }
 
@@ -394,10 +396,10 @@ fn icon_button(
 ) -> egui::Response {
     let control = hedit::ui_style::Metrics::for_ui(ui).control;
     let (rect, _) = ui.allocate_exact_size(egui::vec2(control, control), egui::Sense::hover());
-    let response = ui.interact(rect, egui::Id::new(id), egui::Sense::click());
+    let response = ui.interact(rect, egui::Id::unique(id), egui::Sense::click());
     response.widget_info(|| {
         egui::WidgetInfo::labeled(
-            egui::WidgetType::Button,
+            egui::Role::Button,
             ui.is_enabled(),
             hint.split('·').next().unwrap_or(hint).trim(),
         )

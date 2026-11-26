@@ -243,7 +243,9 @@ impl HeditApp {
             self.quality.incoming_error = Some("File opening cancelled.".into());
         }
     }
-    pub(super) fn opening_bar(&mut self, ctx: &egui::Context) {
+    pub(super) fn opening_bar(&mut self, root: &mut egui::Ui) {
+        let context = root.ctx().clone();
+        let ctx = &context;
         let Some((label, started)) = self
             .opens
             .visible
@@ -258,13 +260,13 @@ impl HeditApp {
             return;
         }
         let mut cancel = false;
-        egui::TopBottomPanel::top("opening-files")
+        egui::Panel::top("opening-files")
             .frame(
                 egui::Frame::new()
                     .fill(self.theme.panel.color())
                     .inner_margin(egui::Margin::symmetric(10, 2)),
             )
-            .show(ctx, |ui| {
+            .show(root, |ui| {
                 ui.horizontal(|ui| {
                     ui.spinner();
                     let text = format!(
@@ -305,7 +307,7 @@ impl HeditApp {
                             | egui::Event::Cut
                             | egui::Event::Copy
                             | egui::Event::Ime(
-                                egui::ImeEvent::Preedit(_) | egui::ImeEvent::Commit(_)
+                                egui::ImeEvent::Preedit { .. } | egui::ImeEvent::Commit(_)
                             )
                             | egui::Event::Key { pressed: true, .. }
                             | egui::Event::PointerButton { pressed: true, .. }
@@ -477,7 +479,8 @@ mod tests {
             assert!(Instant::now() < until);
             thread::yield_now();
         }
-        let _ = ctx.run(
+        let _ = crate::app::tests::run_pass(
+            &ctx,
             egui::RawInput {
                 focused: true,
                 events: vec![egui::Event::Text("original".into())],
@@ -487,8 +490,8 @@ mod tests {
                 app.note_open_input(ctx);
                 app.receive(ctx);
                 app.shortcuts(ctx);
-                app.chrome(ctx);
-                app.editor(ctx);
+                ctx.root_ui(|root| app.chrome(root));
+                ctx.root_ui(|root| app.editor(root));
             },
         );
         assert_eq!(app.active().view.id, original);

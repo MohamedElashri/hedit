@@ -137,7 +137,7 @@ fn markdown_links_underline_on_hover_and_allow_copying_the_address() {
         .job
         .sections
         .iter()
-        .find(|s| s.byte_range.contains(&2))
+        .find(|s| s.byte_range.contains(&egui::text::ByteIndex(2)))
         .unwrap()
         .format
         .color;

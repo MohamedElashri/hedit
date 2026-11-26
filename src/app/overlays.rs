@@ -76,7 +76,7 @@ pub(super) fn clicked_away<R>(ctx: &egui::Context, shown: &Option<egui::InnerRes
 
 impl HeditApp {
     pub(super) fn find_input_focused(&self, ctx: &egui::Context) -> bool {
-        self.find_open && ctx.memory(|m| m.has_focus(egui::Id::new(chrome::FIND_INPUT)))
+        self.find_open && ctx.memory(|m| m.has_focus(egui::Id::unique(chrome::FIND_INPUT)))
     }
     pub(super) fn overlay_open(&self, overlay: Overlay) -> bool {
         match overlay {
@@ -177,7 +177,7 @@ impl HeditApp {
         }
         self.cancel_language_requests();
         // Menus, combo boxes, and context menus dismiss themselves.
-        if self.open_menu.is_some() || ctx.memory(|m| m.any_popup_open()) {
+        if self.open_menu.is_some() || egui::Popup::is_any_open(ctx) {
             return;
         }
         if let Some(overlay) = Overlay::ALL.into_iter().find(|&o| self.overlay_open(o)) {

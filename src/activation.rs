@@ -247,7 +247,9 @@ mod wayland {
                 since: std::time::Instant,
             }
             impl eframe::App for App {
-                fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+                fn ui(&mut self, _: &mut egui::Ui, _: &mut eframe::Frame) {}
+
+                fn logic(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
                     self.activation.update(ctx);
                     if !self.protocol_checked && self.activation.pending.is_none() {
                         assert!(self
@@ -338,7 +340,9 @@ mod tests {
     use super::*;
 
     fn commands(ctx: &egui::Context, window: &mut Window) -> Vec<egui::ViewportCommand> {
-        ctx.run(Default::default(), |ctx| window.update(ctx))
+        let mut output = ctx.run_pass(Default::default(), |ctx| window.update(ctx));
+        output.textures_delta.clear();
+        output
             .viewport_output
             .remove(&egui::ViewportId::ROOT)
             .unwrap()

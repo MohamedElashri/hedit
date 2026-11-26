@@ -232,9 +232,12 @@ impl FileIcon {
         if self == Self::Generic {
             return Icon::File.texture(ui.ctx(), size);
         }
-        cached_texture(ui.ctx(), size, egui::Id::new(("file-icon", self)), || {
-            self.svg()
-        })
+        cached_texture(
+            ui.ctx(),
+            size,
+            egui::Id::unique(("file-icon", self)),
+            || self.svg(),
+        )
     }
 
     pub fn image(self, ui: &egui::Ui, fallback: Color32) -> egui::Image<'static> {
@@ -307,7 +310,7 @@ impl FolderIcon {
         let texture = cached_texture(
             ui.ctx(),
             rect.width(),
-            egui::Id::new(("named-folder", expanded)),
+            egui::Id::unique(("named-folder", expanded)),
             || body,
         );
         paint_texture(ui, rect, &texture, mark.tint(ui, fallback));

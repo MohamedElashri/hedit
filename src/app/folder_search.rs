@@ -31,7 +31,7 @@ fn field(
         ui.add_sized(
             [ui.available_width(), 24.0],
             egui::TextEdit::singleline(text)
-                .id(egui::Id::new(id))
+                .id(egui::Id::unique(id))
                 .hint_text(hint),
         )
     })
@@ -50,7 +50,7 @@ fn file_row(
         egui::vec2(ui.available_width(), ROW_HEIGHT.max(metrics.row)),
         egui::Sense::click(),
     );
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
     let fill = if selected {
         theme.selection.color()
     } else if response.hovered() {
@@ -166,14 +166,16 @@ impl HeditApp {
         }
     }
 
-    pub(super) fn folder_search_sidebar(&mut self, ctx: &egui::Context) {
+    pub(super) fn folder_search_sidebar(&mut self, root: &mut egui::Ui) {
+        let context = root.ctx().clone();
+        let ctx = &context;
         let theme = self.theme.clone();
-        egui::SidePanel::left("search-sidebar")
-            .default_width(310.0)
-            .min_width(230.0)
-            .max_width((ctx.screen_rect().width() * 0.45).max(230.0))
+        egui::Panel::left("search-sidebar")
+            .default_size(310.0)
+            .min_size(230.0)
+            .max_size((ctx.viewport_rect().width() * 0.45).max(230.0))
             .frame(egui::Frame::new().fill(theme.panel.color()).inner_margin(8))
-            .show(ctx, |ui| self.folder_sidebar_content(ui, ctx));
+            .show(root, |ui| self.folder_sidebar_content(ui, ctx));
     }
 
     fn folder_sidebar_content(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
@@ -187,7 +189,7 @@ impl HeditApp {
             ui.menu_button("More…", |ui| {
                 if ui.button("Files").clicked() {
                     self.sidebar = workbench_navigation::Sidebar::Files;
-                    ui.close_menu();
+                    ui.close();
                 }
                 if ui
                     .add_enabled(
@@ -197,7 +199,7 @@ impl HeditApp {
                     .clicked()
                 {
                     self.show_git_sidebar(ctx);
-                    ui.close_menu();
+                    ui.close();
                 }
                 if ui
                     .checkbox(&mut self.quality.folder_context, "Context")
@@ -209,7 +211,7 @@ impl HeditApp {
                     self.sidebar = workbench_navigation::Sidebar::Files;
                     self.quality.folders_open = true;
                     self.quality.folder_focus = true;
-                    ui.close_menu();
+                    ui.close();
                 }
             });
         });
@@ -222,7 +224,7 @@ impl HeditApp {
                 self.folder_search_scope(ui);
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut self.quality.folder_query)
-                        .id(egui::Id::new(FIELDS[0]))
+                        .id(egui::Id::unique(FIELDS[0]))
                         .hint_text("Search folders")
                         .desired_width(f32::INFINITY),
                 );
@@ -233,14 +235,14 @@ impl HeditApp {
                 if self.quality.folder_replace {
                     ui.add(
                         egui::TextEdit::singleline(&mut self.quality.folder_replacement)
-                            .id(egui::Id::new(FIELDS[1]))
+                            .id(egui::Id::unique(FIELDS[1]))
                             .hint_text("Replacement text")
                             .desired_width(f32::INFINITY),
                     );
                 }
                 ui.add(
                     egui::TextEdit::singleline(&mut self.quality.filter)
-                        .id(egui::Id::new(FIELDS[2]))
+                        .id(egui::Id::unique(FIELDS[2]))
                         .hint_text("Files, e.g. *.rs, *.cu")
                         .desired_width(f32::INFINITY),
                 );
@@ -423,22 +425,22 @@ impl HeditApp {
         let searching = matches!(self.quality.folder_state, State::Searching);
         let roots = self.folder_search_roots();
         let size = egui::vec2(
-            (ctx.screen_rect().width() - 64.0).min(900.0),
-            (ctx.screen_rect().height() - 100.0).min(620.0),
+            (ctx.viewport_rect().width() - 64.0).min(900.0),
+            (ctx.viewport_rect().height() - 100.0).min(620.0),
         );
         egui::Window::new("Find in folders")
-            .id(egui::Id::new("folder-search"))
+            .id(egui::Id::unique("folder-search"))
             .open(&mut open).collapsible(false)
             .default_size(size).min_size([560.0, 300.0])
-            .max_size(ctx.screen_rect().size() - egui::vec2(40.0, 70.0))
-            .default_pos(ctx.screen_rect().center() - size * 0.5)
-            .frame(egui::Frame::window(&ctx.style()).inner_margin(12.0).corner_radius(8))
+            .max_size(ctx.viewport_rect().size() - egui::vec2(40.0, 70.0))
+            .default_pos(ctx.viewport_rect().center() - size * 0.5)
+            .frame(egui::Frame::window(&ctx.global_style()).inner_margin(12.0).corner_radius(8))
             .show(ctx, |ui| {
                 self.folder_search_scope(ui);
                 ui.horizontal(|ui| {
                     ui.add_sized([48.0, 26.0], egui::Label::new("Find").halign(egui::Align::LEFT));
                     let response = ui.add_sized([(ui.available_width() - 106.0).max(120.0), 26.0],
-                        egui::TextEdit::singleline(&mut self.quality.folder_query).id(egui::Id::new(FIELDS[0]))
+                        egui::TextEdit::singleline(&mut self.quality.folder_query).id(egui::Id::unique(FIELDS[0]))
                             .hint_text("Search text or regular expression"));
                     if self.quality.folder_focus {
                         response.request_focus();
@@ -689,7 +691,7 @@ impl HeditApp {
                             egui::Sense::click(),
                         );
                         response.widget_info(|| {
-                            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &line.text)
+                            egui::WidgetInfo::labeled(egui::Role::Button, true, &line.text)
                         });
                         if selected || response.hovered() {
                             ui.painter().rect_filled(

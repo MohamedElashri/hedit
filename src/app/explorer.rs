@@ -48,7 +48,7 @@ impl HeditApp {
         }
         self.explorer.scroll = true;
         self.focus_editor = false;
-        ctx.memory_mut(|m| m.request_focus(egui::Id::new("explorer-tree")));
+        ctx.memory_mut(|m| m.request_focus(egui::Id::unique("explorer-tree")));
     }
     pub(super) fn prepare_explorer(&mut self, ctx: &egui::Context) {
         if self.settings.explorer_auto_reveal {
@@ -172,7 +172,7 @@ impl HeditApp {
             ui.add_space((depth.min(2) * 12) as f32);
             let invalid = draft.error.is_some();
             let mut input = egui::TextEdit::singleline(&mut draft.name)
-                .id(egui::Id::new("explorer-entry-name"))
+                .id(egui::Id::unique("explorer-entry-name"))
                 .hint_text("Name")
                 .desired_width((ui.available_width() - 98.0).max(48.0));
             if invalid {
@@ -341,15 +341,11 @@ impl HeditApp {
         self.sync_folder_view();
     }
     pub(super) fn explorer_shortcuts(&mut self, ctx: &egui::Context) -> bool {
-        if self.busy
-            || self.closing
-            || self.open_menu.is_some()
-            || ctx.memory(|m| m.any_popup_open())
-        {
+        if self.busy || self.closing || self.open_menu.is_some() || egui::Popup::is_any_open(ctx) {
             return false;
         }
         let focused = ctx.memory(|m| m.focused());
-        if focused == Some(egui::Id::new("explorer-entry-name")) {
+        if focused == Some(egui::Id::unique("explorer-entry-name")) {
             if tab_switch::take_exact(ctx, Modifiers::NONE, Key::Escape) {
                 self.project.create = None;
                 self.project.tree = None;
@@ -358,7 +354,7 @@ impl HeditApp {
             }
             return false;
         }
-        if focused != Some(egui::Id::new("explorer-tree"))
+        if focused != Some(egui::Id::unique("explorer-tree"))
             || self.sidebar != workbench_navigation::Sidebar::Files
             || !self.settings.show_sidebar
         {
@@ -404,7 +400,7 @@ impl HeditApp {
             return false;
         }
         if tab_switch::take_exact(ctx, Modifiers::NONE, Key::Escape) {
-            ctx.memory_mut(|m| m.surrender_focus(egui::Id::new("explorer-tree")));
+            ctx.memory_mut(|m| m.surrender_focus(egui::Id::unique("explorer-tree")));
             self.focus_editor = true;
             return true;
         }

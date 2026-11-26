@@ -40,10 +40,10 @@ impl Rows {
         }
         let start = galley
             .rows
-            .partition_point(|r| origin.y + r.rect.bottom() < clip.top());
+            .partition_point(|r| origin.y + r.rect().bottom() < clip.top());
         let end = galley
             .rows
-            .partition_point(|r| origin.y + r.rect.top() <= clip.bottom());
+            .partition_point(|r| origin.y + r.rect().top() <= clip.bottom());
         start..end.max(start)
     }
     pub fn end(&self, row: usize) -> usize {
@@ -138,9 +138,9 @@ pub(super) mod tests {
         let ctx = egui::Context::default();
         ctx.set_pixels_per_point(scale);
         let mut galley = None;
-        let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
-                galley = Some(ui.fonts(|f| {
+        let _ = crate::app::tests::run_pass(&ctx, egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show_in_context(ctx, |ui| {
+                galley = Some(ui.fonts_mut(|f| {
                     f.layout(
                         text.into(),
                         FontId::monospace(14.0),
@@ -201,7 +201,7 @@ pub(super) mod tests {
                     assert_eq!(rows.row(i).start, chars);
                     assert_eq!(rows.row(i).line, line);
                     assert_eq!(rows.row(i).first, first);
-                    chars += row.char_count_including_newline();
+                    chars += row.char_count_including_newline().0;
                     assert_eq!(rows.end(i), chars);
                     if row.ends_with_newline {
                         line += 1;
@@ -217,8 +217,8 @@ pub(super) mod tests {
                         .iter()
                         .enumerate()
                         .filter(|(_, r)| {
-                            origin.y + r.rect.bottom() >= clip.top()
-                                && origin.y + r.rect.top() <= clip.bottom()
+                            origin.y + r.rect().bottom() >= clip.top()
+                                && origin.y + r.rect().top() <= clip.bottom()
                         })
                         .map(|(i, _)| i)
                         .collect();
@@ -289,11 +289,15 @@ mod performance {
             1.0,
         );
         let row = galley.rows.len() - 2;
-        let cursor = galley.from_rcursor(egui::epaint::text::cursor::RCursor { row, column: 12 });
-        let point = galley.pos_from_cursor(&cursor).center().to_vec2();
+        let layout = egui::epaint::text::cursor::LayoutCursor {
+            row,
+            column: 12.into(),
+        };
+        let cursor = galley.cursor_from_layout(layout);
+        let point = galley.pos_from_cursor(cursor).center().to_vec2();
         for (name, run) in [
             ("character", 0),
-            ("paragraph", 1),
+            ("row start", 1),
             ("row", 2),
             ("position", 3),
             ("pointer", 4),
@@ -304,21 +308,19 @@ mod performance {
                 match run {
                     0 => {
                         std::hint::black_box(
-                            galley.from_ccursor(std::hint::black_box(cursor.ccursor)),
+                            galley.layout_from_cursor(std::hint::black_box(cursor)),
                         );
                     }
                     1 => {
-                        std::hint::black_box(
-                            galley.from_pcursor(std::hint::black_box(cursor.pcursor)),
-                        );
+                        std::hint::black_box(galley.row_start(std::hint::black_box(row)));
                     }
                     2 => {
                         std::hint::black_box(
-                            galley.from_rcursor(std::hint::black_box(cursor.rcursor)),
+                            galley.cursor_from_layout(std::hint::black_box(layout)),
                         );
                     }
                     3 => {
-                        std::hint::black_box(galley.pos_from_cursor(std::hint::black_box(&cursor)));
+                        std::hint::black_box(galley.pos_from_cursor(std::hint::black_box(cursor)));
                     }
                     4 => {
                         std::hint::black_box(galley.cursor_from_pos(std::hint::black_box(point)));

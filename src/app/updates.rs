@@ -204,14 +204,14 @@ impl HeditApp {
         let mut install = false;
         let mut restart = false;
         egui::Window::new("Software Update")
-            .id(egui::Id::new("updates"))
+            .id(egui::Id::unique("updates"))
             .title_bar(false)
             .collapsible(false)
             .resizable(false)
             .default_width(360.0)
-            .max_width((ctx.screen_rect().width() - 64.0).max(240.0))
+            .max_width((ctx.viewport_rect().width() - 64.0).max(240.0))
             .frame(
-                egui::Frame::window(&ctx.style())
+                egui::Frame::window(&ctx.global_style())
                     .inner_margin(20.0)
                     .corner_radius(6),
             )
@@ -262,7 +262,9 @@ impl HeditApp {
                         .show(ui, |ui| {
                             egui::ScrollArea::vertical()
                                 .id_salt("update-error")
-                                .max_height((ctx.screen_rect().height() - 330.0).clamp(40.0, 120.0))
+                                .max_height(
+                                    (ctx.viewport_rect().height() - 330.0).clamp(40.0, 120.0),
+                                )
                                 .show(ui, |ui| {
                                     if let Some(error) = &self.updates.error {
                                         ui.add(egui::Label::new(error).wrap().selectable(true));
@@ -383,7 +385,8 @@ mod tests {
 
     fn click_update_button(ctx: &egui::Context, app: &mut HeditApp, label: &str) {
         let draw = |app: &mut HeditApp, events| {
-            ctx.run(
+            crate::app::tests::run_pass(
+                ctx,
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(
                         egui::Pos2::ZERO,
@@ -637,7 +640,8 @@ mod tests {
                     };
                     let mut output = None;
                     for _ in 0..4 {
-                        output = Some(ctx.run(
+                        output = Some(crate::app::tests::run_pass(
+                            &ctx,
                             egui::RawInput {
                                 screen_rect: Some(screen),
                                 ..Default::default()
@@ -682,7 +686,7 @@ mod tests {
             let directory = tempfile::tempdir().unwrap();
             let (workspace, _) = Workspace::restore(directory.path().into()).unwrap();
             let ctx = egui::Context::default();
-            ctx.style_mut(|style| style.animation_time = 0.0);
+            ctx.global_style_mut(|style| style.animation_time = 0.0);
             let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
             let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
             app.updates = Updates {
@@ -691,7 +695,8 @@ mod tests {
                 ..Default::default()
             };
             let mut draw = |events| {
-                ctx.run(
+                crate::app::tests::run_pass(
+                    &ctx,
                     egui::RawInput {
                         screen_rect: Some(screen),
                         events,
@@ -769,7 +774,8 @@ mod tests {
                 ..Default::default()
             };
             let mut draw = |events| {
-                ctx.run(
+                crate::app::tests::run_pass(
+                    &ctx,
                     egui::RawInput {
                         screen_rect: Some(egui::Rect::from_min_size(
                             egui::Pos2::ZERO,
@@ -882,7 +888,8 @@ mod tests {
                 };
                 let mut last = None;
                 for _ in 0..4 {
-                    last = Some(ctx.run(
+                    last = Some(crate::app::tests::run_pass(
+                        &ctx,
                         egui::RawInput {
                             screen_rect: Some(egui::Rect::from_min_size(
                                 egui::Pos2::ZERO,
@@ -891,8 +898,8 @@ mod tests {
                             ..Default::default()
                         },
                         |ctx| {
-                            app.chrome(ctx);
-                            app.editor(ctx);
+                            ctx.root_ui(|root| app.chrome(root));
+                            ctx.root_ui(|root| app.editor(root));
                             app.preferences(ctx);
                             app.updates_window(ctx);
                         },

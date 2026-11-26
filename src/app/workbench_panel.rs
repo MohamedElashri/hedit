@@ -104,9 +104,9 @@ impl HeditApp {
         }
         self.panel_state.maximized = !self.panel_state.maximized;
         if !self.panel_state.maximized {
-            let id = egui::Id::new("workbench-panel");
+            let id = ctx.viewport_id().root_ui_id().with("workbench-panel");
             if let Some(mut state) = egui::containers::panel::PanelState::load(ctx, id) {
-                state.rect.min.y = state.rect.max.y - self.panel_state.normal_height;
+                state.outer_rect.min.y = state.outer_rect.max.y - self.panel_state.normal_height;
                 ctx.data_mut(|d| d.insert_persisted(id, state));
             }
         }
@@ -131,7 +131,9 @@ impl HeditApp {
             ctx.memory_mut(|m| m.request_focus(terminal_panel::input_id()));
         }
     }
-    pub(super) fn workbench_panel(&mut self, ctx: &egui::Context) {
+    pub(super) fn workbench_panel(&mut self, root: &mut egui::Ui) {
+        let context = root.ctx().clone();
+        let ctx = &context;
         let Some(panel) = self.active_panel() else {
             return;
         };
@@ -139,16 +141,16 @@ impl HeditApp {
         let mut hide = false;
         let mut maximize = false;
         let maximized = self.panel_state.maximized;
-        let builder = egui::TopBottomPanel::bottom("workbench-panel");
+        let builder = egui::Panel::bottom("workbench-panel");
         let builder = if maximized {
             builder
                 .resizable(false)
-                .exact_height((ctx.available_rect().height() - 40.0).max(90.0))
+                .exact_size((root.available_rect_before_wrap().height() - 40.0).max(90.0))
         } else {
             builder
                 .resizable(true)
-                .default_height(self.panel_state.normal_height)
-                .height_range(90.0..=(ctx.screen_rect().height() * 0.6).max(100.0))
+                .default_size(self.panel_state.normal_height)
+                .size_range(90.0..=(ctx.viewport_rect().height() * 0.6).max(100.0))
         };
         let shown = builder
             .frame(
@@ -156,7 +158,7 @@ impl HeditApp {
                     .fill(self.theme.surface.color())
                     .inner_margin(egui::Margin::symmetric(10, 4)),
             )
-            .show(ctx, |ui| {
+            .show(root, |ui| {
                 ui.set_min_height(ui.available_height());
                 ui.horizontal(|ui| {
                     for (tab, label) in [
@@ -322,11 +324,13 @@ mod interaction_tests {
         frame(&ctx, &mut app, vec![]);
         assert!(app.panel_state.maximized);
         assert_eq!(app.panel_state.normal_height, height);
-        let maximized =
-            egui::containers::panel::PanelState::load(&ctx, egui::Id::new("workbench-panel"))
-                .unwrap()
-                .size()
-                .y;
+        let maximized = egui::containers::panel::PanelState::load(
+            &ctx,
+            ctx.viewport_id().root_ui_id().with("workbench-panel"),
+        )
+        .unwrap()
+        .size()
+        .y;
         assert!(maximized > height);
         app.hide_panel();
         app.toggle_last_panel(&ctx);
@@ -352,7 +356,7 @@ mod interaction_tests {
         app.execute(&ctx, Command::FocusExplorer);
         assert_eq!(
             ctx.memory(|m| m.focused()),
-            Some(egui::Id::new("explorer-tree"))
+            Some(egui::Id::unique("explorer-tree"))
         );
         app.execute(&ctx, Command::FocusSearch);
         assert_eq!(app.sidebar, workbench_navigation::Sidebar::Search);

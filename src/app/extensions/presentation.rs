@@ -73,7 +73,7 @@ pub(super) fn render(
     let mut button = |ui: &mut egui::Ui, title: &str, action: &dyn Fn() -> Action| {
         if ui.add(egui::Button::new(title).truncate()).clicked() {
             chosen = Some(action());
-            ui.close_menu();
+            ui.close();
         }
     };
     match result {

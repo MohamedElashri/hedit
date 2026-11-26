@@ -575,7 +575,8 @@ mod formatting_override_tests {
         rules: &mut FormatSettings,
         events: Vec<egui::Event>,
     ) -> egui::FullOutput {
-        ctx.run(
+        crate::app::tests::run_pass(
+            ctx,
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
                     egui::Pos2::ZERO,
@@ -585,7 +586,8 @@ mod formatting_override_tests {
                 ..Default::default()
             },
             |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| format_fields(ui, "test", rules));
+                egui::CentralPanel::default()
+                    .show_in_context(ctx, |ui| format_fields(ui, "test", rules));
             },
         )
     }

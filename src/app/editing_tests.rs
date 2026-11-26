@@ -122,7 +122,7 @@ fn display_settings_change_cursor_and_line_spacing() {
     app.settings.caret_width = 3.0;
     app.settings.caret_blink = false;
     frame(&ctx, &mut app, vec![]);
-    let cursor = ctx.style().visuals.text_cursor.clone();
+    let cursor = ctx.global_style().visuals.text_cursor.clone();
     assert_eq!(cursor.stroke.width, 3.0);
     assert!(!cursor.blink);
     // Line spacing makes each laid-out row taller.
@@ -1055,7 +1055,7 @@ fn f4_goes_through_folder_matches_after_a_search() {
 
 /// The editor text's rectangle on screen, from last frame.
 fn editor_rect(ctx: &egui::Context, app: &HeditApp) -> egui::Rect {
-    let id = egui::Id::new(("editor", app.active().page.info.id, app.active().page.start));
+    let id = egui::Id::unique(("editor", app.active().page.info.id, app.active().page.start));
     ctx.read_response(id).expect("editor drawn").rect
 }
 
@@ -1162,27 +1162,29 @@ fn hovering_a_git_marker_shows_its_change() {
     app.quality
         .git_cache
         .insert(id, "@@ -1 +1 @@\n-uno\n+one\n".into());
-    frame(&ctx, &mut app, vec![]);
-    let rect = editor_rect(&ctx, &app);
-    let gutter = rect.left() - editor_gutter_width(&app);
-    let at = egui::pos2(gutter + 4.0, rect.top() + app.settings.font_size * 0.6);
+    let output = frame(&ctx, &mut app, vec![]);
+    let at = output
+        .shapes
+        .iter()
+        .find_map(|shape| match &shape.shape {
+            egui::Shape::Rect(rect)
+                if rect.fill == app.theme.warning.color() && rect.rect.width() == 5.0 =>
+            {
+                Some(rect.rect.center())
+            }
+            _ => None,
+        })
+        .expect("Git change marker is visible");
+    frame(&ctx, &mut app, vec![egui::Event::PointerMoved(at)]);
     let mut seen = false;
-    for _ in 0..12 {
-        let output = frame(&ctx, &mut app, vec![egui::Event::PointerMoved(at)]);
-        thread::sleep(Duration::from_millis(60));
+    for _ in 0..60 {
+        let output = frame(&ctx, &mut app, vec![]);
         seen |= output
             .shapes
             .iter()
             .any(|c| matches!(&c.shape, egui::Shape::Text(t) if t.galley.text().contains("+one")));
     }
     assert!(seen, "the hunk shows on hover");
-}
-
-fn editor_gutter_width(app: &HeditApp) -> f32 {
-    let digits = (app.active().page.text.matches('\n').count() + 1)
-        .to_string()
-        .len();
-    (digits.max(3) as f32 * app.settings.font_size * 0.65 + 16.0).max(42.0)
 }
 
 /// Run frames until spelling results for the active file are in.
@@ -1258,12 +1260,12 @@ fn resting_the_pointer_on_a_call_finds_its_definition() {
             events,
             ..Default::default()
         };
-        let _ = ctx.run(input, |ctx| {
+        let _ = crate::app::tests::run_pass(&ctx, input, |ctx| {
             app.shortcuts(ctx);
-            app.chrome(ctx);
-            app.search_panel(ctx);
-            app.workbench_panel(ctx);
-            app.editor(ctx);
+            ctx.root_ui(|root| app.chrome(root));
+            ctx.root_ui(|root| app.search_panel(root));
+            ctx.root_ui(|root| app.workbench_panel(root));
+            ctx.root_ui(|root| app.editor(root));
             app.quality_windows(ctx);
         });
     };
@@ -1725,10 +1727,10 @@ fn control_arrows_scroll_without_moving_the_cursor() {
             focused: true,
             ..Default::default()
         };
-        let _ = ctx.run(input, |ctx| {
+        let _ = crate::app::tests::run_pass(&ctx, input, |ctx| {
             app.shortcuts(ctx);
-            app.chrome(ctx);
-            app.editor(ctx);
+            ctx.root_ui(|root| app.chrome(root));
+            ctx.root_ui(|root| app.editor(root));
         });
     }
     for _ in 0..3 {

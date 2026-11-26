@@ -626,8 +626,8 @@ pub(super) fn paint_ranges(
         let row = &galley.rows[r];
         let row_start = rows.row(r).start;
         let row_end = rows.end(r);
-        let top = origin.y + row.rect.top();
-        let bottom = origin.y + row.rect.bottom();
+        let top = origin.y + row.rect().top();
+        let bottom = origin.y + row.rect().bottom();
         for &(a, b) in &shown {
             let zero_at_end = a == b && a == row_end && r + 1 == galley.rows.len();
             if (a >= row_end && !zero_at_end) || b < row_start || b == row_start && a != b {
@@ -788,9 +788,9 @@ mod tests {
         ctx.set_pixels_per_point(scale);
         let fill = egui::Color32::from_rgb(251, 1, 7);
         let mut layout = None;
-        let output = ctx.run(egui::RawInput::default(), |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
-                let galley = ui.fonts(|f| {
+        let output = crate::app::tests::run_pass(&ctx, egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show_in_context(ctx, |ui| {
+                let galley = ui.fonts_mut(|f| {
                     f.layout(
                         projection.text.clone(),
                         FontId::monospace(14.0),
@@ -799,7 +799,7 @@ mod tests {
                     )
                 });
                 let (galley, bidi) =
-                    ui.fonts(|f| bidi_view::apply(f, galley, bidi_view::Base::Auto));
+                    ui.fonts_mut(|f| bidi_view::apply(f, galley, bidi_view::Base::Auto));
                 let rows = row_index::Cache::default().get(&galley);
                 paint_ranges(
                     &ui.painter().with_clip_rect(clip),
@@ -855,8 +855,10 @@ mod tests {
                         let mut expected = vec![];
                         let mut row_start = 0;
                         for (r, row) in galley.rows.iter().enumerate() {
-                            let row_end = row_start + row.char_count_including_newline();
-                            if row.rect.bottom() >= clip.top() && row.rect.top() <= clip.bottom() {
+                            let row_end = row_start + row.char_count_including_newline().0;
+                            if row.rect().bottom() >= clip.top()
+                                && row.rect().top() <= clip.bottom()
+                            {
                                 for &(a, b) in &shown {
                                     if a >= row_end || b <= row_start {
                                         continue;
@@ -868,8 +870,8 @@ mod tests {
                                         b.min(row_end) - row_start,
                                     ) {
                                         expected.push(egui::Rect::from_min_max(
-                                            egui::pos2(x0, row.rect.top()),
-                                            egui::pos2(x1.max(x0 + 2.0), row.rect.bottom()),
+                                            egui::pos2(x0, row.rect().top()),
+                                            egui::pos2(x1.max(x0 + 2.0), row.rect().bottom()),
                                         ));
                                     }
                                 }

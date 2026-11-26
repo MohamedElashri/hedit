@@ -15,7 +15,7 @@ pub(super) struct Figure {
     pub source: String,
 }
 
-#[derive(Clone, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
 struct Key {
     document: u64,
     kind: Kind,
@@ -95,7 +95,7 @@ impl Media {
             .unwrap_or_else(|| egui_commonmark::InlineMathMetrics {
                 height: f32::from(size) * 1.6,
                 above: 0.0,
-                width: ui.fonts(|fonts| {
+                width: ui.fonts_mut(|fonts| {
                     fonts
                         .layout_no_wrap(
                             source.to_owned(),
@@ -180,7 +180,7 @@ impl Media {
             Some(Ok(raster)) => {
                 let mut entry = entry.as_ref().unwrap().lock().unwrap();
                 if entry.tiles.is_empty() {
-                    entry.tiles = upload(ui.ctx(), raster, egui::Id::new(&key).value());
+                    entry.tiles = upload(ui.ctx(), raster, egui::Id::unique(&key).value());
                 }
                 let response = if block {
                     let (rect, response) = ui.allocate_exact_size(
@@ -195,7 +195,7 @@ impl Media {
                 response.on_hover_text(source).context_menu(|ui| {
                     if ui.button("Copy source").clicked() {
                         ui.ctx().copy_text(source.to_owned());
-                        ui.close_menu();
+                        ui.close();
                     }
                 });
             }
@@ -243,7 +243,7 @@ impl Media {
                 ui.set_width(width);
                 ui.add_space(8.0);
                 egui::ScrollArea::both()
-                    .id_salt(("figure", ui.id(), &key))
+                    .id_salt(("figure", ui.scope_id(), &key))
                     .auto_shrink([false, true])
                     .max_height(480.0)
                     .show(ui, |ui| {
@@ -356,10 +356,7 @@ fn upload(ctx: &egui::Context, raster: &Raster, id: u64) -> Vec<Tile> {
                         .copied()
                 })
                 .collect();
-            let image = egui::ColorImage {
-                size: [w, h],
-                pixels,
-            };
+            let image = egui::ColorImage::new([w, h], pixels);
             #[cfg(test)]
             let retained = image.clone();
             let texture = ctx.load_texture(
@@ -405,7 +402,8 @@ fn inline_geometry(ui: &egui::Ui, raster: &Raster) -> (f32, f32, f32) {
         f32::INFINITY,
     );
     job.sections[0].format.line_height = Some(font.size * 1.6);
-    let reference = ui.fonts(|fonts| fonts.layout_job(job));
+    job.center_text_in_line_height = false;
+    let reference = ui.fonts_mut(|fonts| fonts.layout_job(job));
     let glyph = &reference.rows[0].glyphs[0];
     let offset = glyph.pos.y - reference.size().y / 2.0;
     let baseline = raster.baseline.unwrap_or(raster.size.y * 0.75);
@@ -487,7 +485,13 @@ fn rasterize(svg: &str) -> Result<Raster, String> {
                 #[cfg(test)]
                 {
                     let bundled = egui::FontDefinitions::default();
-                    fonts.load_font_data(bundled.font_data["Ubuntu-Light"].font.to_vec());
+                    fonts.load_font_data(
+                        bundled.font_data["Ubuntu-Light"]
+                            .font
+                            .as_ref()
+                            .as_ref()
+                            .to_vec(),
+                    );
                     fonts.set_sans_serif_family("Ubuntu");
                 }
                 Arc::new(fonts)
@@ -572,7 +576,7 @@ mod tests {
             || {
                 loads.fetch_add(1, Ordering::Relaxed);
                 let mut fonts = resvg::usvg::fontdb::Database::new();
-                fonts.load_font_data(egui::FontDefinitions::default().font_data["Ubuntu-Light"].font.to_vec());
+                fonts.load_font_data(egui::FontDefinitions::default().font_data["Ubuntu-Light"].font.as_ref().as_ref().to_vec());
                 Arc::new(fonts)
             },
         ).unwrap();
@@ -584,9 +588,9 @@ mod tests {
     fn warm_figures_with_different_text_colors_keep_their_cached_results() {
         let ctx = egui::Context::default();
         let media = Media::default();
-        let size = egui::TextStyle::Body.resolve(&ctx.style()).size;
-        let color = ctx.style().visuals.text_color();
-        let dark = ctx.style().visuals.dark_mode;
+        let size = egui::TextStyle::Body.resolve(&ctx.global_style()).size;
+        let color = ctx.global_style().visuals.text_color();
+        let dark = ctx.global_style().visuals.dark_mode;
         media.set_appearance(size, color, dark);
         let originals: Vec<_> = [egui::Color32::RED, egui::Color32::BLUE]
             .into_iter()
@@ -597,11 +601,11 @@ mod tests {
                     source: "x".into(),
                     size: size.round().clamp(8.0, 96.0) as u16,
                     color: color.to_array(),
-                    dark: ctx.style().visuals.dark_mode,
+                    dark: ctx.global_style().visuals.dark_mode,
                 };
                 let entry = Arc::new(Mutex::new(Entry {
                     result: Some(Ok(Arc::new(Raster {
-                        image: egui::ColorImage::new([4, 4], egui::Color32::WHITE),
+                        image: egui::ColorImage::filled([4, 4], egui::Color32::WHITE),
                         size: egui::vec2(4.0, 4.0),
                         baseline: Some(2.0),
                     }))),
@@ -616,8 +620,8 @@ mod tests {
             })
             .collect();
         for _ in 0..3 {
-            let _ = ctx.run(egui::RawInput::default(), |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| {
+            let _ = crate::app::tests::run_pass(&ctx, egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show_in_context(ctx, |ui| {
                     for color in [egui::Color32::RED, egui::Color32::BLUE] {
                         ui.visuals_mut().override_text_color = Some(color);
                         media.show(ui, 1, "x", Kind::InlineMath);

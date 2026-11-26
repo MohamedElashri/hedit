@@ -695,18 +695,20 @@ impl HeditApp {
             operation,
         });
     }
-    pub(super) fn source_control_sidebar(&mut self, ctx: &egui::Context) {
+    pub(super) fn source_control_sidebar(&mut self, root: &mut egui::Ui) {
+        let context = root.ctx().clone();
+        let ctx = &context;
         let theme = self.theme.clone();
-        egui::SidePanel::left("source-control")
-            .default_width(310.0)
-            .min_width(260.0)
-            .max_width((ctx.screen_rect().width() * 0.4).clamp(260.0, 520.0))
+        egui::Panel::left("source-control")
+            .default_size(310.0)
+            .min_size(260.0)
+            .max_size((ctx.viewport_rect().width() * 0.4).clamp(260.0, 520.0))
             .frame(
                 egui::Frame::new()
                     .fill(theme.panel.color())
                     .inner_margin(egui::Margin::symmetric(8, 10)),
             )
-            .show(ctx, |ui| {
+            .show(root, |ui| {
                 if self.workspace_header(ui, true) == Some(false) {
                     self.focus_editor = true;
                     ctx.memory_mut(|m| {
@@ -775,7 +777,7 @@ impl HeditApp {
                                     ] {
                                         if ui.selectable_label(view == v, label).clicked() {
                                             view = v;
-                                            ui.close_menu();
+                                            ui.close();
                                         }
                                     }
                                 },
@@ -977,7 +979,7 @@ impl HeditApp {
                     );
                 row.widget_info(|| {
                     egui::WidgetInfo::selected(
-                        egui::WidgetType::SelectableLabel,
+                        egui::Role::ListItem,
                         ui.is_enabled(),
                         selected,
                         &*label,
@@ -996,15 +998,15 @@ impl HeditApp {
                 row.context_menu(|ui| {
                     if ui.button("File history").clicked() {
                         self.git_file_history(ctx, file.path.clone());
-                        ui.close_menu();
+                        ui.close();
                     }
                     if ui.button("Line history").clicked() {
                         self.git_line_history(ctx, file.path.clone());
-                        ui.close_menu();
+                        ui.close();
                     }
                     if ui.button("Open in editor").clicked() {
                         self.git_open_file(ctx, &file.path);
-                        ui.close_menu();
+                        ui.close();
                     }
                 });
                 if !kind.read_only()
@@ -1113,11 +1115,14 @@ impl HeditApp {
                     );
                 }
                 let response = response.response;
-                let click =
-                    ui.interact(response.rect, ui.id().with("commit"), egui::Sense::click());
+                let click = ui.interact(
+                    response.rect,
+                    ui.scope_id().with("commit"),
+                    egui::Sense::click(),
+                );
                 click.widget_info(|| {
                     egui::WidgetInfo::selected(
-                        egui::WidgetType::SelectableLabel,
+                        egui::Role::ListItem,
                         ui.is_enabled(),
                         selected,
                         &commit.subject,
@@ -1171,28 +1176,28 @@ impl HeditApp {
                         ui.label(RichText::new(&branch.name).strong()).on_hover_text(format!("{}\n{}", branch.oid, branch.upstream));
                         ui.menu_button("…", |ui| {
                             if !branch.current && ui.button(if remote { if snapshot.branches.iter().any(|local| !local.remote && local.upstream == branch.reference) { "Switch tracking branch" } else { "Create tracking branch…" } } else { "Switch branch" }).clicked() {
-                                if remote { self.git_track_remote(ctx, snapshot, branch); } else { self.git_action(ctx, Operation::Switch(branch.name.clone())); } ui.close_menu();
+                                if remote { self.git_track_remote(ctx, snapshot, branch); } else { self.git_action(ctx, Operation::Switch(branch.name.clone())); } ui.close();
                             }
                             if ui.button("Compare with current branch").clicked() {
-                                self.git_start_comparison(ctx, branch.reference.clone(), "HEAD".into()); ui.close_menu();
+                                self.git_start_comparison(ctx, branch.reference.clone(), "HEAD".into()); ui.close();
                             }
                             if ui.button("View branch history").clicked() {
-                                self.git_branch_history(ctx, branch.reference.clone()); ui.close_menu();
+                                self.git_branch_history(ctx, branch.reference.clone()); ui.close();
                             }
                             if !branch.current && ui.button("Rebase current branch onto this…").clicked() {
-                                self.git_confirm("Rebase current branch", format!("Replay {} onto {}? This rewrites commit IDs. Git stops for conflicts; Continue and Abort are available in Changes.", snapshot.branch, branch.name), Operation::Rebase(branch.reference.clone())); ui.close_menu();
+                                self.git_confirm("Rebase current branch", format!("Replay {} onto {}? This rewrites commit IDs. Git stops for conflicts; Continue and Abort are available in Changes.", snapshot.branch, branch.name), Operation::Rebase(branch.reference.clone())); ui.close();
                             }
                             if !remote && ui.button("Rename branch…").clicked() {
-                                self.source_control.prompt = Some(Prompt::Named { action: inspect::NamedAction::Rename(branch.name.clone()), name: branch.name.clone(), message: String::new() }); ui.close_menu();
+                                self.source_control.prompt = Some(Prompt::Named { action: inspect::NamedAction::Rename(branch.name.clone()), name: branch.name.clone(), message: String::new() }); ui.close();
                             }
                             if remote && snapshot.branch != "(detached)" && ui.button("Set as upstream…").clicked() {
-                                self.git_confirm("Set upstream", format!("Track {} from {}? Future Pull and Push use this upstream.", branch.name, snapshot.branch), Operation::SetUpstream { branch: snapshot.branch.clone(), upstream: branch.reference.clone() }); ui.close_menu();
+                                self.git_confirm("Set upstream", format!("Track {} from {}? Future Pull and Push use this upstream.", branch.name, snapshot.branch), Operation::SetUpstream { branch: snapshot.branch.clone(), upstream: branch.reference.clone() }); ui.close();
                             }
                             if !branch.current && ui.button("Merge into current branch…").clicked() {
-                                self.git_confirm("Merge branch", format!("Merge {} into {}? Git will stop if there are conflicts.", branch.name, snapshot.branch), Operation::Merge(branch.reference.clone())); ui.close_menu();
+                                self.git_confirm("Merge branch", format!("Merge {} into {}? Git will stop if there are conflicts.", branch.name, snapshot.branch), Operation::Merge(branch.reference.clone())); ui.close();
                             }
                             if !branch.current && !remote && ui.button("Delete branch…").clicked() {
-                                self.git_confirm("Delete branch", format!("Delete {}? Git will refuse if it contains unmerged commits.", branch.name), Operation::DeleteBranch(branch.name.clone())); ui.close_menu();
+                                self.git_confirm("Delete branch", format!("Delete {}? Git will refuse if it contains unmerged commits.", branch.name), Operation::DeleteBranch(branch.name.clone())); ui.close();
                             }
                         });
                     });
@@ -1260,14 +1265,16 @@ impl HeditApp {
             ui.label("No stashed changes.");
         }
     }
-    pub(super) fn source_control_editor(&mut self, ctx: &egui::Context) {
+    pub(super) fn source_control_editor(&mut self, root: &mut egui::Ui) {
+        let context = root.ctx().clone();
+        let ctx = &context;
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::new()
                     .fill(self.theme.background.color())
                     .inner_margin(14.0),
             )
-            .show(ctx, |ui| self.source_control_contents(ui));
+            .show(root, |ui| self.source_control_contents(ui));
         self.git_prompt(ctx);
     }
     pub(super) fn source_control_contents(&mut self, ui: &mut egui::Ui) {
@@ -1352,15 +1359,15 @@ impl HeditApp {
                         ui.menu_button("More…", |ui| {
                             if ui.button("Branch here…").clicked() {
                                 self.git_name_at(inspect::NamedAction::Branch(oid.clone()));
-                                ui.close_menu();
+                                ui.close();
                             }
                             if ui.button("Tag…").clicked() {
                                 self.git_name_at(inspect::NamedAction::Tag(oid.clone()));
-                                ui.close_menu();
+                                ui.close();
                             }
                             if ui.button("Compare with HEAD").clicked() {
                                 self.git_start_comparison(ctx, oid.clone(), "HEAD".into());
-                                ui.close_menu();
+                                ui.close();
                             }
                         });
                     });
@@ -1377,12 +1384,12 @@ impl HeditApp {
                     });
                 ui.separator();
                 if ui.available_width() >= 640.0 {
-                    egui::SidePanel::left("git-commit-files")
-                        .default_width(210.0)
-                        .min_width(140.0)
-                        .max_width(ui.available_width() * 0.4)
+                    egui::Panel::left("git-commit-files")
+                        .default_size(210.0)
+                        .min_size(140.0)
+                        .max_size(ui.available_width() * 0.4)
                         .resizable(true)
-                        .show_inside(ui, |ui| {
+                        .show(ui, |ui| {
                             self.git_commit_files(ui, ctx, &oid);
                         });
                 } else {
@@ -1630,8 +1637,8 @@ impl HeditApp {
         let mut keep = true;
         let mut operation = None;
         let mut create = false;
-        egui::Modal::new(egui::Id::new("git-prompt")).show(ctx, |ui| {
-            ui.set_width(410.0_f32.min(ctx.screen_rect().width() - 48.0));
+        egui::Modal::new(egui::Id::unique("git-prompt")).show(ctx, |ui| {
+            ui.set_width(410.0_f32.min(ctx.viewport_rect().width() - 48.0));
             ui.strong(title);
             ui.add_space(10.0);
             let submit = ui.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Enter));
@@ -1863,7 +1870,7 @@ impl HeditApp {
                             );
                             let response = ui.interact(
                                 cell,
-                                ui.id().with(("diff-cell", row, column)),
+                                ui.scope_id().with(("diff-cell", row, column)),
                                 egui::Sense::click(),
                             );
                             let selected = self.git_diff_line_selection(

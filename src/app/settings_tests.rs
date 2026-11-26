@@ -21,8 +21,8 @@ fn refocus(ctx: &egui::Context, app: &mut HeditApp) {
         events: vec![egui::Event::WindowFocused(true)],
         ..Default::default()
     };
-    let _ = ctx.run(input, |ctx| {
-        eframe::App::update(app, ctx, &mut fake_frame())
+    let _ = crate::app::tests::run_pass(ctx, input, |ctx| {
+        ctx.root_ui(|root| eframe::App::ui(app, root, &mut fake_frame()))
     });
 }
 
@@ -490,7 +490,10 @@ fn settings_choose_themes_by_name() {
     std::fs::write(&path, r#"{ "color_theme": "Dracula" }"#).unwrap();
     app.reload_settings(&ctx);
     assert_eq!(app.theme.name, "Dracula");
-    assert_eq!(ctx.style().visuals.panel_fill, app.theme.panel.color());
+    assert_eq!(
+        ctx.global_style().visuals.panel_fill,
+        app.theme.panel.color()
+    );
     // An unknown name is reported and the current theme stays.
     thread::sleep(Duration::from_millis(20));
     std::fs::write(&path, r#"{ "color_theme": "No Such Theme" }"#).unwrap();
@@ -522,7 +525,7 @@ fn editor_font_results_trim_names_and_failures_preserve_document_jobs() {
     let bytes = include_bytes!("../../assets/fonts/NotoSans-Regular.ttf").to_vec();
     app.settings.font_face = " selected font ".into();
     app.busy = true;
-    let focus = egui::Id::new("document-job");
+    let focus = egui::Id::unique("document-job");
     app.job_editor_focus = Some(focus);
     app.tx
         .send(Ok(Action::Font("selected font".into(), bytes, 0)))

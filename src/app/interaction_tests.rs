@@ -7,7 +7,7 @@ fn app(text: &str) -> (tempfile::TempDir, egui::Context, HeditApp) {
     workspace.edit(0, "").unwrap();
     let ctx = egui::Context::default();
     let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
-    ctx.style_mut(|style| style.scroll_animation = egui::style::ScrollAnimation::none());
+    ctx.global_style_mut(|style| style.scroll_animation = egui::style::ScrollAnimation::none());
     frame(&ctx, &mut app, vec![]);
     frame(&ctx, &mut app, vec![]);
     (dir, ctx, app)
@@ -211,16 +211,13 @@ fn soft_wrap_affinity_survives_idle_repaints_and_relayout() {
     let at = galley.row_start(1);
     app.set_selections(vec![hedit::advanced::Selection::caret(at)]);
     frame(&ctx, &mut app, vec![]);
-    let id = egui::Id::new(("editor", app.active().page.info.id, app.active().page.start));
+    let id = egui::Id::unique(("editor", app.active().page.info.id, app.active().page.start));
     let mut state = egui::TextEdit::load_state(&ctx, id).unwrap();
-    let cursor = galley.from_ccursor(CCursor {
-        index: at,
-        prefer_next_row: false,
-    });
-    assert_eq!(cursor.rcursor.row, 0);
+    let cursor = CCursor::new(at);
+    assert_eq!(galley.layout_from_cursor(cursor).row, 0);
     state
         .cursor
-        .set_range(Some(egui::text_selection::CursorRange::one(cursor)));
+        .set_char_range(Some(egui::text::CCursorRange::one(cursor)));
     state.store(&ctx, id);
     for _ in 0..3 {
         frame(&ctx, &mut app, vec![]);
@@ -287,8 +284,12 @@ fn coalesced_rtl_drag_maps_expanded_tabs_back_to_source_characters() {
     let first = &row.glyphs[4];
     let last = &row.glyphs[7];
     assert!(first.pos.x > last.pos.x);
-    let start = origin + egui::vec2(first.pos.x + first.advance_width - 1.0, row.rect.center().y);
-    let end = origin + egui::vec2(last.pos.x + 1.0, row.rect.center().y);
+    let start = origin
+        + egui::vec2(
+            first.pos.x + first.advance_width - 1.0,
+            row.rect().center().y,
+        );
+    let end = origin + egui::vec2(last.pos.x + 1.0, row.rect().center().y);
     frame(&ctx, &mut app, drag(start, end, Modifiers::NONE));
     assert_eq!((app.active().view.anchor, app.active().view.head), (1, 5));
     frame(&ctx, &mut app, vec![]);

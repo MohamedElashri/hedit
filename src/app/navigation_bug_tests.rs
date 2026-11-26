@@ -118,13 +118,13 @@ fn copy_file_location_works_beyond_the_first_page() {
     finish_app_job(&mut app, &ctx);
     assert!(app.active().page.start > 0);
     assert!(app.command_enabled(Command::CopyFileLocation));
-    let mut output = ctx.run(egui::RawInput::default(), |ctx| {
+    let mut output = crate::app::tests::run_pass(&ctx, egui::RawInput::default(), |ctx| {
         app.execute(ctx, Command::CopyFileLocation)
     });
     let started = Instant::now();
     while !output.platform_output.commands.iter().any(|command| matches!(command, egui::OutputCommand::CopyText(text) if text.ends_with(":90000:2"))) {
         assert!(started.elapsed() < Duration::from_secs(5), "copy did not produce the absolute position: {:?}", app.error);
-        output = ctx.run(egui::RawInput::default(), |ctx| app.receive(ctx));
+        output = crate::app::tests::run_pass(&ctx, egui::RawInput::default(), |ctx| app.receive(ctx));
         thread::sleep(Duration::from_millis(5));
     }
 }

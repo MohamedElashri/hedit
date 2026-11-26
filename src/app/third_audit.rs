@@ -80,10 +80,10 @@ fn select_all_find_does_not_use_stale_selection_scope_from_another_tab() {
 fn macro_paste_timeout_does_not_change_the_next_ordinary_paste() {
     let (_dir, ctx, mut app) = app_with("");
     app.play_macro(vec![macros::Step::PasteIndent]);
-    let _ = ctx.run(Default::default(), |ctx| app.play_step(ctx));
+    let _ = crate::app::tests::run_pass(&ctx, Default::default(), |ctx| app.play_step(ctx));
     assert!(app.paste_indent);
     thread::sleep(Duration::from_millis(1050));
-    let _ = ctx.run(Default::default(), |ctx| app.play_step(ctx));
+    let _ = crate::app::tests::run_pass(&ctx, Default::default(), |ctx| app.play_step(ctx));
     assert!(!app.paste_indent);
 }
 
@@ -118,7 +118,8 @@ fn quoted_location_round_trips_an_at_sign_after_a_literal_quote() {
     fs::write(&path, "\nprice\n").unwrap();
     open(&mut app, &ctx, &path);
     app.set_selections(vec![S::caret(3)]);
-    let output = ctx.run(Default::default(), |ctx| app.copy_file_location(ctx));
+    let output =
+        crate::app::tests::run_pass(&ctx, Default::default(), |ctx| app.copy_file_location(ctx));
     let copied = output
         .platform_output
         .commands

@@ -109,7 +109,7 @@ impl Tree {
         };
         for root in roots {
             tree.scopes
-                .push((tree.rows.len(), egui::Id::new(&root.path)));
+                .push((tree.rows.len(), egui::Id::unique(&root.path)));
             let display = remote
                 .filter(|r| r.root() == std::path::Path::new(&root.path))
                 .map(|r| r.config.root.as_str())

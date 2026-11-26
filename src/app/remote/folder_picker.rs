@@ -188,7 +188,7 @@ impl FolderPicker {
 
     fn controls(&mut self, ctx: &egui::Context) -> Option<Action> {
         let ready = self.pending.is_none();
-        let input_id = egui::Id::new("ssh-folder-picker-path");
+        let input_id = egui::Id::unique("ssh-folder-picker-path");
         let focused = ctx.memory(|memory| memory.has_focus(input_id));
         let take = |key| {
             ready && focused && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, key))
@@ -196,8 +196,8 @@ impl FolderPicker {
         let down = take(Key::ArrowDown);
         let up = take(Key::ArrowUp);
         let enter = take(Key::Enter);
-        let shown = egui::Modal::new(egui::Id::new("ssh-folder-picker")).show(ctx, |ui| {
-            ui.set_width((ctx.screen_rect().width() - 40.0).clamp(0.0, 500.0));
+        let shown = egui::Modal::new(egui::Id::unique("ssh-folder-picker")).show(ctx, |ui| {
+            ui.set_width((ctx.viewport_rect().width() - 40.0).clamp(0.0, 500.0));
             ui.heading("Open remote folder");
             let mut action = None;
             if let Some(folder) = &self.folder {
@@ -253,7 +253,7 @@ impl FolderPicker {
                         self.selected = self.selected.and_then(|i| i.checked_sub(1));
                     }
                     let mut scroll = egui::ScrollArea::vertical()
-                        .max_height(230.0_f32.min(ctx.screen_rect().height() * 0.4));
+                        .max_height(230.0_f32.min(ctx.viewport_rect().height() * 0.4));
                     if up || down {
                         let stride = 26.0 + ui.spacing().item_spacing.y;
                         scroll =
@@ -367,7 +367,8 @@ mod tests {
         events: Vec<egui::Event>,
     ) -> Option<Action> {
         let mut result = None;
-        let _ = ctx.run(
+        let _ = crate::app::tests::run_pass(
+            ctx,
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
                     egui::Pos2::ZERO,

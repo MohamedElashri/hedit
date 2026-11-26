@@ -48,7 +48,8 @@ fn shifted_alt_layout_shortcuts_never_insert_their_native_text() {
 #[test]
 fn consuming_an_alt_shortcut_preserves_other_text_in_the_input_batch() {
     let ctx = egui::Context::default();
-    let _ = ctx.run(
+    let _ = crate::app::tests::run_pass(
+        &ctx,
         egui::RawInput {
             events: vec![
                 egui::Event::Text("2".into()),
@@ -115,13 +116,14 @@ fn held(ctx: &egui::Context, app: &mut HeditApp, held: Modifiers, events: Vec<eg
             egui::vec2(1280.0, 820.0),
         )),
         focused: true,
-        modifiers: held,
-        events,
+        events: std::iter::once(egui::Event::ModifiersChanged(held))
+            .chain(events)
+            .collect(),
         ..Default::default()
     };
-    let _ = ctx.run(input, |ctx| {
+    let _ = crate::app::tests::run_pass(ctx, input, |ctx| {
         app.shortcuts(ctx);
-        app.editor(ctx);
+        ctx.root_ui(|root| app.editor(root));
     });
 }
 

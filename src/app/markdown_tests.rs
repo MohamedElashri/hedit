@@ -53,7 +53,7 @@ pub(super) fn fixture(text: &str) -> (tempfile::TempDir, egui::Context, HeditApp
     std::fs::write(&path, text).unwrap();
     let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
     let ctx = egui::Context::default();
-    ctx.style_mut(|style| style.scroll_animation = egui::style::ScrollAnimation::none());
+    ctx.global_style_mut(|style| style.scroll_animation = egui::style::ScrollAnimation::none());
     let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
     app.open(&ctx, Some(path));
     finish_app_job(&mut app, &ctx);
@@ -381,18 +381,18 @@ fn markdown_local_images_resolve_relative_and_absolute_paths_without_blocking() 
             match ctx.try_load_bytes(&uri).unwrap() {
                 egui::load::BytesPoll::Ready { bytes, .. } => {
                     assert_eq!(image::load_from_memory(bytes.as_ref()).unwrap().width(), 12);
-                    assert!(matches!(
+                    if matches!(
                         ctx.try_load_image(&uri, egui::load::SizeHint::default())
                             .unwrap(),
                         egui::load::ImagePoll::Ready { .. }
-                    ));
-                    break;
+                    ) {
+                        break;
+                    }
                 }
-                egui::load::BytesPoll::Pending { .. } => {
-                    assert!(started.elapsed() < Duration::from_secs(3));
-                    thread::sleep(Duration::from_millis(5));
-                }
+                egui::load::BytesPoll::Pending { .. } => {}
             }
+            assert!(started.elapsed() < Duration::from_secs(3));
+            thread::sleep(Duration::from_millis(5));
         }
     }
     let moved = directory.path().join("moved");
@@ -766,9 +766,12 @@ fn markdown_preview_fills_the_editor_with_a_padded_document_after_split() {
         "the document should use its preview pane with consistent side padding: {paragraph:?}"
     );
     assert!((paragraph.center().x - (220.0 + size.x) / 2.0).abs() < 30.0);
-    let status = egui::containers::panel::PanelState::load(&ctx, egui::Id::new("status"))
-        .unwrap()
-        .rect;
+    let status = egui::containers::panel::PanelState::load(
+        &ctx,
+        ctx.viewport_id().root_ui_id().with("status"),
+    )
+    .unwrap()
+    .outer_rect;
     assert!(
         output
             .shapes
@@ -944,6 +947,8 @@ fn scroll_markdown(
         vec![
             egui::Event::PointerMoved(at),
             egui::Event::MouseWheel {
+                phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Unknown,
                 unit: egui::MouseWheelUnit::Point,
                 delta: egui::vec2(0.0, delta),
                 modifiers: Modifiers::NONE,
@@ -1092,8 +1097,8 @@ fn markdown_split_sync_keeps_its_place_when_wrapped_math_content_resizes() {
         let (galley, _) = app.editor_layout.last().unwrap();
         let at = galley
             .cursor_from_pos(egui::vec2(0.0, (viewport.offset - 2.0).max(0.0)))
-            .ccursor
-            .index;
+            .index
+            .0;
         source.chars().take(at).filter(|&ch| ch == '\n').count()
     };
     let before = source_line(&app);
@@ -1169,7 +1174,7 @@ fn markdown_native_reader_has_clear_links_real_emphasis_and_theme_colored_copyab
                 .unwrap()
         };
         assert!(
-            ctx.fonts(|fonts| fonts.has_glyph(
+            ctx.fonts_mut(|fonts| fonts.has_glyph(
                 &FontId::new(15.0, egui::FontFamily::Name("hedit-reader".into())),
                 '→'
             )),
@@ -1187,7 +1192,7 @@ fn markdown_native_reader_has_clear_links_real_emphasis_and_theme_colored_copyab
                             .job
                             .sections
                             .iter()
-                            .find(|s| s.byte_range.contains(&at))
+                            .find(|s| s.byte_range.contains(&egui::text::ByteIndex(at)))
                             .map(|s| &s.format)
                     }
                     _ => None,

@@ -71,15 +71,15 @@ impl Group<'_> {
             row.context_menu(|ui| {
                 if self.listed_alias && ui.button("Connect to remote home").clicked() {
                     choice = Some(Action::Open(home()));
-                    ui.close_menu();
+                    ui.close();
                 }
                 if local && ui.button("Connection settings…").clicked() {
                     choice = Some(Action::Edit(browse()));
-                    ui.close_menu();
+                    ui.close();
                 }
                 if ui.button("SSH configuration…").clicked() {
                     choice = Some(Action::SshConfig);
-                    ui.close_menu();
+                    ui.close();
                 }
             });
             ui.indent("remote-workspaces", |ui| {
@@ -121,11 +121,11 @@ impl Group<'_> {
                                 .clicked()
                             {
                                 choice = Some(Action::Edit((*profile).clone()));
-                                ui.close_menu();
+                                ui.close();
                             }
                             if ui.button("Remove saved workspace").clicked() {
                                 choice = Some(Action::Remove(*index));
-                                ui.close_menu();
+                                ui.close();
                             }
                         });
                     });

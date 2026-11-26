@@ -9,7 +9,10 @@ use std::{
 // handles backgrounds, selection rectangles and decoration triangles.
 const LEAF_INDICES: usize = 256 * 3;
 #[derive(Clone, Default)]
-pub struct TextMeshCache(OnceLock<Option<Arc<TextMeshIndex>>>);
+pub struct TextMeshCache {
+    index: OnceLock<Option<Arc<TextMeshIndex>>>,
+    color_glyphs: OnceLock<bool>,
+}
 impl std::fmt::Debug for TextMeshCache {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("TextMeshCache")
@@ -29,17 +32,25 @@ impl TextMeshCache {
     }
     /// Approximate initialized metadata, without building the index.
     pub fn bytes(&self) -> usize {
-        self.0.get().and_then(Option::as_ref).map_or(0, |index| {
-            std::mem::size_of::<TextMeshIndex>()
-                + index.bounds.capacity() * std::mem::size_of::<Rect>()
-                + index.leaves.capacity() * std::mem::size_of::<MeshLeaf>()
-        })
+        self.index
+            .get()
+            .and_then(Option::as_ref)
+            .map_or(0, |index| {
+                std::mem::size_of::<TextMeshIndex>()
+                    + index.bounds.capacity() * std::mem::size_of::<Rect>()
+                    + index.leaves.capacity() * std::mem::size_of::<MeshLeaf>()
+            })
+    }
+    pub(crate) fn has_color_glyphs(&self, glyphs: &[super::Glyph]) -> bool {
+        *self
+            .color_glyphs
+            .get_or_init(|| glyphs.iter().any(|glyph| glyph.is_color))
     }
     pub(crate) fn get(&self, mesh: &Mesh) -> Option<&TextMeshIndex> {
         if mesh.indices.len() < 4 * LEAF_INDICES {
             return None;
         }
-        self.0
+        self.index
             .get_or_init(|| TextMeshIndex::new(mesh).map(Arc::new))
             .as_deref()
     }

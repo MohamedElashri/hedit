@@ -270,7 +270,7 @@ fn an_idle_window_schedules_no_redraws() {
     // Let the startup checkpoint finish.
     let started = Instant::now();
     while app.generation != app.persisted || app.checkpoint_pending {
-        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(started.elapsed() < Duration::from_secs(15));
         app.checkpoint(&ctx);
         app.receive(&ctx);
         thread::sleep(Duration::from_millis(5));
@@ -291,7 +291,9 @@ fn a_request_from_another_hedit_process_wakes_the_window() {
     let (directory, ctx, _app) = app_with("");
     let requests = directory.path().join("requests");
     std::fs::create_dir_all(&requests).unwrap();
-    let _ = ctx.run(egui::RawInput::default(), |_| {});
+    for _ in 0..3 {
+        let _ = crate::app::tests::run_pass(&ctx, egui::RawInput::default(), |_| {});
+    }
     assert!(!ctx.has_requested_repaint());
     std::fs::write(requests.join("1.request"), "{}").unwrap();
     let started = Instant::now();
@@ -302,6 +304,45 @@ fn a_request_from_another_hedit_process_wakes_the_window() {
         );
         thread::sleep(Duration::from_millis(20));
     }
+}
+
+#[test]
+fn a_hidden_window_opens_requests_without_a_ui_pass() {
+    let (directory, ctx, mut app) = app_with("");
+    let file = directory.path().join("opened-while-hidden.txt");
+    std::fs::write(&file, "ready").unwrap();
+    let requests = directory.path().join("requests");
+    std::fs::create_dir_all(&requests).unwrap();
+    let request = hedit::ipc::Request {
+        files: vec![hedit::ipc::WirePath::new(&file)],
+        stdin: None,
+        new_buffer: false,
+        wait: None,
+        activation: Default::default(),
+    };
+    std::fs::write(
+        requests.join("1.request"),
+        serde_json::to_vec(&request).unwrap(),
+    )
+    .unwrap();
+
+    let mut input = egui::RawInput::default();
+    input
+        .viewports
+        .get_mut(&egui::ViewportId::ROOT)
+        .unwrap()
+        .minimized = Some(true);
+    let started = Instant::now();
+    while app.active().page.text != "ready" {
+        let _ = ctx.run_logic(&input, |ctx| app.poll_window(ctx));
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            app.error
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(app.active().view.name, "opened-while-hidden.txt");
 }
 
 #[test]

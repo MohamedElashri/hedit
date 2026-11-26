@@ -166,6 +166,7 @@ pub(super) fn code_block(ui: &mut egui::Ui, theme: &Theme, source: &str, languag
                 size: size.to_bits(),
                 theme,
             })
+            .clone()
     });
     let width = ui.available_width().max(1.0);
     let scale = size / 14.0;
@@ -185,7 +186,7 @@ pub(super) fn code_block(ui: &mut egui::Ui, theme: &Theme, source: &str, languag
                 .auto_shrink([false, true])
                 .show(ui, |ui| {
                     ui.set_min_width(content_width);
-                    let galley = ui.fonts(|fonts| fonts.layout_job((*job).clone()));
+                    let galley = ui.fonts_mut(|fonts| fonts.layout_job((*job).clone()));
                     ui.add(egui::Label::new(galley).selectable(true));
                 });
         });
@@ -208,7 +209,7 @@ pub(super) fn code_block(ui: &mut egui::Ui, theme: &Theme, source: &str, languag
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text("Copy code");
     response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), "Copy code")
+        egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), "Copy code")
     });
     let hovered = ui
         .input(|input| input.pointer.hover_pos())

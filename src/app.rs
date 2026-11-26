@@ -1857,18 +1857,14 @@ impl HeditApp {
                     continue;
                 };
                 match ime {
-                    egui::ImeEvent::Preedit(text) => self.ime_composing = !text.is_empty(),
-                    egui::ImeEvent::Commit(text) => {
+                    egui::ImeEvent::Preedit { text, .. } => self.ime_composing = !text.is_empty(),
+                    egui::ImeEvent::Commit(text)
                         if !std::mem::take(&mut self.ime_composing)
-                            && !text.is_empty()
-                            && text != "\n"
-                            && text != "\r"
-                        {
-                            *event = egui::Event::Text(std::mem::take(text));
-                        }
+                            && !matches!(text.as_str(), "" | "\n" | "\r") =>
+                    {
+                        *event = egui::Event::Text(std::mem::take(text));
                     }
-                    egui::ImeEvent::Disabled => self.ime_composing = false,
-                    egui::ImeEvent::Enabled => {}
+                    _ => {}
                 }
             }
         });
@@ -2251,11 +2247,14 @@ impl HeditApp {
             self.settings.font_size = (self.settings.font_size - 1.0).max(10.0);
         }
     }
-    fn editor(&mut self, ctx: &egui::Context) {
+    fn editor(&mut self, root: &mut egui::Ui) {
+        let context = root.ctx().clone();
+        let ctx = &context;
         self.apply_editor_style(ctx);
+        root.reset_style();
         self.sync_review_group();
         if self.source_control.open && self.panes.mode == 0 {
-            self.source_control_editor(ctx);
+            self.source_control_editor(root);
             self.finish_tab_drag(ctx);
             return;
         }
@@ -2267,7 +2266,7 @@ impl HeditApp {
                     .fill(theme.background.color())
                     .inner_margin(egui::Margin::symmetric(4, 6)),
             )
-            .show(ctx, |ui| {
+            .show(root, |ui| {
                 self.error_banner(ui, &theme);
                 self.pane_layout(ui);
             });
@@ -2317,7 +2316,7 @@ impl HeditApp {
         if self.distraction_free {
             let mut rect = ui.available_rect_before_wrap();
             let width = ui
-                .fonts(|f| f.glyph_width(&FontId::monospace(self.settings.font_size), ' '))
+                .fonts_mut(|f| f.glyph_width(&FontId::monospace(self.settings.font_size), ' '))
                 * 100.0
                 + 60.0;
             if rect.width() > width {
@@ -2439,7 +2438,7 @@ impl HeditApp {
         let mut word_menu_at = None;
         let index = self.workspace.active;
         let buffer = &mut self.workspace.open[index];
-        let base_id = egui::Id::new(("editor", buffer.page.info.id, buffer.page.start));
+        let base_id = egui::Id::unique(("editor", buffer.page.info.id, buffer.page.start));
         let id = if pane_id == 0 {
             base_id
         } else {
@@ -2516,7 +2515,7 @@ impl HeditApp {
             if buffer.reveal_cursor
                 || !self.row_indexes[pane_id].text_matches(&projection)
                 || state.cursor.char_range().is_none_or(|range| {
-                    range.primary.index != head || range.secondary.index != anchor
+                    range.primary.index.0 != head || range.secondary.index.0 != anchor
                 })
             {
                 state
@@ -2545,7 +2544,8 @@ impl HeditApp {
         let typography = editor_layout::Font::from_settings(ui, &self.settings);
         let font_size = typography.size;
         let wrap = self.settings.word_wrap || self.distraction_free;
-        let column_width = ui.fonts(|fonts| fonts.glyph_width(&FontId::monospace(font_size), ' '));
+        let column_width =
+            ui.fonts_mut(|fonts| fonts.glyph_width(&FontId::monospace(font_size), ' '));
         let wrap_limit = if self.settings.wrap_width == 0 {
             if self.distraction_free {
                 column_width * 100.0
@@ -2572,7 +2572,7 @@ impl HeditApp {
             &buffer.page.info.name,
             language,
         );
-        let row_height = ui.fonts(|f| f.row_height(&typography.id()));
+        let row_height = ui.fonts_mut(|f| f.row_height(&typography.id()));
         let line_height = typography.line_height;
         // Like Sublime, the last line can scroll up to the top: the editor is a
         // window's height taller than its text, so clicks there place the cursor.
@@ -2585,10 +2585,10 @@ impl HeditApp {
         };
         // Row directions of the latest layout, for drawing right-to-left text.
         let latest_bidi = std::cell::RefCell::new(Arc::default());
-        let mut layouter = |ui: &egui::Ui, text: &str, wrap_width: f32| {
+        let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap_width: f32| {
             let galley = layout_cache.layout(
                 ui,
-                text,
+                text.as_str(),
                 language,
                 typography,
                 if wrap {
@@ -2719,13 +2719,15 @@ impl HeditApp {
                             crlf: buffer.page.info.eol == "CRLF",
                             index: projection.is_identity().then(|| source_index.clone()),
                         };
-                        let mut edit = egui::TextEdit::multiline(&mut editor_text)
+                        let edit = egui::TextEdit::multiline(&mut editor_text)
+                            .paint_selection(false)
                             .id(id)
                             .font(FontId::monospace(font_size))
                             .code_editor()
                             .lock_focus(true)
-                            .frame(false)
+                            .frame(egui::Frame::NONE)
                             .desired_rows(rows)
+                            .horizontal_overflow(!wrap)
                             .desired_width(if wrap {
                                 ui.available_width()
                             } else {
@@ -2754,9 +2756,6 @@ impl HeditApp {
                                     && self.project.create.is_none()
                                     && self.quality.file_action.is_none(),
                             );
-                        if !wrap {
-                            edit = edit.desired_width(f32::INFINITY);
-                        }
                         // Asking again resets egui's key filter, and the next
                         // arrow or Tab press would move focus out of the editor.
                         if self.focus_editor && !ctx.memory(|m| m.has_focus(id)) {
@@ -2766,15 +2765,16 @@ impl HeditApp {
                         let selection_background = ui.painter().add(egui::Shape::Noop);
                         let caret_color = ui.visuals().text_cursor.stroke.color;
                         let selection_color = ui.visuals().selection.bg_fill;
-                        // Paint selection below the text without copying selected glyph meshes.
-                        ui.visuals_mut().selection.bg_fill = egui::Color32::TRANSPARENT;
                         if rtl_text {
                             ui.visuals_mut().text_cursor.stroke.color = egui::Color32::TRANSPARENT;
                         }
                         let mut output = edit.show(ui);
+                        if !wrap {
+                            // Let the last caret clear the clip edge at maximum scroll.
+                            ui.add_space(2.0);
+                        }
                         let edited_chars = editor_text.index.as_ref().map(|index| index.chars);
                         known_splice = editor_text.change.filter(|_| edited_chars.is_some());
-                        ui.visuals_mut().selection.bg_fill = selection_color;
                         let row_index = self.row_indexes[pane_id].get(&output.galley);
                         let visible_rows =
                             row_index.visible(&output.galley, output.galley_pos, ui.clip_rect());
@@ -2839,7 +2839,7 @@ impl HeditApp {
                             if let Some(range) = &output.cursor_range {
                                 let caret = output
                                     .galley
-                                    .pos_from_cursor(&range.primary)
+                                    .pos_from_cursor(range.primary)
                                     .translate(output.galley_pos.to_vec2());
                                 let rect = egui::Rect::from_min_max(
                                     egui::pos2(ui.clip_rect().left(), caret.top()),
@@ -2860,12 +2860,10 @@ impl HeditApp {
                             if projection.source(display_start) != fold.start {
                                 continue;
                             }
-                            let cursor = output
-                                .galley
-                                .from_ccursor(egui::text::CCursor::new(display_start));
+                            let cursor = egui::text::CCursor::new(display_start);
                             let position = output
                                 .galley
-                                .pos_from_cursor(&cursor)
+                                .pos_from_cursor(cursor)
                                 .translate(output.galley_pos.to_vec2());
                             if !position.intersects(ui.clip_rect()) {
                                 continue;
@@ -2896,9 +2894,9 @@ impl HeditApp {
                             for r in visible_rows.clone() {
                                 let row = &output.galley.rows[r];
                                 if row_index.row(r).first
-                                    && output.galley_pos.y + row.rect.bottom()
+                                    && output.galley_pos.y + row.rect().bottom()
                                         >= ui.clip_rect().top()
-                                    && output.galley_pos.y + row.rect.top()
+                                    && output.galley_pos.y + row.rect().top()
                                         <= ui.clip_rect().bottom()
                                 {
                                     let spaces =
@@ -2911,8 +2909,8 @@ impl HeditApp {
                                         let x = output.galley_pos.x + column_width * col as f32;
                                         ui.painter().vline(
                                             x,
-                                            (output.galley_pos.y + row.rect.top())
-                                                ..=(output.galley_pos.y + row.rect.bottom()),
+                                            (output.galley_pos.y + row.rect().top())
+                                                ..=(output.galley_pos.y + row.rect().bottom()),
                                             egui::Stroke::new(
                                                 1.0_f32,
                                                 self.theme.muted.color().gamma_multiply(0.22),
@@ -3081,7 +3079,7 @@ impl HeditApp {
                                 if row_index.row(r).first {
                                     let position = egui::pos2(
                                         gutter_rect.right() - 12.0,
-                                        output.galley_pos.y + row.rect.center().y,
+                                        output.galley_pos.y + row.rect().center().y,
                                     );
                                     if gutter_rect
                                         .contains(egui::pos2(gutter_rect.center().x, position.y))
@@ -3099,9 +3097,9 @@ impl HeditApp {
                                             let mark = egui::Rect::from_min_size(
                                                 egui::pos2(
                                                     gutter_rect.left() + 2.0,
-                                                    position.y - row.rect.height() / 2.0,
+                                                    position.y - row.rect().height() / 2.0,
                                                 ),
-                                                egui::vec2(5.0, row.rect.height()),
+                                                egui::vec2(5.0, row.rect().height()),
                                             );
                                             gutter_painter.rect_filled(
                                                 mark,
@@ -3116,7 +3114,7 @@ impl HeditApp {
                                                 gutter_ui
                                                     .interact(
                                                         mark,
-                                                        gutter_ui.id().with((
+                                                        gutter_ui.scope_id().with((
                                                             "git-hunk",
                                                             buffer.view.id,
                                                             source_line,
@@ -3144,12 +3142,12 @@ impl HeditApp {
                                                 egui::pos2(gutter_rect.right() - 6.0, position.y);
                                             let target = egui::Rect::from_center_size(
                                                 center,
-                                                egui::vec2(12.0, row.rect.height()),
+                                                egui::vec2(12.0, row.rect().height()),
                                             );
                                             let response = gutter_ui
                                                 .interact(
                                                     target,
-                                                    gutter_ui.id().with((
+                                                    gutter_ui.scope_id().with((
                                                         "fold-arrow",
                                                         buffer.view.id,
                                                         source_line,
@@ -3220,7 +3218,7 @@ impl HeditApp {
                                 let relative = at - output.galley_pos;
                                 let index = bidi_view::hit(&output.galley, &bidi_rows, relative)
                                     .unwrap_or_else(|| {
-                                        output.galley.cursor_from_pos(relative).ccursor.index
+                                        output.galley.cursor_from_pos(relative).index.0
                                     });
                                 // Only over the text itself, not the space after a line.
                                 let caret =
@@ -3240,7 +3238,7 @@ impl HeditApp {
                                 let rect = bidi_view::caret_rect(
                                     &output.galley,
                                     &bidi_rows,
-                                    range.primary.ccursor.index,
+                                    range.primary.index.0,
                                 )
                                 .translate(output.galley_pos.to_vec2());
                                 ui.clip_rect().contains(rect.center()).then_some(rect)
@@ -3252,18 +3250,17 @@ impl HeditApp {
                             // selection head in display coordinates instead.
                             let head = output.cursor_range.map_or_else(
                                 || projection.display(buffer.view.head),
-                                |range| range.primary.ccursor.index,
+                                |range| range.primary.index.0,
                             );
                             let rect = bidi_view::caret_rect(&output.galley, &bidi_rows, head)
                                 .translate(output.galley_pos.to_vec2());
                             ui.scroll_to_rect(rect, Some(egui::Align::Center));
                         }
                         if let Some(range) = output.cursor_range {
-                            let range = range.as_ccursor_range();
                             let previous = (buffer.view.anchor, buffer.view.head);
                             let selection = hedit::advanced::Selection {
-                                anchor: range.secondary.index,
-                                head: range.primary.index,
+                                anchor: range.secondary.index.0,
+                                head: range.primary.index.0,
                             };
                             if output.response.changed() {
                                 let changed_chars = edited_chars.filter(|_| {
@@ -3340,7 +3337,7 @@ impl HeditApp {
                                 if let Some(at) = output.response.interact_pointer_pos() {
                                     let cursor =
                                         output.galley.cursor_from_pos(at - output.galley_pos);
-                                    let source = projection.source(cursor.ccursor.index);
+                                    let source = projection.source(cursor.index.0);
                                     buffer
                                         .view
                                         .folds
@@ -3357,16 +3354,16 @@ impl HeditApp {
                             let top = output
                                 .galley
                                 .cursor_from_pos(egui::vec2(0.0, clip.top() - output.galley_pos.y))
-                                .ccursor
-                                .index;
+                                .index
+                                .0;
                             let bottom = output
                                 .galley
                                 .cursor_from_pos(egui::vec2(
                                     f32::MAX,
                                     clip.bottom() - output.galley_pos.y,
                                 ))
-                                .ccursor
-                                .index;
+                                .index
+                                .0;
                             let painter = ui.painter();
                             let stroke = egui::Stroke::new(1.2_f32, self.theme.error.color());
                             for range in &misspelled {
@@ -3452,14 +3449,13 @@ impl HeditApp {
                                 );
                             }
                             if decoration.severity.is_none() {
-                                let row = output
+                                let cursor = output
                                     .galley
-                                    .cursor_from_pos(start.center() - output.galley_pos)
-                                    .rcursor
-                                    .row;
+                                    .cursor_from_pos(start.center() - output.galley_pos);
+                                let row = output.galley.layout_from_cursor(cursor).row;
                                 if let Some(row) = output.galley.rows.get(row) {
                                     let position = egui::pos2(
-                                        output.galley_pos.x + row.rect.right() + 12.0,
+                                        output.galley_pos.x + row.rect().right() + 12.0,
                                         start.top(),
                                     );
                                     if position.x < ui.clip_rect().right() {
@@ -3480,7 +3476,7 @@ impl HeditApp {
                                 let relative = at - output.galley_pos;
                                 let index = bidi_view::hit(&output.galley, &bidi_rows, relative)
                                     .unwrap_or_else(|| {
-                                        output.galley.cursor_from_pos(relative).ccursor.index
+                                        output.galley.cursor_from_pos(relative).index.0
                                     });
                                 let source = projection.source(index);
                                 word_menu_at = Some(source);
@@ -3507,7 +3503,7 @@ impl HeditApp {
                                     if ui.button(RichText::new(word).strong()).clicked() {
                                         spell_choice =
                                             Some(spell_check::SpellAction::Replace(word.clone()));
-                                        ui.close_menu();
+                                        ui.close();
                                     }
                                 }
                                 if ui
@@ -3515,11 +3511,11 @@ impl HeditApp {
                                     .clicked()
                                 {
                                     spell_choice = Some(spell_check::SpellAction::Add);
-                                    ui.close_menu();
+                                    ui.close();
                                 }
                                 if ui.button(format!("Ignore “{}”", menu.word)).clicked() {
                                     spell_choice = Some(spell_check::SpellAction::Ignore);
-                                    ui.close_menu();
+                                    ui.close();
                                 }
                                 ui.separator();
                             }
@@ -3532,7 +3528,7 @@ impl HeditApp {
                                         egui::Button::new(*label).shortcut_text(shortcut.as_str());
                                     if ui.add_enabled(*enabled, button).clicked() {
                                         context_command = Some(*command);
-                                        ui.close_menu();
+                                        ui.close();
                                     }
                                 }
                             }
@@ -3591,7 +3587,7 @@ impl HeditApp {
                 );
             }
             let content = scroll_output.content_size.y.max(map.height());
-            let start = (scroll_output.state.offset.y / content).clamp(0.0, 1.0);
+            let start = (scroll_output.state.clamped_offset().y / content).clamp(0.0, 1.0);
             let fraction = (map.height() / content).min(1.0);
             let viewport = egui::Rect::from_min_size(
                 egui::pos2(map.left(), map.top() + start * map.height()),
@@ -3604,7 +3600,7 @@ impl HeditApp {
             );
             let response = ui.interact(
                 map,
-                egui::Id::new(("minimap", pane_id)),
+                egui::Id::unique(("minimap", pane_id)),
                 egui::Sense::click_and_drag(),
             );
             if let Some(pos) = response.interact_pointer_pos() {
@@ -3625,11 +3621,11 @@ impl HeditApp {
         }
         buffer.restore_cursor = false;
         buffer.reveal_cursor = false;
-        if buffer.view.scroll_top != scroll_output.state.offset.y as f64
-            || buffer.view.scroll_left != scroll_output.state.offset.x as f64
+        if buffer.view.scroll_top != scroll_output.state.clamped_offset().y as f64
+            || buffer.view.scroll_left != scroll_output.state.clamped_offset().x as f64
         {
-            buffer.view.scroll_top = scroll_output.state.offset.y as f64;
-            buffer.view.scroll_left = scroll_output.state.offset.x as f64;
+            buffer.view.scroll_top = scroll_output.state.clamped_offset().y as f64;
+            buffer.view.scroll_left = scroll_output.state.clamped_offset().x as f64;
             self.generation = self.generation.wrapping_add(1);
         }
         if let Some(target) = minimap_target {
@@ -3696,12 +3692,14 @@ impl HeditApp {
             self.execute(ui.ctx(), command);
         }
     }
-    fn gpu(&mut self, ctx: &egui::Context) {
+    fn gpu(&mut self, root: &mut egui::Ui) {
+        let context = root.ctx().clone();
+        let ctx = &context;
         let theme = self.theme.clone();
         if !hedit::debugger::LOCAL_TOOLS_SUPPORTED || !self.gpu_open {
             return;
         }
-        egui::TopBottomPanel::bottom("gpu").resizable(true).default_height(285.0).min_height(160.0).show(ctx, |ui| {
+        egui::Panel::bottom("gpu").resizable(true).default_size(285.0).min_size(160.0).show(root, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new("CUDA / GPU").strong().color(theme.accent.color()));
                 ui.label(RichText::new("NVIDIA tools · Linux").small().color(theme.muted.color()));
@@ -3895,7 +3893,7 @@ impl HeditApp {
             let mut apply = false;
             let mut cancel = false;
             egui::Window::new("Name unsaved file")
-                .id(egui::Id::new("unsaved-file-name"))
+                .id(egui::Id::unique("unsaved-file-name"))
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(false)
@@ -4102,27 +4100,16 @@ impl HeditApp {
         }
     }
 }
-impl eframe::App for HeditApp {
-    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
-        if let Some(trace) = &self.native_perf {
-            trace.input(raw);
+impl HeditApp {
+    /// Process incoming work even when eframe suspends painting a hidden window.
+    fn poll_window(&mut self, ctx: &egui::Context) {
+        if ctx.input(|input| input.viewport().visible().unwrap_or(true)) {
+            self.note_open_input(ctx);
         }
-    }
-    fn persist_egui_memory(&self) -> bool {
-        self.workspace.remote.is_none()
-    }
-
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if let Some(trace) = &self.native_perf {
-            trace.begin_frame(ctx);
-        }
-        self.note_open_input(ctx);
         self.remote_controls(ctx);
-        self.opening_bar(ctx);
         self.updates.poll();
         self.receive(ctx);
         self.poll_language_servers(ctx);
-        self.language_information(ctx);
         self.poll_incoming(ctx);
         self.activation.update(ctx);
         self.poll_workspace_watch(ctx);
@@ -4145,6 +4132,41 @@ impl eframe::App for HeditApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.request_quit();
         }
+        self.poll_build();
+        self.poll_terminal(ctx);
+        self.track_waits();
+        self.poll_lua_transform(ctx);
+        self.poll_broker_command(ctx);
+        self.poll_plugin_services(ctx);
+        self.persist_settings();
+        if let Some(after) = self.next_wake(ctx) {
+            ctx.request_repaint_after(after);
+        }
+    }
+}
+
+impl eframe::App for HeditApp {
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
+        if let Some(trace) = &self.native_perf {
+            trace.input(raw);
+        }
+    }
+    fn persist_egui_memory(&self) -> bool {
+        self.workspace.remote.is_none()
+    }
+
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.poll_window(ctx);
+    }
+
+    fn ui(&mut self, root: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let context = root.ctx().clone();
+        let ctx = &context;
+        if let Some(trace) = &self.native_perf {
+            trace.begin_frame(ctx);
+        }
+        self.opening_bar(root);
+        self.language_information(ctx);
         self.sync_appearance(ctx);
         // Follow full screen changes made outside hedit, such as by the window manager.
         if let Some(fullscreen) = ctx.input(|i| i.viewport().fullscreen) {
@@ -4196,14 +4218,11 @@ impl eframe::App for HeditApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
             self.window_title = title;
         }
-        self.poll_build();
-        self.poll_terminal(ctx);
-        self.track_waits();
-        self.chrome(ctx);
-        self.gpu(ctx);
-        self.search_panel(ctx);
-        self.workbench_panel(ctx);
-        self.editor(ctx);
+        self.chrome(root);
+        self.gpu(root);
+        self.search_panel(root);
+        self.workbench_panel(root);
+        self.editor(root);
         if !self.busy && !self.closing {
             self.command_palette(ctx);
         }
@@ -4214,16 +4233,13 @@ impl eframe::App for HeditApp {
         self.quality_windows(ctx);
         self.record_copies(ctx);
         self.close_dialog(ctx);
-        self.poll_lua_transform(ctx);
-        self.poll_broker_command(ctx);
-        self.poll_plugin_services(ctx);
         self.terminal_onboarding(ctx);
         self.notification_center(ctx);
         let paths: Vec<_> = ctx.input(|i| {
             i.raw
                 .dropped_files
                 .iter()
-                .filter_map(|f| f.path.clone())
+                .map(|file| file.path().to_path_buf())
                 .collect()
         });
         self.pending_paths.extend(paths);
@@ -4327,6 +4343,16 @@ pub fn icon() -> egui::IconData {
 mod tests {
     use super::*;
 
+    pub(super) fn run_pass(
+        ctx: &egui::Context,
+        input: egui::RawInput,
+        run: impl FnMut(&egui::Context),
+    ) -> egui::FullOutput {
+        let mut output = ctx.run_pass(input, run);
+        output.textures_delta.clear();
+        output
+    }
+
     pub(super) fn frame(
         ctx: &egui::Context,
         app: &mut HeditApp,
@@ -4340,13 +4366,24 @@ mod tests {
         events: Vec<egui::Event>,
         size: egui::Vec2,
     ) -> egui::FullOutput {
+        let mut output = frame_with_textures(ctx, app, events, size);
+        output.textures_delta.clear();
+        output
+    }
+
+    pub(super) fn frame_with_textures(
+        ctx: &egui::Context,
+        app: &mut HeditApp,
+        events: Vec<egui::Event>,
+        size: egui::Vec2,
+    ) -> egui::FullOutput {
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
             focused: true,
             events,
             ..Default::default()
         };
-        let output = ctx.run(input, |ctx| {
+        let output = ctx.run_pass(input, |ctx| {
             app.note_open_input(ctx);
             app.poll_source_control(ctx);
             if app.languages.service.is_some()
@@ -4357,12 +4394,12 @@ mod tests {
                 app.language_information(ctx);
             }
             app.shortcuts(ctx);
-            app.chrome(ctx);
-            app.gpu(ctx);
-            app.search_panel(ctx);
+            ctx.root_ui(|root| app.chrome(root));
+            ctx.root_ui(|root| app.gpu(root));
+            ctx.root_ui(|root| app.search_panel(root));
             app.poll_build();
-            app.workbench_panel(ctx);
-            app.editor(ctx);
+            ctx.root_ui(|root| app.workbench_panel(root));
+            ctx.root_ui(|root| app.editor(root));
             app.command_palette(ctx);
             app.preferences(ctx);
             app.buffer_tools(ctx);
@@ -4530,9 +4567,12 @@ mod tests {
                     frame_size(&ctx, &mut app, vec![], size);
                 }
                 let panel = |name| {
-                    egui::containers::panel::PanelState::load(&ctx, egui::Id::new(name))
-                        .unwrap()
-                        .rect
+                    egui::containers::panel::PanelState::load(
+                        &ctx,
+                        ctx.viewport_id().root_ui_id().with(name),
+                    )
+                    .unwrap()
+                    .outer_rect
                 };
                 let tabs = panel("tabs");
                 let menu = panel("menu-bar");
@@ -4905,7 +4945,7 @@ mod tests {
         frame(&ctx, &mut app, vec![]);
         frame(&ctx, &mut app, vec![]);
         let response = ctx
-            .read_response(egui::Id::new(("minimap", 0usize)))
+            .read_response(egui::Id::unique(("minimap", 0usize)))
             .unwrap();
         let position = egui::pos2(response.rect.center().x, response.rect.bottom() - 8.0);
         frame(
@@ -4963,7 +5003,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
         frame(&ctx, &mut app, vec![]);
-        let id = egui::Id::new(("editor", app.active().page.info.id, 0u64));
+        let id = egui::Id::unique(("editor", app.active().page.info.id, 0u64));
         let rect = ctx.read_response(id).unwrap().rect;
         let start = rect.min + egui::vec2(10.0, 8.0);
         let end = rect.min + egui::vec2(26.0, 40.0);
@@ -4973,21 +5013,23 @@ mod tests {
             ..Modifiers::NONE
         };
         let run = |app: &mut HeditApp, events| {
-            ctx.run(
+            crate::app::tests::run_pass(
+                &ctx,
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(
                         egui::Pos2::ZERO,
                         egui::vec2(1280.0, 820.0),
                     )),
-                    modifiers,
-                    events,
+                    events: std::iter::once(egui::Event::ModifiersChanged(modifiers))
+                        .chain(events)
+                        .collect(),
                     focused: true,
                     ..Default::default()
                 },
                 |ctx| {
                     app.shortcuts(ctx);
-                    app.chrome(ctx);
-                    app.editor(ctx);
+                    ctx.root_ui(|root| app.chrome(root));
+                    ctx.root_ui(|root| app.editor(root));
                 },
             )
         };
@@ -5093,6 +5135,9 @@ mod tests {
         }
         fn set_string(&mut self, key: &str, value: String) {
             self.0.insert(key.into(), value);
+        }
+        fn remove_string(&mut self, key: &str) {
+            self.0.remove(key);
         }
         fn flush(&mut self) {}
     }
@@ -5399,11 +5444,11 @@ mod tests {
                 system_theme: Some(theme),
                 ..Default::default()
             };
-            let _ = ctx.run(input, |ctx| app.sync_appearance(ctx));
+            let _ = crate::app::tests::run_pass(&ctx, input, |ctx| app.sync_appearance(ctx));
         };
         system(&mut app, egui::Theme::Light);
         assert_eq!(app.theme, light);
-        assert!(!ctx.style().visuals.dark_mode);
+        assert!(!ctx.global_style().visuals.dark_mode);
         system(&mut app, egui::Theme::Dark);
         assert_eq!(app.theme, dark);
         // Editing a built-in marks it modified and updates the displayed slot.
@@ -5451,10 +5496,10 @@ mod tests {
         let app = HeditApp::from_context(&ctx, Some(&storage), workspace, vec![], vec![]);
         assert_eq!(app.theme, custom);
         assert_eq!(
-            ctx.style().visuals.text_cursor.stroke.color,
+            ctx.global_style().visuals.text_cursor.stroke.color,
             custom.accent.color()
         );
-        assert!(!ctx.style().visuals.dark_mode);
+        assert!(!ctx.global_style().visuals.dark_mode);
     }
     #[test]
     fn invalid_saved_theme_keeps_editor_usable_and_reports_error() {
@@ -5768,7 +5813,7 @@ mod tests {
         for _ in 0..3 {
             frame_size(&ctx, &mut app, vec![], size);
         }
-        let popup_id = egui::Id::new("syntax-popup");
+        let popup_id = egui::Id::unique("syntax-popup");
         let rect = ctx.memory(|memory| memory.area_rect(popup_id)).unwrap();
         assert!(egui::Rect::from_min_size(egui::Pos2::ZERO, size).contains_rect(rect));
         for event in [
@@ -6450,7 +6495,8 @@ mod tests {
                 let mut last = None;
                 for _ in 0..3 {
                     render_time += 0.25;
-                    let result = ctx.run(
+                    let result = crate::app::tests::run_pass(
+                        &ctx,
                         egui::RawInput {
                             time: Some(render_time),
                             screen_rect: Some(egui::Rect::from_min_size(
@@ -6460,11 +6506,11 @@ mod tests {
                             ..Default::default()
                         },
                         |ctx| {
-                            app.chrome(ctx);
-                            app.gpu(ctx);
-                            app.search_panel(ctx);
-                            app.workbench_panel(ctx);
-                            app.editor(ctx);
+                            ctx.root_ui(|root| app.chrome(root));
+                            ctx.root_ui(|root| app.gpu(root));
+                            ctx.root_ui(|root| app.search_panel(root));
+                            ctx.root_ui(|root| app.workbench_panel(root));
+                            ctx.root_ui(|root| app.editor(root));
                             app.command_palette(ctx);
                             app.preferences(ctx);
                         },

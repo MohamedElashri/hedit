@@ -695,10 +695,6 @@ impl HeditApp {
                         || self.setting_modified(s, &current, defaults))
             })
             .collect();
-        if self.settings_search_active() {
-            ui.weak(format!("{} matching settings", entries.len()));
-            ui.add_space(8.0);
-        }
         if entries.is_empty() {
             ui.label("No matching settings.");
             ui.weak("Try a setting name, a JSON key, or clear the Modified filter.");
@@ -736,7 +732,7 @@ impl HeditApp {
                         );
                     }
                     let reset_font = hedit::ui_style::Metrics::for_ui(ui).small;
-                    let reset_width = ui.fonts(|f| {
+                    let reset_width = ui.fonts_mut(|f| {
                         f.layout_no_wrap(
                             "Reset".into(),
                             FontId::proportional(reset_font),
@@ -906,7 +902,7 @@ impl HeditApp {
                             let response = if matches!(kind, Kind::List) {
                                 ui.add(
                                     egui::TextEdit::multiline(&mut text)
-                                        .id(egui::Id::new(("setting-value", spec.key)))
+                                        .id(egui::Id::unique(("setting-value", spec.key)))
                                         .desired_rows(3)
                                         .desired_width(f32::INFINITY)
                                         .char_limit(65536),
@@ -914,7 +910,7 @@ impl HeditApp {
                             } else {
                                 ui.add(
                                     egui::TextEdit::singleline(&mut text)
-                                        .id(egui::Id::new(("setting-value", spec.key)))
+                                        .id(egui::Id::unique(("setting-value", spec.key)))
                                         .desired_width(f32::INFINITY)
                                         .char_limit(4096),
                                 )
@@ -1176,7 +1172,7 @@ mod tests {
             for _ in 0..2 {
                 frame(&ctx, &mut app, vec![]);
             }
-            ctx.memory_mut(|m| m.request_focus(egui::Id::new(("setting-value", key))));
+            ctx.memory_mut(|m| m.request_focus(egui::Id::unique(("setting-value", key))));
             frame(&ctx, &mut app, vec![egui::Event::Text(first.into())]);
             assert_eq!(
                 app.settings_browser.drafts.get(key).map(String::as_str),

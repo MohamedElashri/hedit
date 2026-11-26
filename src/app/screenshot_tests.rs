@@ -142,7 +142,7 @@ impl Scene {
         });
         let ctx = egui::Context::default();
         ctx.set_pixels_per_point(SCALE);
-        ctx.style_mut(|s| s.scroll_animation = egui::style::ScrollAnimation::none());
+        ctx.global_style_mut(|s| s.scroll_animation = egui::style::ScrollAnimation::none());
         settings_store::fallback_fonts();
         settings_store::set_editor_font(&ctx, None);
         let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
@@ -170,7 +170,7 @@ impl Scene {
         self.app.project.poll();
         self.app.receive(&self.ctx);
         self.app.poll_terminal(&self.ctx);
-        let output = self.ctx.run(
+        let mut output = self.ctx.run_pass(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, SIZE)),
                 focused: true,
@@ -180,10 +180,10 @@ impl Scene {
             |ctx| {
                 self.app.poll_source_control(ctx);
                 self.app.shortcuts(ctx);
-                self.app.chrome(ctx);
-                self.app.search_panel(ctx);
-                self.app.workbench_panel(ctx);
-                self.app.editor(ctx);
+                ctx.root_ui(|root| self.app.chrome(root));
+                ctx.root_ui(|root| self.app.search_panel(root));
+                ctx.root_ui(|root| self.app.workbench_panel(root));
+                ctx.root_ui(|root| self.app.editor(root));
                 self.app.quality_windows(ctx);
                 self.app.preferences(ctx);
                 self.app.buffer_tools(ctx);
@@ -192,10 +192,13 @@ impl Scene {
                 self.app.notification_center(ctx);
             },
         );
-        for (id, delta) in &output.textures_delta.set {
-            let egui::ImageData::Color(image) = &delta.image else {
-                continue;
-            };
+        for (id, delta) in output
+            .textures_delta
+            .set
+            .iter()
+            .flat_map(|(id, deltas)| deltas.iter().map(move |delta| (id, delta)))
+        {
+            let egui::ImageData::Color(image) = &delta.image;
             if let Some([x, y]) = delta.pos {
                 if let Some(target) = self.textures.get_mut(id) {
                     for row in 0..image.height() {
@@ -209,6 +212,7 @@ impl Scene {
                 self.textures.insert(*id, (**image).clone());
             }
         }
+        output.textures_delta.clear();
         output
     }
     fn settle(&mut self) {

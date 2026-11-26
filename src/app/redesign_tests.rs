@@ -161,9 +161,12 @@ fn redesign_status_actions_fit_with_follow_multicursor_and_a_long_notice() {
                 frame_size(&ctx, &mut app, vec![], SIZE);
             }
             let output = frame_size(&ctx, &mut app, vec![], SIZE);
-            let status = egui::containers::panel::PanelState::load(&ctx, egui::Id::new("status"))
-                .unwrap()
-                .rect;
+            let status = egui::containers::panel::PanelState::load(
+                &ctx,
+                ctx.viewport_id().root_ui_id().with("status"),
+            )
+            .unwrap()
+            .outer_rect;
             for label in [
                 format!("{} ⏷", language.label()),
                 "UTF-8".into(),
@@ -196,9 +199,12 @@ fn redesign_find_and_replace_remain_clickable_beside_a_wide_sidebar() {
             frame_size(&ctx, &mut app, vec![], SIZE);
         }
         // Resize the sidebar through the same pointer gesture a user makes.
-        let side = egui::containers::panel::PanelState::load(&ctx, egui::Id::new("buffers"))
-            .unwrap()
-            .rect;
+        let side = egui::containers::panel::PanelState::load(
+            &ctx,
+            ctx.viewport_id().root_ui_id().with("buffers"),
+        )
+        .unwrap()
+        .outer_rect;
         let from = egui::pos2(side.right() - 1.0, side.center().y);
         let to = egui::pos2(side.left() + 359.0, side.center().y);
         frame_size(
@@ -227,9 +233,12 @@ fn redesign_find_and_replace_remain_clickable_beside_a_wide_sidebar() {
             }],
             SIZE,
         );
-        let side = egui::containers::panel::PanelState::load(&ctx, egui::Id::new("buffers"))
-            .unwrap()
-            .rect;
+        let side = egui::containers::panel::PanelState::load(
+            &ctx,
+            ctx.viewport_id().root_ui_id().with("buffers"),
+        )
+        .unwrap()
+        .outer_rect;
         assert!(side.width() >= 350.0, "sidebar did not resize: {side:?}");
         app.execute(&ctx, Command::Replace);
         app.query = "cat".into();

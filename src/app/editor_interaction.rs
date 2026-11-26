@@ -60,19 +60,20 @@ pub(super) fn complete_drag(
             output
                 .galley
                 .cursor_from_pos(pos - output.galley_pos)
-                .ccursor
                 .index
+                .0
         })
     };
     let anchor = if shift { previous_anchor } else { hit(start) };
     let head = hit(end);
-    let cursor = |at| output.galley.from_ccursor(egui::text::CCursor::new(at));
-    let range = egui::text_selection::CursorRange {
+    let cursor = |at| egui::text::CCursor::new(at);
+    let range = egui::text::CCursorRange {
         primary: cursor(head),
         secondary: cursor(anchor),
+        h_pos: None,
     };
     output.cursor_range = Some(range);
-    output.state.cursor.set_range(Some(range));
+    output.state.cursor.set_char_range(Some(range));
     response.request_focus();
     true
 }
@@ -81,14 +82,17 @@ pub(super) fn complete_drag(
 /// The cached galley and its glyph meshes remain shared even for Select All.
 pub(super) fn selection_rects(
     galley: &egui::Galley,
-    range: &egui::text_selection::CursorRange,
+    range: &egui::text::CCursorRange,
     rows: std::ops::Range<usize>,
 ) -> Vec<egui::Rect> {
     if range.is_empty() {
         return vec![];
     }
     let [min, max] = range.sorted_cursors();
-    let (min, max) = (min.rcursor, max.rcursor);
+    let (min, max) = (
+        galley.layout_from_cursor(min),
+        galley.layout_from_cursor(max),
+    );
     let end = max
         .row
         .saturating_add(1)
@@ -98,14 +102,14 @@ pub(super) fn selection_rects(
         .map(|ri| {
             let row = &galley.rows[ri];
             let left = if ri == min.row {
-                row.x_offset(min.column)
+                row.pos.x + row.x_offset(min.column)
             } else {
-                row.rect.left()
+                row.rect().left()
             };
             let right = if ri == max.row {
-                row.x_offset(max.column)
+                row.pos.x + row.x_offset(max.column)
             } else {
-                row.rect.right()
+                row.rect().right()
                     + if row.ends_with_newline {
                         row.height() / 2.0
                     } else {

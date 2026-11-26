@@ -8,7 +8,7 @@
 //! because egui assumes glyph x positions grow with the character index.
 use eframe::egui::{
     self,
-    epaint::text::{Fonts, Row},
+    epaint::text::{CharIndex, FontsView, PlacedRow, Row},
     text::Galley,
 };
 use hedit::bidi;
@@ -75,45 +75,65 @@ impl Base {
 
 /// Join and reorder the right-to-left lines of `galley`, returning it (a copy
 /// when anything changed) and the directions of its rows.
-pub(super) fn apply(fonts: &Fonts, galley: Arc<Galley>, base: Base) -> (Arc<Galley>, BidiRows) {
+pub(super) fn apply(
+    fonts: &mut FontsView<'_>,
+    galley: Arc<Galley>,
+    base: Base,
+) -> (Arc<Galley>, BidiRows) {
     if galley.elided || !bidi::has_rtl(galley.text()) {
         return (galley, BidiRows::default());
     }
     let mut galley = (*galley).clone();
     let mut dirs = vec![None; galley.rows.len()];
     let pixels_per_point = galley.pixels_per_point;
+    let mut byte_offset = 0;
     for rows in lines(&galley) {
         let chars: Vec<char> = galley.rows[rows.clone()]
             .iter()
             .flat_map(|row| row.glyphs.iter().map(|g| g.chr))
             .collect();
         let text: String = chars.iter().collect();
+        let paragraph_byte = byte_offset;
+        byte_offset += text.len() + usize::from(galley.rows[rows.end - 1].ends_with_newline);
         if !bidi::has_rtl(&text) {
             continue;
         }
         let line = bidi::Line::with_base(&text, (base == Base::Ltr).then_some(false));
         let shaped = bidi::shape(&chars);
         let mut start = 0;
+        let mut byte = paragraph_byte;
+        let job = &galley.job;
+        let mut section = job.sections.partition_point(|s| s.byte_range.end.0 <= byte);
         for r in rows {
-            let row = Arc::make_mut(&mut galley.rows[r]);
+            let row = Arc::make_mut(&mut galley.rows[r].row);
+            let mut formats = Vec::with_capacity(row.glyphs.len());
+            for glyph in &row.glyphs {
+                while section + 1 < job.sections.len()
+                    && byte >= job.sections[section].byte_range.end.0
+                {
+                    section += 1;
+                }
+                formats.push(&job.sections[section.min(job.sections.len() - 1)].format);
+                byte += glyph.chr.len_utf8();
+            }
             let count = row.glyphs.len();
             let rtl = line.row_rtl(start, start + count);
             let quads: Vec<bool> = row.glyphs.iter().map(|g| !g.uv_rect.is_nothing()).collect();
             let hidden: Vec<bool> = (0..count).map(|i| shaped[start + i].hidden).collect();
-            substitute(fonts, &galley.job, row, &shaped[start..start + count], &rtl);
+            substitute(fonts, &formats, row, &shaped[start..start + count], &rtl);
             for (glyph, hidden) in row.glyphs.iter_mut().zip(&hidden) {
                 if *hidden {
                     glyph.advance_width = 0.0;
                 }
             }
-            let mut x = row.rect.min.x;
+            let mut x = 0.0;
             for i in line.visual(start, start + count) {
                 let glyph = &mut row.glyphs[i - start];
                 glyph.pos.x = x;
                 x += glyph.advance_width;
             }
-            row.rect.max.x = x.max(row.rect.min.x);
-            retessellate(row, &galley.job, &quads, &hidden, pixels_per_point);
+            row.size.x = x.max(0.0);
+            retessellate(row, &formats, &quads, &hidden, pixels_per_point);
             dirs[r] = Some(RowDirs {
                 rtl,
                 base_rtl: line.base_rtl(),
@@ -122,12 +142,12 @@ pub(super) fn apply(fonts: &Fonts, galley: Arc<Galley>, base: Base) -> (Arc<Gall
         }
     }
     galley.mesh_bounds = galley.rows.iter().fold(egui::Rect::NOTHING, |bounds, row| {
-        bounds.union(row.visuals.mesh_bounds)
+        bounds.union(row.visuals.mesh_bounds.translate(row.pos.to_vec2()))
     });
     let right = galley
         .rows
         .iter()
-        .map(|row| row.rect.max.x)
+        .map(|row| row.rect().max.x)
         .fold(galley.rect.max.x, f32::max);
     galley.rect.max.x = right;
     galley.invalidate_cursor_index();
@@ -137,8 +157,8 @@ pub(super) fn apply(fonts: &Fonts, galley: Arc<Galley>, base: Base) -> (Arc<Gall
 /// Swap glyphs for their joined forms, and mirror brackets in right-to-left
 /// runs, when the font has the replacement.
 fn substitute(
-    fonts: &Fonts,
-    job: &egui::text::LayoutJob,
+    fonts: &mut FontsView<'_>,
+    formats: &[&egui::TextFormat],
     row: &mut Row,
     shaped: &[bidi::Shaped],
     rtl: &[bool],
@@ -154,7 +174,7 @@ fn substitute(
         if shape.hidden || target == glyph.chr {
             continue;
         }
-        let font = &job.sections[glyph.section_index as usize].format.font_id;
+        let font = &formats[i].font_id;
         if !fonts.has_glyph(font, target) {
             continue;
         }
@@ -174,6 +194,7 @@ fn substitute(
         for (glyph, &i) in source.glyphs.iter().zip(&indices) {
             row.glyphs[i].uv_rect = glyph.uv_rect;
             row.glyphs[i].advance_width = glyph.advance_width;
+            row.glyphs[i].is_color = glyph.is_color;
         }
     }
 }
@@ -182,22 +203,21 @@ fn substitute(
 /// Glyphs keep the vertices egui gave them, four per drawn glyph in order.
 fn retessellate(
     row: &mut Row,
-    job: &egui::text::LayoutJob,
+    formats: &[&egui::TextFormat],
     quads: &[bool],
     hidden: &[bool],
     pixels_per_point: f32,
 ) {
     let round = |v: f32| (v * pixels_per_point).round() / pixels_per_point;
-    let mut vertex = row.visuals.glyph_vertex_range.start;
-    let mesh = row.visuals.mesh_mut();
+    let mesh = &mut row.visuals.mesh;
     for (i, glyph) in row.glyphs.iter().enumerate() {
         if !quads[i] {
             continue;
         }
+        let vertex = glyph.first_vertex as usize;
         let Some(vertices) = mesh.vertices.get_mut(vertex..vertex + 4) else {
             break;
         };
-        vertex += 4;
         if hidden[i] || glyph.uv_rect.is_nothing() {
             let at = vertices[0].pos;
             for v in vertices.iter_mut() {
@@ -214,7 +234,7 @@ fn retessellate(
             egui::pos2(uv.min[0] as f32, uv.min[1] as f32),
             egui::pos2(uv.max[0] as f32, uv.max[1] as f32),
         );
-        let slant = if job.sections[glyph.section_index as usize].format.italics {
+        let slant = if formats[i].italics {
             rect.height() * 0.25 * egui::Vec2::X
         } else {
             egui::Vec2::ZERO
@@ -236,12 +256,12 @@ fn retessellate(
 
 /// The x of a caret before character `column` of `row`, relative to the
 /// galley. In right-to-left runs the caret sits on the glyph's right edge.
-pub(super) fn caret_x(row: &Row, dirs: Option<&RowDirs>, column: usize) -> f32 {
+pub(super) fn caret_x(row: &PlacedRow, dirs: Option<&RowDirs>, column: usize) -> f32 {
     let Some(dirs) = dirs else {
-        return row.x_offset(column);
+        return row.x_offset(CharIndex(column)) + row.pos.x;
     };
     match (column.min(row.glyphs.len()), row.glyphs.is_empty()) {
-        (_, true) => row.rect.min.x,
+        (_, true) => row.pos.x,
         (0, false) => leading(row, dirs, 0),
         // Follow the character before the caret, the one just typed.
         (c, false) => trailing(row, dirs, c - 1),
@@ -249,9 +269,10 @@ pub(super) fn caret_x(row: &Row, dirs: Option<&RowDirs>, column: usize) -> f32 {
 }
 
 /// Where text read in the glyph's direction ends: right edge when left to right.
-fn trailing(row: &Row, dirs: &RowDirs, i: usize) -> f32 {
+fn trailing(row: &PlacedRow, dirs: &RowDirs, i: usize) -> f32 {
     let glyph = &row.glyphs[i];
-    glyph.pos.x
+    row.pos.x
+        + glyph.pos.x
         + if dirs.rtl[i] {
             0.0
         } else {
@@ -260,9 +281,10 @@ fn trailing(row: &Row, dirs: &RowDirs, i: usize) -> f32 {
 }
 
 /// Where text read in the glyph's direction starts.
-fn leading(row: &Row, dirs: &RowDirs, i: usize) -> f32 {
+fn leading(row: &PlacedRow, dirs: &RowDirs, i: usize) -> f32 {
     let glyph = &row.glyphs[i];
-    glyph.pos.x
+    row.pos.x
+        + glyph.pos.x
         + if dirs.rtl[i] {
             glyph.advance_width
         } else {
@@ -273,9 +295,9 @@ fn leading(row: &Row, dirs: &RowDirs, i: usize) -> f32 {
 /// Where a caret before `column` also belongs when the characters on either
 /// side run in different directions: the start of the next character. GTK
 /// shows this second place as a half-height caret.
-pub(super) fn split_caret_x(row: &Row, dirs: Option<&RowDirs>, column: usize) -> Option<f32> {
+pub(super) fn split_caret_x(row: &PlacedRow, dirs: Option<&RowDirs>, column: usize) -> Option<f32> {
     let dirs = dirs?;
-    if column == 0 || column >= row.glyphs.len() {
+    if column == 0 || column >= row.glyphs.len() || dirs.rtl[column - 1] == dirs.rtl[column] {
         return None;
     }
     let other = leading(row, dirs, column);
@@ -283,7 +305,7 @@ pub(super) fn split_caret_x(row: &Row, dirs: Option<&RowDirs>, column: usize) ->
 }
 
 /// Every screen position of each caret in `row`, as (column, x).
-fn caret_places(row: &Row, dirs: &RowDirs) -> Vec<(usize, f32)> {
+fn caret_places(row: &PlacedRow, dirs: &RowDirs) -> Vec<(usize, f32)> {
     (0..=row.glyphs.len())
         .flat_map(|c| {
             std::iter::once((c, caret_x(row, Some(dirs), c)))
@@ -294,8 +316,8 @@ fn caret_places(row: &Row, dirs: &RowDirs) -> Vec<(usize, f32)> {
 
 /// The row of `galley` holding character `index`, and the column within it.
 fn locate(galley: &Galley, index: usize) -> (usize, usize) {
-    let cursor = galley.from_ccursor(egui::text::CCursor::new(index));
-    (cursor.rcursor.row, cursor.rcursor.column)
+    let cursor = galley.layout_from_cursor(egui::text::CCursor::new(index));
+    (cursor.row, cursor.column.0)
 }
 
 /// The character index where `row` starts.
@@ -307,8 +329,7 @@ fn row_start(galley: &Galley, row: usize) -> usize {
 pub(super) fn caret_rect(galley: &Galley, bidi: &BidiRows, index: usize) -> egui::Rect {
     let (row, column) = locate(galley, index);
     let Some(dirs) = bidi.row(row) else {
-        let cursor = galley.from_ccursor(egui::text::CCursor::new(index));
-        return galley.pos_from_cursor(&cursor);
+        return galley.pos_from_cursor(egui::text::CCursor::new(index));
     };
     let r = &galley.rows[row];
     let x = caret_x(r, Some(dirs), column);
@@ -318,18 +339,21 @@ pub(super) fn caret_rect(galley: &Galley, bidi: &BidiRows, index: usize) -> egui
 /// Horizontal spans covering columns `start..end` of `row`: one for
 /// left-to-right rows, and one per visual run otherwise.
 pub(super) fn spans(
-    row: &Row,
+    row: &PlacedRow,
     dirs: Option<&RowDirs>,
     start: usize,
     end: usize,
 ) -> Vec<(f32, f32)> {
     let end = end.min(row.glyphs.len());
     if dirs.is_none() || start >= end {
-        return vec![(row.x_offset(start), row.x_offset(end))];
+        return vec![(
+            row.pos.x + row.x_offset(CharIndex(start)),
+            row.pos.x + row.x_offset(CharIndex(end)),
+        )];
     }
     let mut parts: Vec<(f32, f32)> = row.glyphs[start..end]
         .iter()
-        .map(|g| (g.pos.x, g.pos.x + g.advance_width))
+        .map(|g| (row.pos.x + g.pos.x, row.pos.x + g.pos.x + g.advance_width))
         .collect();
     parts.sort_by(|a, b| a.0.total_cmp(&b.0));
     let mut merged: Vec<(f32, f32)> = Vec::new();
@@ -401,8 +425,8 @@ pub(super) fn glyph_rect(galley: &Galley, index: usize) -> Option<egui::Rect> {
     let r = galley.rows.get(row)?;
     let glyph = r.glyphs.get(column)?;
     Some(egui::Rect::from_min_max(
-        egui::pos2(glyph.pos.x, r.min_y()),
-        egui::pos2(glyph.pos.x + glyph.advance_width, r.max_y()),
+        egui::pos2(r.pos.x + glyph.pos.x, r.min_y()),
+        egui::pos2(r.pos.x + glyph.pos.x + glyph.advance_width, r.max_y()),
     ))
 }
 
@@ -475,7 +499,7 @@ pub(super) fn visual_step(
         // and Left through its end; left-to-right lines move as usual.
         None if dirs.base_rtl && right => Some(start.saturating_sub(1)),
         None if dirs.base_rtl => {
-            let end = start + r.char_count_including_newline();
+            let end = start + r.char_count_including_newline().0;
             Some(end.min(galley.cursor_index().end.start))
         }
         None => None,
@@ -500,15 +524,24 @@ pub(super) fn accessibility(ctx: &egui::Context, id: egui::Id, galley: &Galley, 
         let mut positions: Vec<f32> = row
             .glyphs
             .iter()
-            .map(|g| row.rect.right() - g.pos.x - g.advance_width)
+            .map(|g| row.size.x - g.pos.x - g.advance_width)
             .collect();
         if row.ends_with_newline {
-            positions.push(row.rect.width());
+            positions.push(row.size.x);
         }
-        ctx.accesskit_node_builder(id.with(index), |node| {
-            node.set_text_direction(egui::accesskit::TextDirection::RightToLeft);
-            node.set_character_positions(positions);
-        });
+        // Match egui 0.37's fixed-size AccessKit text runs.
+        for (part, positions) in positions.chunks(u8::MAX as usize).enumerate() {
+            let origin = positions[0];
+            ctx.accesskit_node_builder(id.with(index).with(part), |node| {
+                node.set_text_direction(egui::accesskit::TextDirection::RightToLeft);
+                node.set_character_positions(
+                    positions
+                        .iter()
+                        .map(|pos| *pos - origin)
+                        .collect::<Vec<_>>(),
+                );
+            });
+        }
     }
 }
 
@@ -548,15 +581,16 @@ pub(super) fn interact(
             let anchor = if pressed && !shift {
                 index
             } else {
-                range.secondary.ccursor.index
+                range.secondary.index.0
             };
-            let cursor = |i| galley.from_ccursor(egui::text::CCursor::new(i));
-            let range = egui::text_selection::CursorRange {
+            let cursor = |i| egui::text::CCursor::new(i);
+            let range = egui::text::CCursorRange {
                 primary: cursor(index),
                 secondary: cursor(anchor),
+                h_pos: None,
             };
             output.cursor_range = Some(range);
-            output.state.cursor.set_range(Some(range));
+            output.state.cursor.set_char_range(Some(range));
         }
     }
     if !output.response.has_focus() {
@@ -565,7 +599,7 @@ pub(super) fn interact(
     let Some(range) = output.cursor_range else {
         return;
     };
-    let (head, anchor) = (range.primary.ccursor.index, range.secondary.ccursor.index);
+    let (head, anchor) = (range.primary.index.0, range.secondary.index.0);
     let rects = range_rects_in_rows(
         &galley,
         bidi,
@@ -617,14 +651,17 @@ pub(super) fn field(
 ) -> egui::Response {
     let rtl = bidi::has_rtl(text);
     let latest = std::cell::RefCell::new(BidiRows::default());
-    let mut layouter = |ui: &egui::Ui, text: &str, wrap_width: f32| {
+    let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap_width: f32| {
         let font = egui::TextStyle::Body.resolve(ui.style());
         let color = ui
             .visuals()
             .override_text_color
             .unwrap_or_else(|| ui.visuals().widgets.inactive.text_color());
-        let job = egui::text::LayoutJob::simple(text.to_owned(), font, color, wrap_width);
-        let (galley, bidi) = ui.fonts(|f| apply(f, f.layout_job(job), Base::Ltr));
+        let job = egui::text::LayoutJob::simple(text.as_str().to_owned(), font, color, wrap_width);
+        let (galley, bidi) = ui.fonts_mut(|fonts| {
+            let galley = fonts.layout_job(job);
+            apply(fonts, galley, Base::Ltr)
+        });
         *latest.borrow_mut() = bidi;
         galley
     };
@@ -636,10 +673,9 @@ pub(super) fn field(
         };
         if rtl {
             ui.visuals_mut().text_cursor.stroke.color = egui::Color32::TRANSPARENT;
-            ui.visuals_mut().selection.bg_fill = egui::Color32::TRANSPARENT;
         }
         let background = ui.painter().add(egui::Shape::Noop);
-        let mut output = build(egui::TextEdit::singleline(text))
+        let mut output = build(egui::TextEdit::singleline(text).paint_selection(!rtl))
             .layouter(&mut layouter)
             .show(ui);
         let bidi = latest.take();
@@ -647,7 +683,7 @@ pub(super) fn field(
             let rows = 0..output.galley.rows.len();
             interact(ui, &mut output, &bidi, background, rows, look);
         }
-        output.response
+        output.response.response
     })
     .inner
 }
@@ -665,8 +701,8 @@ mod tests {
         let mut out = None;
         // The first frame installs the fonts; the second lays out with them.
         for _ in 0..2 {
-            let _ = ctx.run(egui::RawInput::default(), |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| {
+            let _ = crate::app::tests::run_pass(&ctx, egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show_in_context(ctx, |ui| {
                     let theme = hedit::theme::builtins()[0].clone();
                     let job = syntax::highlight_language(
                         text,
@@ -675,7 +711,10 @@ mod tests {
                         Language::PlainText,
                         &theme,
                     );
-                    out = Some(ui.fonts(|f| apply(f, f.layout_job(job), Base::Auto)));
+                    out = Some(ui.fonts_mut(|fonts| {
+                        let galley = fonts.layout_job(job);
+                        apply(fonts, galley, Base::Auto)
+                    }));
                 });
             });
         }
@@ -688,7 +727,7 @@ mod tests {
         let (_, galley, bidi) = laid_out("fn main() {}\nlet x = 1;");
         assert!(!bidi.any());
         let caret = caret_rect(&galley, &bidi, 3);
-        assert_eq!(caret.left(), galley.rows[0].x_offset(3));
+        assert_eq!(caret.left(), galley.rows[0].x_offset(CharIndex(3)));
     }
 
     #[test]
@@ -702,7 +741,14 @@ mod tests {
         assert!(row.glyphs[3].pos.x > row.glyphs[6].pos.x);
         // The Arabic word stays between "ab " and " cd".
         assert!(row.glyphs[6].pos.x >= row.glyphs[2].pos.x);
-        assert!(row.glyphs[7].pos.x >= row.glyphs[3].pos.x);
+        assert!(
+            row.glyphs[7].pos.x >= row.glyphs[3].pos.x,
+            "{:?}",
+            row.glyphs
+                .iter()
+                .map(|g| (g.chr, g.pos.x, g.advance_width))
+                .collect::<Vec<_>>()
+        );
         // The caret after س sits on its left edge; before it, on its right edge.
         assert_eq!(caret_x(row, Some(dirs), 4), row.glyphs[3].pos.x);
         let after_space = caret_x(row, Some(dirs), 3);
@@ -713,7 +759,7 @@ mod tests {
         // Clicking just left of س's right edge puts the caret before it.
         let hit_x = row.glyphs[3].pos.x + row.glyphs[3].advance_width - 1.0;
         assert_eq!(
-            hit(&galley, &bidi, egui::vec2(hit_x, row.rect.center().y)),
+            hit(&galley, &bidi, egui::vec2(hit_x, row.rect().center().y)),
             Some(3)
         );
         // Right from after س (its left edge) goes to before it (its right edge).
@@ -754,7 +800,8 @@ mod tests {
                         }
                         let p = (y as usize * width + x as usize) * 3;
                         for c in 0..3 {
-                            let value = canvas[p + c] as f32 * (1.0 - coverage);
+                            let value =
+                                canvas[p + c] as f32 * (1.0 - f32::from(coverage.a()) / 255.0);
                             canvas[p + c] = value as u8;
                         }
                     }

@@ -70,7 +70,7 @@ impl Review {
         ready: bool,
         feedback: Option<&str>,
     ) -> Option<Request> {
-        let shown = egui::Modal::new(egui::Id::new("extension-workspace-recovery"))
+        let shown = egui::Modal::new(egui::Id::unique("extension-workspace-recovery"))
             .show(ui.ctx(), |ui| self.contents(ui, ready, feedback));
         if shown.should_close() {
             Some(Request::Close)

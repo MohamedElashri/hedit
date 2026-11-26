@@ -52,7 +52,7 @@ impl Metrics {
         let font = ui.style().text_styles[&TextStyle::Body].size;
         let density = ui
             .ctx()
-            .data(|d| d.get_temp::<Density>(egui::Id::new("workbench-density")))
+            .data(|d| d.get_temp::<Density>(egui::Id::unique("workbench-density")))
             .unwrap_or_default();
         Self::new(font, density)
     }
@@ -60,12 +60,12 @@ impl Metrics {
 
 /// Theme changes may replace egui's styles. Reapply our metrics only when needed.
 pub fn apply(ctx: &egui::Context, size: f32, density: Density) {
-    let id = egui::Id::new("workbench-density");
+    let id = egui::Id::unique("workbench-density");
     if ctx.data(|d| d.get_temp::<Density>(id)) != Some(density) {
         ctx.data_mut(|d| d.insert_temp(id, density));
     }
     let m = Metrics::new(size, density);
-    let style = ctx.style();
+    let style = ctx.global_style();
     if style.text_styles[&TextStyle::Body] == FontId::proportional(m.font)
         && style.text_styles[&TextStyle::Button] == FontId::proportional(m.font)
         && style.text_styles[&TextStyle::Small] == FontId::proportional(m.small)
@@ -107,7 +107,7 @@ mod tests {
             let mut last = 0.0;
             for density in [Density::Compact, Density::Default, Density::Comfortable] {
                 apply(&ctx, font, density);
-                let style = ctx.style();
+                let style = ctx.global_style();
                 let m = Metrics::new(font, density);
                 assert!(m.row >= 22.0 && m.row > last);
                 assert_eq!(style.text_styles[&TextStyle::Body].size, font);
@@ -119,11 +119,11 @@ mod tests {
     #[test]
     fn invalid_programmatic_sizes_remain_bounded_and_theme_colors_survive() {
         let ctx = egui::Context::default();
-        let color = ctx.style().visuals.selection.bg_fill;
+        let color = ctx.global_style().visuals.selection.bg_fill;
         for font in [f32::NAN, f32::INFINITY, -4.0, 100.0] {
             apply(&ctx, font, Density::Default);
-            assert!((10.0..=20.0).contains(&ctx.style().text_styles[&TextStyle::Body].size));
-            assert_eq!(ctx.style().visuals.selection.bg_fill, color);
+            assert!((10.0..=20.0).contains(&ctx.global_style().text_styles[&TextStyle::Body].size));
+            assert_eq!(ctx.global_style().visuals.selection.bg_fill, color);
         }
     }
 }

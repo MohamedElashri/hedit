@@ -310,7 +310,7 @@ fn shape_image(
     let glyphs = rustybuzz::shape(&face, &[], input);
     let infos = glyphs.glyph_infos();
     let positions = glyphs.glyph_positions();
-    let mut image = egui::ColorImage::new([width, height], egui::Color32::TRANSPARENT);
+    let mut image = egui::ColorImage::filled([width, height], egui::Color32::TRANSPARENT);
     let cell_width = width as f32 / run.width as f32;
     let y_scale = font_size / face.units_per_em() as f32;
     let baseline = (height as f32 + font_size) * 0.5 - font_size * 0.2;

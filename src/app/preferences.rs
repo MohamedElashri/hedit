@@ -106,9 +106,9 @@ impl HeditApp {
             let before = self.theme.clone();
             let mut open = true;
             let available =
-                (ctx.screen_rect().size() - egui::vec2(32.0, 80.0)).max(egui::vec2(320.0, 240.0));
+                (ctx.viewport_rect().size() - egui::vec2(32.0, 80.0)).max(egui::vec2(320.0, 240.0));
             egui::Window::new("Settings")
-                .id(egui::Id::new("preferences"))
+                .id(egui::Id::unique("preferences"))
                 .open(&mut open)
                 .default_size(egui::vec2(960.0, 680.0).min(available))
                 .min_size(egui::vec2(520.0, 320.0).min(available))
@@ -125,7 +125,7 @@ impl HeditApp {
                     }
                     let m = hedit::ui_style::Metrics::for_ui(ui);
                     let text_width = |text: &str| {
-                        ui.fonts(|fonts| {
+                        ui.fonts_mut(|fonts| {
                             fonts
                                 .layout_no_wrap(
                                     text.into(),
@@ -159,7 +159,7 @@ impl HeditApp {
                         let width = (ui.available_width() - header_controls).max(80.0);
                         let search = ui.add(
                             egui::TextEdit::singleline(&mut self.settings_browser.query)
-                                .id(egui::Id::new("settings-search"))
+                                .id(egui::Id::unique("settings-search"))
                                 .hint_text("Search settings by name or key…")
                                 .desired_width(width)
                                 .char_limit(256),
@@ -220,12 +220,30 @@ impl HeditApp {
                         ui.separator();
                         ui.vertical(|ui| {
                             ui.set_width(ui.available_width().max(0.0));
-                            ui.heading(if searching && self.settings_browser.category.is_none() {
-                                "Search results"
-                            } else {
-                                self.preferences_page.title()
-                            });
-                            ui.add_space(8.0);
+                            let heading = ui
+                                .horizontal_wrapped(|ui| {
+                                    ui.heading(
+                                        if searching && self.settings_browser.category.is_none() {
+                                            "Search results"
+                                        } else {
+                                            self.preferences_page.title()
+                                        },
+                                    );
+                                    if searching {
+                                        let count = self.settings_browser.category.map_or_else(
+                                            || {
+                                                PreferencesPage::ALL
+                                                    .iter()
+                                                    .filter(|page| page.available())
+                                                    .map(|page| counts[*page as usize])
+                                                    .sum()
+                                            },
+                                            |page| counts[page as usize],
+                                        );
+                                        ui.weak(format!("({count})"));
+                                    }
+                                })
+                                .response;
                             let content_width = ui.available_width();
                             let mut scroll = egui::ScrollArea::both()
                                 .max_width(content_width)
@@ -234,7 +252,12 @@ impl HeditApp {
                                     self.preferences_page as u8,
                                     searching,
                                 ))
-                                .max_height((body_height - (m.font + 5.0) * 1.5 - m.gap).max(24.0))
+                                .max_height(
+                                    (body_height
+                                        - heading.rect.height()
+                                        - ui.spacing().item_spacing.y)
+                                        .max(24.0),
+                                )
                                 .auto_shrink([false, false]);
                             if std::mem::take(&mut self.settings_browser.reset_scroll) {
                                 scroll = scroll.vertical_scroll_offset(0.0);
@@ -329,7 +352,7 @@ impl HeditApp {
                 .resizable(false)
                 .default_width(400.0)
                 .frame(
-                    egui::Frame::window(&ctx.style())
+                    egui::Frame::window(&ctx.global_style())
                         .inner_margin(12.0)
                         .corner_radius(10),
                 )
@@ -489,7 +512,7 @@ impl HeditApp {
             .anchor(egui::Align2::CENTER_TOP, [0.0, 90.0])
             .show(ctx, |ui| {
                 ui.label("Line number in the whole document");
-                let input_id = egui::Id::new("goto-line-input");
+                let input_id = egui::Id::unique("goto-line-input");
                 let enter = ctx.memory(|m| m.has_focus(input_id))
                     && ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter));
                 let response = ui.add(

@@ -115,7 +115,7 @@ impl AutoComplete {
 impl HeditApp {
     pub(super) fn editor_id(&self) -> egui::Id {
         let b = self.active();
-        let id = egui::Id::new(("editor", b.page.info.id, b.page.start));
+        let id = egui::Id::unique(("editor", b.page.info.id, b.page.start));
         if self.panes.mode != 0 && self.panes.focused > 0 {
             id.with(("pane", self.panes.focused))
         } else {
@@ -510,8 +510,8 @@ impl HeditApp {
     }
     pub(super) fn update_completion(&mut self, ctx: &egui::Context) {
         let focused = ctx.memory(|m| m.has_focus(self.editor_id()));
-        let popup_rect =
-            egui::AreaState::load(ctx, egui::Id::new("completion-popup")).map(|area| area.rect());
+        let popup_rect = egui::AreaState::load(ctx, egui::Id::unique("completion-popup"))
+            .map(|area| area.rect());
         // A pressed choice temporarily owns focus until its release commits it.
         let choosing = self.auto.visible()
             && ctx.input(|i| {
@@ -754,7 +754,7 @@ impl HeditApp {
             return;
         }
         let popup = self.auto.popup.as_ref();
-        let below = caret.bottom() < ctx.screen_rect().height() * 0.6;
+        let below = caret.bottom() < ctx.viewport_rect().height() * 0.6;
         let (pivot, at) = if below {
             (
                 egui::Align2::LEFT_TOP,
@@ -769,7 +769,7 @@ impl HeditApp {
         let theme = self.theme.clone();
         let mut clicked = None;
         let font = FontId::monospace(self.settings.font_size - 1.0);
-        egui::Area::new(egui::Id::new("completion-popup"))
+        egui::Area::new(egui::Id::unique("completion-popup"))
             .order(egui::Order::Foreground)
             .fixed_pos(at)
             .pivot(pivot)
@@ -778,7 +778,9 @@ impl HeditApp {
                     .fill(theme.panel.color())
                     .inner_margin(4.0)
                     .show(ui, |ui| {
-                        ui.set_width(280.0_f32.min((ctx.screen_rect().width() - 24.0).max(100.0)));
+                        ui.set_width(
+                            280.0_f32.min((ctx.viewport_rect().width() - 24.0).max(100.0)),
+                        );
                         ui.spacing_mut().item_spacing.y = 0.0;
                         ui.visuals_mut().selection.stroke.width = 0.0;
                         if popup.is_none() {
@@ -879,7 +881,8 @@ mod redesign_tests {
             egui::vec2(2.0, 30.0),
         ));
         for _ in 0..4 {
-            let _ = ctx.run(
+            let _ = crate::app::tests::run_pass(
+                &ctx,
                 egui::RawInput {
                     screen_rect: Some(screen),
                     ..Default::default()
@@ -887,7 +890,7 @@ mod redesign_tests {
                 |ctx| app.completion_popup(ctx),
             );
         }
-        let popup = egui::AreaState::load(&ctx, egui::Id::new("completion-popup"))
+        let popup = egui::AreaState::load(&ctx, egui::Id::unique("completion-popup"))
             .unwrap()
             .rect();
         assert!(
@@ -901,7 +904,8 @@ mod redesign_tests {
         // Click the truncated word, then undo: truncation must affect only display.
         let position = egui::pos2(popup.left() + 30.0, popup.bottom() - 20.0);
         for pressed in [true, false] {
-            let _ = ctx.run(
+            let _ = crate::app::tests::run_pass(
+                &ctx,
                 egui::RawInput {
                     screen_rect: Some(screen),
                     focused: true,

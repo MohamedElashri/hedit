@@ -73,7 +73,7 @@ impl TerminalState {
 }
 
 pub(super) fn input_id() -> egui::Id {
-    egui::Id::new("integrated-terminal-input")
+    egui::Id::unique("integrated-terminal-input")
 }
 
 impl HeditApp {
@@ -188,7 +188,7 @@ impl HeditApp {
                 .unwrap_or_else(|| font.face.clone());
             let response = ui.add(
                 egui::TextEdit::singleline(&mut face)
-                    .id(egui::Id::new("terminal-font-face"))
+                    .id(egui::Id::unique("terminal-font-face"))
                     .hint_text("Font family or absolute font-file path")
                     .desired_width(340.0)
                     .char_limit(4096),
@@ -365,7 +365,7 @@ impl HeditApp {
             return;
         }
         let mut choice = None;
-        let modal = egui::Modal::new(egui::Id::new("terminal-onboarding")).show(ctx, |ui| {
+        let modal = egui::Modal::new(egui::Id::unique("terminal-onboarding")).show(ctx, |ui| {
             ui.set_max_width(440.0);
             ui.heading("An optional terminal for your projects");
             ui.label("Open a local shell in a resizable panel while you edit. The integrated terminal is powered by Ghostty.");
@@ -886,12 +886,8 @@ mod surface {
             let preedit = &mut tab.preedit;
             for event in events {
                 let result = match event {
-                    egui::Event::Ime(egui::ImeEvent::Preedit(text)) => {
+                    egui::Event::Ime(egui::ImeEvent::Preedit { text, .. }) => {
                         *preedit = text;
-                        Ok(())
-                    }
-                    egui::Event::Ime(egui::ImeEvent::Disabled) => {
-                        preedit.clear();
                         Ok(())
                     }
                     egui::Event::Text(_) if !preedit.is_empty() => Ok(()),
@@ -1101,7 +1097,7 @@ mod surface {
         let ctx = ui.ctx().clone();
         let session = &mut tab.session;
         let font_size = font.size;
-        let cell = ui.fonts(|f| {
+        let cell = ui.fonts_mut(|f| {
             egui::vec2(
                 f.glyph_width(&font, ' ').max(1.0),
                 f.row_height(&font).max(1.0),
@@ -1321,13 +1317,15 @@ mod surface {
                     let pos = rect.min + egui::vec2(x * cell.x, f32::from(y) * cell.y);
                     ui.output_mut(|o| {
                         o.ime = Some(egui::output::IMEOutput {
+                            purpose: Default::default(),
+                            should_interrupt_composition: false,
                             rect,
                             cursor_rect: egui::Rect::from_min_size(pos, egui::vec2(1.0, cell.y)),
                         });
                         o.mutable_text_under_cursor = response.hovered();
                     });
                     if !tab.preedit.is_empty() {
-                        let galley = ui.fonts(|f| {
+                        let galley = ui.fonts_mut(|f| {
                             f.layout_no_wrap(
                                 hedit::bidi::display(&tab.preedit).into_owned(),
                                 font.clone(),

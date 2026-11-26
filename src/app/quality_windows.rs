@@ -93,7 +93,7 @@ impl HeditApp {
         // Enter belongs to a window only while its own field has focus, so it
         // still types a newline in the editor beside an open window.
         let focused = ctx.memory(|m| m.focused());
-        let field = |name: &str| focused == Some(egui::Id::new(name));
+        let field = |name: &str| focused == Some(egui::Id::unique(name));
         if self.quality.snippets_open
             && field(SNIPPETS_FIELD)
             && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter))
@@ -161,7 +161,7 @@ impl HeditApp {
             && field("outline-filter")
             && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape))
         {
-            ctx.memory_mut(|m| m.surrender_focus(egui::Id::new("outline-filter")));
+            ctx.memory_mut(|m| m.surrender_focus(egui::Id::unique("outline-filter")));
             self.focus_editor = true;
         }
         let id = self.editor_id();
@@ -281,8 +281,8 @@ impl HeditApp {
             egui::Window::new("Recent projects")
                 .open(&mut open)
                 .collapsible(false)
-                .max_width((ctx.screen_rect().width() - 32.0).max(300.0))
-                .max_height((ctx.screen_rect().height() - 32.0).max(220.0))
+                .max_width((ctx.viewport_rect().width() - 32.0).max(300.0))
+                .max_height((ctx.viewport_rect().height() - 32.0).max(220.0))
                 .vscroll(true)
                 .default_width(480.0)
                 .show(ctx, |ui| {
@@ -303,8 +303,8 @@ impl HeditApp {
         let mut open = true;
         let mut reload = false;
         let mut selected = None;
-        egui::Window::new("Go to symbol").open(&mut open).max_width((ctx.screen_rect().width()-32.0).max(300.0)).max_height((ctx.screen_rect().height()-32.0).max(220.0)).vscroll(true).collapsible(false).default_width(620.0).show(ctx,|ui|{
-            let response=ui.add(egui::TextEdit::singleline(&mut self.quality.symbol_query).id(egui::Id::new(SYMBOLS_FIELD)));if self.quality.symbol_focus{response.request_focus();self.quality.symbol_focus=false;}
+        egui::Window::new("Go to symbol").open(&mut open).max_width((ctx.viewport_rect().width()-32.0).max(300.0)).max_height((ctx.viewport_rect().height()-32.0).max(220.0)).vscroll(true).collapsible(false).default_width(620.0).show(ctx,|ui|{
+            let response=ui.add(egui::TextEdit::singleline(&mut self.quality.symbol_query).id(egui::Id::unique(SYMBOLS_FIELD)));if self.quality.symbol_focus{response.request_focus();self.quality.symbol_focus=false;}
             ui.horizontal(|ui|{reload=ui.checkbox(&mut self.quality.symbols_project,"All project folders").changed();reload|=ui.add_enabled(!self.busy,egui::Button::new("Refresh symbols")).clicked();});
             ui.weak("Functions, classes and types detected from source lines; generated and ignored folders are skipped.");
             let query=self.quality.symbol_query.to_lowercase();
@@ -331,7 +331,7 @@ impl HeditApp {
         let mut open = true;
         let mut disk = false;
         let mut mine = false;
-        egui::Window::new(if self.quality.git_diff{"Git changes compared with HEAD"}else{"Disk and editor comparison"}).open(&mut open).max_width((ctx.screen_rect().width()-32.0).max(300.0)).max_height((ctx.screen_rect().height()-32.0).max(220.0)).vscroll(true).collapsible(false).default_width(760.0).show(ctx,|ui|{
+        egui::Window::new(if self.quality.git_diff{"Git changes compared with HEAD"}else{"Disk and editor comparison"}).open(&mut open).max_width((ctx.viewport_rect().width()-32.0).max(300.0)).max_height((ctx.viewport_rect().height()-32.0).max(220.0)).vscroll(true).collapsible(false).default_width(760.0).show(ctx,|ui|{
             if self.quality.diff.is_empty(){ui.label("No changes.");}
             egui::ScrollArea::both().max_height(460.0).show(ui,|ui|{let mut text=self.quality.diff.as_str();ui.add(egui::TextEdit::multiline(&mut text).code_editor().desired_width(f32::INFINITY));});
             if !self.quality.git_diff {
@@ -377,8 +377,8 @@ impl HeditApp {
         };
         egui::Window::new(title)
             .open(&mut open)
-            .max_width((ctx.screen_rect().width() - 32.0).max(300.0))
-            .max_height((ctx.screen_rect().height() - 32.0).max(220.0))
+            .max_width((ctx.viewport_rect().width() - 32.0).max(300.0))
+            .max_height((ctx.viewport_rect().height() - 32.0).max(220.0))
             .vscroll(true)
             .collapsible(false)
             .show(ctx, |ui| {
@@ -428,12 +428,12 @@ impl HeditApp {
         }
         let mut open = true;
         let mut save = false;
-        egui::Window::new("Key bindings and snippets").open(&mut open).max_width((ctx.screen_rect().width()-32.0).max(300.0)).max_height((ctx.screen_rect().height()-32.0).max(220.0)).vscroll(true).collapsible(false).default_width(740.0).show(ctx,|ui|{
+        egui::Window::new("Key bindings and snippets").open(&mut open).max_width((ctx.viewport_rect().width()-32.0).max(300.0)).max_height((ctx.viewport_rect().height()-32.0).max(220.0)).vscroll(true).collapsible(false).default_width(740.0).show(ctx,|ui|{
             ui.label("Keybindings override defaults. Use Primary for Ctrl/Cmd, e.g. Primary+Shift+F. An empty shortcut unbinds a command.");
             ui.label("Snippets support ${SELECTION}, fields ($1, ${1:text}) visited with Tab, and $0 for the final cursor. Type a trigger then Tab, or use Tools → Insert snippet.");
             ui.collapsing("Command identifiers",|ui|{egui::ScrollArea::vertical().max_height(120.0).show(ui,|ui|{for command in Command::ALL{ui.label(format!("{} — {}",serde_json::to_value(command).unwrap().as_str().unwrap(),command.label()));}});});
             ui.label("Formatting defaults are under Settings → Formatting.");
-            egui::ScrollArea::vertical().max_height((ctx.screen_rect().height()-260.0).clamp(100.0,380.0)).show(ui,|ui|{ui.add(egui::TextEdit::multiline(&mut self.quality.settings_json).code_editor().desired_rows(18).desired_width(f32::INFINITY));});
+            egui::ScrollArea::vertical().max_height((ctx.viewport_rect().height()-260.0).clamp(100.0,380.0)).show(ui,|ui|{ui.add(egui::TextEdit::multiline(&mut self.quality.settings_json).code_editor().desired_rows(18).desired_width(f32::INFINITY));});
             save=ui.add_enabled(!self.busy,egui::Button::new("Save settings")).clicked();
         });
         self.quality.settings_open = open;
@@ -476,7 +476,7 @@ impl HeditApp {
         let mut convert = false;
         let mut reopen = false;
         let mut choose = false;
-        egui::Window::new("File encoding").open(&mut open).max_width((ctx.screen_rect().width()-32.0).max(300.0)).max_height((ctx.screen_rect().height()-32.0).max(220.0)).vscroll(true).collapsible(false).show(ctx,|ui|{
+        egui::Window::new("File encoding").open(&mut open).max_width((ctx.viewport_rect().width()-32.0).max(300.0)).max_height((ctx.viewport_rect().height()-32.0).max(220.0)).vscroll(true).collapsible(false).show(ctx,|ui|{
             ui.label(format!("Current: {}",self.active().page.info.encoding));
             egui::ComboBox::from_label("Encoding").selected_text(&self.quality.encoding).show_ui(ui,|ui|{for &label in hedit::text_encoding::LABELS{ui.selectable_value(&mut self.quality.encoding,label.to_owned(),label);}});
             ui.label("Conversion rejects characters the target encoding cannot represent. UTF-16 BOMs are detected automatically; legacy encodings must be selected explicitly.");
@@ -533,14 +533,14 @@ impl HeditApp {
         egui::Window::new("Insert snippet")
             .open(&mut open)
             .collapsible(false)
-            .max_width((ctx.screen_rect().width() - 32.0).max(300.0))
-            .max_height((ctx.screen_rect().height() - 32.0).max(220.0))
+            .max_width((ctx.viewport_rect().width() - 32.0).max(300.0))
+            .max_height((ctx.viewport_rect().height() - 32.0).max(220.0))
             .vscroll(true)
             .default_width(480.0)
             .show(ctx, |ui| {
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut self.quality.snippet_query)
-                        .id(egui::Id::new(SNIPPETS_FIELD)),
+                        .id(egui::Id::unique(SNIPPETS_FIELD)),
                 );
                 if self.quality.snippet_focus {
                     response.request_focus();

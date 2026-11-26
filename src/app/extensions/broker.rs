@@ -286,7 +286,7 @@ impl HeditApp {
                     }
                     let mut open = true;
                     let mut decision = None;
-                    egui::Window::new("Extension command").id(egui::Id::new("scoped-extension-command")).open(&mut open).default_width(650.0).show(ctx, |ui| {
+                    egui::Window::new("Extension command").id(egui::Id::unique("scoped-extension-command")).open(&mut open).default_width(650.0).show(ctx, |ui| {
                         ui.heading(&context.command);
                         if let Some(plan) = review {
                             ui.label("Review every affected file before applying this workspace edit.");
@@ -386,7 +386,7 @@ impl HeditApp {
                     let mut open = true;
                     let mut action = None;
                     egui::Window::new("Extension command result")
-                        .id(egui::Id::new("scoped-extension-result"))
+                        .id(egui::Id::unique("scoped-extension-result"))
                         .open(&mut open)
                         .default_width(480.0)
                         .show(ctx, |ui| {

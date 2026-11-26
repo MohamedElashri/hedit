@@ -23,7 +23,7 @@ impl HeditApp {
             width.to_bits(),
             m.row.to_bits(),
         );
-        let reveal_id = egui::Id::new("settings-category-reveal");
+        let reveal_id = egui::Id::unique("settings-category-reveal");
         let reveal = ui.data_mut(|data| {
             let changed = data.get_temp(reveal_id) != Some(token);
             data.insert_temp(reveal_id, token);
@@ -135,7 +135,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (workspace, _) = Workspace::restore(dir.path().join("session")).unwrap();
         let ctx = egui::Context::default();
-        ctx.style_mut(|s| s.scroll_animation = egui::style::ScrollAnimation::none());
+        ctx.global_style_mut(|s| s.scroll_animation = egui::style::ScrollAnimation::none());
         let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
         app.settings.auto_complete = false;
         app.font_families = Some(vec![]);
@@ -151,7 +151,16 @@ mod tests {
                 text_rect(&s.shape, label)
                     .filter(|r| screen.contains_rect(*r) && s.clip_rect.contains_rect(*r))
             })
-            .unwrap_or_else(|| panic!("missing or clipped {label}"))
+            .unwrap_or_else(|| {
+                panic!(
+                    "missing or clipped {label}: {:?}",
+                    output
+                        .shapes
+                        .iter()
+                        .filter_map(|s| text_rect(&s.shape, label).map(|r| (r, s.clip_rect)))
+                        .collect::<Vec<_>>()
+                )
+            })
     }
     #[test]
     fn settings_header_search_reset_and_footer_fit_the_typography_matrix() {
@@ -180,7 +189,7 @@ mod tests {
                         visible(&out, label, SIZE);
                     }
                     let search = ctx
-                        .read_response(egui::Id::new("settings-search"))
+                        .read_response(egui::Id::unique("settings-search"))
                         .unwrap()
                         .rect;
                     let modified = visible(&out, "Modified", SIZE);
@@ -211,7 +220,7 @@ mod tests {
         assert_eq!(app.preferences_page, PreferencesPage::Recovery);
         frame_size(&ctx, &mut app, vec![key(Key::Home, Modifiers::NONE)], SIZE);
         assert_eq!(app.preferences_page, PreferencesPage::General);
-        ctx.memory_mut(|m| m.request_focus(egui::Id::new("settings-search")));
+        ctx.memory_mut(|m| m.request_focus(egui::Id::unique("settings-search")));
         frame_size(
             &ctx,
             &mut app,
@@ -251,7 +260,7 @@ mod tests {
             visible(&out, "Choose installed font…", size).center(),
             size,
         );
-        ctx.memory_mut(|m| m.request_focus(egui::Id::new("ui-font-filter-input")));
+        ctx.memory_mut(|m| m.request_focus(egui::Id::unique("ui-font-filter-input")));
         frame_size(
             &ctx,
             &mut app,
@@ -331,7 +340,7 @@ mod tests {
                     visible(&out, label, SIZE);
                 }
                 let search = ctx
-                    .read_response(egui::Id::new("settings-search"))
+                    .read_response(egui::Id::unique("settings-search"))
                     .unwrap()
                     .rect;
                 assert!(

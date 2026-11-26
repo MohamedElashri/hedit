@@ -262,7 +262,7 @@ impl HeditApp {
                             match resolved.sources.get(key) {
                                 Some(FormattingSource::EditorConfig {path,property,unset}) => {
                                     let response=ui.small_button(if *unset {".editorconfig · unset"} else {".editorconfig"}).on_hover_text(format!("{property} · {}",path.display()));
-                                    response.widget_info(||egui::WidgetInfo::labeled(egui::WidgetType::Button,true,format!("Open source for {label}")));
+                                    response.widget_info(||egui::WidgetInfo::labeled(egui::Role::Button,true,format!("Open source for {label}")));
                                     if response.clicked() {source=Some(path.clone());}
                                 },
                                 Some(FormattingSource::User)=>{ui.weak("User defaults");},
@@ -405,7 +405,7 @@ mod interaction_tests {
         for _ in 0..3 {
             frame(&ctx, &mut app, vec![]);
         }
-        ctx.memory_mut(|m| m.request_focus(egui::Id::new("project-settings-json")));
+        ctx.memory_mut(|m| m.request_focus(egui::Id::unique("project-settings-json")));
         frame(&ctx, &mut app, vec![]);
         frame(&ctx, &mut app, vec![key(Key::A, Modifiers::COMMAND)]);
         let mut events = vec![egui::Event::Text("{\"custom\":\"".into())];

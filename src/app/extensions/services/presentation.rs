@@ -9,7 +9,7 @@ impl Services {
         let mut chosen = None;
         let mut selected = self.selected.clone();
         egui::Window::new("Extension results")
-            .id(egui::Id::new("plugin-results"))
+            .id(egui::Id::unique("plugin-results"))
             .open(&mut open)
             .default_width(480.0)
             .show(ctx, |ui| {

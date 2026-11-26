@@ -48,7 +48,7 @@ pub(super) fn workspace_switcher(
         egui::Sense::hover(),
     );
     let width = |text: &str| {
-        ui.fonts(|f| {
+        ui.fonts_mut(|f| {
             f.layout_no_wrap(
                 text.into(),
                 FontId::proportional(m.font),
@@ -87,13 +87,13 @@ pub(super) fn workspace_switcher(
         let response = ui.add_enabled(enabled, |ui: &mut egui::Ui| {
             ui.interact(
                 part,
-                ui.id().with(("workspace-mode", source)),
+                ui.scope_id().with(("workspace-mode", source)),
                 egui::Sense::click(),
             )
         });
         response.widget_info(|| {
             egui::WidgetInfo::selected(
-                egui::WidgetType::SelectableLabel,
+                egui::Role::ListItem,
                 enabled,
                 selected == Some(source),
                 label,
@@ -229,8 +229,7 @@ pub(super) fn tab_close_button(ui: &mut egui::Ui, dirty: bool) -> egui::Response
 fn close_control(ui: &mut egui::Ui, hint: &str, dirty: bool) -> egui::Response {
     let side = hedit::ui_style::Metrics::for_ui(ui).control;
     let (rect, response) = ui.allocate_exact_size(egui::vec2(side, side), egui::Sense::click());
-    response
-        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), hint));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), hint));
     if ui.is_rect_visible(rect) {
         let visuals = ui.style().interact(&response);
         if response.hovered() || response.has_focus() {
@@ -325,8 +324,8 @@ mod tests {
             events,
             ..Default::default()
         };
-        ctx.run(input, |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| add(ui));
+        crate::app::tests::run_pass(ctx, input, |ctx| {
+            egui::CentralPanel::default().show_in_context(ctx, |ui| add(ui));
         })
     }
 

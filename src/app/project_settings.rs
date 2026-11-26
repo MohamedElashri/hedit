@@ -409,19 +409,19 @@ impl HeditApp {
         let mut open = true;
         let mut close = false;
         let size = egui::vec2(
-            (ctx.screen_rect().width() - 64.0).min(740.0),
-            (ctx.screen_rect().height() - 100.0).min(440.0),
+            (ctx.viewport_rect().width() - 64.0).min(740.0),
+            (ctx.viewport_rect().height() - 100.0).min(440.0),
         );
         egui::Window::new("Project settings")
-            .id(egui::Id::new("project-settings"))
+            .id(egui::Id::unique("project-settings"))
             .open(&mut open)
             .collapsible(false)
             .default_size(size)
             .min_size([520.0, 300.0])
-            .max_size(ctx.screen_rect().size() - egui::vec2(40.0, 70.0))
-            .default_pos(ctx.screen_rect().center() - size * 0.5)
+            .max_size(ctx.viewport_rect().size() - egui::vec2(40.0, 70.0))
+            .default_pos(ctx.viewport_rect().center() - size * 0.5)
             .frame(
-                egui::Frame::window(&ctx.style())
+                egui::Frame::window(&ctx.global_style())
                     .inner_margin(12.0)
                     .corner_radius(8),
             )
@@ -486,7 +486,7 @@ impl HeditApp {
                 } else {
                     let response = ui.add(
                         egui::TextEdit::multiline(&mut self.quality.settings_json)
-                            .id(egui::Id::new("project-settings-json"))
+                            .id(egui::Id::unique("project-settings-json"))
                             .code_editor()
                             .desired_width(f32::INFINITY)
                             .desired_rows(14),

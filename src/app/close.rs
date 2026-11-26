@@ -171,7 +171,7 @@ impl HeditApp {
             return;
         }
         let mut choice = None;
-        let response = egui::Modal::new(egui::Id::new("save-before-close")).show(ctx, |ui| {
+        let response = egui::Modal::new(egui::Id::unique("save-before-close")).show(ctx, |ui| {
             ui.set_max_width(480.0);
             ui.heading(format!("Save changes to {}?", buffer.view.name));
             if let Some(path) = &buffer.page.info.path {

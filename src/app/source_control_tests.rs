@@ -41,7 +41,7 @@ fn fixture() -> (tempfile::TempDir, egui::Context, HeditApp, Git) {
         expanded: vec![],
     }];
     let ctx = egui::Context::default();
-    ctx.style_mut(|s| s.scroll_animation = egui::style::ScrollAnimation::none());
+    ctx.global_style_mut(|s| s.scroll_animation = egui::style::ScrollAnimation::none());
     let mut app = HeditApp::from_context(&ctx, None, workspace, errors, vec![]);
     app.settings.show_activity_bar = false;
     app.open_source_control(&ctx);
@@ -253,6 +253,8 @@ fn horizontal_diff_scrolling_keeps_line_numbers_fixed_in_both_layouts() {
             vec![
                 egui::Event::PointerMoved(egui::pos2(700.0, 350.0)),
                 egui::Event::MouseWheel {
+                    phase: egui::TouchPhase::Move,
+                    source: egui::MouseWheelSource::Unknown,
                     unit: egui::MouseWheelUnit::Point,
                     delta: egui::vec2(-220.0, 0.0),
                     modifiers: Modifiers::NONE,
@@ -598,19 +600,19 @@ fn diff_code_matches_editor_typography_syntax_and_selection_for_custom_themes() 
                 app.source_control.last_refresh = Instant::now();
                 let output = frame(&ctx, &mut app, vec![]);
                 let diff = find(&output, line_text);
-                assert_eq!(editor.rows[0].rect.height(), diff.rows[0].rect.height());
+                assert_eq!(editor.rows[0].rect().height(), diff.rows[0].rect().height());
                 for byte in line_text.char_indices().map(|(i, _)| i) {
                     let a = editor
                         .job
                         .sections
                         .iter()
-                        .find(|s| s.byte_range.contains(&byte))
+                        .find(|s| s.byte_range.contains(&egui::text::ByteIndex(byte)))
                         .unwrap();
                     let b = diff
                         .job
                         .sections
                         .iter()
-                        .find(|s| s.byte_range.contains(&byte))
+                        .find(|s| s.byte_range.contains(&egui::text::ByteIndex(byte)))
                         .unwrap();
                     assert_eq!(a.format.font_id, b.format.font_id);
                     assert_eq!(
@@ -754,19 +756,28 @@ fn diff_font_changes_and_zoom_stay_in_sync_with_the_editor() {
                         galley.rows[0]
                             .glyphs
                             .iter()
-                            .map(|glyph| egui::epaint::text::Glyph {
-                                // Intraline highlights split syntax sections.
-                                section_index: 0,
-                                ..*glyph
+                            .map(|glyph| {
+                                (
+                                    glyph.chr,
+                                    glyph.pos,
+                                    glyph.advance_width,
+                                    glyph.line_height,
+                                    glyph.font_height,
+                                    glyph.uv_rect,
+                                )
                             })
                             .collect::<Vec<_>>()
                     };
-                    assert_eq!(
-                        metrics(&diff),
-                        metrics(&editor),
-                        "face={face}, size={size}, scale={scale}, padding={padding}, split={split}"
-                    );
-                    assert_eq!(diff.rows[0].rect, editor.rows[0].rect);
+                    for (i, (diff, editor)) in
+                        metrics(&diff).into_iter().zip(metrics(&editor)).enumerate()
+                    {
+                        assert_eq!(
+                            diff, editor,
+                            "glyph={i}, face={face}, size={size}, scale={scale}, padding={padding}, split={split}"
+                        );
+                    }
+                    assert_eq!(diff.rows[0].glyphs.len(), editor.rows[0].glyphs.len());
+                    assert_eq!(diff.rows[0].rect(), editor.rows[0].rect());
                     assert!(diff
                         .job
                         .sections
@@ -775,7 +786,7 @@ fn diff_font_changes_and_zoom_stay_in_sync_with_the_editor() {
                     app.source_control.open = true;
                 }
                 if measure {
-                    widths.push(first.rows[0].rect.width());
+                    widths.push(first.rows[0].rect().width());
                 }
             }
         }
@@ -825,8 +836,8 @@ fn conflict_previews_share_editor_font_spacing_and_syntax_colors() {
                 .expect("Conflict sides must render with the shared code layout");
             let font = galley.job.sections[0].format.font_id.clone();
             assert_eq!(font, FontId::monospace(24.0));
-            let expected_height = ctx.fonts(|f| f.row_height(&font)) + 6.0;
-            assert!((galley.rows[0].rect.height() - expected_height).abs() < 0.1);
+            let expected_height = ctx.fonts_mut(|f| f.row_height(&font)) + 6.0;
+            assert!((galley.rows[0].rect().height() - expected_height).abs() < 0.1);
             let sample = hedit::syntax::highlight_sample(
                 source,
                 24.0,
@@ -838,13 +849,13 @@ fn conflict_previews_share_editor_font_spacing_and_syntax_colors() {
                 let expected = sample
                     .sections
                     .iter()
-                    .find(|s| s.byte_range.contains(&byte))
+                    .find(|s| s.byte_range.contains(&egui::text::ByteIndex(byte)))
                     .unwrap();
                 let actual = galley
                     .job
                     .sections
                     .iter()
-                    .find(|s| s.byte_range.contains(&byte))
+                    .find(|s| s.byte_range.contains(&egui::text::ByteIndex(byte)))
                     .unwrap();
                 assert_eq!(actual.format.color, expected.format.color);
             }
@@ -1135,6 +1146,9 @@ fn shortcut_close_and_commit_drafts_preserve_editor_state() {
         fn set_string(&mut self, key: &str, value: String) {
             self.0.insert(key.into(), value);
         }
+        fn remove_string(&mut self, key: &str) {
+            self.0.remove(key);
+        }
         fn flush(&mut self) {}
     }
     let (_directory, ctx, mut app, _git) = fixture();
@@ -1200,7 +1214,8 @@ fn workspace_switcher_preserves_drafts_and_files_across_themes_and_small_sidebar
     assert_eq!(app.sidebar, workbench_navigation::Sidebar::SourceControl);
     assert_eq!(app.source_control.draft, "Keep my commit message");
     // Fallback navigation remains inside a sidebar at its minimum width.
-    let output = ctx.run(
+    let output = crate::app::tests::run_pass(
+        &ctx,
         egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
@@ -1209,7 +1224,7 @@ fn workspace_switcher_preserves_drafts_and_files_across_themes_and_small_sidebar
             ..Default::default()
         },
         |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
+            egui::CentralPanel::default().show_in_context(ctx, |ui| {
                 app.workspace_header(ui, true);
             });
         },
@@ -1477,19 +1492,23 @@ fn branch_comparison_uses_read_only_diff_and_refreshes_moving_revisions() {
         assert!(visible(&output, "Base"));
         assert!(!visible(&output, "Stage file"));
         assert!(!visible(&output, "Stage hunk"));
-        let before =
-            egui::containers::panel::PanelState::load(&ctx, egui::Id::new("source-control"))
-                .unwrap()
-                .rect
-                .width();
+        let before = egui::containers::panel::PanelState::load(
+            &ctx,
+            ctx.viewport_id().root_ui_id().with("source-control"),
+        )
+        .unwrap()
+        .outer_rect
+        .width();
         for _ in 0..8 {
             frame_size(&ctx, &mut app, vec![], size);
         }
-        let after =
-            egui::containers::panel::PanelState::load(&ctx, egui::Id::new("source-control"))
-                .unwrap()
-                .rect
-                .width();
+        let after = egui::containers::panel::PanelState::load(
+            &ctx,
+            ctx.viewport_id().root_ui_id().with("source-control"),
+        )
+        .unwrap()
+        .outer_rect
+        .width();
         assert!(
             (after - before).abs() < 1.0,
             "Revision inputs must not widen the sidebar on every frame: {before} to {after}"
@@ -2153,8 +2172,8 @@ fn cloning_exposes_progress_and_a_failed_clone_preserves_the_current_review() {
     let patch = app.source_control.diff.as_ref().unwrap().patch.clone();
     // An existing destination is rejected before any clone process can write.
     app.git_clone(&ctx, "/nonexistent/disposable-source".into(), root.clone());
-    let output = ctx.run(egui::RawInput::default(), |ctx| {
-        app.source_control_editor(ctx)
+    let output = crate::app::tests::run_pass(&ctx, egui::RawInput::default(), |ctx| {
+        ctx.root_ui(|root| app.source_control_editor(root))
     });
     assert!(visible(&output, "Cloning repository…"));
     assert!(visible(&output, "Cancel"));
@@ -2278,7 +2297,7 @@ fn tag_remote_and_clone_forms_work_by_keyboard_and_preserve_repository_drafts() 
 #[test]
 fn history_rows_select_when_clicking_the_subject_author_or_reference_text() {
     let (_directory, ctx, mut app, _git) = fixture();
-    ctx.style_mut(|style| style.interaction.selectable_labels = true);
+    ctx.global_style_mut(|style| style.interaction.selectable_labels = true);
     app.source_control.visit(&ctx, View::History, false);
     finish_git(&ctx, &mut app);
     for field in 0..3 {
