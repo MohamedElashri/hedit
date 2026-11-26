@@ -12,7 +12,7 @@ pub fn canonical(label: &str) -> Result<&'static str, String> {
     if label.eq_ignore_ascii_case("ISO-8859-1") || label.eq_ignore_ascii_case("latin1") {
         return Ok("ISO-8859-1");
     }
-    encoding_rs::Encoding::for_label(label.as_bytes())
+    encoding_rs::Encoding::for_label_no_replacement(label.as_bytes())
         .map(|e| e.name())
         .ok_or_else(|| "Unknown encoding.".into())
 }
@@ -65,6 +65,9 @@ pub fn detect(bytes: &[u8]) -> &'static str {
 }
 
 pub fn encode(text: &str, label: &str, bom: bool) -> Result<Vec<u8>, String> {
+    if text.contains('\0') {
+        return Err("Text files cannot contain NUL characters.".into());
+    }
     if canonical(label)? == "ISO-8859-1" {
         return text
             .chars()

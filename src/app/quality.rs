@@ -228,6 +228,29 @@ pub(super) enum Event {
     ),
     ProjectSaved(PathBuf),
 }
+/// Save-time cleanup preserves lines and only changes their trailing whitespace
+/// and separators. Keep the cursor on the same line and clamp it to the body.
+fn cursor_after_save_cleanup(before: &str, after: &str, cursor: usize) -> usize {
+    let mut remaining = cursor;
+    let mut result = 0;
+    let mut after = after.split_inclusive('\n');
+    for line in before.split_inclusive('\n') {
+        let next = after.next().unwrap_or("");
+        let length = line.chars().count();
+        let has_newline = line.ends_with('\n');
+        if remaining < length || !has_newline {
+            let body = next
+                .strip_suffix("\r\n")
+                .or_else(|| next.strip_suffix('\n'))
+                .unwrap_or(next);
+            return result + remaining.min(body.chars().count());
+        }
+        remaining -= length;
+        result += next.chars().count();
+    }
+    result
+}
+
 impl HeditApp {
     pub(super) fn init_quality(&mut self, storage: Option<&dyn eframe::Storage>) {
         self.quality.recent = storage
@@ -636,6 +659,22 @@ impl HeditApp {
                 return false;
             }
         };
+        let charset = format
+            .charset
+            .as_deref()
+            .map(|charset| {
+                let bom = charset == "utf-8-bom";
+                let charset = if bom { "UTF-8" } else { charset };
+                hedit::text_encoding::canonical(charset).map(|encoding| (encoding, bom))
+            })
+            .transpose();
+        let charset = match charset {
+            Ok(charset) => charset,
+            Err(error) => {
+                self.error = Some(error);
+                return false;
+            }
+        };
         if self.active().page.info.paged {
             if format.insert_final_newline == Some(true)
                 || format.trim_trailing_whitespace == Some(true)
@@ -645,6 +684,13 @@ impl HeditApp {
                     .is_some_and(|e| !e.eq_ignore_ascii_case(self.active().page.info.eol))
             {
                 self.error=Some("Save-time formatting requires a fully loaded file. Disable these rules to save this paged file unchanged.".into());
+                return false;
+            }
+            let info = &self.active().page.info;
+            if charset.is_some_and(|(encoding, bom)| {
+                info.encoding != encoding || (encoding == "UTF-8" && info.bom != bom)
+            }) {
+                self.error = Some("Save-time encoding conversion requires a fully loaded file. Disable the encoding rule to save this paged file unchanged.".into());
                 return false;
             }
             return true;
@@ -671,28 +717,23 @@ impl HeditApp {
             )
             .text;
         }
-        if text != self.active().page.text
-            || crlf.is_some_and(|c| c != (self.active().page.info.eol == "CRLF"))
-        {
-            let n = text.chars().count();
-            if !self.apply_edit(
-                hedit::editing::Edit {
-                    text,
-                    anchor: self.active().view.anchor.min(n),
-                    head: self.active().view.head.min(n),
-                },
-                crlf,
-            ) {
+        if let Some((encoding, bom)) = charset {
+            if let Err(error) = hedit::text_encoding::encode(&text, encoding, bom) {
+                self.error = Some(error);
                 return false;
             }
         }
-        if let Some(charset) = format.charset {
-            let needs_bom = charset == "utf-8-bom";
-            let charset = if charset == "utf-8-bom" {
-                "UTF-8"
-            } else {
-                &charset
-            };
+        if text != self.active().page.text
+            || crlf.is_some_and(|c| c != (self.active().page.info.eol == "CRLF"))
+        {
+            let buffer = self.active();
+            let anchor = cursor_after_save_cleanup(&buffer.page.text, &text, buffer.view.anchor);
+            let head = cursor_after_save_cleanup(&buffer.page.text, &text, buffer.view.head);
+            if !self.apply_edit(hedit::editing::Edit { text, anchor, head }, crlf) {
+                return false;
+            }
+        }
+        if let Some((charset, needs_bom)) = charset {
             let shared = self.workspace.editor.get(self.active().view.id).unwrap();
             let mut doc = shared.lock().unwrap();
             if let Err(e) = doc.set_encoding(charset) {

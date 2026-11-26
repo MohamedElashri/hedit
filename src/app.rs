@@ -104,6 +104,8 @@ mod row_index;
 #[cfg(test)]
 mod rtl_tests;
 #[cfg(test)]
+mod save_format_tests;
+#[cfg(test)]
 mod screenshot_tests;
 mod settings_browser;
 mod settings_navigation;
