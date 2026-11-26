@@ -1,8 +1,11 @@
 # Changelog
 
-## [Unreleased]
+## [0.7.4] - 2026-11-26
 
-- Add built-in file and folder icons to Explorer and Source Control, and file icons to editor tabs and Go to File. Icons distinguish common languages, project files, and folder roles in light and dark themes.
+- Add built-in file and folder icons to Explorer, Source Control, tabs, and Go to File.
+- Add permanent Delete in Explorer and an option to skip the Move to Trash prompt.
+- Show plain Untitled when only one unnamed tab is open. Preserve draft names and recovery.
+- Fix editing, clipboard, search, paged navigation, Git staging, and Windows build cancellation. Accept colons in CLI filenames.
 
 ## [0.7.3] - 2026-11-23
 

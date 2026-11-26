@@ -346,7 +346,7 @@ impl HeditApp {
             let text = doc.text(32 * 1024 * 1024).unwrap_or_default();
             let (line, column) = resolve(&text, &file, &target).unwrap_or((1, None));
             let (page, cursor) =
-                opening::page_at_location(&mut doc, file_line as u64, column.unwrap_or(1) as u64)?;
+                opening::page_at_location(&mut doc, line as u64, column.unwrap_or(1) as u64)?;
             Ok(Action::Add(Box::new(doc), page, cursor))
         });
     }
