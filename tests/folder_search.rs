@@ -99,5 +99,7 @@ fn selection_search_does_not_let_an_unselected_match_block_a_selected_match() {
     let options = search::Options::default();
     let hits = search::matches("aaa", "aa", &options, 1..3).unwrap();
     let replaced = search::replace("aaa", "aa", "x", &options, 1..3).unwrap();
-    assert_eq!((hits, replaced), (vec![1..3], ("ax".into(), 1)));
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0], 1..3);
+    assert_eq!(replaced, ("ax".into(), 1));
 }
