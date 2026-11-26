@@ -607,6 +607,17 @@ impl HeditApp {
                 self.start_explorer_entry(ui.ctx(), path.to_owned(), true, false);
                 ui.close_menu();
             }
+            if ui
+                .add_enabled(
+                    self.command_enabled(Command::FindFiles),
+                    egui::Button::new("Find in This Folder"),
+                )
+                .clicked()
+            {
+                self.set_folder_search_scope(Some(PathBuf::from(path)));
+                self.show_search_sidebar();
+                ui.close_menu();
+            }
         }
         for (label, operation) in [
             ("Rename…", quality::FileOperation::Rename),

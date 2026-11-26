@@ -345,6 +345,7 @@ missing. **Esc** returns to one cursor after dismissing open panels/dialogs.
 | Find/replace | **Ctrl+F / Ctrl+H**; Enter/Shift+Enter navigates. Options: regex, case, whole words, selection only. Replacements support `${1}` groups; Replace all is one undo step |
 | Select matches | **Alt+Enter**; Find highlights up to 20,000 matches but navigates beyond. Replacement/select-all requires at most 20,000; narrow larger queries |
 | Find in folders | **Ctrl+Shift+F** searches open folders and unsaved buffers, honoring Git ignores. Filter with `*.rs, *.cu`; Context shows surrounding lines; **F4/Shift+F4** navigates |
+| Search one folder | Right-click an Explorer folder and choose **Find in This Folder**. Use **Clear scope** in Search to return to all open folders |
 | Replace in folders | Enable Replace, enter text, then **Preview**. Review/select files and **Apply**. Open files remain unsaved/undoable; unopened files are written only if unchanged since preview, with **Undo replacements** available |
 | Go to anything | **Ctrl+P** finds by letters in order (`srcprj` → `src/project.rs`). Append `@symbol`, `:42:7`, or `#text`; alone these search the current file. Esc cancels previews |
 | Commands/symbols/lines | **Ctrl+Shift+P / Ctrl+R / Ctrl+G**; **Alt+Left/Right** navigates history |
