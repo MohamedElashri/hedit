@@ -15,6 +15,15 @@ fn clean(value: &str) -> Option<String> {
     .then(|| value.to_owned())
 }
 
+fn location_suffix(suffix: &str) -> Option<&str> {
+    let numbers = suffix.strip_prefix(':')?;
+    (numbers.split(':').count() <= 2
+        && numbers
+            .split(':')
+            .all(|part| part.parse::<u64>().is_ok_and(|n| n > 0)))
+    .then_some(suffix)
+}
+
 /// A selection takes precedence; otherwise inspect the cursor's line only.
 /// Quoted paths may contain spaces; bare paths stop at common source delimiters.
 pub fn at(text: &str, selection: Selection) -> Option<String> {
@@ -22,14 +31,16 @@ pub fn at(text: &str, selection: Selection) -> Option<String> {
     let end = advanced::byte(text, selection.end());
     if start != end {
         let selected = text.get(start..end)?.trim();
-        let unwrapped = ['\'', '"', '`', '<']
-            .into_iter()
-            .find_map(|open| {
-                let close = if open == '<' { '>' } else { open };
-                selected.strip_prefix(open)?.strip_suffix(close)
-            })
-            .unwrap_or(selected);
-        return clean(unwrapped);
+        let unwrapped = ['\'', '"', '`', '<'].into_iter().find_map(|open| {
+            let close = if open == '<' { '>' } else { open };
+            let (path, suffix) = selected.strip_prefix(open)?.rsplit_once(close)?;
+            if suffix.is_empty() {
+                clean(path)
+            } else {
+                clean(&format!("{path}{}", location_suffix(suffix)?))
+            }
+        });
+        return unwrapped.or_else(|| clean(selected));
     }
     let before = &text[..start];
     let line_start = before.rfind('\n').map_or(0, |i| i + 1);
@@ -49,18 +60,10 @@ pub fn at(text: &str, selection: Selection) -> Option<String> {
                     .next()
                     .unwrap_or("")
                     .trim_end_matches(':');
-                let suffix = suffix.strip_prefix(':').filter(|numbers| {
-                    numbers.split(':').count() <= 2
-                        && numbers
-                            .split(':')
-                            .all(|number| number.parse::<u64>().is_ok_and(|n| n > 0))
-                });
-                let end = after_quote + suffix.map_or(0, |numbers| numbers.len() + 1);
+                let suffix = location_suffix(suffix).unwrap_or_default();
+                let end = after_quote + suffix.len();
                 if begin <= position && position <= end {
-                    return match suffix {
-                        Some(numbers) => clean(&format!("{}:{numbers}", &line[begin..offset])),
-                        None => clean(&line[begin..offset]),
-                    };
+                    return clean(&format!("{}{suffix}", &line[begin..offset]));
                 }
                 quoted = None;
             }

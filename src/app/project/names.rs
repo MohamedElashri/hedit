@@ -2,6 +2,7 @@
 //! persisted. A changed query reuses metadata; changed roots cancel the walk.
 use super::*;
 use std::collections::VecDeque;
+use std::path::Path;
 use std::sync::{mpsc::SyncSender, Mutex};
 
 const MAX_ENTRIES: usize = 50_000;
@@ -137,9 +138,17 @@ struct Catalogue {
 impl Catalogue {
     fn filter(&self, query: &str) -> QuickOpen {
         let query = query.to_lowercase().replace('\\', "/");
+        let absolute = Path::new(&query).is_absolute();
         let mut best: Vec<(i64, &folder::FolderEntry)> = vec![];
         for entry in &self.entries {
-            if let Some(score) = folder::fuzzy_score(&entry.name, &query) {
+            let score = folder::fuzzy_score(&entry.name, &query).or_else(|| {
+                if absolute {
+                    folder::fuzzy_score(&entry.path, &query)
+                } else {
+                    None
+                }
+            });
+            if let Some(score) = score {
                 let at = best.partition_point(|(prior, e)| {
                     *prior > score || (*prior == score && e.name <= entry.name)
                 });

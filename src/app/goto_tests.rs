@@ -33,6 +33,56 @@ fn line_of(app: &HeditApp) -> usize {
         + 1
 }
 
+#[test]
+fn regression_goto_keeps_a_windows_drive_prefix() {
+    assert_eq!(
+        super::goto_anything::parse_file_query(r"c:\work\note.txt:17:4"),
+        (r"c:\work\note.txt", Some(Target::Line(Some(17), Some(4))))
+    );
+}
+
+#[test]
+fn regression_open_reference_keeps_a_selected_quoted_paths_location() {
+    let reference = "\"folder/my notes.txt\":12:4";
+    let selected = hedit::advanced::Selection {
+        anchor: 0,
+        head: reference.len(),
+    };
+    assert_eq!(
+        hedit::file_reference::at(reference, selected).as_deref(),
+        Some("folder/my notes.txt:12:4")
+    );
+}
+
+#[test]
+fn regression_goto_text_in_a_named_open_paged_file_keeps_the_page() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("large.txt");
+    let prefix = "before abcdefghijklmnopqrstuvwxyz\n".repeat(75_000);
+    std::fs::write(
+        &path,
+        format!("{prefix}unique marker\n{}", "after\n".repeat(1_000)),
+    )
+    .unwrap();
+    let (workspace, _) = Workspace::restore(dir.path().join("session")).unwrap();
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    app.open(&ctx, Some(path));
+    finish_app_job(&mut app, &ctx);
+    app.jump_to_line(&ctx, 75_001, None);
+    finish_app_job(&mut app, &ctx);
+    let start = app.active().page.start;
+    assert!(start > 0);
+    app.go_to_target(&ctx, None, Target::Text("unique marker".into()));
+    finish_app_job(&mut app, &ctx);
+    let buffer = app.active();
+    assert_eq!(buffer.page.start, start);
+    assert!(
+        buffer.page.text[hedit::advanced::byte(&buffer.page.text, buffer.view.head)..]
+            .starts_with("unique marker")
+    );
+}
+
 fn palette(ctx: &egui::Context, app: &mut HeditApp, query: &str) {
     app.execute(ctx, Command::Switcher);
     frame(ctx, app, vec![]);

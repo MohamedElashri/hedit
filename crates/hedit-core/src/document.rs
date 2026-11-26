@@ -1498,7 +1498,7 @@ impl Document {
                 if byte == b'\n' && self.eol == "Unknown" {
                     self.eol = if previous_cr { "CRLF" } else { "LF" };
                 }
-                if byte == b'\n' && (self.eol != "CRLF" || previous_cr) {
+                if byte == b'\n' {
                     current_line += 1;
                     line_start = cursor + index as u64 + 1;
                     if current_line == line {
@@ -1508,6 +1508,10 @@ impl Document {
                 previous_cr = byte == b'\r';
             }
             cursor += bytes.len() as u64;
+        }
+        if current_line < line {
+            self.check_source()?;
+            return Ok(self.size);
         }
         cursor = line_start;
         let mut remaining = col - 1;
@@ -1520,7 +1524,7 @@ impl Document {
                     }
                     bytes.truncate(error.valid_up_to());
                 }
-                if self.eol != "LF" && bytes.last() == Some(&b'\r') {
+                if bytes.last() == Some(&b'\r') {
                     bytes.pop();
                 }
             }
@@ -1528,8 +1532,10 @@ impl Document {
             if self.eol == "Unknown" {
                 self.eol = detected_eol(&bytes);
             }
-            let separator = if self.eol == "CRLF" { "\r\n" } else { "\n" };
-            let end = text.find(separator).unwrap_or(text.len());
+            let newline = text.find('\n');
+            let end = newline.map_or(text.len(), |at| {
+                at - usize::from(text[..at].ends_with('\r'))
+            });
             for (index, character) in text[..end].char_indices() {
                 let width = character.len_utf16() as u64;
                 if remaining < width {
@@ -1543,7 +1549,7 @@ impl Document {
                 }
             }
             cursor += end as u64;
-            if end < text.len() {
+            if newline.is_some() {
                 break;
             }
         }
@@ -2115,5 +2121,29 @@ impl Document {
         }
         self.check_source()?;
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod location_tests {
+    use super::*;
+
+    #[test]
+    fn regression_location_counts_every_newline_in_a_mixed_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mixed.txt");
+        std::fs::write(&path, "one\r\ntwo\nthree\r\n").unwrap();
+        let mut doc = Document::open(1, &path).unwrap();
+        assert_eq!(doc.location_offset(2, 99).unwrap(), 8);
+        assert_eq!(doc.location_offset(3, 1).unwrap(), 9);
+    }
+
+    #[test]
+    fn regression_location_past_the_last_line_clamps_to_eof() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("file.txt");
+        std::fs::write(&path, "one\ntwo").unwrap();
+        let mut doc = Document::open(1, &path).unwrap();
+        assert_eq!(doc.location_offset(10, 1).unwrap(), 7);
     }
 }

@@ -2147,7 +2147,7 @@ impl HeditApp {
             let (file_filter, goto) = if commands || paste || literal_open_file {
                 (filter.as_str(), None)
             } else {
-                goto_anything::parse(&filter)
+                goto_anything::parse_file_query(&filter)
             };
             let filter = file_filter.to_owned();
             let here = goto.is_some() && filter.is_empty();
@@ -2159,6 +2159,9 @@ impl HeditApp {
             let mut items = Vec::new();
             // Letters in order, best matches first; equal scores keep their order.
             let score = |text: &str| hedit::folder::fuzzy_match(text, &filter).map(|(s, _)| s);
+            let absolute_filter = std::path::Path::new(&filter)
+                .is_absolute()
+                .then(|| filter.replace('\\', "/"));
             let extension_detail = |id: &str| {
                 let shortcut = self.extension_shortcut_text(id);
                 if shortcut.is_empty() {
@@ -2252,7 +2255,10 @@ impl HeditApp {
                 let roots: Vec<_> = self.workspace.folders.iter().map(|f| PathBuf::from(&f.path)).collect();
                 for (index, buffer) in self.workspace.open.iter().enumerate() {
                     let label = buffer.page.info.path.as_ref().map(|path| hedit::folder::display_path(&roots, std::path::Path::new(path))).unwrap_or_else(|| buffer.view.name.clone());
-                    if let Some(found) = score(&label).or_else(|| score(&buffer.view.name)) {
+                    let absolute_score = absolute_filter.as_deref().and_then(|query| {
+                        buffer.page.info.path.as_deref().and_then(|path| hedit::folder::fuzzy_score(path, query))
+                    });
+                    if let Some(found) = absolute_score.or_else(|| score(&label)).or_else(|| score(&buffer.view.name)) {
                         scored.push((found, (label, "open".to_owned(), Item::Buffer(index))));
                     }
                 }
