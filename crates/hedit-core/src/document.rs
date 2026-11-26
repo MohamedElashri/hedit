@@ -1561,14 +1561,27 @@ impl Document {
                 }
                 Err(error) => return Err(err(error)),
             };
-            for ch in text.chars() {
-                if ch == '\n' {
-                    line += 1;
-                    column = 1;
+            let bytes = text.as_bytes();
+            let suffix = if let Some(last) = memchr::memrchr(b'\n', bytes) {
+                line += memchr::memchr_iter(b'\n', bytes).count() as u64;
+                column = 1;
+                trailing_crs = 0;
+                &text[last + 1..]
+            } else {
+                text
+            };
+            column += if suffix.is_ascii() {
+                suffix.len() as u64
+            } else {
+                suffix.encode_utf16().count() as u64
+            };
+            if !suffix.is_empty() {
+                let crs = suffix.bytes().rev().take_while(|&b| b == b'\r').count() as u64;
+                trailing_crs = if crs == suffix.len() as u64 {
+                    trailing_crs + crs
                 } else {
-                    column += ch.len_utf16() as u64;
-                }
-                trailing_crs = if ch == '\r' { trailing_crs + 1 } else { 0 };
+                    crs
+                };
             }
             at += text.len() as u64;
         }
@@ -1587,19 +1600,27 @@ impl Document {
         let mut previous_cr = false;
         while cursor < self.size && current_line < line {
             let bytes = self.read_range(cursor, (self.size - cursor).min(IO_SIZE))?;
-            for (index, &byte) in bytes.iter().enumerate() {
-                if byte == b'\n' && self.eol == "Unknown" {
-                    self.eol = if previous_cr { "CRLF" } else { "LF" };
+            if self.eol == "Unknown" {
+                if let Some(index) = memchr::memchr(b'\n', &bytes) {
+                    let crlf = if index == 0 {
+                        previous_cr
+                    } else {
+                        bytes[index - 1] == b'\r'
+                    };
+                    self.eol = if crlf { "CRLF" } else { "LF" };
                 }
-                if byte == b'\n' {
-                    current_line += 1;
-                    line_start = cursor + index as u64 + 1;
-                    if current_line == line {
-                        break;
-                    }
-                }
-                previous_cr = byte == b'\r';
             }
+            let count = memchr::memchr_iter(b'\n', &bytes).count() as u64;
+            if count >= line - current_line {
+                let index = memchr::memchr_iter(b'\n', &bytes)
+                    .nth((line - current_line - 1) as usize)
+                    .unwrap();
+                line_start = cursor + index as u64 + 1;
+                current_line = line;
+            } else {
+                current_line += count;
+            }
+            previous_cr = bytes.last() == Some(&b'\r');
             cursor += bytes.len() as u64;
         }
         if current_line < line {
