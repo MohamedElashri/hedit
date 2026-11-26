@@ -484,7 +484,7 @@ fn folder_search_includes_named_unsaved_files_from_the_editor() {
     let (directory, ctx, mut app) = app_with("");
     let root = directory.path().join("project");
     std::fs::create_dir(&root).unwrap();
-    let path = root.join("not-on-disk.txt");
+    let path = root.canonicalize().unwrap().join("not-on-disk.txt");
     app.set_folder(hedit::folder::read_directory(root).unwrap());
     app.open(&ctx, Some(path.clone()));
     finish_app_job(&mut app, &ctx);
