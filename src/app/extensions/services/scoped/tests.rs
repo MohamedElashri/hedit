@@ -262,8 +262,15 @@ fn native_workspace_provider_never_receives_document_text_and_interactions_prese
         }
         assert!(
             started.elapsed() < Duration::from_secs(15),
-            "Stopped provider did not reappear: {:?}",
-            app.plugin_services.error
+            "Stopped provider did not reappear: open={}, suspended={}, error={:?}, entries={:?}, text={:?}",
+            app.plugin_services.open,
+            app.plugin_services.suspended,
+            app.plugin_services.error,
+            app.plugin_services.entries.iter().map(|entry| (&entry.contribution.id, entry.state.stopped, &entry.error)).collect::<Vec<_>>(),
+            output.shapes.iter().filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) => Some(text.galley.text()),
+                _ => None,
+            }).collect::<Vec<_>>()
         );
         std::thread::sleep(Duration::from_millis(3));
     }
