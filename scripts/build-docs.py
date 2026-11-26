@@ -117,15 +117,16 @@ def rewrite_links(body, rewrite, base_path):
             result.append(line)
             continue
         if not fence:
-            image = re.fullmatch(r'!\[([^\]\n]+)\]\(([^\s)]+)\)\n?', line)
+            image = re.fullmatch(r'<!-- docs-screenshot (\S+) \| (.+) -->\n?', line)
             if image:
-                alt, target = image.groups()
+                target, alt = image.groups()
                 url = rewrite(target)
-                if url.startswith(base_path + '/images/'):
-                    file = json.dumps(url.removeprefix(base_path + '/'), ensure_ascii=False)
-                    alt = json.dumps(alt, ensure_ascii=False)
-                    result.append(f'{{{{< screenshot file={file} alt={alt} >}}}}\n')
-                    continue
+                if not url.startswith(base_path + '/images/'):
+                    raise ValueError(f'Screenshot must refer to a local docs image: {target}')
+                file = json.dumps(url.removeprefix(base_path + '/'), ensure_ascii=False)
+                alt = json.dumps(alt, ensure_ascii=False)
+                result.append(f'{{{{< screenshot file={file} alt={alt} >}}}}\n')
+                continue
             line = re.sub(r'(\]\()([^\s)]+)(\))', lambda m: m[1] + rewrite(m[2]) + m[3], line)
             line = re.sub(r'((?:href|src|srcset)=")([^"]+)(")', lambda m: m[1] + rewrite(m[2]) + m[3], line)
         result.append(line)

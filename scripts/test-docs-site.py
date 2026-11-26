@@ -57,7 +57,7 @@ class Imports(unittest.TestCase):
             (root / 'docs/images').mkdir(parents=True)
             (root / 'docs/images/a.png').touch()
             rewrite = lambda target: build.rewrite_target(target, 'USER_GUIDE.md', routes, anchors, '/manual', root)
-            text = '[settings](#settings) [API](docs/sdk.md#edits)\n![view](docs/images/a.png)\n```md\n[example](#not-real)\n```\n'
+            text = '[settings](#settings) [API](docs/sdk.md#edits)\n<!-- docs-screenshot docs/images/a.png | view -->\n```md\n[example](#not-real)\n```\n'
             self.assertEqual(build.rewrite_links(text, rewrite, '/manual'),
                              '[settings](@/guide/settings.md) [API](@/reference/sdk.md#edits)\n{{< screenshot file="images/a.png" alt="view" >}}\n```md\n[example](#not-real)\n```\n')
             with self.assertRaises(ValueError):

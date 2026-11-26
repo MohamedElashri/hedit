@@ -177,7 +177,7 @@ Remote Explorer. Search for a hostname, SSH alias, `user@host`, or saved path.
 Use the arrow keys and **Enter** to connect. A host opens its home directory.
 A saved workspace opens its saved folder.
 
-![Remote Explorer with SSH hosts and saved workspaces](docs/images/ssh.png)
+<!-- docs-screenshot docs/images/ssh.png | Remote Explorer with SSH hosts and saved workspaces -->
 
 | In Remote Explorer | Use it to |
 | --- | --- |
@@ -314,7 +314,7 @@ Install script fonts if glyphs are missing.
 | Path under cursor | **Alt+D** opens a path/include/`file:line:column` in the line or selection. Quote spaces. Checks beside the file, then open folders and `include/`; existing files only, no URLs |
 | Bookmarks | **Ctrl+F2** toggles; **F2/Shift+F2** navigates; **Goto → Bookmarks…** lists; **Alt+F2** adds cursors; **Ctrl+Shift+F2** clears |
 
-![Search results grouped by file in the sidebar](docs/images/search.png)
+<!-- docs-screenshot docs/images/search.png | Search results grouped by file in the sidebar -->
 
 Searches run in the background. New input takes priority. Filename indexes
 stay in memory. Notices report incomplete results and unreadable folders.
@@ -526,7 +526,7 @@ trusted host. Drag the panel edge to resize it.
 | **…** / right-click | Rename, restart, stop, close, copy selection |
 | Panel close button / toggle shortcut | Hide panel while shells keep running |
 
-![Integrated terminal below a Rust project](docs/images/terminal.png)
+<!-- docs-screenshot docs/images/terminal.png | Integrated terminal below a Rust project -->
 
 These keys apply while terminal-focused; macOS uses Cmd for new/close, Control
 for tab switching. **Ctrl+C** interrupts; copy/paste uses **Ctrl+Shift+C/V**
@@ -579,7 +579,7 @@ prompts are disabled. Signing and hooks follow Git configuration.
 | Undo/revert | Undo last commit confirms the reviewed HEAD, moves to its first parent, and leaves changes staged. Unavailable for initial commits/operations in progress. Revert shared commits; Branch here creates without switching |
 | Remotes | Fetch updates references; Pull fast-forwards only; Push uses the configured destination; Publish sets upstream. No force-push; merge/rebase divergence explicitly |
 
-![Source Control with a syntax-colored file diff](docs/images/git.png)
+<!-- docs-screenshot docs/images/git.png | Source Control with a syntax-colored file diff -->
 
 Conflicts show **Current · ours**, **Incoming · theirs**, and the ancestor.
 **Use Current/Incoming…** confirms and backs up; **Open to resolve** combines in
@@ -599,7 +599,7 @@ unsaved source and scrolls with it. Narrow windows stack the panes. Drag the
 divider, use its arrow keys, or double-click to restore equal sizes. Choose
 Markdown syntax for an untitled note. The mode survives a restart.
 
-![Markdown source beside rendered tables, an equation, and a diagram](docs/images/markdown.png)
+<!-- docs-screenshot docs/images/markdown.png | Markdown source beside rendered tables, an equation, and a diagram -->
 
 | Task | Use |
 | --- | --- |
@@ -635,7 +635,7 @@ a hover error and **Copy source**.
 | Font | **Preferences → Editor font…** filters installed fonts by family/script. **Ctrl++ / Ctrl+- / Ctrl+0** changes/resets size |
 | Editor details | **View → Editor** toggles numbers, current-line highlight, whitespace, guides, minimap, tabs, and status bar |
 
-![Two files open in independent editor groups](docs/images/split-panes.png)
+<!-- docs-screenshot docs/images/split-panes.png | Two files open in independent editor groups -->
 
 | Workspace control | Behavior |
 | --- | --- |
@@ -684,7 +684,7 @@ Open **Preferences → Settings…** with **Ctrl+,**. Choose **User** or **Proje
 | Adjust formatting rules | Choose **Inherit**, **Enabled**, or **Disabled**. `.editorconfig` can override project rules, which can override user defaults. |
 | Rebind a command | Open **Key Bindings**. Use one or two keys. `Primary` means Ctrl or macOS Cmd. Reset one binding or all bindings. |
 
-![Settings window with the category list and editable preferences](docs/images/settings.png)
+<!-- docs-screenshot docs/images/settings.png | Settings window with the category list and editable preferences -->
 
 Invalid settings keep the last valid value. Incomplete list entries stay
 editable. Project saves refuse disk conflicts or an unsaved project-file tab.
@@ -749,7 +749,7 @@ system light/dark following with a separate theme for each. Hedit Ink and Hedit
 Paper are defaults; [palette credits](assets/licenses/theme-palettes.md) cover
 additional themes.
 
-![Appearance settings with built-in theme previews](docs/images/themes.png)
+<!-- docs-screenshot docs/images/themes.png | Appearance settings with built-in theme previews -->
 
 **Customize colors** previews interface/syntax/status colors and contrast.
 **Save as new theme…** keeps a copy; Import accepts hedit JSON and TextMate
@@ -896,7 +896,7 @@ checkpoint. [SSH recovery](#privacy-and-recovery) lives on the host.
 | A tab is missing | Check open tabs, **Ctrl+P**, **Closed Files**, and the session you launched. |
 | The latest recovery is unreadable | hedit tries the previous copy and keeps `preserved-*` data. Damaged undo can be dropped with a warning while text survives. |
 
-![Closed Files with an unsaved note available to reopen](docs/images/recovery.png)
+<!-- docs-screenshot docs/images/recovery.png | Closed Files with an unsaved note available to reopen -->
 
 | Platform | Default local session |
 | --- | --- |

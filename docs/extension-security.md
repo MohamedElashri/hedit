@@ -131,9 +131,9 @@ image and snapshot. The live workspace stays with the host.
 
 | Platform | Isolation and cleanup |
 | --- | --- |
-| [Linux](../crates/hedit-plugin/src/sandbox/linux.rs) | Landlock ABI 3 restricts content access to the image, projection, and required system files. seccomp restricts sockets, process creation, tracing, metadata changes, and policy changes. Address space has a hard 256 MiB cap. The launcher sets parent-death termination. |
-| [macOS](../crates/hedit-plugin/src/sandbox/macos.rs) | A fresh host process closes inherited descriptors and reads up to 16 KiB of policy. It installs Seatbelt before receiving text. The policy allows the image, snapshot, and required libraries. It denies network, writes, child creation, and other-image execution. A trusted guardian and a liveness socket enforce cleanup. |
-| [Windows](../crates/hedit-plugin/src/sandbox/windows/native.rs) | Capability-free LPAC, untrusted integrity, no-write-up, write-restricted primary token, Win32k lockdown, explicit handles, and a kill-on-close single-process job. The host checks token, mitigations, and job before resuming the suspended image. |
+| [Linux](https://github.com/MohamedElashri/hedit/blob/main/crates/hedit-plugin/src/sandbox/linux.rs) | Landlock ABI 3 restricts content access to the image, projection, and required system files. seccomp restricts sockets, process creation, tracing, metadata changes, and policy changes. Address space has a hard 256 MiB cap. The launcher sets parent-death termination. |
+| [macOS](https://github.com/MohamedElashri/hedit/blob/main/crates/hedit-plugin/src/sandbox/macos.rs) | A fresh host process closes inherited descriptors and reads up to 16 KiB of policy. It installs Seatbelt before receiving text. The policy allows the image, snapshot, and required libraries. It denies network, writes, child creation, and other-image execution. A trusted guardian and a liveness socket enforce cleanup. |
+| [Windows](https://github.com/MohamedElashri/hedit/blob/main/crates/hedit-plugin/src/sandbox/windows/native.rs) | Capability-free LPAC, untrusted integrity, no-write-up, write-restricted primary token, Win32k lockdown, explicit handles, and a kill-on-close single-process job. The host checks token, mitigations, and job before resuming the suspended image. |
 
 On Linux, the exact system ELF loaders are available. A tool can use them to
 interpret readable code inside its sandbox. Landlock restricts file contents
@@ -167,7 +167,7 @@ bounds, transport, and cancellation.
 
 The supervisor kills and reaps on cancellation, bad transport, or exceeded
 limits. Keep private copies and disclosure guards through cleanup. The native
-suite in [`native_tool.rs`](../crates/hedit-plugin/tests/native_tool.rs) exercises the real boundary
+suite in [`native_tool.rs`](https://github.com/MohamedElashri/hedit/blob/main/crates/hedit-plugin/tests/native_tool.rs) exercises the real boundary
 with hostile operations and Unicode/full-size inputs. Native platform checks
 are required before enabling a profile.
 
@@ -271,8 +271,8 @@ abandoned AppContainer housekeeping remain availability risks.
 
 ### Language-server framing
 
-The [shared codec](../crates/hedit-protocol/src/lsp.rs) validates frames.
-The [broker owner](../crates/hedit-broker/src/lsp/owner.rs) manages the process.
+The [shared codec](https://github.com/MohamedElashri/hedit/blob/main/crates/hedit-protocol/src/lsp.rs) validates frames.
+The [broker owner](https://github.com/MohamedElashri/hedit/blob/main/crates/hedit-broker/src/lsp/owner.rs) manages the process.
 
 | Layer | Checks |
 | --- | --- |
