@@ -1136,6 +1136,7 @@ impl HeditApp {
                 text,
                 view: b.view.clone(),
                 encoding: b.page.info.encoding.clone(),
+                bom: b.page.info.dirty.then_some(b.page.info.bom),
             });
         }
         Ok(projects::State {
@@ -1197,7 +1198,7 @@ impl HeditApp {
                     }
                 }
             }
-            projects::atomic_json(&path.with_extension("hedit-workspace"), &state)?;
+            projects::atomic_json(&projects::workspace_path(&path), &state)?;
             projects::atomic_json(&path, &project)?;
             Ok(Action::Quality(Box::new(Event::ProjectSaved(path))))
         });
@@ -1207,7 +1208,7 @@ impl HeditApp {
         if let Some(current) = self.quality.project_path.clone() {
             match self
                 .project_snapshot()
-                .and_then(|s| projects::atomic_json(&current.with_extension("hedit-workspace"), &s))
+                .and_then(|s| projects::atomic_json(&projects::workspace_path(&current), &s))
             {
                 Ok(()) => (),
                 Err(e) => {
@@ -1240,6 +1241,9 @@ impl HeditApp {
                 }
                 if doc.info().encoding != tab.encoding {
                     doc.set_encoding(&tab.encoding)?;
+                }
+                if let Some(bom) = tab.bom {
+                    doc.set_bom(bom)?;
                 }
                 let page = doc.page(tab.view.page_start)?;
                 tabs.push((doc, page, tab.view.clone()));

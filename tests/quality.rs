@@ -759,3 +759,24 @@ fn changes_list_changed_blocks_with_their_original_lines() {
         (1, 4..6, "c\n")
     );
 }
+
+#[test]
+fn editorconfig_numeric_ranges_match_numbered_filenames() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(
+        d.path().join(".editorconfig"),
+        "root = true\n[chapter{1..3}.txt]\nindent_size = 7\n",
+    )
+    .unwrap();
+    let format = |name| {
+        hedit::projects::formatting(
+            &d.path().join(name),
+            "plain",
+            &hedit::projects::Defaults::default(),
+            None,
+        )
+        .unwrap()
+    };
+    assert_eq!(format("chapter4.txt").indent_size, None);
+    assert_eq!(format("chapter2.txt").indent_size, Some(7));
+}
