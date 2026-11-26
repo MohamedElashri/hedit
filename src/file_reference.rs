@@ -43,8 +43,24 @@ pub fn at(text: &str, selection: Selection) -> Option<String> {
     for (offset, ch) in line.char_indices() {
         match quoted {
             Some((quote, begin)) if ch == quote => {
-                if begin <= position && position <= offset {
-                    return clean(&line[begin..offset]);
+                let after_quote = offset + ch.len_utf8();
+                let suffix = line[after_quote..]
+                    .split(|c: char| c != ':' && !c.is_ascii_digit())
+                    .next()
+                    .unwrap_or("")
+                    .trim_end_matches(':');
+                let suffix = suffix.strip_prefix(':').filter(|numbers| {
+                    numbers.split(':').count() <= 2
+                        && numbers
+                            .split(':')
+                            .all(|number| number.parse::<u64>().is_ok_and(|n| n > 0))
+                });
+                let end = after_quote + suffix.map_or(0, |numbers| numbers.len() + 1);
+                if begin <= position && position <= end {
+                    return match suffix {
+                        Some(numbers) => clean(&format!("{}:{numbers}", &line[begin..offset])),
+                        None => clean(&line[begin..offset]),
+                    };
                 }
                 quoted = None;
             }

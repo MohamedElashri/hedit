@@ -504,3 +504,171 @@ fn file_symbol_navigation_reads_decoded_utf16_documents() {
     assert_eq!(app.active().page.info.encoding, "UTF-16LE");
     assert_eq!(line_of(&app), 4);
 }
+
+fn app_with(text: &str) -> (tempfile::TempDir, egui::Context, HeditApp) {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+    workspace.open[0].page.text = text.into();
+    workspace.edit(0, "").unwrap();
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    app.settings.auto_complete = false;
+    app.focus_editor = true;
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![]);
+    (directory, ctx, app)
+}
+
+#[test]
+fn selection_only_skips_a_different_tab() {
+    let (_directory, ctx, mut app) = app_with("needle needle");
+    let original = app.active().view.id;
+    app.quality.selection_only = true;
+    app.quality.scope = Some((original, 0, 6));
+    app.query = "needle".into();
+    app.replacement = "changed".into();
+    app.execute(&ctx, Command::New);
+    let second = app.active().view.id;
+    assert_ne!(second, original);
+    assert!(app.apply_edit(
+        hedit::editing::Edit {
+            text: "needle needle".into(),
+            anchor: 0,
+            head: 0,
+        },
+        None
+    ));
+    assert!(app.quality.selection_only);
+    app.replace_advanced(true);
+    assert_eq!(app.active().page.text, "needle needle");
+}
+
+#[test]
+fn folder_search_includes_named_unsaved_files_from_the_editor() {
+    let (directory, ctx, mut app) = app_with("");
+    let root = directory.path().join("project");
+    std::fs::create_dir(&root).unwrap();
+    let path = root.canonicalize().unwrap().join("not-on-disk.txt");
+    app.set_folder(hedit::folder::read_directory(root).unwrap());
+    app.open(&ctx, Some(path.clone()));
+    finish_app_job(&mut app, &ctx);
+    assert_eq!(app.active().page.info.name, "not-on-disk.txt");
+    assert!(app.apply_edit(
+        hedit::editing::Edit {
+            text: "unique_marker\n".into(),
+            anchor: 0,
+            head: 0,
+        },
+        None
+    ));
+    assert!(!path.exists());
+    app.quality.folder_query = "unique_marker".into();
+    app.folder_search(&ctx, false);
+    finish_app_job(&mut app, &ctx);
+    assert!(app.quality.results.hits.iter().any(|hit| hit.path == path));
+}
+
+#[test]
+fn git_partial_stage_uses_header_records_not_filename_fragments() {
+    for name in ["mode notes.txt", "rename plan.txt"] {
+        let patch = format!("diff --git a/{name} b/{name}\nindex 1111111..2222222 100644\n--- a/{name}\t\n+++ b/{name}\t\n@@ -1 +1 @@\n-old\n+new\n");
+        let diff = hedit::git::Diff::parse(patch, true);
+        assert!(diff.supports_partial(), "{name}");
+        assert!(diff.hunk_patch(0).is_some());
+    }
+}
+
+#[test]
+fn cancelling_a_line_preview_restores_the_old_page() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("large.txt");
+    std::fs::write(&path, "filler abcdefghijklmnopqrstuvwxyz\n".repeat(130_000)).unwrap();
+    let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    app.open(&ctx, Some(path));
+    finish_app_job(&mut app, &ctx);
+    app.jump_to_line(&ctx, 60_000, None);
+    finish_app_job(&mut app, &ctx);
+    let original = app.active().page.start;
+    assert!(original > 0 && app.active().page.info.paged);
+    app.preview_line(&ctx, PickerLine::File(100_000, None));
+    wait_for_preview(&ctx, &mut app);
+    assert_ne!(app.active().page.start, original);
+    app.cancel_goto_preview();
+    finish_app_job(&mut app, &ctx);
+    assert_eq!(app.active().page.start, original);
+    app.preview_line(&ctx, PickerLine::File(100_000, None));
+    app.cancel_goto_preview();
+    wait_for_preview(&ctx, &mut app);
+    assert_eq!(app.active().page.start, original);
+}
+
+#[test]
+fn go_to_file_prefers_a_literal_filename_with_a_hash() {
+    let (directory, ctx, mut app) = app_with("");
+    let first = directory.path().join("notes");
+    let second = directory.path().join("notes#draft.md");
+    std::fs::write(&first, "a plain note\n").unwrap();
+    std::fs::write(&second, "# draft\n").unwrap();
+    for path in [second, first] {
+        app.open(&ctx, Some(path));
+        finish_app_job(&mut app, &ctx);
+    }
+    palette(&ctx, &mut app, "notes#draft.md");
+    frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)]);
+    assert_eq!(app.active().page.info.name, "notes#draft.md");
+}
+
+#[test]
+fn selection_scope_does_not_invent_whole_word_boundaries() {
+    use hedit::search::{self, Options};
+    let text = "bobcat cat";
+    let options = Options {
+        whole_word: true,
+        ..Default::default()
+    };
+    let found = search::matches(text, "cat", &options, 3..6).unwrap();
+    assert!(found.is_empty(), "{found:?}");
+}
+
+#[test]
+fn column_coordinates_match_file_open_after_an_emoji() {
+    let (_directory, ctx, mut app) = app_with("a😀b\n");
+    let mut doc = Document::empty(1);
+    doc.replace(0, 0, "a😀b\n".into(), 0).unwrap();
+    let expected = doc.location_offset(1, 4).unwrap();
+    app.jump_to_line(&ctx, 1, Some(4));
+    assert_eq!(
+        hedit::advanced::byte(&app.active().page.text, app.active().view.head) as u64,
+        expected
+    );
+}
+
+fn wait_for_preview(ctx: &egui::Context, app: &mut HeditApp) {
+    let started = Instant::now();
+    while app.goto_preview_running {
+        assert!(started.elapsed() < Duration::from_secs(5));
+        app.receive(ctx);
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[test]
+fn quoted_file_reference_keeps_the_location_suffix() {
+    use hedit::{advanced::Selection, file_reference};
+    let reference = r#""notes folder/file.txt":3:7,"#;
+    assert_eq!(
+        file_reference::at(reference, Selection::caret(10)).as_deref(),
+        Some("notes folder/file.txt:3:7")
+    );
+}
+
+#[test]
+fn git_partial_stage_supports_quoted_paths() {
+    let patch = "diff --git \"a/notes\\tfile.txt\" \"b/notes\\tfile.txt\"\n\
+        --- \"a/notes\\tfile.txt\"\n+++ \"b/notes\\tfile.txt\"\n@@ -1 +1 @@\n-old\n+new\n";
+    let diff = hedit::git::Diff::parse(patch.into(), true);
+    assert!(diff.supports_partial());
+    assert!(diff.hunk_patch(0).is_some());
+}

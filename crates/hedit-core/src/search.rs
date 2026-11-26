@@ -61,14 +61,28 @@ pub fn matches(
     }
     let re = options.compile(query)?;
     let mut found = Vec::new();
-    for m in re.find_iter(&text[scope.clone()]) {
+    for m in scoped_matches(&re, text, scope) {
         if found.len() == MATCH_LIMIT {
             return Err("More than 20,000 matches; narrow the search.".into());
         }
-        found.push(m.start() + scope.start..m.end() + scope.start);
+        found.push(m.range());
     }
     Ok(found)
 }
+
+/// A scope limits which matches are accepted, while regex assertions still
+/// see the surrounding text.
+pub fn scoped_matches<'r, 'h>(
+    regex: &'r Regex,
+    text: &'h str,
+    scope: Range<usize>,
+) -> impl Iterator<Item = regex::Match<'h>> + use<'r, 'h> {
+    regex
+        .find_iter(text)
+        .skip_while(move |hit| hit.start() < scope.start)
+        .take_while(move |hit| hit.end() <= scope.end)
+}
+
 pub fn replace(
     text: &str,
     query: &str,
@@ -78,18 +92,38 @@ pub fn replace(
 ) -> Result<(String, usize), String> {
     let found = matches(text, query, options, scope.clone())?;
     let re = options.compile(query)?;
-    let replacement = if options.regex {
-        re.replace_all(&text[scope.clone()], replacement)
-    } else {
-        re.replace_all(&text[scope.clone()], regex::NoExpand(replacement))
-    };
     let mut out = String::with_capacity(text.len());
-    out.push_str(&text[..scope.start]);
-    out.push_str(&replacement);
-    out.push_str(&text[scope.end..]);
-    if out.len() > 64 * 1024 * 1024 {
+    let mut at = 0;
+    if options.regex {
+        for captures in re.captures_iter(text) {
+            let hit = captures.get(0).unwrap();
+            if hit.start() < scope.start {
+                continue;
+            }
+            if hit.end() > scope.end {
+                break;
+            }
+            out.push_str(&text[at..hit.start()]);
+            captures.expand(replacement, &mut out);
+            at = hit.end();
+            if out.len() > 64 * 1024 * 1024 {
+                return Err("Replacement exceeds 64 MiB; narrow the search.".into());
+            }
+        }
+    } else {
+        for hit in &found {
+            out.push_str(&text[at..hit.start]);
+            out.push_str(replacement);
+            at = hit.end;
+            if out.len() > 64 * 1024 * 1024 {
+                return Err("Replacement exceeds 64 MiB; narrow the search.".into());
+            }
+        }
+    }
+    if out.len() + text.len() - at > 64 * 1024 * 1024 {
         return Err("Replacement exceeds 64 MiB; narrow the search.".into());
     }
+    out.push_str(&text[at..]);
     Ok((out, found.len()))
 }
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -163,19 +197,7 @@ pub fn walk(roots: &[PathBuf], filter: &str, cancel: &AtomicBool) -> Result<Vec<
     if filter.len() > 4096 {
         return Err("Filename filters are limited to 4096 bytes.".into());
     }
-    let patterns = filter
-        .split(',')
-        .map(str::trim)
-        .filter(|p| !p.is_empty())
-        .map(|pattern| {
-            globset::GlobBuilder::new(pattern)
-                .literal_separator(true)
-                .backslash_escape(false)
-                .build()
-                .map(|g| g.compile_matcher())
-                .map_err(|e| e.to_string())
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let patterns = filename_patterns(filter)?;
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
     for entry in builder.build() {
@@ -189,16 +211,7 @@ pub fn walk(roots: &[PathBuf], filter: &str, cancel: &AtomicBool) -> Result<Vec<
             continue;
         }
         let path = entry.into_path();
-        if !patterns.is_empty()
-            && !patterns.iter().any(|p| {
-                p.is_match(path.file_name().unwrap_or_default())
-                    || p.is_match(&path)
-                    || roots.iter().any(|r| {
-                        path.strip_prefix(r)
-                            .is_ok_and(|relative| p.is_match(relative))
-                    })
-            })
-        {
+        if !filename_matches(&path, roots, &patterns) {
             continue;
         }
         let path = std::fs::canonicalize(&path).map_err(|e| e.to_string())?;
@@ -211,6 +224,63 @@ pub fn walk(roots: &[PathBuf], filter: &str, cancel: &AtomicBool) -> Result<Vec<
     }
     out.sort();
     Ok(out)
+}
+
+fn filename_patterns(filter: &str) -> Result<Vec<globset::GlobMatcher>, String> {
+    filter
+        .split(',')
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(|pattern| {
+            globset::GlobBuilder::new(pattern)
+                .literal_separator(true)
+                .backslash_escape(false)
+                .build()
+                .map(|g| g.compile_matcher())
+                .map_err(|e| e.to_string())
+        })
+        .collect()
+}
+
+fn filename_matches(path: &Path, roots: &[PathBuf], patterns: &[globset::GlobMatcher]) -> bool {
+    patterns.is_empty()
+        || patterns.iter().any(|pattern| {
+            pattern.is_match(path.file_name().unwrap_or_default())
+                || pattern.is_match(path)
+                || roots.iter().any(|root| {
+                    path.strip_prefix(root)
+                        .is_ok_and(|relative| pattern.is_match(relative))
+                })
+        })
+}
+
+fn draft_is_ignored(path: &Path, root: &Path) -> bool {
+    let relative = path.strip_prefix(root).unwrap_or(path);
+    if relative.ancestors().any(|part| {
+        part.file_name().is_some_and(|name| {
+            let name = name.to_string_lossy();
+            crate::folder::excluded(&name, part != relative) || name.ends_with(".hedit-workspace")
+        })
+    }) {
+        return true;
+    }
+    for filename in [".ignore", ".gitignore"] {
+        for directory in path
+            .ancestors()
+            .skip(1)
+            .take_while(|dir| dir.starts_with(root))
+        {
+            let rules = directory.join(filename);
+            if rules.is_file() {
+                let (matcher, _) = ignore::gitignore::Gitignore::new(rules);
+                let matched = matcher.matched_path_or_any_parents(path, false);
+                if !matched.is_none() {
+                    return matched.is_ignore();
+                }
+            }
+        }
+    }
+    false
 }
 pub fn glob(pattern: &str, text: &str) -> bool {
     globset::GlobBuilder::new(pattern)
@@ -274,7 +344,38 @@ pub fn folders(
     options.compile(query)?;
     let mut result = Results::default();
     let mut retained = 0;
-    for path in walk(roots, filter, cancel)? {
+    let mut paths = walk(roots, filter, cancel)?;
+    let unsaved = open.keys().filter(|path| {
+        path.is_absolute()
+            && path
+                .symlink_metadata()
+                .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+    });
+    if unsaved.clone().next().is_some() {
+        let roots: Vec<_> = roots
+            .iter()
+            .filter_map(|root| root.canonicalize().ok())
+            .collect();
+        let patterns = filename_patterns(filter)?;
+        paths.extend(
+            unsaved
+                .filter(|path| {
+                    filename_matches(path, &roots, &patterns)
+                        && roots
+                            .iter()
+                            .filter(|root| path.starts_with(root))
+                            .max_by_key(|root| root.components().count())
+                            .is_some_and(|root| !draft_is_ignored(path, root))
+                })
+                .cloned(),
+        );
+        paths.sort();
+        paths.dedup();
+        if paths.len() > 50_000 {
+            return Err("More than 50,000 files; narrow the folder or filter.".into());
+        }
+    }
+    for path in paths {
         if cancel.load(Ordering::Relaxed) {
             return Err("Search cancelled.".into());
         }

@@ -2142,7 +2142,9 @@ impl HeditApp {
                 .trim()
                 .to_lowercase();
             // Go to Anything: `file@symbol`, `file:line`, `file#text`.
-            let (file_filter, goto) = if commands || paste {
+            let literal_open_file = filter.contains(['@', ':', '#'])
+                && self.workspace.open.iter().any(|buffer| buffer.view.name.to_lowercase() == filter);
+            let (file_filter, goto) = if commands || paste || literal_open_file {
                 (filter.as_str(), None)
             } else {
                 goto_anything::parse(&filter)
@@ -2272,7 +2274,16 @@ impl HeditApp {
                 });
                 match &self.project.search {
                     Some(Ok(results)) => {
-                        for entry in &results.entries {
+                        let full_query = self.palette_query.trim().to_lowercase();
+                        let literal = target.as_ref().and_then(|_| {
+                            results.entries.iter().find(|entry| entry.name.to_lowercase() == full_query)
+                        });
+                        if literal.is_some() {
+                            target = None;
+                            items.clear();
+                        }
+                        let entries = literal.map_or(results.entries.as_slice(), std::slice::from_ref);
+                        for entry in entries {
                             if let Some(index) = self.workspace.open.iter().position(|b| b.page.info.path.as_deref() == Some(&entry.path)) {
                                 if !items.iter().any(|(_, _, item)| matches!(item, Item::Buffer(prior) if *prior == index)) {
                                     items.push((entry.name.clone(), "open".to_owned(), Item::Buffer(index)));
