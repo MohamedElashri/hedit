@@ -219,6 +219,7 @@ pub(super) enum Event {
     ),
     Diff(u64, u64, String, String, bool),
     FileChanged(PathBuf, Option<PathBuf>),
+    FileRemovalFailed(String, Vec<(u64, hedit::document::RemovalState)>),
     ProjectLoaded(
         PathBuf,
         projects::Project,
@@ -351,6 +352,11 @@ impl HeditApp {
                 if !errors.is_empty() {
                     self.error = Some(errors.join("\n"));
                 }
+            }
+            Event::FileRemovalFailed(error, states) => {
+                self.rollback_file_removal(states);
+                self.refresh_folder();
+                self.error = Some(error);
             }
             Event::Symbols(symbols) => self.quality.symbols = symbols,
             Event::Locations(references, name, found) => {
@@ -1078,6 +1084,7 @@ impl HeditApp {
             self.error = Some("Save the file first.".into());
             return;
         };
+        let encoding = b.page.info.encoding.clone();
         let id = b.view.id;
         let revision = b.page.info.revision;
         let editor = Arc::clone(&self.workspace.editor);
@@ -1102,8 +1109,7 @@ impl HeditApp {
                 return Err("Disk comparison supports files up to 32 MiB.".into());
             }
             let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
-            let (disk, _) =
-                hedit::text_encoding::decode(&bytes, hedit::text_encoding::detect(&bytes))?;
+            let (disk, _) = hedit::text_encoding::decode(&bytes, &encoding)?;
             let diff = search::diff(&disk, &text, &path);
             Ok(Action::Quality(Box::new(Event::Diff(
                 id, revision, disk, diff, false,
@@ -1567,36 +1573,57 @@ impl HeditApp {
         }
         let name = self.quality.file_name.clone();
         if matches!(operation, FileOperation::Trash | FileOperation::Delete) {
-            for view in self
-                .workspace
-                .open
-                .iter()
-                .map(|b| &b.view)
-                .chain(&self.workspace.closed)
-            {
-                if let Ok(shared) = self.workspace.editor.get(view.id) {
-                    let mut doc = shared.lock().unwrap();
-                    if doc
-                        .info()
-                        .path
-                        .as_ref()
-                        .is_some_and(|p| Path::new(p).starts_with(&path))
+            let mut preserved = Vec::new();
+            let checkpoint = (|| {
+                for view in self
+                    .workspace
+                    .open
+                    .iter()
+                    .map(|b| &b.view)
+                    .chain(&self.workspace.closed)
+                {
+                    let shared = self.workspace.editor.get(view.id)?;
+                    let mut doc = shared.lock().map_err(|error| error.to_string())?;
+                    if let Some(source) =
+                        doc.info().path.filter(|p| Path::new(p).starts_with(&path))
                     {
-                        if let Err(error) = doc.preserve_as_unsaved() {
-                            self.error = Some(error);
-                            return;
-                        }
+                        preserved.push((view.id, source, doc.prepare_removal()?));
                     }
                 }
+                self.workspace.checkpoint()
+            })();
+            if let Err(error) = checkpoint {
+                self.rollback_file_removal(preserved.into_iter().map(|(id, _, state)| (id, state)));
+                self.error = Some(error);
+                return;
             }
-            for b in &mut self.workspace.open {
-                if let Ok(shared) = self.workspace.editor.get(b.view.id) {
-                    b.page.info = shared.lock().unwrap().info();
-                }
-            }
-            self.changed();
+            self.refresh_removal_buffer_info();
+            self.job(ctx, move || {
+                let result = if operation == FileOperation::Trash {
+                    hedit::folder::trash_path(&path)
+                } else {
+                    hedit::folder::delete_path(&path)
+                };
+                let event = match result {
+                    Ok(()) => Event::FileChanged(path, None),
+                    Err(error) => {
+                        let remaining = preserved
+                            .into_iter()
+                            .filter(|(_, source, _)| {
+                                !std::fs::symlink_metadata(source).is_err_and(|error| {
+                                    error.kind() == std::io::ErrorKind::NotFound
+                                })
+                            })
+                            .map(|(id, _, state)| (id, state))
+                            .collect();
+                        Event::FileRemovalFailed(error, remaining)
+                    }
+                };
+                Ok(Action::Quality(Box::new(event)))
+            });
+            return;
         }
-        // Snapshot first so moving or removing a source preserves recoverable buffers.
+        // Snapshot first so moving a source preserves recoverable buffers.
         if let Err(e) = self.workspace.checkpoint() {
             self.error = Some(e);
             return;
@@ -1626,18 +1653,34 @@ impl HeditApp {
                         target.is_dir(),
                     ));
                 }
-                FileOperation::Trash => {
-                    hedit::folder::trash_path(&path)?;
-                    None
-                }
-                FileOperation::Delete => {
-                    hedit::folder::delete_path(&path)?;
-                    None
+                FileOperation::Trash | FileOperation::Delete => {
+                    unreachable!("removal handled separately")
                 }
             };
             Ok(Action::Quality(Box::new(Event::FileChanged(path, to))))
         });
     }
+    fn refresh_removal_buffer_info(&mut self) {
+        for buffer in &mut self.workspace.open {
+            if let Ok(shared) = self.workspace.editor.get(buffer.view.id) {
+                buffer.page.info = shared.lock().unwrap().info();
+            }
+        }
+        self.changed();
+    }
+
+    fn rollback_file_removal(
+        &mut self,
+        states: impl IntoIterator<Item = (u64, hedit::document::RemovalState)>,
+    ) {
+        for (id, state) in states {
+            if let Ok(shared) = self.workspace.editor.get(id) {
+                shared.lock().unwrap().rollback_removal(state);
+            }
+        }
+        self.refresh_removal_buffer_info();
+    }
+
     pub(super) fn poll_incoming(&mut self, ctx: &egui::Context) {
         if self.closing {
             return;

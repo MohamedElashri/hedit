@@ -407,3 +407,31 @@ fn case_only_rename_preserves_entries_and_never_replaces_distinct_names() {
     assert!(fs::symlink_metadata(renamed).unwrap().is_symlink());
     assert_eq!(fs::read_to_string(distinct).unwrap(), "keep bytes");
 }
+
+#[cfg(unix)]
+#[test]
+fn duplicate_preserves_directory_mode() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = tempfile::tempdir().unwrap();
+    let source = d.path().join("source");
+    let target = d.path().join("copy");
+    fs::create_dir(&source).unwrap();
+    fs::write(source.join("notes.txt"), "notes").unwrap();
+    fs::set_permissions(&source, fs::Permissions::from_mode(0o710)).unwrap();
+    folder::duplicate_path(&source, &target).unwrap();
+    assert_eq!(
+        fs::metadata(target).unwrap().permissions().mode() & 0o777,
+        0o710
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn submitting_unchanged_rename_preserves_filename_whitespace() {
+    let d = tempfile::tempdir().unwrap();
+    let path = d.path().canonicalize().unwrap().join(" notes.txt ");
+    fs::write(&path, "notes").unwrap();
+    let target = folder::rename_path(path.to_str().unwrap().into(), " notes.txt ".into()).unwrap();
+    assert_eq!(std::path::PathBuf::from(target), path);
+    assert!(path.is_file());
+}

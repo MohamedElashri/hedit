@@ -31,8 +31,10 @@ fn directory(kind: &Kind) -> bool {
     )
 }
 fn valid_name(name: &str) -> bool {
-    let name = name.trim();
-    !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\', '\0', '\n', '\r'])
+    !name.trim().is_empty()
+        && name != "."
+        && name != ".."
+        && !name.contains(['/', '\\', '\0', '\n', '\r'])
 }
 impl HeditApp {
     pub(super) fn focus_explorer(&mut self, ctx: &egui::Context) {
@@ -231,7 +233,7 @@ impl HeditApp {
         let (token, parent, name, directory, rename) = (
             draft.token,
             draft.parent.clone(),
-            draft.name.trim().to_owned(),
+            draft.name.clone(),
             draft.directory,
             draft.rename.clone(),
         );

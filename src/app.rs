@@ -31,6 +31,8 @@ pub(crate) use extensions::run_plugin_cli;
 mod file_reference;
 #[cfg(test)]
 mod file_reference_tests;
+#[cfg(test)]
+mod filesystem_operation_tests;
 mod find_live;
 mod find_tools;
 mod fold_gutter;
@@ -1032,6 +1034,31 @@ impl HeditApp {
         let Some(index) = self.workspace.open.iter().position(|b| b.view.id == id) else {
             return;
         };
+        let target = match target
+            .map(|path| hedit::document::save_destination(&path))
+            .transpose()
+        {
+            Ok(target) => target,
+            Err(error) => {
+                self.error = Some(error);
+                return;
+            }
+        };
+        if let Some(target) = target.as_deref() {
+            let open_elsewhere = self.workspace.open.iter().any(|buffer| {
+                buffer.view.id != id
+                    && buffer
+                        .page
+                        .info
+                        .path
+                        .as_deref()
+                        .is_some_and(|path| std::path::Path::new(path) == target)
+            });
+            if open_elsewhere {
+                self.error = Some("This file is already open in another tab.".into());
+                return;
+            }
+        }
         let retry = notifications::Action::RetrySave {
             view: id,
             path: self.workspace.open[index].page.info.path.clone(),
