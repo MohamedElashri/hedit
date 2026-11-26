@@ -91,7 +91,7 @@ fn invalid_terminal_font_drafts_do_not_block_other_settings_or_reach_disk() {
     for _ in 0..3 {
         frame(&ctx, &mut app, vec![]);
     }
-    ctx.memory_mut(|m| m.request_focus(egui::Id::new("terminal-font-face")));
+    ctx.memory_mut(|m| m.request_focus(egui::Id::unique("terminal-font-face")));
     // The limit is in bytes, while TextEdit's character limit counts scalars.
     frame(&ctx, &mut app, vec![egui::Event::Paste("界".repeat(2000))]);
     assert!(
@@ -138,7 +138,7 @@ fn invalid_terminal_font_drafts_do_not_block_other_settings_or_reach_disk() {
         .as_ref()
         .is_none_or(String::is_empty));
     // Reset also discards an invalid draft while keeping the app usable.
-    ctx.memory_mut(|m| m.request_focus(egui::Id::new("terminal-font-face")));
+    ctx.memory_mut(|m| m.request_focus(egui::Id::unique("terminal-font-face")));
     frame(&ctx, &mut app, vec![egui::Event::Paste("界".repeat(2000))]);
     super::tests::click_label(&ctx, &mut app, "Use app font and size");
     assert!(app.settings.terminal_font.is_none());
@@ -163,10 +163,10 @@ fn terminal_hide_keeps_session_and_disabling_ends_it_without_editing_buffer() {
         focused: true,
         ..Default::default()
     };
-    let _ = ctx.run(input, |ctx| {
-        app.chrome(ctx);
-        app.workbench_panel(ctx);
-        app.editor(ctx);
+    let _ = crate::app::tests::run_pass(&ctx, input, |ctx| {
+        ctx.root_ui(|root| app.chrome(root));
+        ctx.root_ui(|root| app.workbench_panel(root));
+        ctx.root_ui(|root| app.editor(root));
     });
     // Wait for a real command response before sending control keys. On Windows
     // those keys can affect cmd.exe startup before its input handler is ready.
@@ -195,7 +195,8 @@ fn terminal_hide_keeps_session_and_disabling_ends_it_without_editing_buffer() {
         );
         thread::sleep(Duration::from_millis(10));
     }
-    let _ = ctx.run(
+    let _ = crate::app::tests::run_pass(
+        &ctx,
         egui::RawInput {
             focused: true,
             events: vec![
@@ -221,15 +222,17 @@ fn terminal_hide_keeps_session_and_disabling_ends_it_without_editing_buffer() {
             ],
         ),
     ] {
-        let _ = ctx.run(
+        let _ = crate::app::tests::run_pass(
+            &ctx,
             egui::RawInput {
                 focused: true,
-                modifiers,
-                events,
+                events: std::iter::once(egui::Event::ModifiersChanged(modifiers))
+                    .chain(events)
+                    .collect(),
                 ..Default::default()
             },
             |ctx| {
-                ctx.memory_mut(|m| m.request_focus(egui::Id::new("integrated-terminal-input")));
+                ctx.memory_mut(|m| m.request_focus(egui::Id::unique("integrated-terminal-input")));
                 app.shortcuts(ctx);
             },
         );
@@ -307,21 +310,23 @@ fn terminal_hide_keeps_session_and_disabling_ends_it_without_editing_buffer() {
     // Preset editor/workbench shortcuts remain shell input while it has focus.
     app.settings.keybinding_preset = hedit::settings::KeybindingPreset::Vscode;
     let sidebar = app.settings.show_sidebar;
-    let _ = ctx.run(
+    let _ = crate::app::tests::run_pass(
+        &ctx,
         egui::RawInput {
             focused: true,
             events: vec![key(Key::B, Modifiers::COMMAND)],
             ..Default::default()
         },
         |ctx| {
-            ctx.memory_mut(|m| m.request_focus(egui::Id::new("integrated-terminal-input")));
+            ctx.memory_mut(|m| m.request_focus(egui::Id::unique("integrated-terminal-input")));
             app.shortcuts(ctx);
         },
     );
     assert_eq!(app.settings.show_sidebar, sidebar);
     assert!(app.terminal.open);
     // Explorer focus is a workbench action and preserves the live shell.
-    let _ = ctx.run(
+    let _ = crate::app::tests::run_pass(
+        &ctx,
         egui::RawInput {
             focused: true,
             events: vec![key(Key::E, Modifiers::COMMAND | Modifiers::SHIFT)],
@@ -334,11 +339,12 @@ fn terminal_hide_keeps_session_and_disabling_ends_it_without_editing_buffer() {
     );
     assert_eq!(
         ctx.memory(|m| m.focused()),
-        Some(egui::Id::new("explorer-tree"))
+        Some(egui::Id::unique("explorer-tree"))
     );
     assert!(app.terminal.open);
     assert_eq!(app.terminal.tabs[0].id, session_id);
-    let _ = ctx.run(
+    let _ = crate::app::tests::run_pass(
+        &ctx,
         egui::RawInput {
             focused: true,
             events: vec![key(Key::Num1, Modifiers::COMMAND)],
@@ -363,14 +369,15 @@ fn terminal_hide_keeps_session_and_disabling_ends_it_without_editing_buffer() {
         editor_only: false,
     }];
     for pressed in [Key::K, Key::T] {
-        let _ = ctx.run(
+        let _ = crate::app::tests::run_pass(
+            &ctx,
             egui::RawInput {
                 focused: true,
                 events: vec![key(pressed, Modifiers::COMMAND)],
                 ..Default::default()
             },
             |ctx| {
-                ctx.memory_mut(|m| m.request_focus(egui::Id::new("integrated-terminal-input")));
+                ctx.memory_mut(|m| m.request_focus(egui::Id::unique("integrated-terminal-input")));
                 app.shortcuts(ctx);
             },
         );
@@ -450,27 +457,33 @@ fn export_terminal_previews() {
         };
         let mut output = None;
         for _ in 0..3 {
-            output = Some(ctx.run(
+            output = Some(ctx.run_pass(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
                     focused: true,
                     ..Default::default()
                 },
                 |ctx| {
-                    app.chrome(ctx);
-                    app.workbench_panel(ctx);
-                    app.editor(ctx);
+                    ctx.root_ui(|root| app.chrome(root));
+                    ctx.root_ui(|root| app.workbench_panel(root));
+                    ctx.root_ui(|root| app.editor(root));
                     app.preferences(ctx);
                     app.terminal_onboarding(ctx);
                 },
             ));
-            for (id, delta) in &output.as_ref().unwrap().textures_delta.set {
+            let frame = output.as_mut().unwrap();
+            for (id, delta) in frame
+                .textures_delta
+                .set
+                .iter()
+                .flat_map(|(id, deltas)| deltas.iter().map(move |delta| (id, delta)))
+            {
                 if delta.pos.is_none() {
-                    if let egui::ImageData::Color(image) = &delta.image {
-                        textures.insert(*id, (**image).clone());
-                    }
+                    let egui::ImageData::Color(image) = &delta.image;
+                    textures.insert(*id, (**image).clone());
                 }
             }
+            frame.textures_delta.clear();
         }
         std::fs::write(
             format!("/tmp/hedit-terminal-{name}.ppm"),
@@ -499,19 +512,21 @@ fn terminal_frame_size(
     modifiers: Modifiers,
     size: egui::Vec2,
 ) -> egui::FullOutput {
-    ctx.run(
+    crate::app::tests::run_pass(
+        ctx,
         egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
             focused: true,
-            events,
-            modifiers,
+            events: std::iter::once(egui::Event::ModifiersChanged(modifiers))
+                .chain(events)
+                .collect(),
             ..Default::default()
         },
         |ctx| {
             app.shortcuts(ctx);
-            app.chrome(ctx);
-            app.workbench_panel(ctx);
-            app.editor(ctx);
+            ctx.root_ui(|root| app.chrome(root));
+            ctx.root_ui(|root| app.workbench_panel(root));
+            ctx.root_ui(|root| app.editor(root));
         },
     )
 }
@@ -535,25 +550,27 @@ fn terminal_header_scales_without_changing_shell_or_terminal_typography() {
                 terminal_frame_size(&ctx, &mut app, vec![], Modifiers::NONE, size);
             }
             let bar = ctx
-                .read_response(egui::Id::new("terminal-tab-bar"))
+                .read_response(egui::Id::unique("terminal-tab-bar"))
                 .unwrap()
                 .rect;
             assert_eq!(bar.height(), Metrics::new(font, density).tab);
             for action in [
-                egui::Id::new("terminal-new-tab"),
-                egui::Id::new(("terminal-tab-close", id)),
+                egui::Id::unique("terminal-new-tab"),
+                egui::Id::unique(("terminal-tab-close", id)),
             ] {
                 let rect = ctx.read_response(action).unwrap().rect;
-                assert!(bar.contains_rect(rect) && rect.width() >= 22.0 && rect.height() >= 22.0);
+                assert!(bar.contains_rect(rect) && rect.width() >= 22.0 && rect.height() >= 22.0, "font={font}, density={density:?}, bar={bar:?}, action={action:?}, rect={rect:?}");
             }
-            assert!(ctx.read_response(egui::Id::new("terminal-hide")).is_none());
+            assert!(ctx
+                .read_response(egui::Id::unique("terminal-hide"))
+                .is_none());
             assert_eq!(app.terminal.tabs[0].id, id);
             assert_eq!(app.terminal_font_id(), terminal_font);
         }
     }
     let output = terminal_frame_size(&ctx, &mut app, vec![], Modifiers::NONE, size);
     let bar = ctx
-        .read_response(egui::Id::new("terminal-tab-bar"))
+        .read_response(egui::Id::unique("terminal-tab-bar"))
         .unwrap()
         .rect;
     let more = output
@@ -571,11 +588,18 @@ fn terminal_header_scales_without_changing_shell_or_terminal_typography() {
         .unwrap();
     super::tests::click_at(&ctx, &mut app, more.center(), size);
     let output = terminal_frame_size(&ctx, &mut app, vec![], Modifiers::NONE, size);
-    let hide = output
+    let (hide, clip) = output
         .shapes
         .iter()
-        .find_map(|shape| super::tests::text_rect(&shape.shape, "Hide terminal"))
+        .find_map(|shape| {
+            super::tests::text_rect(&shape.shape, "Hide terminal")
+                .map(|rect| (rect, shape.clip_rect))
+        })
         .unwrap();
+    assert!(
+        clip.contains(hide.center()) && hide.center().y < size.y,
+        "hide={hide:?}, clip={clip:?}"
+    );
     super::tests::click_at(&ctx, &mut app, hide.center(), size);
     assert!(!app.terminal.open && !app.terminal.focus);
     assert_eq!(app.panel_state.last, workbench_panel::Panel::Terminal);
@@ -699,10 +723,10 @@ fn arabic_terminal_selection_copies_logical_unicode_after_visual_drag() {
         terminal_frame(&ctx, &mut app, vec![], Modifiers::NONE);
     }
     let rect = ctx
-        .read_response(egui::Id::new("integrated-terminal-input"))
+        .read_response(egui::Id::unique("integrated-terminal-input"))
         .unwrap()
         .rect;
-    let cell = ctx.fonts(|f| {
+    let cell = ctx.fonts_mut(|f| {
         egui::vec2(
             f.glyph_width(&FontId::monospace(app.settings.font_size), ' '),
             f.row_height(&FontId::monospace(app.settings.font_size)),
@@ -774,7 +798,10 @@ fn terminal_ime_preedit_stays_out_of_the_shell_until_committed() {
         &ctx,
         &mut app,
         vec![
-            egui::Event::Ime(egui::ImeEvent::Preedit("echo مرحبا".into())),
+            egui::Event::Ime(egui::ImeEvent::Preedit {
+                text: "echo مرحبا".into(),
+                active_range_chars: None,
+            }),
             key(Key::Enter, Modifiers::NONE),
         ],
         Modifiers::NONE,
@@ -840,9 +867,9 @@ fn compact_terminal_tabs_support_pointer_creation_reordering_and_middle_close() 
     app.choose_terminal(true);
     app.new_terminal(&ctx);
     terminal_frame(&ctx, &mut app, vec![], Modifiers::NONE);
-    let input = egui::Id::new("integrated-terminal-input");
+    let input = egui::Id::unique("integrated-terminal-input");
     let bar = ctx
-        .read_response(egui::Id::new("terminal-tab-bar"))
+        .read_response(egui::Id::unique("terminal-tab-bar"))
         .unwrap()
         .rect;
     assert!(
@@ -851,7 +878,7 @@ fn compact_terminal_tabs_support_pointer_creation_reordering_and_middle_close() 
     );
     assert!(ctx.read_response(input).unwrap().rect.top() <= bar.bottom() + 8.0);
     let point = ctx
-        .read_response(egui::Id::new("terminal-new-tab"))
+        .read_response(egui::Id::unique("terminal-new-tab"))
         .unwrap()
         .rect
         .center();
@@ -881,12 +908,12 @@ fn compact_terminal_tabs_support_pointer_creation_reordering_and_middle_close() 
     terminal_frame(&ctx, &mut app, vec![], Modifiers::NONE);
     let ids: Vec<_> = app.terminal.tabs.iter().map(|t| t.id).collect();
     let source = ctx
-        .read_response(egui::Id::new(("terminal-tab", ids[0])))
+        .read_response(egui::Id::unique(("terminal-tab", ids[0])))
         .unwrap()
         .rect
         .center();
     let target = ctx
-        .read_response(egui::Id::new(("terminal-tab", ids[1])))
+        .read_response(egui::Id::unique(("terminal-tab", ids[1])))
         .unwrap()
         .rect
         .center();
@@ -924,7 +951,7 @@ fn compact_terminal_tabs_support_pointer_creation_reordering_and_middle_close() 
         terminal_frame(&ctx, &mut app, vec![], Modifiers::NONE);
     }
     let first = ctx
-        .read_response(egui::Id::new(("terminal-tab", ids[1])))
+        .read_response(egui::Id::unique(("terminal-tab", ids[1])))
         .unwrap()
         .rect
         .center();
@@ -949,7 +976,7 @@ fn compact_terminal_tabs_support_pointer_creation_reordering_and_middle_close() 
     );
     assert_eq!(app.terminal.tabs[app.terminal.active].id, ids[2]);
     assert_eq!(app.workspace.open.len(), 1);
-    ctx.style_mut(|style| style.scroll_animation = egui::style::ScrollAnimation::none());
+    ctx.global_style_mut(|style| style.scroll_animation = egui::style::ScrollAnimation::none());
     app.terminal.focus = false;
     for _ in 0..3 {
         terminal_frame_size(
@@ -961,11 +988,11 @@ fn compact_terminal_tabs_support_pointer_creation_reordering_and_middle_close() 
         );
     }
     let close = ctx
-        .read_response(egui::Id::new(("terminal-tab-close", ids[2])))
+        .read_response(egui::Id::unique(("terminal-tab-close", ids[2])))
         .unwrap()
         .rect;
     let new = ctx
-        .read_response(egui::Id::new("terminal-new-tab"))
+        .read_response(egui::Id::unique("terminal-new-tab"))
         .unwrap()
         .rect;
     assert!(
@@ -1035,7 +1062,7 @@ fn stale_terminal_font_results_do_not_replace_a_new_selection() {
     });
     app.terminal_font_generation = 2;
     app.busy = true;
-    app.job_editor_focus = Some(egui::Id::new("busy-editor"));
+    app.job_editor_focus = Some(egui::Id::unique("busy-editor"));
     let notice = app.notice.clone();
     app.tx
         .send(Ok(Action::TerminalFont(
@@ -1046,7 +1073,7 @@ fn stale_terminal_font_results_do_not_replace_a_new_selection() {
         .unwrap();
     app.receive(&ctx);
     assert!(app.busy);
-    assert_eq!(app.job_editor_focus, Some(egui::Id::new("busy-editor")));
+    assert_eq!(app.job_editor_focus, Some(egui::Id::unique("busy-editor")));
     assert_eq!(app.notice, notice);
     assert!(app.terminal_font.is_none());
     app.settings.terminal_font = None;
@@ -1059,7 +1086,7 @@ fn stale_terminal_font_results_do_not_replace_a_new_selection() {
         .unwrap();
     app.receive(&ctx);
     assert!(app.busy);
-    assert_eq!(app.job_editor_focus, Some(egui::Id::new("busy-editor")));
+    assert_eq!(app.job_editor_focus, Some(egui::Id::unique("busy-editor")));
     assert_eq!(app.notice, notice);
     assert!(app.terminal_font.is_none());
     app.settings.terminal_font = Some(TerminalFont {
@@ -1075,7 +1102,7 @@ fn stale_terminal_font_results_do_not_replace_a_new_selection() {
         .unwrap();
     app.receive(&ctx);
     assert!(app.busy);
-    assert_eq!(app.job_editor_focus, Some(egui::Id::new("busy-editor")));
+    assert_eq!(app.job_editor_focus, Some(egui::Id::unique("busy-editor")));
     assert!(app.notice.contains("cannot load selected font"));
     app.busy = false;
     settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
@@ -1195,8 +1222,8 @@ fn terminal_font_loads_without_changing_the_editor_and_survives_editor_font_chan
     }
     let measure = |app: &HeditApp| {
         let mut widths = None;
-        let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            widths = Some(ctx.fonts(|fonts| {
+        let _ = crate::app::tests::run_pass(&ctx, egui::RawInput::default(), |ctx| {
+            widths = Some(ctx.fonts_mut(|fonts| {
                 (
                     fonts.glyph_width(&app.terminal_font_id(), 'i'),
                     fonts.glyph_width(&app.terminal_font_id(), 'W'),

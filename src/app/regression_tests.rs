@@ -18,7 +18,7 @@ fn app(text: &str, tabs: usize) -> (tempfile::TempDir, egui::Context, HeditApp) 
     app.settings.auto_complete = false;
     app.settings.caret_blink = false;
     app.settings.show_sidebar = false;
-    ctx.style_mut(|s| s.scroll_animation = egui::style::ScrollAnimation::none());
+    ctx.global_style_mut(|s| s.scroll_animation = egui::style::ScrollAnimation::none());
     for _ in 0..3 {
         frame(&ctx, &mut app, vec![]);
     }
@@ -228,15 +228,12 @@ fn large_primary_selections_do_not_copy_the_cached_glyph_meshes() {
 }
 #[test]
 fn visible_selection_rectangles_match_eguis_original_mesh_rectangles() {
-    use egui::text::{CCursor, CursorRange};
+    use egui::text::{CCursor, CCursorRange};
     for text in ["", "αβ\r\n\nlong wrapped line with words and spaces\nend"] {
         let galley = row_index::tests::layout(text, 90.0, 1.25);
         let count = text.chars().count();
         for (a, b) in [(0, count), (1.min(count), count), (count, 0), (0, 0)] {
-            let range = CursorRange {
-                primary: galley.from_ccursor(CCursor::new(b)),
-                secondary: galley.from_ccursor(CCursor::new(a)),
-            };
+            let range = CCursorRange::two(CCursor::new(a), CCursor::new(b));
             let mut reference = galley.clone();
             let mut indices = vec![];
             egui::text_selection::visuals::paint_text_selection(
@@ -254,13 +251,14 @@ fn visible_selection_rectangles_match_eguis_original_mesh_rectangles() {
                     .iter()
                     .filter(|i| rows.contains(&i.row))
                     .map(|i| {
-                        let mesh = &reference.rows[i.row].visuals.mesh;
-                        i.vertex_indices.iter().fold(egui::Rect::NOTHING, |r, &v| {
-                            r.union(egui::Rect::from_min_max(
-                                mesh.vertices[v as usize].pos,
-                                mesh.vertices[v as usize].pos,
-                            ))
-                        })
+                        let row = &reference.rows[i.row];
+                        let mesh = &row.visuals.mesh;
+                        i.vertex_indices
+                            .iter()
+                            .fold(egui::Rect::NOTHING, |mut r, &v| {
+                                r.extend_with(mesh.vertices[v as usize].pos + row.pos.to_vec2());
+                                r
+                            })
                     })
                     .collect();
                 assert_eq!(
@@ -439,16 +437,14 @@ fn accessible_word_boundaries_cover_long_identifiers_and_unicode_without_overflo
         let mut checked = false;
         for (_, node) in tree.nodes {
             if node.role() == egui::accesskit::Role::TextRun
-                && node.value().is_some_and(|v| v.chars().count() > 255)
+                && node.character_lengths().len() == u8::MAX as usize
             {
                 let lengths = node.character_lengths();
-                assert_eq!(
-                    node.word_lengths()
-                        .iter()
-                        .map(|&n| n as usize)
-                        .sum::<usize>(),
-                    lengths.len()
-                );
+                assert!(lengths.len() <= u8::MAX as usize);
+                assert!(node
+                    .word_starts()
+                    .iter()
+                    .all(|&at| usize::from(at) < lengths.len()));
                 checked = true;
             }
         }
@@ -519,18 +515,18 @@ fn assert_accessible_focus_is_reachable(out: egui::FullOutput) {
 fn a_focus_request_for_a_future_widget_cannot_export_a_dangling_accessibility_id() {
     let ctx = egui::Context::default();
     ctx.enable_accesskit();
-    let out = ctx.run(Default::default(), |ctx| {
-        egui::CentralPanel::default().show(ctx, |ui| {
+    let out = crate::app::tests::run_pass(&ctx, Default::default(), |ctx| {
+        egui::CentralPanel::default().show_in_context(ctx, |ui| {
             ui.label("Current view");
         });
-        ctx.memory_mut(|m| m.request_focus(egui::Id::new("next-frame-widget")));
+        ctx.memory_mut(|m| m.request_focus(egui::Id::unique("next-frame-widget")));
     });
     assert_accessible_focus_is_reachable(out);
-    assert!(ctx.memory(|m| m.has_focus(egui::Id::new("next-frame-widget"))));
+    assert!(ctx.memory(|m| m.has_focus(egui::Id::unique("next-frame-widget"))));
     let mut text = String::new();
-    let out = ctx.run(Default::default(), |ctx| {
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.add(egui::TextEdit::singleline(&mut text).id(egui::Id::new("next-frame-widget")));
+    let out = crate::app::tests::run_pass(&ctx, Default::default(), |ctx| {
+        egui::CentralPanel::default().show_in_context(ctx, |ui| {
+            ui.add(egui::TextEdit::singleline(&mut text).id(egui::Id::unique("next-frame-widget")));
         });
     });
     assert_accessible_focus_is_reachable(out);
@@ -589,6 +585,17 @@ fn plain_arrows_collapse_rtl_selections_to_the_visual_edge_before_moving() {
 #[test]
 #[cfg(target_os = "macos")]
 fn native_accessibility_consumer_accepts_successive_split_undo_trees() {
+    use accesskit_consumer::{NodeRef, TreeChangeHandler};
+
+    struct IgnoreChanges;
+
+    impl TreeChangeHandler for IgnoreChanges {
+        fn node_added(&mut self, _: &NodeRef<'_>) {}
+        fn node_updated(&mut self, _: &NodeRef<'_>, _: &NodeRef<'_>) {}
+        fn node_removed(&mut self, _: &NodeRef<'_>) {}
+        fn focus_moved(&mut self, _: Option<&NodeRef<'_>>, _: Option<&NodeRef<'_>>) {}
+    }
+
     for _ in 0..20 {
         let (_dir, ctx, mut app) = app("α🦀 one\r\nשלום two\r\n", 100);
         ctx.enable_accesskit();
@@ -603,7 +610,10 @@ fn native_accessibility_consumer_accepts_successive_split_undo_trees() {
             app.receive(&ctx);
             let output = frame(&ctx, app, events);
             assert_accessible_focus_is_reachable(output.clone());
-            tree.update(output.platform_output.accesskit_update.unwrap());
+            tree.update_and_process_changes(
+                output.platform_output.accesskit_update.unwrap(),
+                &mut IgnoreChanges,
+            );
         };
         app.split(1);
         app.focus_group(1, false);

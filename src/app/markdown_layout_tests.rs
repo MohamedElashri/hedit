@@ -45,7 +45,7 @@ fn markdown_inline_code_uses_the_surrounding_type_size() {
                 "code and prose must share a baseline: {row:?}"
             );
             assert!(
-                (code.logical_rect().center().y - row.rect.center().y).abs() <= 1.0,
+                (row.pos.y + code.logical_rect().center().y - row.rect().center().y).abs() <= 1.0,
                 "code background must be centered in the line: {row:?}"
             );
         }
@@ -70,14 +70,21 @@ fn markdown_wrapped_code_keeps_the_surrounding_line_spacing() {
             let line_height = font_size.clamp(10.0, 32.0) * 1.6;
             assert!(code.rows.len() > 2);
             for row in &code.rows {
-                assert!((row.rect.height() - line_height).abs() <= 1.0, "code-only rows must retain prose spacing at scale {scale}: {} versus {line_height}", row.rect.height());
+                assert!((row.rect().height() - line_height).abs() <= 1.0, "code-only rows must retain prose spacing at scale {scale}: {} versus {line_height}", row.rect().height());
                 assert!(
-                    (row.glyphs[0].logical_rect().center().y - row.rect.center().y).abs() <= 1.0
+                    (row.pos.y + row.glyphs[0].logical_rect().center().y - row.rect().center().y)
+                        .abs()
+                        <= 1.0
                 );
             }
             for pair in code.rows.windows(2) {
                 assert!(
-                    (pair[1].glyphs[0].pos.y - pair[0].glyphs[0].pos.y - line_height).abs() <= 1.0,
+                    (pair[1].pos.y + pair[1].glyphs[0].pos.y
+                        - pair[0].pos.y
+                        - pair[0].glyphs[0].pos.y
+                        - line_height)
+                        .abs()
+                        <= 1.0,
                     "wrapped baselines must remain evenly spaced"
                 );
             }
@@ -104,19 +111,17 @@ fn markdown_wrapped_code_keeps_link_targets_and_native_copying() {
         }
         let output = frame_size(&ctx, &mut app, vec![], size);
         let shape = text(&output, &code);
-        let first = shape.galley.rows[0].glyphs[0]
+        let first = &shape.galley.rows[0];
+        let first = first.glyphs[0]
             .logical_rect()
-            .translate(shape.pos.to_vec2());
-        let last = shape
-            .galley
-            .rows
-            .last()
-            .unwrap()
+            .translate(shape.pos.to_vec2() + first.pos.to_vec2());
+        let last = shape.galley.rows.last().unwrap();
+        let last = last
             .glyphs
             .last()
             .unwrap()
             .logical_rect()
-            .translate(shape.pos.to_vec2());
+            .translate(shape.pos.to_vec2() + last.pos.to_vec2());
         assert!(shape.galley.rows.len() > 1);
         if linked {
             super::tests::click_at(&ctx, &mut app, last.center(), size);
@@ -219,7 +224,7 @@ fn markdown_nested_inline_styles_restore_the_outer_formatting() {
                 .job
                 .sections
                 .iter()
-                .find(|s| s.byte_range.contains(&at))
+                .find(|s| s.byte_range.contains(&egui::text::ByteIndex(at)))
                 .unwrap()
                 .format;
             match kind {
@@ -405,6 +410,8 @@ fn markdown_wide_tables_scroll_without_widening_following_prose() {
         vec![
             egui::Event::PointerMoved(hover),
             egui::Event::MouseWheel {
+                phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Unknown,
                 unit: egui::MouseWheelUnit::Point,
                 delta: egui::vec2(-2000.0, 0.0),
                 modifiers: Modifiers::NONE,

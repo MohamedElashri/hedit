@@ -31,7 +31,7 @@ pub(super) fn show(ui: &mut egui::Ui, theme: &Theme, row: Row<'_>) -> egui::Resp
         );
         response.widget_info(|| {
             egui::WidgetInfo::selected(
-                egui::WidgetType::SelectableLabel,
+                egui::Role::ListItem,
                 ui.is_enabled(),
                 row.selected,
                 row.badge_hint.map_or_else(

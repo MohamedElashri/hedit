@@ -261,7 +261,7 @@ fn mouse_clicks_accept_choices_and_explicit_navigation_keeps_the_highlighted_cho
     app.publish_choices(query, vec!["altered_result".into()]);
     let popup = app.auto.popup.as_ref().unwrap();
     assert!(matches!(&popup.choices[popup.selected], Choice::Word(w) if w == &selected));
-    let rect = egui::AreaState::load(&ctx, egui::Id::new("completion-popup"))
+    let rect = egui::AreaState::load(&ctx, egui::Id::unique("completion-popup"))
         .unwrap()
         .rect();
     let pos = rect.left_top() + egui::vec2(20.0, 16.0);

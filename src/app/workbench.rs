@@ -77,7 +77,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (workspace, _) = Workspace::restore(dir.path().join("session")).unwrap();
         let ctx = egui::Context::default();
-        ctx.style_mut(|s| s.scroll_animation = egui::style::ScrollAnimation::none());
+        ctx.global_style_mut(|s| s.scroll_animation = egui::style::ScrollAnimation::none());
         let app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
         (dir, ctx, app)
     }
@@ -88,7 +88,7 @@ mod tests {
         app.ui_font.generation = 2;
         app.ui_font.loading = Some(2);
         app.busy = true;
-        let focus = egui::Id::new("document-job");
+        let focus = egui::Id::unique("document-job");
         app.job_editor_focus = Some(focus);
         app.tx
             .send(Ok(Action::UiFont(
@@ -126,7 +126,10 @@ mod tests {
         for theme in [Theme::default(), Theme::paper()] {
             app.set_theme(&ctx, theme);
             frame(&ctx, &mut app, vec![]);
-            assert_eq!(ctx.style().text_styles[&egui::TextStyle::Body].size, 18.0);
+            assert_eq!(
+                ctx.global_style().text_styles[&egui::TextStyle::Body].size,
+                18.0
+            );
             assert_eq!(app.settings.font_size, before);
             assert!(app.settings.terminal_font.is_none());
         }
@@ -157,11 +160,15 @@ mod tests {
                 frame(&ctx, &mut app, vec![]);
             }
             for _ in 0..30 {
-                let output = frame(&ctx, &mut app, vec![]);
-                assert!(
-                    output.textures_delta.set.is_empty(),
-                    "idle workbench uploaded textures again"
+                let output = super::super::tests::frame_with_textures(
+                    &ctx,
+                    &mut app,
+                    vec![],
+                    egui::vec2(1280.0, 820.0),
                 );
+                let empty = output.textures_delta.set.is_empty();
+                output.drop_without_applying_deltas();
+                assert!(empty, "idle workbench uploaded textures again");
             }
         }
         assert!(app.ui_font.loading.is_none());
@@ -181,10 +188,12 @@ mod tests {
                     frame_size(&ctx, &mut app, vec![], size);
                 }
                 let out = frame_size(&ctx, &mut app, vec![], size);
-                let sidebar =
-                    egui::containers::panel::PanelState::load(&ctx, egui::Id::new("buffers"))
-                        .unwrap()
-                        .rect;
+                let sidebar = egui::containers::panel::PanelState::load(
+                    &ctx,
+                    ctx.viewport_id().root_ui_id().with("buffers"),
+                )
+                .unwrap()
+                .outer_rect;
                 let mut close = None;
                 for icon in [Icon::Add, Icon::Refresh, Icon::Close] {
                     let rect = out
@@ -231,6 +240,9 @@ mod tests {
             frame(&ctx, &mut app, vec![]);
         }
         let before = app.tab_strip.width();
+        // A distinct metric family makes stale cached widths visible even when
+        // the selected tab and most earlier tabs are offscreen.
+        let font = egui::FontDefinitions::default().font_data["Hack"].clone();
         app.settings.ui_font_face = "choice".into();
         app.ui_font.requested = Some("choice".into());
         app.ui_font.generation = 1;
@@ -239,17 +251,15 @@ mod tests {
             &ctx,
             1,
             "choice".into(),
-            Ok((
-                include_bytes!("../../assets/fonts/NotoSansArabic.ttf").to_vec(),
-                0,
-            )),
+            Ok((font.bytes().to_owned(), font.index)),
         );
         for _ in 0..4 {
             frame(&ctx, &mut app, vec![]);
         }
         assert!(
             (app.tab_strip.width() - before).abs() > 1.0,
-            "all cached widths must reflect the new proportional fallback"
+            "all cached widths must reflect the new UI font: {before} -> {}",
+            app.tab_strip.width()
         );
         app.settings.ui_font_size = 20.0;
         app.settings.ui_density = hedit::ui_style::Density::Comfortable;
@@ -358,14 +368,19 @@ mod tests {
             }
             let mut textures = std::collections::HashMap::new();
             for _ in 0..4 {
-                let out = super::super::tests::frame_size(&ctx, &mut app, vec![], size);
-                for (id, delta) in &out.textures_delta.set {
-                    if let egui::ImageData::Color(image) = &delta.image {
-                        if delta.pos.is_none() {
-                            textures.insert(*id, (**image).clone());
-                        }
+                let out = super::super::tests::frame_with_textures(&ctx, &mut app, vec![], size);
+                for (id, delta) in out
+                    .textures_delta
+                    .set
+                    .iter()
+                    .flat_map(|(id, deltas)| deltas.iter().map(move |delta| (id, delta)))
+                {
+                    if delta.pos.is_none() {
+                        let egui::ImageData::Color(image) = &delta.image;
+                        textures.insert(*id, (**image).clone());
                     }
                 }
+                out.drop_without_applying_deltas();
             }
             let out = super::super::tests::frame_size(&ctx, &mut app, vec![], size);
             std::fs::write(

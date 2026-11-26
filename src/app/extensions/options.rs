@@ -161,7 +161,7 @@ impl HeditApp {
             return;
         }
         ui.collapsing("Lua on Save", |ui| {
-            let language_key = ui.id().with("save-hook-language");
+            let language_key = ui.scope_id().with("save-hook-language");
             let mut language = ui
                 .data(|data| data.get_temp(language_key))
                 .unwrap_or(active_language);

@@ -69,12 +69,12 @@ impl WorkspacePicker {
             }
         }
         let ready = self.pending.is_none();
-        let input_id = egui::Id::new("ssh-workspace-directory");
+        let input_id = egui::Id::unique("ssh-workspace-directory");
         let enter = ready
             && ctx.memory(|memory| memory.has_focus(input_id))
             && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Enter));
-        let shown = egui::Modal::new(egui::Id::new("ssh-choose-workspace")).show(ctx, |ui| {
-            ui.set_width((ctx.screen_rect().width() - 40.0).clamp(0.0, 480.0));
+        let shown = egui::Modal::new(egui::Id::unique("ssh-choose-workspace")).show(ctx, |ui| {
+            ui.set_width((ctx.viewport_rect().width() - 40.0).clamp(0.0, 480.0));
             ui.heading("Choose remote folder");
             ui.label(&self.profile.target.host);
             let mut action = None;
@@ -114,7 +114,7 @@ impl WorkspacePicker {
                     ui.weak("No subfolders.");
                 } else {
                     egui::ScrollArea::vertical()
-                        .max_height(230.0_f32.min(ctx.screen_rect().height() * 0.4))
+                        .max_height(230.0_f32.min(ctx.viewport_rect().height() * 0.4))
                         .show_rows(ui, 25.0, directory.directories.len(), |ui, rows| {
                             for row in rows {
                                 let name = &directory.directories[row];

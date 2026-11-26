@@ -420,7 +420,7 @@ impl<'a, 'f> Renderer<'a, 'f> {
     fn list(&mut self, ui: &mut Ui, node: &Node, start: Option<u64>, depth: usize) {
         let body = TextStyle::Body.resolve(ui.style()).size;
         let indent = (body * 2.0).max(start.map_or(0.0, |start| {
-            ui.fonts(|f| {
+            ui.fonts_mut(|f| {
                 f.layout_no_wrap(
                     format!("{}.", start.saturating_add(node.children.len() as u64)),
                     TextStyle::Body.resolve(ui.style()),

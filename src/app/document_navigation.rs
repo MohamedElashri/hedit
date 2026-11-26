@@ -172,15 +172,17 @@ impl HeditApp {
             self.reveal_path_in_sidebar(path.to_string_lossy().into_owned());
         }
     }
-    pub(super) fn document_outline(&mut self, ctx: &egui::Context) {
+    pub(super) fn document_outline(&mut self, root: &mut egui::Ui) {
+        let context = root.ctx().clone();
+        let ctx = &context;
         if !self.settings.show_outline || self.distraction_free || self.source_control.open {
             return;
         }
         let mut close = false;
         let mut jump = None;
         let origin = (self.active().view.id, self.active().page.info.revision);
-        egui::SidePanel::right("document-outline").default_width(240.0).min_width(160.0).max_width((ctx.screen_rect().width()*0.3).max(160.0))
-            .frame(egui::Frame::new().fill(self.theme.panel.color()).inner_margin(8)).show(ctx,|ui| {
+        egui::Panel::right("document-outline").default_size(240.0).min_size(160.0).max_size((ctx.viewport_rect().width()*0.3).max(160.0))
+            .frame(egui::Frame::new().fill(self.theme.panel.color()).inner_margin(8)).show(root,|ui| {
                 ui.horizontal(|ui| {
                     ui.strong("Outline");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center),|ui| { close=controls::close_button(ui,"Hide Outline").clicked(); });
@@ -188,7 +190,7 @@ impl HeditApp {
                 if self.active().page.info.paged || self.active().page.text.len()>OUTLINE_LIMIT {
                     ui.weak("Outline is available for files up to 2 MiB. Use Go to symbol for larger files.");return;
                 }
-                let query=ui.add(egui::TextEdit::singleline(&mut self.document_navigation.query).id(egui::Id::new("outline-filter")).hint_text("Filter symbols…").char_limit(128));
+                let query=ui.add(egui::TextEdit::singleline(&mut self.document_navigation.query).id(egui::Id::unique("outline-filter")).hint_text("Filter symbols…").char_limit(128));
                 if std::mem::take(&mut self.document_navigation.focus_query) { query.request_focus(); }
                 if query.has_focus() { self.focus_editor=false; }
                 let target=goto_anything::Target::Symbol(self.document_navigation.query.clone());
@@ -210,7 +212,7 @@ impl HeditApp {
         if close {
             self.settings.show_outline = false;
             self.focus_editor = true;
-            ctx.memory_mut(|m| m.surrender_focus(egui::Id::new("outline-filter")));
+            ctx.memory_mut(|m| m.surrender_focus(egui::Id::unique("outline-filter")));
         }
         if let Some(line) =
             jump.filter(|_| origin == (self.active().view.id, self.active().page.info.revision))
@@ -330,7 +332,8 @@ mod tests {
             if !paged {
                 b.page.text = "x".repeat(OUTLINE_LIMIT + 1);
             }
-            let _ = ctx.run(
+            let _ = crate::app::tests::run_pass(
+                &ctx,
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(
                         egui::Pos2::ZERO,
@@ -338,7 +341,7 @@ mod tests {
                     )),
                     ..Default::default()
                 },
-                |ctx| app.document_outline(ctx),
+                |ctx| ctx.root_ui(|root| app.document_outline(root)),
             );
             assert_eq!(app.document_navigation.updates, 0);
             assert!(!app.document_navigation.symbols.pending());

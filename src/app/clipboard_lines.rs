@@ -2,6 +2,7 @@
 //! whole line, and pasting such a line puts it above the cursor's line. Paste
 //! and indent (Ctrl+Shift+V) fits pasted lines to the indentation where they land.
 use super::*;
+use egui::text::{ByteIndex, CharIndex};
 use egui::TextBuffer as _;
 use hedit::advanced::{self, Selection};
 
@@ -82,7 +83,7 @@ impl EditorText<'_, '_> {
     }
 
     fn snap_cursor(&self, cursor: &mut egui::text::CCursor) {
-        let at = self.byte_index_from_char_index(cursor.index);
+        let at = self.byte_index_from_char_index(cursor.index).0;
         if at > 0
             && self.text.as_bytes().get(at - 1) == Some(&b'\r')
             && self.text.as_bytes().get(at) == Some(&b'\n')
@@ -99,21 +100,24 @@ impl egui::TextBuffer for EditorText<'_, '_> {
     fn as_str(&self) -> &str {
         self.text.as_ref()
     }
-    fn byte_index_from_char_index(&self, at: usize) -> usize {
-        self.index.as_ref().map_or_else(
-            || advanced::byte(self.text, at),
-            |index| index.byte(self.text, at),
-        )
+    fn byte_index_from_char_index(&self, at: CharIndex) -> ByteIndex {
+        ByteIndex(self.index.as_ref().map_or_else(
+            || advanced::byte(self.text, at.0),
+            |index| index.byte(self.text, at.0),
+        ))
     }
-    fn char_range(&self, range: std::ops::Range<usize>) -> &str {
-        &self.text[self.byte_index_from_char_index(range.start)
-            ..self.byte_index_from_char_index(range.end)]
+    fn char_range(&self, range: std::ops::Range<CharIndex>) -> &str {
+        &self.text[self.byte_index_from_char_index(range.start).0
+            ..self.byte_index_from_char_index(range.end).0]
     }
-    fn insert_text(&mut self, text: &str, at: usize) -> usize {
+    fn type_id(&self) -> std::any::TypeId {
+        std::any::TypeId::of::<EditorText<'static, 'static>>()
+    }
+    fn insert_text(&mut self, text: &str, at: CharIndex) -> usize {
         let text = line_endings(text, self.crlf);
-        let byte = self.byte_index_from_char_index(at);
+        let byte = self.byte_index_from_char_index(at).0;
         if let Some(index) = &mut self.index {
-            let at = at.min(index.chars);
+            let at = at.0.min(index.chars);
             Arc::make_mut(index).replace(self.text, byte..byte, at..at, &text);
         }
         self.record(byte, byte, text.len());
@@ -122,11 +126,11 @@ impl egui::TextBuffer for EditorText<'_, '_> {
         }
         text.chars().count()
     }
-    fn delete_char_range(&mut self, range: std::ops::Range<usize>) {
-        let start = self.byte_index_from_char_index(range.start);
-        let end = self.byte_index_from_char_index(range.end);
+    fn delete_char_range(&mut self, range: std::ops::Range<CharIndex>) {
+        let start = self.byte_index_from_char_index(range.start).0;
+        let end = self.byte_index_from_char_index(range.end).0;
         if let Some(index) = &mut self.index {
-            let (a, b) = (range.start.min(index.chars), range.end.min(index.chars));
+            let (a, b) = (range.start.0.min(index.chars), range.end.0.min(index.chars));
             Arc::make_mut(index).replace(self.text, start..end, a..b, "");
         }
         self.record(start, end, 0);
@@ -148,10 +152,10 @@ impl egui::TextBuffer for EditorText<'_, '_> {
     }
     fn delete_previous_char(&mut self, mut cursor: egui::text::CCursor) -> egui::text::CCursor {
         self.snap_cursor(&mut cursor);
-        let at = self.byte_index_from_char_index(cursor.index);
+        let at = self.byte_index_from_char_index(cursor.index).0;
         if self.text[..at].ends_with("\r\n") {
             self.delete_selected_ccursor_range([cursor - 2, cursor])
-        } else if cursor.index == 0 {
+        } else if cursor.index == CharIndex::ZERO {
             cursor
         } else {
             self.delete_selected_ccursor_range([cursor - 1, cursor])
@@ -159,7 +163,7 @@ impl egui::TextBuffer for EditorText<'_, '_> {
     }
     fn delete_next_char(&mut self, mut cursor: egui::text::CCursor) -> egui::text::CCursor {
         self.snap_cursor(&mut cursor);
-        let at = self.byte_index_from_char_index(cursor.index);
+        let at = self.byte_index_from_char_index(cursor.index).0;
         if self.text[at..].starts_with("\r\n") {
             self.delete_selected_ccursor_range([cursor, cursor + 2])
         } else {
@@ -418,11 +422,11 @@ mod indexed_buffer_tests {
             let b = (random >> 32) as usize % (count + 1);
             if random & 1 == 0 {
                 let insert = ["x", "🦀\n", "العربية\n"][random as usize % 3];
-                buffer.insert_text(insert, a);
-                reference.insert_text(insert, a);
+                buffer.insert_text(insert, CharIndex(a));
+                reference.insert_text(insert, CharIndex(a));
             } else {
-                buffer.delete_char_range(a.min(b)..a.max(b));
-                reference.delete_char_range(a.min(b)..a.max(b));
+                buffer.delete_char_range(CharIndex(a.min(b))..CharIndex(a.max(b)));
+                reference.delete_char_range(CharIndex(a.min(b))..CharIndex(a.max(b)));
             }
             assert_eq!(buffer.as_str(), reference);
             if let Some((start, old_end, new_end)) = buffer.change {
@@ -438,7 +442,7 @@ mod indexed_buffer_tests {
             }
             for cursor in 0..=reference.chars().count() + 1 {
                 assert_eq!(
-                    buffer.byte_index_from_char_index(cursor),
+                    buffer.byte_index_from_char_index(CharIndex(cursor)).0,
                     advanced::byte(&reference, cursor)
                 );
             }

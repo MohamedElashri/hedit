@@ -34,7 +34,9 @@ impl HeditApp {
         self.focus_editor = false;
     }
 
-    pub(super) fn activity_bar(&mut self, ctx: &egui::Context) {
+    pub(super) fn activity_bar(&mut self, root: &mut egui::Ui) {
+        let context = root.ctx().clone();
+        let ctx = &context;
         if !self.settings.show_activity_bar || self.distraction_free {
             return;
         }
@@ -46,15 +48,15 @@ impl HeditApp {
         }
         let mut action = None;
         let width = (self.settings.ui_font_size + 23.0).max(48.0);
-        egui::SidePanel::left("activity-bar")
-            .exact_width(width)
+        egui::Panel::left("activity-bar")
+            .exact_size(width)
             .resizable(false)
             .frame(
                 egui::Frame::new()
                     .fill(self.theme.panel.color())
                     .inner_margin(egui::Margin::symmetric(6, 6)),
             )
-            .show(ctx, |ui| {
+            .show(root, |ui| {
                 ui.vertical_centered(|ui| {
                     if icons::navigation(
                         ui,

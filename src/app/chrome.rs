@@ -34,22 +34,25 @@ fn menu_item(ui: &mut egui::Ui, app: &HeditApp, command: Command) -> bool {
     response.clicked()
 }
 impl HeditApp {
-    pub(super) fn chrome(&mut self, ctx: &egui::Context) {
+    pub(super) fn chrome(&mut self, root: &mut egui::Ui) {
+        let context = root.ctx().clone();
+        let ctx = &context;
         self.observe_notifications();
         self.sync_groups();
         self.sync_review_group();
         self.apply_workbench_style(ctx);
+        root.reset_style();
         let theme = self.theme.clone();
         let mut action = None;
         let mut open_menu = None;
-        egui::TopBottomPanel::top("menu-bar")
+        egui::Panel::top("menu-bar")
             .frame(
                 egui::Frame::new()
                     .fill(theme.panel.color())
                     .inner_margin(egui::Margin::symmetric(8, 1)),
             )
-            .show(ctx, |ui| {
-                egui::menu::bar(ui, |ui| {
+            .show(root, |ui| {
+                egui::MenuBar::new().ui(ui, |ui| {
                     if controls::sidebar_button(
                         ui,
                         &theme,
@@ -216,7 +219,7 @@ impl HeditApp {
                         if self.open_menu == Some(title) {
                             button = button.fill(theme.hover().color());
                         }
-                        egui::menu::menu_custom_button(ui, button, |ui| {
+                        egui::menu::MenuButton::from_button(button).ui(ui, |ui| {
                             // Contents run only while this menu is open.
                             open_menu = Some(title);
                             ui.set_min_width(245.0);
@@ -239,7 +242,7 @@ impl HeditApp {
                                         for &command in group {
                                             if menu_item(ui, self, command) {
                                                 action = Some(command);
-                                                ui.close_menu();
+                                                ui.close();
                                             }
                                         }
                                     });
@@ -248,7 +251,7 @@ impl HeditApp {
                                 for &command in group {
                                     if menu_item(ui, self, command) {
                                         action = Some(command);
-                                        ui.close_menu();
+                                        ui.close();
                                     }
                                 }
                             }
@@ -258,7 +261,7 @@ impl HeditApp {
                                     .hyperlink_to(controls::TIP_LABEL, controls::TIP_URL)
                                     .clicked()
                                 {
-                                    ui.close_menu();
+                                    ui.close();
                                 }
                             }
                         });
@@ -275,13 +278,15 @@ impl HeditApp {
         if let Some(command) = action {
             self.execute(ctx, command);
         }
-        self.status_bar(ctx);
-        self.activity_bar(ctx);
-        self.buffer_sidebar(ctx);
-        self.tabs(ctx);
-        self.document_outline(ctx);
+        self.status_bar(root);
+        self.activity_bar(root);
+        self.buffer_sidebar(root);
+        self.tabs(root);
+        self.document_outline(root);
     }
-    fn tabs(&mut self, ctx: &egui::Context) {
+    fn tabs(&mut self, root: &mut egui::Ui) {
+        let context = root.ctx().clone();
+        let ctx = &context;
         if !self.settings.show_tab_bar || self.distraction_free || self.panes.mode != 0 {
             return;
         }
@@ -290,7 +295,7 @@ impl HeditApp {
         let mut close = None;
         let mut action = None;
         let mut reorder = None;
-        egui::TopBottomPanel::top("tabs")
+        egui::Panel::top("tabs")
             .frame(
                 egui::Frame::new()
                     .fill(theme.panel.color())
@@ -301,7 +306,7 @@ impl HeditApp {
                         bottom: 0,
                     }),
             )
-            .show(ctx, |ui| {
+            .show(root, |ui| {
                 egui::ScrollArea::horizontal()
                     .id_salt("tab-strip")
                     .show_viewport(ui, |ui, viewport| {
@@ -396,7 +401,7 @@ impl HeditApp {
                                                         ui.add(button).on_hover_text(tooltip);
                                                     response.widget_info(|| {
                                                         egui::WidgetInfo::labeled(
-                                                            egui::WidgetType::Button,
+                                                            egui::Role::Button,
                                                             ui.is_enabled(),
                                                             &label,
                                                         )
@@ -477,7 +482,7 @@ impl HeditApp {
                                                             {
                                                                 select = Some(index);
                                                                 action = Some(command);
-                                                                ui.close_menu();
+                                                                ui.close();
                                                             }
                                                         }
                                                         if ui
@@ -488,20 +493,20 @@ impl HeditApp {
                                                             .clicked()
                                                         {
                                                             close = Some(index);
-                                                            ui.close_menu();
+                                                            ui.close();
                                                         }
                                                         if ui.button("Name unsaved file…").clicked()
                                                         {
                                                             select = Some(index);
                                                             action = Some(Command::Rename);
-                                                            ui.close_menu();
+                                                            ui.close();
                                                         }
                                                         if ui
                                                             .button("Browse closed files…")
                                                             .clicked()
                                                         {
                                                             action = Some(Command::Shelf);
-                                                            ui.close_menu();
+                                                            ui.close();
                                                         }
                                                     });
                                                     if can_close {
@@ -516,7 +521,7 @@ impl HeditApp {
                                                             ));
                                                         close_response.widget_info(|| {
                                                             egui::WidgetInfo::labeled(
-                                                                egui::WidgetType::Button,
+                                                                egui::Role::Button,
                                                                 ui.is_enabled(),
                                                                 format!("Close {}", label),
                                                             )
@@ -606,20 +611,22 @@ impl HeditApp {
             }
         }
     }
-    fn status_bar(&mut self, ctx: &egui::Context) {
+    fn status_bar(&mut self, root: &mut egui::Ui) {
+        let context = root.ctx().clone();
+        let ctx = &context;
         if !self.settings.show_status_bar || self.distraction_free {
             return;
         }
         let font = (self.settings.ui_font_size - 1.0).max(10.0);
         let mut status_action = None;
         let theme = self.theme.clone();
-        egui::TopBottomPanel::bottom("status")
+        egui::Panel::bottom("status")
             .frame(
                 egui::Frame::new()
                     .fill(theme.panel.color())
                     .inner_margin(egui::Margin::symmetric(10, 0)),
             )
-            .show(ctx, |ui| {
+            .show(root, |ui| {
                 ui.horizontal(|ui| {
                     let right = (340.0 * font / 11.0).min(ui.available_width() * 0.75);
                     let left =
@@ -798,16 +805,17 @@ impl HeditApp {
         {
             *action = Some(Command::Encoding);
         }
-        egui::menu::menu_custom_button(ui, small(info.eol.to_owned()), |ui| {
-            for command in [Command::ToLf, Command::ToCrlf] {
-                if menu_item(ui, self, command) {
-                    *action = Some(command);
-                    ui.close_menu();
+        egui::menu::MenuButton::from_button(small(info.eol.to_owned()))
+            .ui(ui, |ui| {
+                for command in [Command::ToLf, Command::ToCrlf] {
+                    if menu_item(ui, self, command) {
+                        *action = Some(command);
+                        ui.close();
+                    }
                 }
-            }
-        })
-        .response
-        .on_hover_text("Line endings");
+            })
+            .0
+            .on_hover_text("Line endings");
         let view = &self.active().view;
         let width = view.tab_size.unwrap_or(4);
         let indent = if view.indent.as_deref() == Some("tabs") {
@@ -815,31 +823,32 @@ impl HeditApp {
         } else {
             format!("Spaces: {width}")
         };
-        egui::menu::menu_custom_button(ui, small(indent), |ui| {
-            ui.set_min_width(220.0);
-            for command in [Command::IndentSpaces, Command::IndentTabs] {
-                if menu_item(ui, self, command) {
-                    *action = Some(command);
-                    ui.close_menu();
+        egui::menu::MenuButton::from_button(small(indent))
+            .ui(ui, |ui| {
+                ui.set_min_width(220.0);
+                for command in [Command::IndentSpaces, Command::IndentTabs] {
+                    if menu_item(ui, self, command) {
+                        *action = Some(command);
+                        ui.close();
+                    }
                 }
-            }
-            ui.separator();
-            for command in [Command::Indent2, Command::Indent4, Command::Indent8] {
-                if menu_item(ui, self, command) {
-                    *action = Some(command);
-                    ui.close_menu();
+                ui.separator();
+                for command in [Command::Indent2, Command::Indent4, Command::Indent8] {
+                    if menu_item(ui, self, command) {
+                        *action = Some(command);
+                        ui.close();
+                    }
                 }
-            }
-            ui.separator();
-            for command in [Command::DetectIndent, Command::ToSpaces, Command::ToTabs] {
-                if menu_item(ui, self, command) {
-                    *action = Some(command);
-                    ui.close_menu();
+                ui.separator();
+                for command in [Command::DetectIndent, Command::ToSpaces, Command::ToTabs] {
+                    if menu_item(ui, self, command) {
+                        *action = Some(command);
+                        ui.close();
+                    }
                 }
-            }
-        })
-        .response
-        .on_hover_text("Indentation");
+            })
+            .0
+            .on_hover_text("Indentation");
     }
     /// Choose the active file's syntax (`None` detects it from the name) and
     /// apply that syntax's formatting rules.
@@ -854,9 +863,9 @@ impl HeditApp {
         let language = buffer.language();
         let detected = syntax::Language::detect(&buffer.page.info.name);
         let selected = buffer.language_override();
-        let popup_id = egui::Id::new("syntax-popup");
+        let popup_id = egui::Id::unique("syntax-popup");
         if ui.input(|input| input.key_pressed(Key::Escape)) {
-            ui.memory_mut(|memory| memory.close_popup());
+            egui::Popup::close_id(ui.ctx(), popup_id);
         }
         let response = ui.add(
             egui::Button::new(
@@ -873,40 +882,42 @@ impl HeditApp {
             )
             .frame(false)
             .min_size(egui::vec2(90.0, 22.0))
-            .selected(ui.memory(|memory| memory.is_popup_open(popup_id))),
+            .selected(egui::Popup::is_id_open(ui.ctx(), popup_id)),
         );
         if response.clicked() {
-            ui.memory_mut(|memory| memory.toggle_popup(popup_id));
+            egui::Popup::toggle_id(ui.ctx(), popup_id);
         }
         let first_frame = self.syntax_focus;
         let mut choice = None;
         let height =
-            (response.rect.top() - ui.ctx().screen_rect().top() - 150.0).clamp(80.0, 480.0);
-        egui::popup::popup_above_or_below_widget(
-            ui,
-            popup_id,
-            &response,
-            egui::AboveOrBelow::Above,
-            egui::popup::PopupCloseBehavior::CloseOnClickOutside,
-            |ui| {
-                let width = (ui.ctx().screen_rect().width() - 40.0).clamp(240.0, 380.0);
+            (response.rect.top() - ui.ctx().viewport_rect().top() - 150.0).clamp(80.0, 480.0);
+        egui::Popup::from_response(&response)
+            .id(popup_id)
+            .open_memory(None)
+            .align(egui::emath::RectAlign::TOP_START)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .show(|ui| {
+                let width = (ui.ctx().viewport_rect().width() - 40.0).clamp(240.0, 380.0);
                 ui.set_width(width);
                 ui.spacing_mut().interact_size.y = hedit::ui_style::Metrics::for_ui(ui).row;
                 ui.style_mut()
                     .text_styles
                     .insert(egui::TextStyle::Button, egui::FontId::proportional(15.0));
                 ui.label(RichText::new("Syntax for this file").size(16.0).strong());
+                let search_id = egui::Id::unique("syntax-filter");
+                if first_frame {
+                    ui.memory_mut(|memory| memory.request_focus(search_id));
+                    if !ui.is_sizing_pass() {
+                        self.syntax_focus = false;
+                    }
+                }
                 let search = ui.add_sized(
                     [width, 30.0],
                     egui::TextEdit::singleline(&mut self.syntax_query)
-                        .id(egui::Id::new("syntax-filter"))
+                        .id(search_id)
                         .hint_text("Filter by language or extension…")
                         .font(egui::FontId::proportional(14.0)),
                 );
-                if first_frame && !ui.is_sizing_pass() {
-                    search.request_focus();
-                    self.syntax_focus = false;
-                }
                 let query_changed = self.syntax_query != self.syntax_last_query;
                 if query_changed {
                     self.syntax_matches = syntax::Language::ALL
@@ -973,14 +984,13 @@ impl HeditApp {
                         }
                     });
                 }
-            },
-        );
+            });
         if let Some(language) = choice {
-            ui.memory_mut(|memory| memory.close_popup());
+            egui::Popup::close_id(ui.ctx(), popup_id);
             self.set_syntax(language);
             self.focus_editor = true;
         }
-        if !ui.memory(|memory| memory.is_popup_open(popup_id)) {
+        if !egui::Popup::is_id_open(ui.ctx(), popup_id) {
             self.syntax_query.clear();
             self.syntax_focus = true;
         }
@@ -993,29 +1003,31 @@ impl HeditApp {
             },
         ));
     }
-    fn buffer_sidebar(&mut self, ctx: &egui::Context) {
+    fn buffer_sidebar(&mut self, root: &mut egui::Ui) {
+        let context = root.ctx().clone();
+        let ctx = &context;
         if !self.settings.show_sidebar || self.distraction_free {
             return;
         }
         if self.sidebar == workbench_navigation::Sidebar::Search {
-            self.folder_search_sidebar(ctx);
+            self.folder_search_sidebar(root);
             return;
         }
         if self.sidebar == workbench_navigation::Sidebar::SourceControl {
-            self.source_control_sidebar(ctx);
+            self.source_control_sidebar(root);
             return;
         }
         let theme = self.theme.clone();
-        egui::SidePanel::left("buffers")
-            .default_width(220.0)
-            .min_width(140.0)
-            .max_width(360.0)
+        egui::Panel::left("buffers")
+            .default_size(220.0)
+            .min_size(140.0)
+            .max_size(360.0)
             .frame(
                 egui::Frame::new()
                     .fill(theme.panel.color())
                     .inner_margin(egui::Margin::symmetric(8, 10)),
             )
-            .show(ctx, |ui| {
+            .show(root, |ui| {
                 ui.set_min_width(ui.available_width());
                 if self.sidebar == workbench_navigation::Sidebar::Remote {
                     self.ensure_remote_catalog(ctx);
@@ -1052,25 +1064,27 @@ impl HeditApp {
                 ui.add_enabled_ui(!self.busy && !self.closing, |ui| self.folder_tree(ui));
             });
     }
-    pub(super) fn search_panel(&mut self, ctx: &egui::Context) {
+    pub(super) fn search_panel(&mut self, root: &mut egui::Ui) {
+        let context = root.ctx().clone();
+        let ctx = &context;
         self.poll_live_find(ctx);
         if !self.find_open {
             return;
         }
-        egui::TopBottomPanel::bottom("find-panel")
+        egui::Panel::bottom("find-panel")
             .frame(
                 egui::Frame::new()
                     .fill(self.theme.surface.color())
                     .inner_margin(egui::Margin::symmetric(10, 6)),
             )
-            .show(ctx, |ui| {
+            .show(root, |ui| {
                 // Wrap whole controls; wrapping checkbox text into the remaining
                 // few pixels can grow a narrow panel beyond the viewport.
                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                 ui.horizontal_wrapped(|ui| {
                     ui.label("Find");
                     let width = (ui.available_width() - 225.0).max(100.0);
-                    let input_id = egui::Id::new(FIND_INPUT);
+                    let input_id = egui::Id::unique(FIND_INPUT);
                     let focused = ctx.memory(|m| m.has_focus(input_id));
                     // Shift+Enter searches backwards, like Sublime Text.
                     let previous =
@@ -1213,7 +1227,7 @@ fn command_group(
         for &command in commands {
             if menu_item(ui, app, command) {
                 *action = Some(command);
-                ui.close_menu();
+                ui.close();
             }
         }
     });
@@ -1223,7 +1237,7 @@ impl HeditApp {
         for command in [Command::Undo, Command::Redo] {
             if menu_item(ui, self, command) {
                 *action = Some(command);
-                ui.close_menu();
+                ui.close();
             }
         }
         ui.separator();
@@ -1236,7 +1250,7 @@ impl HeditApp {
         ] {
             if menu_item(ui, self, command) {
                 *action = Some(command);
-                ui.close_menu();
+                ui.close();
             }
         }
         ui.separator();
@@ -1312,7 +1326,7 @@ impl HeditApp {
         ui.menu_button("Indentation", |ui| {
             egui::ScrollArea::vertical()
                 .id_salt("indent-menu-scroll")
-                .max_height((ui.ctx().screen_rect().height() - 70.0).max(140.0))
+                .max_height((ui.ctx().viewport_rect().height() - 70.0).max(140.0))
                 .show(ui, |ui| {
                     for commands in [
                         &[Command::Indent, Command::Unindent][..],
@@ -1329,7 +1343,7 @@ impl HeditApp {
                         for &command in commands {
                             if menu_item(ui, self, command) {
                                 *action = Some(command);
-                                ui.close_menu();
+                                ui.close();
                             }
                         }
                         ui.separator();
@@ -1340,7 +1354,7 @@ impl HeditApp {
         for command in [Command::ToggleComment, Command::ToggleBlockComment] {
             if menu_item(ui, self, command) {
                 *action = Some(command);
-                ui.close_menu();
+                ui.close();
             }
         }
     }
@@ -1477,7 +1491,7 @@ impl HeditApp {
         ] {
             if menu_item(ui, self, command) {
                 *action = Some(command);
-                ui.close_menu();
+                ui.close();
             }
         }
     }

@@ -352,7 +352,7 @@ impl HeditApp {
 
     fn ssh_picker(&mut self, ctx: &egui::Context) -> Option<RemoteConfig> {
         let mut picker = self.remote_ui.connect_picker.take()?;
-        let input_id = egui::Id::new("ssh-connect-input");
+        let input_id = egui::Id::unique("ssh-connect-input");
         let focused = ctx.memory(|memory| memory.has_focus(input_id));
         let take = |key| focused && ctx.input_mut(|input| input.consume_key(Modifiers::NONE, key));
         let down = take(Key::ArrowDown);
@@ -361,8 +361,8 @@ impl HeditApp {
         let ready = self.remote_ui.ready();
         let mut choice = None;
         let mut advanced = false;
-        let shown = egui::Modal::new(egui::Id::new("ssh-connect-picker")).show(ctx, |ui| {
-            ui.set_width((ctx.screen_rect().width() - 40.0).clamp(0.0, 460.0));
+        let shown = egui::Modal::new(egui::Id::unique("ssh-connect-picker")).show(ctx, |ui| {
+            ui.set_width((ctx.viewport_rect().width() - 40.0).clamp(0.0, 460.0));
             ui.heading("Connect via SSH");
             let input = ui.add(
                 egui::TextEdit::singleline(&mut picker.query)
@@ -393,7 +393,7 @@ impl HeditApp {
                 ui.label("Enter a hostname, SSH alias, or user@host.");
             }
             egui::ScrollArea::vertical()
-                .max_height(250.0_f32.min(ctx.screen_rect().height() * 0.45))
+                .max_height(250.0_f32.min(ctx.viewport_rect().height() * 0.45))
                 .show(ui, |ui| {
                     for (index, option) in choices.iter().enumerate() {
                         let selected = index == picker.selected;
@@ -707,14 +707,14 @@ impl HeditApp {
         header.context_menu(|ui| {
             if ui.button("SSH configuration…").clicked() {
                 self.remote_ui.config_dialog = true;
-                ui.close_menu();
+                ui.close();
             }
             if ui
                 .add_enabled(ready, egui::Button::new("Refresh hosts"))
                 .clicked()
             {
                 self.load_remote_catalog(ui.ctx(), CatalogLoad::Read);
-                ui.close_menu();
+                ui.close();
             }
         });
         ui.horizontal(|ui| {
@@ -1234,7 +1234,7 @@ impl HeditApp {
                 {
                     let connection = remote.clone();
                     self.request_ssh_reconnect(ui.ctx(), connection);
-                    ui.close_menu();
+                    ui.close();
                 }
                 if ui
                     .add_enabled(
@@ -1245,15 +1245,15 @@ impl HeditApp {
                 {
                     let connection = remote.clone();
                     self.remote_background(ui.ctx(), move || connection.disconnect());
-                    ui.close_menu();
+                    ui.close();
                 }
                 if ui.button("Remote Explorer").clicked() {
                     self.show_remote_explorer(ui.ctx());
-                    ui.close_menu();
+                    ui.close();
                 }
                 if ui.button("Show SSH Output").clicked() {
                     self.show_ssh_output();
-                    ui.close_menu();
+                    ui.close();
                 }
                 if connected
                     && ui
@@ -1273,7 +1273,7 @@ impl HeditApp {
                     } else {
                         self.remote_ui.dialog = true;
                     }
-                    ui.close_menu();
+                    ui.close();
                 }
                 if ui
                     .add_enabled(
@@ -1283,7 +1283,7 @@ impl HeditApp {
                     .clicked()
                 {
                     self.remote_new(ui.ctx());
-                    ui.close_menu();
+                    ui.close();
                 }
                 if ui
                     .add_enabled(
@@ -1294,7 +1294,7 @@ impl HeditApp {
                 {
                     self.remote_ui.picker = Some(Picker::Open);
                     self.remote_ui.path.clear();
-                    ui.close_menu();
+                    ui.close();
                 }
             },
         )
@@ -1516,7 +1516,8 @@ mod tests {
         size: egui::Vec2,
         events: Vec<egui::Event>,
     ) -> egui::FullOutput {
-        ctx.run(
+        crate::app::tests::run_pass(
+            ctx,
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
                 events,
@@ -1525,9 +1526,9 @@ mod tests {
             |ctx| {
                 app.remote_controls(ctx);
                 app.shortcuts(ctx);
-                app.chrome(ctx);
-                app.workbench_panel(ctx);
-                app.editor(ctx);
+                ctx.root_ui(|root| app.chrome(root));
+                ctx.root_ui(|root| app.workbench_panel(root));
+                ctx.root_ui(|root| app.editor(root));
                 app.command_palette(ctx);
             },
         )
@@ -1539,7 +1540,8 @@ mod tests {
         events: Vec<egui::Event>,
     ) -> Option<RemoteConfig> {
         let mut choice = None;
-        let _ = ctx.run(
+        let _ = crate::app::tests::run_pass(
+            ctx,
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
                     egui::Pos2::ZERO,
@@ -2248,7 +2250,8 @@ mod tests {
     fn ssh_receipt_ui_schedules_a_deadline_but_no_offline_poll() {
         let ctx = egui::Context::default();
         let frame = |delay| {
-            ctx.run(
+            crate::app::tests::run_pass(
+                &ctx,
                 egui::RawInput {
                     predicted_dt: 0.0,
                     ..Default::default()

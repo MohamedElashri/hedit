@@ -62,9 +62,19 @@ fn shape(svg: &mut String, s: &Shape) {
             );
         }
         Shape::Text(t) => {
+            let mut byte = 0;
+            let mut style = 0;
             for row in &t.galley.rows {
                 for glyph in &row.glyphs {
-                    let section = &t.galley.job.sections[glyph.section_index as usize];
+                    while style + 1 < t.galley.job.sections.len()
+                        && byte >= t.galley.job.sections[style].byte_range.end.0
+                    {
+                        style += 1;
+                    }
+                    let Some(section) = t.galley.job.sections.get(style) else {
+                        break;
+                    };
+                    byte += glyph.chr.len_utf8();
                     let c = t.override_text_color.unwrap_or(
                         if section.format.color == Color32::PLACEHOLDER {
                             t.fallback_color
@@ -77,8 +87,9 @@ fn shape(svg: &mut String, s: &Shape) {
                     } else {
                         "DejaVu Sans"
                     };
-                    let _=write!(svg,"<text x=\"{}\" y=\"{}\" fill=\"{}\" font-family=\"{}\" font-size=\"{}\">{}</text>",t.pos.x+glyph.pos.x,t.pos.y+glyph.pos.y,color(c),family,section.format.font_id.size,escape(&glyph.chr.to_string()));
+                    let _=write!(svg,"<text x=\"{}\" y=\"{}\" fill=\"{}\" font-family=\"{}\" font-size=\"{}\">{}</text>",t.pos.x+row.pos.x+glyph.pos.x,t.pos.y+row.pos.y+glyph.pos.y,color(c),family,section.format.font_id.size,escape(&glyph.chr.to_string()));
                 }
+                byte += usize::from(row.ends_with_newline);
             }
         }
         _ => (),

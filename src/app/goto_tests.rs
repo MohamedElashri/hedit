@@ -401,7 +401,7 @@ fn find_reveals_offscreen_matches_without_leaving_the_search_field() {
         workspace.open[0].page.text = text.clone();
         workspace.edit(0, "").unwrap();
         let ctx = egui::Context::default();
-        ctx.style_mut(|style| style.scroll_animation = egui::style::ScrollAnimation::none());
+        ctx.global_style_mut(|style| style.scroll_animation = egui::style::ScrollAnimation::none());
         let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
         app.settings.word_wrap = wrap;
         frame(&ctx, &mut app, vec![]);

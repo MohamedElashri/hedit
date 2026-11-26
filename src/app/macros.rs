@@ -246,7 +246,7 @@ impl HeditApp {
             .anchor(egui::Align2::CENTER_TOP, [0.0, 90.0])
             .show(ctx, |ui| {
                 ui.label("Name");
-                let id = egui::Id::new("macro-name-input");
+                let id = egui::Id::unique("macro-name-input");
                 let enter = ctx.memory(|m| m.has_focus(id))
                     && ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter));
                 let response = ui.add(

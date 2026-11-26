@@ -377,18 +377,18 @@ impl HeditApp {
                 ui.add_enabled_ui(!pending, |ui| {
                     if ui.button("Refresh").clicked() {
                         self.source_control.request(ctx, None);
-                        ui.close_menu();
+                        ui.close();
                     }
                     if ui.button("Open repository…").clicked() {
                         self.browse_git_repository(ctx);
-                        ui.close_menu();
+                        ui.close();
                     }
                     if ui.button("Clone repository…").clicked() {
                         self.source_control.prompt = Some(Prompt::Clone {
                             url: String::new(),
                             destination: String::new(),
                         });
-                        ui.close_menu();
+                        ui.close();
                     }
                     if let Some(snapshot) = &snapshot {
                         ui.separator();
@@ -397,21 +397,21 @@ impl HeditApp {
                             .clicked()
                         {
                             self.git_action(ctx, Operation::Fetch);
-                            ui.close_menu();
+                            ui.close();
                         }
                         if ui
                             .add_enabled(!snapshot.upstream.is_empty(), egui::Button::new("Pull"))
                             .clicked()
                         {
                             self.git_action(ctx, Operation::Pull);
-                            ui.close_menu();
+                            ui.close();
                         }
                         if ui
                             .add_enabled(!snapshot.upstream.is_empty(), egui::Button::new("Push"))
                             .clicked()
                         {
                             self.git_action(ctx, Operation::Push);
-                            ui.close_menu();
+                            ui.close();
                         }
                     }
                 });
@@ -448,7 +448,7 @@ impl HeditApp {
                     );
                     if ui.button("New branch…").clicked() {
                         self.source_control.prompt = Some(Prompt::Branch(String::new()));
-                        ui.close_menu();
+                        ui.close();
                     }
                     egui::ScrollArea::vertical()
                         .max_height(240.0)
@@ -477,7 +477,7 @@ impl HeditApp {
                                             Operation::Switch(branch.name.clone()),
                                         );
                                     }
-                                    ui.close_menu();
+                                    ui.close();
                                     break;
                                 }
                                 }
@@ -517,7 +517,7 @@ impl HeditApp {
                                             branch: snapshot.branch.clone(),
                                         },
                                     );
-                                    ui.close_menu();
+                                    ui.close();
                                 }
                             }
                         });
@@ -744,7 +744,7 @@ impl HeditApp {
         if self.busy
             || self.closing
             || self.transient_overlay_open()
-            || ctx.memory(|m| m.any_popup_open())
+            || egui::Popup::is_any_open(ctx)
         {
             return false;
         }

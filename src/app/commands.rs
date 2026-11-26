@@ -1961,7 +1961,7 @@ impl HeditApp {
                     }
                 } else {
                     self.focus_editor = true;
-                    ctx.memory_mut(|m| m.surrender_focus(egui::Id::new("outline-filter")));
+                    ctx.memory_mut(|m| m.surrender_focus(egui::Id::unique("outline-filter")));
                 }
             }
             Command::Tabs => self.settings.show_tab_bar = !self.settings.show_tab_bar,
@@ -2121,12 +2121,12 @@ impl HeditApp {
         } else {
             "Go to file"
         })
-        .id(egui::Id::new("command-palette"))
+        .id(egui::Id::unique("command-palette"))
         .collapsible(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_TOP, [0.0, 70.0])
         .default_width(560.0)
-        .frame(egui::Frame::window(&ctx.style()).inner_margin(10.0).corner_radius(4))
+        .frame(egui::Frame::window(&ctx.global_style()).inner_margin(10.0).corner_radius(4))
         .show(ctx, |ui| {
             let response = bidi_view::field(ui, &mut self.palette_query, |edit| {
                 edit.desired_width(f32::INFINITY).font(egui::FontId::proportional(16.0)).margin(egui::Margin::symmetric(8, 7)).hint_text(if let Some(list) = &self.pick_list {
@@ -2345,7 +2345,7 @@ impl HeditApp {
                 }
             }
             ui.separator();
-            let height = (ctx.screen_rect().height() - 190.0).clamp(120.0, 320.0);
+            let height = (ctx.viewport_rect().height() - 190.0).clamp(120.0, 320.0);
             let mut scroll = egui::ScrollArea::vertical().id_salt("palette-results").max_height(height);
             if navigate || changed || targets_ready {
                 let stride = 28.0 + ui.spacing().item_spacing.y;

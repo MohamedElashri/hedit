@@ -326,7 +326,7 @@ impl HeditApp {
         };
         let theme = self.theme.clone();
         let mut chosen = None;
-        let shown = egui::Area::new(egui::Id::new("definition-hover"))
+        let shown = egui::Area::new(egui::Id::unique("definition-hover"))
             .order(egui::Order::Foreground)
             .fixed_pos(hover.at + egui::vec2(0.0, 18.0))
             .show(ctx, |ui| {

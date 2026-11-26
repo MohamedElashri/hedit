@@ -517,11 +517,11 @@ impl HeditApp {
                             response.context_menu(|ui| {
                                 if ui.button("Export…").clicked() {
                                     export = Some(theme.clone());
-                                    ui.close_menu();
+                                    ui.close();
                                 }
                                 if ui.button("Move to trash").clicked() {
                                     delete = Some(path.clone());
-                                    ui.close_menu();
+                                    ui.close();
                                 }
                             });
                         }
@@ -759,7 +759,7 @@ impl HeditApp {
         // Bring the current theme into view when the switcher opens.
         let opened = self.palette_focus;
         let shown = egui::Window::new("Color theme")
-            .id(egui::Id::new("theme-switcher"))
+            .id(egui::Id::unique("theme-switcher"))
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_TOP, [0.0, 70.0])
@@ -787,7 +787,7 @@ impl HeditApp {
                 }
                 ui.separator();
                 egui::ScrollArea::vertical()
-                    .max_height((ctx.screen_rect().height() - 190.0).clamp(120.0, 360.0))
+                    .max_height((ctx.viewport_rect().height() - 190.0).clamp(120.0, 360.0))
                     .show(ui, |ui| {
                         let mut previous: Option<(bool, bool)> = None;
                         for (index, (theme, saved)) in items.iter().enumerate() {
@@ -1029,7 +1029,7 @@ fn theme_card(
         },
     );
     job.wrap = egui::text::TextWrapping::truncate_at_width(width);
-    let galley = ui.fonts(|f| f.layout_job(job));
+    let galley = ui.fonts_mut(|f| f.layout_job(job));
     painter.galley(
         egui::pos2(rect.left() + 1.0, preview.bottom() + 4.0),
         galley,

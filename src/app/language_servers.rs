@@ -1598,7 +1598,8 @@ mod tests {
         });
         app.languages.problems = true;
         let draw = |app: &mut HeditApp, events| {
-            ctx.run(
+            crate::app::tests::run_pass(
+                &ctx,
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(
                         egui::Pos2::ZERO,
@@ -1608,7 +1609,7 @@ mod tests {
                     events,
                     ..Default::default()
                 },
-                |ctx| app.workbench_panel(ctx),
+                |ctx| ctx.root_ui(|root| app.workbench_panel(root)),
             )
         };
         draw(&mut app, vec![]);
@@ -1933,8 +1934,9 @@ mod tests {
             }
             let mut shown = false;
             for _ in 0..2 {
-                let output = ctx.run(egui::RawInput::default(), |ctx| {
-                    egui::CentralPanel::default().show(ctx, |ui| app.language_status_button(ui));
+                let output = crate::app::tests::run_pass(&ctx, egui::RawInput::default(), |ctx| {
+                    egui::CentralPanel::default()
+                        .show_in_context(ctx, |ui| app.language_status_button(ui));
                 });
                 shown = output
                     .shapes

@@ -832,11 +832,11 @@ pub(super) fn show_arguments(
     values: &mut std::collections::BTreeMap<String, hedit::plugin_options::Value>,
 ) -> Option<bool> {
     use hedit::plugin_options::Value;
-    let response = egui::Modal::new(egui::Id::new("extension-command-inputs")).show(ctx, |ui| {
+    let response = egui::Modal::new(egui::Id::unique("extension-command-inputs")).show(ctx, |ui| {
         ui.heading("Extension command inputs");
-        ui.set_max_width((ctx.screen_rect().width() - 48.0).clamp(180.0, 480.0));
+        ui.set_max_width((ctx.viewport_rect().width() - 48.0).clamp(180.0, 480.0));
         egui::ScrollArea::vertical()
-            .max_height((ctx.screen_rect().height() - 180.0).max(80.0))
+            .max_height((ctx.viewport_rect().height() - 180.0).max(80.0))
             .show(ui, |ui| {
                 for (key, definition) in plugin.arguments.iter() {
                     ui.push_id(key, |ui| {
@@ -925,12 +925,12 @@ fn edit_diff(
 }
 
 fn show_preview(ctx: &egui::Context, diff: &Diff) -> Option<bool> {
-    let modal = egui::Modal::new(egui::Id::new("lua-edit-preview")).show(ctx, |ui| {
-        ui.set_width((ctx.screen_rect().width() - 64.0).clamp(224.0, 740.0));
+    let modal = egui::Modal::new(egui::Id::unique("lua-edit-preview")).show(ctx, |ui| {
+        ui.set_width((ctx.viewport_rect().width() - 64.0).clamp(224.0, 740.0));
         ui.heading("Extension edit preview");
         let height = ui.text_style_height(&egui::TextStyle::Monospace);
         egui::ScrollArea::both()
-            .max_height((ctx.screen_rect().height() * 0.52).max(70.0))
+            .max_height((ctx.viewport_rect().height() * 0.52).max(70.0))
             .show_rows(ui, height, diff.rows, |ui, lines| {
                 for row in lines {
                     let Some((added, text)) = diff.row(row) else {
@@ -1315,7 +1315,7 @@ pub(super) mod tests {
         };
         let ctx = egui::Context::default();
         for _ in 0..4 {
-            let _ = ctx.run(egui::RawInput::default(), |_| {});
+            let _ = crate::app::tests::run_pass(&ctx, egui::RawInput::default(), |_| {});
         }
         let (sender, receiver) = mpsc::channel();
         ctx.set_request_repaint_callback(move |info| {

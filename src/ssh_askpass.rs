@@ -146,14 +146,15 @@ impl eframe::App for Prompt {
         false
     }
 
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
         if self.expired() || ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
         }
         // Stop showing the dialog if its SSH parent was cancelled or timed out.
         ctx.request_repaint_after(Duration::from_millis(250));
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             ui.heading("SSH authentication");
             ui.label(&self.host);
             ui.add_space(8.0);

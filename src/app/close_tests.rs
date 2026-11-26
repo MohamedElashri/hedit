@@ -62,9 +62,12 @@ fn last_blank_tab_has_no_close_button_and_ignores_close_actions() {
         .shapes
         .iter()
         .any(|s| text_rect(&s.shape, "OPEN FILES").is_some()));
-    let tabs = egui::containers::panel::PanelState::load(&ctx, egui::Id::new("tabs"))
-        .unwrap()
-        .rect;
+    let tabs = egui::containers::panel::PanelState::load(
+        &ctx,
+        ctx.viewport_id().root_ui_id().with("tabs"),
+    )
+    .unwrap()
+    .outer_rect;
     assert!(!output.shapes.iter().any(|s| matches!(&s.shape,
         egui::Shape::Mesh(mesh) if hedit::icons::Icon::Close.matches_texture(&ctx, mesh.texture_id)
             && tabs.contains_rect(mesh.calc_bounds())
@@ -102,9 +105,12 @@ fn last_blank_tab_has_no_close_button_and_ignores_close_actions() {
     app.execute(&ctx, Command::New);
     assert!(app.command_enabled(Command::Close));
     let output = frame(&ctx, &mut app, vec![]);
-    let tabs = egui::containers::panel::PanelState::load(&ctx, egui::Id::new("tabs"))
-        .unwrap()
-        .rect;
+    let tabs = egui::containers::panel::PanelState::load(
+        &ctx,
+        ctx.viewport_id().root_ui_id().with("tabs"),
+    )
+    .unwrap()
+    .outer_rect;
     assert_eq!(output.shapes.iter().filter(|s| matches!(&s.shape,
         egui::Shape::Mesh(mesh) if hedit::icons::Icon::Close.matches_texture(&ctx, mesh.texture_id)
             && tabs.contains_rect(mesh.calc_bounds())

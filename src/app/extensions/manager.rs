@@ -301,7 +301,7 @@ impl Manager {
             }
         }
         if let Some(review) = &mut self.review {
-            let shown = egui::Modal::new(egui::Id::new(("review-extension", review.label())))
+            let shown = egui::Modal::new(egui::Id::unique(("review-extension", review.label())))
                 .show(ui.ctx(), |ui| review.show(ui, !pending));
             if shown.should_close() || shown.inner == Some(ReviewChoice::Cancel) {
                 self.review = None;
@@ -496,9 +496,9 @@ impl Review {
     }
 
     fn show(&mut self, ui: &mut egui::Ui, ready: bool) -> Option<ReviewChoice> {
-        ui.set_width((ui.ctx().screen_rect().width() - 56.0).clamp(200.0, 520.0));
+        ui.set_width((ui.ctx().viewport_rect().width() - 56.0).clamp(200.0, 520.0));
         ui.heading(self.label());
-        let body_height = (ui.ctx().screen_rect().height() - 132.0).clamp(72.0, 390.0);
+        let body_height = (ui.ctx().viewport_rect().height() - 132.0).clamp(72.0, 390.0);
         let confirm = egui::ScrollArea::vertical()
             .max_height(body_height)
             .show(ui, |ui| self.details(ui))

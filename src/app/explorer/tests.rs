@@ -43,7 +43,7 @@ fn keyboard_navigation_and_typeahead_do_not_edit_the_document() {
     let (_dir, ctx, mut app, root) = fixture();
     app.focus_explorer(&ctx);
     paint(&ctx, &mut app, vec![]);
-    assert!(ctx.memory(|m| m.has_focus(egui::Id::new("explorer-tree"))));
+    assert!(ctx.memory(|m| m.has_focus(egui::Id::unique("explorer-tree"))));
     paint(&ctx, &mut app, vec![key(Key::End, Modifiers::NONE)]);
     assert_eq!(
         app.explorer.selected.as_deref(),
@@ -55,7 +55,7 @@ fn keyboard_navigation_and_typeahead_do_not_edit_the_document() {
         root.join("alpha.txt").to_str()
     );
     assert!(
-        ctx.memory(|m| m.has_focus(egui::Id::new("explorer-tree"))),
+        ctx.memory(|m| m.has_focus(egui::Id::unique("explorer-tree"))),
         "arrow navigation must retain tree focus"
     );
     paint(&ctx, &mut app, vec![egui::Event::Text("be".into())]);
@@ -77,7 +77,7 @@ fn inline_creation_preserves_existing_unsaved_text_and_opens_the_new_file() {
     let original = app.active().view.id;
     app.start_explorer_entry(&ctx, root.to_string_lossy().into_owned(), false, false);
     settle(&ctx, &mut app);
-    assert!(ctx.memory(|m| m.has_focus(egui::Id::new("explorer-entry-name"))));
+    assert!(ctx.memory(|m| m.has_focus(egui::Id::unique("explorer-entry-name"))));
     app.project.create.as_mut().unwrap().name = "new.rs".into();
     app.submit_explorer_entry(&ctx);
     finish_app_job(&mut app, &ctx);
@@ -275,7 +275,7 @@ fn personal_bindings_override_contextual_f2_and_tab_can_leave_the_tree() {
     paint(&ctx, &mut app, vec![]);
     paint(&ctx, &mut app, vec![]);
     paint(&ctx, &mut app, vec![key(Key::Tab, Modifiers::NONE)]);
-    assert!(!ctx.memory(|m| m.has_focus(egui::Id::new("explorer-tree"))));
+    assert!(!ctx.memory(|m| m.has_focus(egui::Id::unique("explorer-tree"))));
     app.quality.config.keybindings.push(quality::Binding {
         command: Command::New.into(),
         shortcut: "F2".into(),
@@ -312,7 +312,7 @@ fn compact_folder_refresh_keeps_selection_and_an_inline_rename_target() {
         .rows
         .iter()
         .any(|n| n.path == nested.to_string_lossy()));
-    assert!(ctx.memory(|m| m.has_focus(egui::Id::new("explorer-entry-name"))));
+    assert!(ctx.memory(|m| m.has_focus(egui::Id::unique("explorer-entry-name"))));
 }
 #[test]
 fn vscode_f2_renames_files_when_explorer_has_focus() {

@@ -85,7 +85,8 @@ fn markdown_wrapped_prose_keeps_the_last_line_aligned_with_inline_math() {
             .find_map(|s| match &s.shape {
                 egui::Shape::Text(t) if t.galley.text() == prefix => {
                     assert!(t.galley.rows.len() > 1);
-                    Some(t.pos.y + t.galley.rows.last().unwrap().glyphs.last().unwrap().pos.y)
+                    let row = t.galley.rows.last().unwrap();
+                    Some(t.pos.y + row.pos.y + row.glyphs.last().unwrap().pos.y)
                 }
                 _ => None,
             })
@@ -133,7 +134,7 @@ fn markdown_styled_text_and_link_punctuation_wrap_as_continuous_prose() {
         .job
         .sections
         .iter()
-        .find(|s| s.byte_range.contains(&link_at))
+        .find(|s| s.byte_range.contains(&egui::text::ByteIndex(link_at)))
         .unwrap()
         .format
         .color;

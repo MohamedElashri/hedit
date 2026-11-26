@@ -140,7 +140,7 @@ impl HeditApp {
     }
     /// Ctrl+Up / Ctrl+Down: scroll one line, leaving the cursor where it is.
     pub(super) fn scroll_lines(&mut self, ctx: &egui::Context, lines: f64) {
-        let row = ctx.fonts(|f| f.row_height(&FontId::monospace(self.settings.font_size)))
+        let row = ctx.fonts_mut(|f| f.row_height(&FontId::monospace(self.settings.font_size)))
             + self.settings.line_padding;
         let b = &mut self.workspace.open[self.workspace.active];
         let top = match self.scroll_request {

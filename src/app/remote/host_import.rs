@@ -28,8 +28,8 @@ impl ImportHosts {
         aliases: &[String],
         ready: bool,
     ) -> (bool, Option<HostImports>) {
-        let shown = egui::Modal::new(egui::Id::new("ssh-host-import")).show(ctx, |ui| {
-            ui.set_width((ctx.screen_rect().width() - 40.0).clamp(0.0, 420.0));
+        let shown = egui::Modal::new(egui::Id::unique("ssh-host-import")).show(ctx, |ui| {
+            ui.set_width((ctx.viewport_rect().width() - 40.0).clamp(0.0, 420.0));
             ui.heading("Import SSH hosts");
             ui.add(
                 egui::TextEdit::singleline(&mut self.query)
@@ -46,7 +46,7 @@ impl ImportHosts {
             }
             let query = self.query.trim().to_ascii_lowercase();
             egui::ScrollArea::vertical()
-                .max_height((ctx.screen_rect().height() - 220.0).clamp(50.0, 280.0))
+                .max_height((ctx.viewport_rect().height() - 220.0).clamp(50.0, 280.0))
                 .show(ui, |ui| {
                     for (key, alias) in &hosts {
                         if !key.contains(&query) {

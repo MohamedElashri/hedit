@@ -180,12 +180,12 @@ impl HeditApp {
             return;
         }
         self.guide.load(self.guide.document);
-        let width = (ctx.screen_rect().width() - 56.0).clamp(160.0, 940.0);
-        let height = (ctx.screen_rect().height() - 150.0).clamp(60.0, 650.0);
+        let width = (ctx.viewport_rect().width() - 56.0).clamp(160.0, 940.0);
+        let height = (ctx.viewport_rect().height() - 150.0).clamp(60.0, 650.0);
         let mut close = false;
         let mut clicked = None;
-        let response = egui::Modal::new(egui::Id::new("user-guide"))
-            .frame(egui::Frame::popup(&ctx.style()).inner_margin(14.0))
+        let response = egui::Modal::new(egui::Id::unique("user-guide"))
+            .frame(egui::Frame::popup(&ctx.global_style()).inner_margin(14.0))
             .show(ctx, |ui| {
                 ui.set_width(width);
                 ui.horizontal(|ui| {
@@ -278,7 +278,7 @@ impl HeditApp {
                             .show_prepared(ui, &mut self.guide.cache, &reader.prepared.parsed);
                     });
                 });
-                self.guide.position = output.state.offset.y;
+                self.guide.position = output.state.clamped_offset().y;
                 if found.get() {
                     self.guide.jump = None;
                 }

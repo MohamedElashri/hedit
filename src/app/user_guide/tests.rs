@@ -7,7 +7,7 @@ fn fixture() -> (tempfile::TempDir, egui::Context, HeditApp) {
     let directory = tempfile::tempdir().unwrap();
     let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
     let ctx = egui::Context::default();
-    ctx.style_mut(|s| s.scroll_animation = egui::style::ScrollAnimation::none());
+    ctx.global_style_mut(|s| s.scroll_animation = egui::style::ScrollAnimation::none());
     let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
     app.workspace.open[0].page.text = "a note that must not change".into();
     app.workspace.edit(0, "").unwrap();
@@ -168,7 +168,7 @@ fn guide_fits_compact_windows_and_dismisses_without_clicking_through() {
             .find_map(|s| text_rect(&s.shape, "User guide").map(|rect| (s, rect)))
             .unwrap();
         assert!(screen.contains_rect(layer.1));
-        let modal = egui::AreaState::load(&ctx, egui::Id::new("user-guide"))
+        let modal = egui::AreaState::load(&ctx, egui::Id::unique("user-guide"))
             .unwrap()
             .rect();
         assert!(

@@ -462,20 +462,20 @@ impl HeditApp {
                                 if let Some(oid) = &tag.commit {
                                     if ui.button("Inspect commit").clicked() {
                                         self.git_inspect_commit(ctx, oid.clone());
-                                        ui.close_menu();
+                                        ui.close();
                                     }
                                     if ui.button("Compare with HEAD").clicked() {
                                         self.git_start_comparison(ctx, oid.clone(), "HEAD".into());
-                                        ui.close_menu();
+                                        ui.close();
                                     }
                                     if ui.button("Branch here…").clicked() {
                                         self.git_name_at(NamedAction::Branch(oid.clone()));
-                                        ui.close_menu();
+                                        ui.close();
                                     }
                                 }
                                 if ui.button("Copy tag name").clicked() {
                                     ui.ctx().copy_text(tag.name.clone());
-                                    ui.close_menu();
+                                    ui.close();
                                 }
                                 if ui.button("Delete local tag…").clicked() {
                                     self.git_confirm(
@@ -489,7 +489,7 @@ impl HeditApp {
                                             expected: tag.object.clone(),
                                         },
                                     );
-                                    ui.close_menu();
+                                    ui.close();
                                 }
                             });
                         });
@@ -677,7 +677,7 @@ fn revision_input(ui: &mut egui::Ui, label: &str, value: &mut String, snapshot: 
             let picker = ui.menu_button("…", |ui| {
                 if ui.button("HEAD").clicked() {
                     *value = "HEAD".into();
-                    ui.close_menu();
+                    ui.close();
                 }
                 egui::ScrollArea::vertical()
                     .max_height(260.0)
@@ -688,7 +688,7 @@ fn revision_input(ui: &mut egui::Ui, label: &str, value: &mut String, snapshot: 
                                 .clicked()
                             {
                                 *value = branch.reference.clone();
-                                ui.close_menu();
+                                ui.close();
                             }
                         }
                     });
@@ -698,7 +698,7 @@ fn revision_input(ui: &mut egui::Ui, label: &str, value: &mut String, snapshot: 
                 .on_hover_text(format!("Choose {label} revision"))
                 .widget_info(|| {
                     egui::WidgetInfo::labeled(
-                        egui::WidgetType::Button,
+                        egui::Role::Button,
                         ui.is_enabled(),
                         format!("Choose {label} revision"),
                     )

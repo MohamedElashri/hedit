@@ -56,7 +56,7 @@ fn builtin_themes_are_readable_and_drive_native_controls() {
         );
         let ctx = egui::Context::default();
         theme.apply(&ctx);
-        let visuals = ctx.style().visuals.clone();
+        let visuals = ctx.global_style().visuals.clone();
         assert_eq!(visuals.widgets.hovered.weak_bg_fill, hover.color());
         assert_eq!(visuals.widgets.open.weak_bg_fill, hover.color());
         assert_eq!(visuals.dark_mode, theme.dark);
@@ -80,9 +80,9 @@ fn applied_theme_survives_a_system_appearance_change() {
         system_theme: Some(egui::Theme::Light),
         ..Default::default()
     };
-    let _ = ctx.run(input, |_| {});
-    assert_eq!(ctx.style().visuals.panel_fill, theme.panel.color());
-    assert!(ctx.style().visuals.dark_mode);
+    let _ = run_test_pass(&ctx, input, |_| {});
+    assert_eq!(ctx.global_style().visuals.panel_fill, theme.panel.color());
+    assert!(ctx.global_style().visuals.dark_mode);
 }
 
 #[test]
@@ -173,7 +173,7 @@ fn new_syntax_roles_color_code_tokens() {
         let at = job.text.find(needle).unwrap();
         job.sections
             .iter()
-            .find(|s| s.byte_range.contains(&at))
+            .find(|s| s.byte_range.contains(&egui::text::ByteIndex(at)))
             .unwrap()
             .format
             .color
@@ -391,4 +391,14 @@ fn additional_dark_and_light_palettes_are_available_by_name() {
             assert_eq!(Theme::from_json(&theme.to_json().unwrap()).unwrap(), theme);
         }
     }
+}
+
+fn run_test_pass(
+    ctx: &egui::Context,
+    input: egui::RawInput,
+    run: impl FnMut(&egui::Context),
+) -> egui::FullOutput {
+    let mut output = ctx.run_pass(input, run);
+    output.textures_delta.clear();
+    output
 }

@@ -64,7 +64,7 @@ pub fn regions(text: &str, language: Language, grammar: &mut Grammar) -> Vec<Ran
         None => crate::syntax::highlight_language(text, 12.0, f32::INFINITY, language, &theme)
             .sections
             .iter()
-            .map(|s| (s.byte_range.len(), s.format.color))
+            .map(|s| (s.byte_range.end.0 - s.byte_range.start.0, s.format.color))
             .collect(),
     };
     let comment = eframe::egui::Color32::from_rgb(1, 2, 3);

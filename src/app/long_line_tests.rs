@@ -11,7 +11,7 @@ fn profile_long_line_coordinates() {
         let index = editor_layout::TextIndex::new(&text);
         let g = row_index::tests::layout(&text, f32::INFINITY, 1.0);
         let row = &g.rows[0];
-        let position = egui::vec2(row.rect.right() - 17.0, row.rect.center().y);
+        let position = egui::vec2(row.rect().right() - 17.0, row.rect().center().y);
         g.cursor_from_pos(position);
         for operation in ["byte", "column", "pointer"] {
             let start = Instant::now();

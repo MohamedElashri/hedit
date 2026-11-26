@@ -434,7 +434,7 @@ impl HeditApp {
         b.view.markdown_view = view;
         // A hidden TextEdit must not keep handling typing or clipboard events.
         if view == MarkdownView::Preview {
-            let base = egui::Id::new(("editor", b.page.info.id, b.page.start));
+            let base = egui::Id::unique(("editor", b.page.info.id, b.page.start));
             ctx.memory_mut(|memory| {
                 memory.surrender_focus(base);
                 for pane in 1..panes::MAX_GROUPS {
@@ -473,7 +473,7 @@ impl HeditApp {
                 if ui
                     .add_enabled(
                         self.command_enabled(action),
-                        egui::SelectableLabel::new(mode == view, label),
+                        egui::Button::selectable(mode == view, label),
                     )
                     .clicked()
                 {
@@ -487,7 +487,7 @@ impl HeditApp {
                         ui.menu_button("Contents", |ui| {
                             if ui.button("Top of document").clicked() {
                                 jump = Some(String::new());
-                                ui.close_menu();
+                                ui.close();
                             }
                             ui.separator();
                             if let Some(prepared) = &contents {
@@ -507,7 +507,7 @@ impl HeditApp {
                                                         .iter()
                                                         .find(|(_, value)| **value == index)
                                                         .map(|(slug, _)| slug.clone());
-                                                    ui.close_menu();
+                                                    ui.close();
                                                 }
                                             });
                                         }

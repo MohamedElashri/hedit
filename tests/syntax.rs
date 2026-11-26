@@ -11,7 +11,11 @@ fn color_at(job: &LayoutJob, needle: &str) -> Color32 {
     let at = job.text.find(needle).unwrap();
     job.sections
         .iter()
-        .find(|section| section.byte_range.contains(&at))
+        .find(|section| {
+            section
+                .byte_range
+                .contains(&eframe::egui::text::ByteIndex(at))
+        })
         .unwrap()
         .format
         .color
@@ -503,7 +507,7 @@ fn strings_comments_lifetimes_and_incomplete_utf8_pages_keep_token_boundaries() 
             let reconstructed: String = job
                 .sections
                 .iter()
-                .map(|s| &job.text[s.byte_range.clone()])
+                .map(|s| &job.text[s.byte_range.start.0..s.byte_range.end.0])
                 .collect();
             assert_eq!(reconstructed, source, "{language:?}");
         }

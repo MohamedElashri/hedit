@@ -545,7 +545,7 @@ impl Theme {
         (a.max(b) + 0.05) / (a.min(b) + 0.05)
     }
     pub fn apply(&self, ctx: &egui::Context) {
-        let mut style = (*ctx.style()).clone();
+        let mut style = (*ctx.global_style()).clone();
         let mut v = if self.dark {
             egui::Visuals::dark()
         } else {
@@ -619,7 +619,7 @@ impl Theme {
         } else {
             egui::Theme::Light
         });
-        ctx.set_style(style);
+        ctx.set_global_style(style);
     }
 }
 

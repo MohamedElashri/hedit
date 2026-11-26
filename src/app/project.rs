@@ -349,12 +349,12 @@ impl HeditApp {
         }
         let tree_focus = ui.interact(
             ui.available_rect_before_wrap(),
-            egui::Id::new("explorer-tree"),
+            egui::Id::unique("explorer-tree"),
             egui::Sense::focusable_noninteractive(),
         );
         tree_focus.widget_info(|| {
             egui::WidgetInfo::labeled(
-                egui::WidgetType::Other,
+                egui::Role::GenericContainer,
                 true,
                 format!(
                     "Explorer · {}",
@@ -366,7 +366,7 @@ impl HeditApp {
         if tree_has_focus {
             ui.memory_mut(|m| {
                 m.set_focus_lock_filter(
-                    egui::Id::new("explorer-tree"),
+                    egui::Id::unique("explorer-tree"),
                     egui::EventFilter {
                         tab: false,
                         horizontal_arrows: true,
@@ -582,7 +582,7 @@ impl HeditApp {
                 if response.clicked() {
                     self.explorer.selected = Some(node.path.clone());
                     ui.ctx()
-                        .memory_mut(|m| m.request_focus(egui::Id::new("explorer-tree")));
+                        .memory_mut(|m| m.request_focus(egui::Id::unique("explorer-tree")));
                     self.focus_editor = false;
                     if root || directory {
                         self.toggle_explorer_node(node);
@@ -603,11 +603,11 @@ impl HeditApp {
         if directory {
             if ui.button("New file…").clicked() {
                 self.start_explorer_entry(ui.ctx(), path.to_owned(), false, false);
-                ui.close_menu();
+                ui.close();
             }
             if ui.button("New folder…").clicked() {
                 self.start_explorer_entry(ui.ctx(), path.to_owned(), true, false);
-                ui.close_menu();
+                ui.close();
             }
             if ui
                 .add_enabled(
@@ -618,7 +618,7 @@ impl HeditApp {
             {
                 self.set_folder_search_scope(Some(PathBuf::from(path)));
                 self.show_search_sidebar();
-                ui.close_menu();
+                ui.close();
             }
         }
         for (label, operation) in [
@@ -641,7 +641,7 @@ impl HeditApp {
                 } else {
                     self.begin_file_action(ui.ctx(), PathBuf::from(path), operation);
                 }
-                ui.close_menu();
+                ui.close();
             }
         }
         if cfg!(feature = "terminal")
@@ -657,7 +657,7 @@ impl HeditApp {
             if let Some(directory) = if directory { Some(path) } else { path.parent() } {
                 self.new_terminal_in(ui.ctx(), Some(directory.to_path_buf()));
             }
-            ui.close_menu();
+            ui.close();
         }
         if ui.button("Reveal in file manager").clicked() {
             let path = path.to_owned();
@@ -665,7 +665,7 @@ impl HeditApp {
                 hedit::folder::reveal_in_file_manager(path)?;
                 Ok(Action::Nothing)
             });
-            ui.close_menu();
+            ui.close();
         }
         if ui.button("Copy relative path").clicked() {
             let roots = self
@@ -685,21 +685,21 @@ impl HeditApp {
             } else {
                 relative.to_string_lossy().into_owned()
             });
-            ui.close_menu();
+            ui.close();
         }
         if ui.button("Copy path").clicked() {
             ui.ctx().copy_text(path.to_owned());
-            ui.close_menu();
+            ui.close();
         }
         if ui.button("Refresh folder").clicked() {
             self.refresh_folder();
-            ui.close_menu();
+            ui.close();
         }
         if self.workspace.folders.iter().any(|f| f.path == path)
             && ui.button("Remove folder from workspace").clicked()
         {
             self.remove_folder(path);
-            ui.close_menu();
+            ui.close();
         }
     }
 
@@ -854,7 +854,8 @@ mod tests {
             })),
         );
         let render = |app: &mut HeditApp| {
-            ctx.run(
+            crate::app::tests::run_pass(
+                &ctx,
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(
                         egui::Pos2::ZERO,
@@ -863,7 +864,7 @@ mod tests {
                     ..Default::default()
                 },
                 |ctx| {
-                    egui::CentralPanel::default().show(ctx, |ui| {
+                    egui::CentralPanel::default().show_in_context(ctx, |ui| {
                         ui.spacing_mut().item_spacing.y = 0.0;
                         app.folder_tree(ui);
                     });
@@ -953,7 +954,8 @@ mod tests {
         app.create_entry(root.path().to_str().unwrap().to_owned(), false);
         app.project.create.as_mut().unwrap().name = "created.rs".into();
         let render = |app: &mut HeditApp, events| {
-            let _ = ctx.run(
+            let _ = crate::app::tests::run_pass(
+                &ctx,
                 egui::RawInput {
                     events,
                     focused: true,

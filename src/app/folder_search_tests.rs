@@ -115,9 +115,12 @@ fn search_sidebar_keeps_the_document_visible_at_large_ui_sizes() {
         frame_size(&ctx, &mut app, vec![], size);
     }
     let out = frame_size(&ctx, &mut app, vec![], size);
-    let side = egui::containers::panel::PanelState::load(&ctx, egui::Id::new("search-sidebar"))
-        .unwrap()
-        .rect;
+    let side = egui::containers::panel::PanelState::load(
+        &ctx,
+        ctx.viewport_id().root_ui_id().with("search-sidebar"),
+    )
+    .unwrap()
+    .outer_rect;
     assert!(side.width() < size.x * 0.6);
     assert!(out
         .shapes

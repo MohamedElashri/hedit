@@ -15,8 +15,6 @@ const BACKGROUND: usize = 64 * 1024;
 
 type Runs = Arc<Vec<(usize, egui::Color32)>>;
 
-type FontAtlas = egui::epaint::mutex::Mutex<egui::epaint::TextureAtlas>;
-
 /// The editor font size and, with extra line spacing, the row height.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct Font {
@@ -26,7 +24,7 @@ pub(super) struct Font {
 
 impl Font {
     pub(super) fn from_settings(ui: &egui::Ui, settings: &hedit::settings::Settings) -> Self {
-        let row = ui.fonts(|f| f.row_height(&egui::FontId::monospace(settings.font_size)));
+        let row = ui.fonts_mut(|f| f.row_height(&egui::FontId::monospace(settings.font_size)));
         Self {
             size: settings.font_size,
             line_height: (settings.line_padding > 0.0).then_some(row + settings.line_padding),
@@ -37,7 +35,7 @@ impl Font {
     }
     pub(super) fn row_height(self, ui: &egui::Ui) -> f32 {
         self.line_height
-            .unwrap_or_else(|| ui.fonts(|f| f.row_height(&self.id())))
+            .unwrap_or_else(|| ui.fonts_mut(|f| f.row_height(&self.id())))
     }
     pub(super) fn gutter_font(self) -> egui::FontId {
         egui::FontId::monospace(self.size - 1.0)
@@ -97,7 +95,7 @@ struct Entry {
     font: Font,
     wrap_width: f32,
     pixels_per_point: f32,
-    atlas: Weak<FontAtlas>,
+    atlas: Weak<()>,
     theme: Theme,
     /// The grammar colors used, or `None` for the lexer's.
     runs: Option<Runs>,
@@ -180,7 +178,7 @@ impl LayoutCache {
     #[cfg(test)]
     pub(super) fn row_height(&self) -> Option<f32> {
         let entry = self.entry.as_ref()?;
-        entry.galley.rows.first().map(|row| row.rect.height())
+        entry.galley.rows.first().map(|row| row.rect().height())
     }
     /// The latest layout and its row directions.
     pub(super) fn last(&self) -> Option<(Arc<Galley>, Arc<super::bidi_view::BidiRows>)> {
@@ -209,12 +207,12 @@ impl LayoutCache {
             _ => false,
         };
         if let Some(entry) = self.shared.take().filter(|entry| {
-            let atlas = ui.fonts(|fonts| fonts.texture_atlas());
+            let atlas = ui.fonts(|fonts| Arc::downgrade(fonts.atlas_identity()));
             entry.language == language
                 && entry.font == font
                 && entry.wrap_width == wrap_width
                 && entry.pixels_per_point == ui.ctx().pixels_per_point()
-                && entry.atlas.ptr_eq(&Arc::downgrade(&atlas))
+                && entry.atlas.ptr_eq(&atlas)
                 && entry.theme == *theme
                 && custom_matches(entry)
                 && entry.galley.job.text == text
@@ -237,13 +235,13 @@ impl LayoutCache {
         let pixels_per_point = ui.ctx().pixels_per_point();
         // egui can recreate the font atlas when fonts change or it fills up.
         // A galley's texture coordinates belong to that particular atlas.
-        let atlas = ui.fonts(|fonts| fonts.texture_atlas());
+        let atlas = ui.fonts(|fonts| Arc::downgrade(fonts.atlas_identity()));
         if let Some(entry) = &self.entry {
             if entry.language == language
                 && entry.font == font
                 && entry.wrap_width == wrap_width
                 && entry.pixels_per_point == pixels_per_point
-                && entry.atlas.ptr_eq(&Arc::downgrade(&atlas))
+                && entry.atlas.ptr_eq(&atlas)
                 && entry.theme == *theme
                 && match (&entry.runs, &runs) {
                     (Some(a), Some(b)) => Arc::ptr_eq(a, b),
@@ -268,25 +266,23 @@ impl LayoutCache {
                 && entry.font == font
                 && entry.wrap_width == wrap_width
                 && entry.pixels_per_point == pixels_per_point
-                && entry.atlas.ptr_eq(&Arc::downgrade(&atlas))
+                && entry.atlas.ptr_eq(&atlas)
                 && entry.theme == *theme
         });
-        let (galley, bidi, blocks) = ui.fonts(|fonts| {
+        let (galley, bidi, blocks) = ui.fonts_mut(|fonts| {
             let base = super::bidi_view::Base::for_language(language);
             if text.len() >= 16 * 1024 {
                 let old = compatible.and_then(|entry| {
-                    entry.blocks.as_ref().map(|blocks| {
-                        (
-                            entry.galley.as_ref(),
-                            entry.bidi.as_ref(),
-                            blocks.as_slice(),
-                        )
-                    })
+                    entry
+                        .blocks
+                        .as_ref()
+                        .map(|blocks| (entry.galley.as_ref(), blocks.as_slice()))
                 });
                 let (galley, bidi, blocks) = blocks::layout(fonts, job, base, old);
                 (galley, bidi, Some(blocks))
             } else {
-                let (galley, bidi) = super::bidi_view::apply(fonts, fonts.layout_job(job), base);
+                let galley = fonts.layout_job(job);
+                let (galley, bidi) = super::bidi_view::apply(fonts, galley, base);
                 (galley, bidi, None)
             }
         });
@@ -296,7 +292,7 @@ impl LayoutCache {
             font,
             wrap_width,
             pixels_per_point,
-            atlas: Arc::downgrade(&atlas),
+            atlas,
             theme: theme.clone(),
             runs,
             galley: Arc::clone(&galley),
@@ -379,8 +375,8 @@ mod tests {
             line_height: None,
         };
         let mut first = None;
-        let _ = ctx.run(Default::default(), |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
+        let _ = crate::app::tests::run_pass(&ctx, Default::default(), |ctx| {
+            egui::CentralPanel::default().show_in_context(ctx, |ui| {
                 for key in 0..4 {
                     cache.activate((key, 0));
                     let galley = cache.layout(
@@ -455,8 +451,8 @@ mod tests {
         let mut cache = LayoutCache::default();
         let uses_grammar = |cache: &mut LayoutCache, text: &str| {
             let mut grammar = false;
-            let _ = ctx.run(egui::RawInput::default(), |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| {
+            let _ = crate::app::tests::run_pass(&ctx, egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show_in_context(ctx, |ui| {
                     cache.layout(ui, text, Language::Rust, font, 800.0, &theme);
                     grammar = cache.entry.as_ref().unwrap().runs.is_some();
                 });
@@ -480,8 +476,8 @@ mod tests {
     fn unchanged_pages_reuse_layout_and_all_visual_inputs_invalidate_it() {
         let ctx = egui::Context::default();
         let mut cache = LayoutCache::default();
-        let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
+        let _ = crate::app::tests::run_pass(&ctx, egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show_in_context(ctx, |ui| {
                 let theme = Theme::default();
                 let source = "let n = 42; // λ\n".repeat(4000);
                 let first = cache.layout(
@@ -584,8 +580,8 @@ mod tests {
         let mut cache = LayoutCache::default();
         for scale in [1.0, 2.0] {
             ctx.set_pixels_per_point(scale);
-            let _ = ctx.run(egui::RawInput::default(), |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| {
+            let _ = crate::app::tests::run_pass(&ctx, egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show_in_context(ctx, |ui| {
                     cache.layout(
                         ui,
                         "let n = 1;",
@@ -616,8 +612,8 @@ mod tests {
                     .insert(egui::FontFamily::Monospace, vec!["Ubuntu-Light".into()]);
                 ctx.set_fonts(fonts);
             }
-            let _ = ctx.run(egui::RawInput::default(), |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| {
+            let _ = crate::app::tests::run_pass(&ctx, egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show_in_context(ctx, |ui| {
                     let galley = cache.layout(
                         ui,
                         "let n = 1;",

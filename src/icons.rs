@@ -30,7 +30,7 @@ icons! {
 struct Cached(std::sync::Arc<std::sync::Mutex<Vec<(u32, TextureHandle)>>>);
 impl Icon {
     fn key(self) -> egui::Id {
-        egui::Id::new(("workbench-codicon", self))
+        egui::Id::unique(("workbench-codicon", self))
     }
     /// Keep at most four pixel sizes per icon/context; no unbounded DPI cache.
     pub fn texture(self, ctx: &egui::Context, points: f32) -> TextureHandle {
@@ -142,9 +142,9 @@ fn control(
     let (_, response) = ui.allocate_exact_size(egui::vec2(side, side), egui::Sense::click());
     response.widget_info(|| match state {
         Some(selected) => {
-            egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), selected, label)
+            egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), selected, label)
         }
-        None => egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label),
+        None => egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label),
     });
     let visuals = ui.style().interact_selectable(&response, selected);
     if selected || response.hovered() || response.has_focus() {
@@ -174,6 +174,16 @@ fn control(
 
 #[cfg(test)]
 mod tests {
+    fn run_test_pass(
+        ctx: &egui::Context,
+        input: egui::RawInput,
+        run: impl FnMut(&egui::Context),
+    ) -> egui::FullOutput {
+        let mut output = ctx.run_pass(input, run);
+        output.textures_delta.clear();
+        output
+    }
+
     use super::*;
     #[test]
     fn every_embedded_icon_renders_visible_white_alpha_at_multiple_dpis() {
@@ -200,14 +210,14 @@ mod tests {
     fn cache_reuses_textures_and_replaces_them_on_dpi_changes() {
         let ctx = egui::Context::default();
         let mut first = None;
-        let _ = ctx.run(Default::default(), |ctx| {
+        let _ = run_test_pass(&ctx, Default::default(), |ctx| {
             let a = Icon::Settings.texture(ctx, 16.0);
             let b = Icon::Settings.texture(ctx, 16.0);
             assert_eq!(a.id(), b.id());
             first = Some(a.id());
         });
         ctx.set_pixels_per_point(2.0);
-        let _ = ctx.run(Default::default(), |ctx| {
+        let _ = run_test_pass(&ctx, Default::default(), |ctx| {
             let c = Icon::Settings.texture(ctx, 16.0);
             assert_ne!(Some(c.id()), first);
             assert!(Icon::Settings.matches_texture(ctx, c.id()));
@@ -217,7 +227,7 @@ mod tests {
     #[test]
     fn mixed_tree_and_toolbar_sizes_reuse_a_bounded_cache() {
         let ctx = egui::Context::default();
-        let _ = ctx.run(Default::default(), |ctx| {
+        let _ = run_test_pass(&ctx, Default::default(), |ctx| {
             let a = Icon::ChevronDown.texture(ctx, 12.0);
             let b = Icon::ChevronDown.texture(ctx, 16.0);
             assert_eq!(Icon::ChevronDown.texture(ctx, 12.0).id(), a.id());
@@ -243,7 +253,8 @@ mod tests {
             enabled: bool,
         ) -> (egui::FullOutput, egui::Response) {
             let mut response = None;
-            let out = ctx.run(
+            let out = run_test_pass(
+                ctx,
                 egui::RawInput {
                     events,
                     focused: true,
@@ -251,7 +262,7 @@ mod tests {
                 },
                 |ctx| {
                     crate::ui_style::apply(ctx, 13.0, crate::ui_style::Density::Default);
-                    egui::CentralPanel::default().show(ctx, |ui| {
+                    egui::CentralPanel::default().show_in_context(ctx, |ui| {
                         response = Some(
                             ui.add_enabled_ui(enabled, |ui| {
                                 button(ui, Icon::Search, "Search workspace")

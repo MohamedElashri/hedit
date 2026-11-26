@@ -11,7 +11,7 @@ pub(super) struct Viewport {
 impl Viewport {
     pub fn new<R>(output: &egui::scroll_area::ScrollAreaOutput<R>, rect: egui::Rect) -> Self {
         Self {
-            offset: output.state.offset.y,
+            offset: output.state.clamped_offset().y,
             max: (output.content_size.y - output.inner_rect.height()).max(0.0),
             rect,
         }
@@ -28,14 +28,7 @@ pub(super) struct Source {
 }
 impl Source {
     fn row_positions(&self, row: usize) -> (f32, f32) {
-        let at = |row| {
-            self.projection.source(
-                self.galley
-                    .from_rcursor(egui::epaint::text::cursor::RCursor { row, column: 0 })
-                    .ccursor
-                    .index,
-            ) as f32
-        };
+        let at = |row| self.projection.source(self.galley.row_start(row)) as f32;
         (at(row), at(row + 1))
     }
     fn position(&self) -> f32 {
@@ -43,9 +36,9 @@ impl Source {
         let row = self
             .galley
             .rows
-            .partition_point(|row| row.rect.bottom() <= y)
+            .partition_point(|row| row.rect().bottom() <= y)
             .min(self.galley.rows.len() - 1);
-        let rect = self.galley.rows[row].rect;
+        let rect = self.galley.rows[row].rect();
         let (start, end) = self.row_positions(row);
         start + (end - start) * ((y - rect.top()) / rect.height().max(1.0)).clamp(0.0, 1.0)
     }
@@ -53,10 +46,9 @@ impl Source {
         let display = self.projection.display(position.max(0.0) as usize);
         let row = self
             .galley
-            .from_ccursor(egui::text::CCursor::new(display))
-            .rcursor
+            .layout_from_cursor(egui::text::CCursor::new(display))
             .row;
-        let rect = self.galley.rows[row].rect;
+        let rect = self.galley.rows[row].rect();
         let (start, end) = self.row_positions(row);
         let fraction = if end > start {
             ((position - start) / (end - start)).clamp(0.0, 1.0)
@@ -178,7 +170,7 @@ impl Sync {
                     .pointer
                     .hover_pos()
                     .is_some_and(|pos| rect.contains(pos))
-                    && (input.raw_scroll_delta.y != 0.0 || input.pointer.primary_down())
+                    && (input.events.iter().any(|event| matches!(event, egui::Event::MouseWheel { delta, .. } if delta.y != 0.0)) || input.pointer.primary_down())
             })
         };
         let preview_input = input_at(preview.viewport.rect) && preview.viewport.max > 0.0;

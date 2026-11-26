@@ -146,7 +146,7 @@ impl HeditApp {
                                                 );
                                                 response.widget_info(|| {
                                                     egui::WidgetInfo::labeled(
-                                                        egui::WidgetType::Button,
+                                                        egui::Role::Button,
                                                         true,
                                                         &label,
                                                     )
@@ -184,7 +184,7 @@ impl HeditApp {
                                                         {
                                                             select = Some(index);
                                                             action = Some(*command);
-                                                            ui.close_menu();
+                                                            ui.close();
                                                         }
                                                     }
                                                 });

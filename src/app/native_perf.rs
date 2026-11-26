@@ -209,7 +209,7 @@ impl Trace {
         match Self::open(Path::new(&path), gl) {
             Ok(trace) => {
                 // Version support is not enough if a loader omitted a symbol.
-                let loaded = cc.get_proc_address.is_some_and(|get| {
+                let loaded = cc.get_proc_address.as_ref().is_some_and(|get| {
                     [
                         c"glGenQueries",
                         c"glDeleteQueries",
@@ -275,7 +275,7 @@ impl Trace {
         let state = self.state.clone();
         ctx.layer_painter(egui::LayerId::background())
             .add(egui::PaintCallback {
-                rect: ctx.screen_rect(),
+                rect: ctx.viewport_rect(),
                 callback: Arc::new(egui_glow::CallbackFn::new(move |_, painter| {
                     state.lock().unwrap().begin_paint(painter.gl());
                 })),
@@ -284,7 +284,7 @@ impl Trace {
     pub(super) fn end_frame(&self, ctx: &egui::Context) {
         let state = self.state.clone();
         ctx.debug_painter().add(egui::PaintCallback {
-            rect: ctx.screen_rect(),
+            rect: ctx.viewport_rect(),
             callback: Arc::new(egui_glow::CallbackFn::new(move |_, painter| {
                 state.lock().unwrap().end_paint(painter.gl());
             })),

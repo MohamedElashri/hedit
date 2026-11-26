@@ -1,6 +1,6 @@
 # Local egui_commonmark patch
 
-Based on egui_commonmark 0.20.0 from crates.io, upstream:
+Based on egui_commonmark 0.26.0 from crates.io, upstream:
 https://github.com/lampsitter/egui_commonmark
 
 The original MIT and Apache-2.0 licenses are retained. This patch replaces the

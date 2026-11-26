@@ -1,6 +1,6 @@
 [package]
 name = "hedit"
-version = "0.7.5"
+version = "0.7.6"
 edition = "2021"
 rust-version = "1.99"
 description = "A native text editor with durable recovery, Git, and private SSH workspaces"
@@ -29,7 +29,7 @@ hedit-remote = { path = "crates/hedit-remote" }
 libghostty-vt = { version = "=0.2.2", default-features = false, optional = true }
 portable-pty = { version = "0.9", optional = true }
 rustybuzz = { version = "0.20.1", optional = true }
-eframe = { version = "0.31.1", default-features = false, features = ["default_fonts", "glow", "x11", "wayland", "persistence"] }
+eframe = { version = "0.37.0", default-features = false, features = ["default_fonts", "glow", "x11", "wayland", "persistence", "clipboard", "links"] }
 rfd = "0.17"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
@@ -51,10 +51,10 @@ unicode-bidi = "0.3"
 unicode-properties = { version = "0.1", default-features = false, features = ["general-category"] }
 ab_glyph = "0.2.32"
 spellbook = "0.4.2"
-egui_commonmark = { version = "0.20.0", default-features = false }
+egui_commonmark = { version = "0.26.0", default-features = false }
 # Decode images through Markdown's bounded loader; never install the generic
 # file:// loader, which bypasses its size, file-type, and worker limits.
-egui_extras = { version = "0.31.1", default-features = false, features = ["image"] }
+egui_extras = { version = "0.37.0", default-features = false, features = ["image"] }
 percent-encoding = "2"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 latex-rust = "3.0.1"
@@ -75,7 +75,7 @@ wayland-client = { version = "0.31", features = ["system", "dlopen"] }
 wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 
 [target.'cfg(target_os = "macos")'.dependencies.eframe]
-version = "0.31.1"
+version = "0.37.0"
 default-features = false
 features = ["accesskit"]
 
@@ -90,7 +90,7 @@ zip = { version = "9", default-features = false, features = ["deflate-flate2-zli
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 # Exercise successive trees with the same consumer as the native adapter.
-accesskit_consumer = "=0.26.0"
+accesskit_consumer = "=0.39.2"
 
 # Native editor row sharing and document layout; see DEVELOPER_GUIDE.md
 # and vendor/egui_commonmark/PATCH.md.

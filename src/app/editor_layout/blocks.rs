@@ -1,40 +1,35 @@
 //! Reuse shaped rows across edits. Blocks always end at paragraph boundaries,
 //! so wrapping, Arabic joining and bidi resolution see complete paragraphs.
 use super::*;
-use egui::emath::GuiRounding as _;
 use egui::{
-    epaint::text::{Fonts, LayoutSection, Row},
+    epaint::text::{ByteIndex, FontsView, LayoutSection},
     text::LayoutJob,
-    Rect,
 };
 use std::ops::Range;
 const BLOCK_BYTES: usize = 4096;
 #[derive(Clone)]
 pub(super) struct Block {
     bytes: Range<usize>,
-    rows: Range<usize>,
+    galley: Arc<Galley>,
     styles: Vec<LayoutSection>,
-    sections: Vec<usize>,
-    width: f32,
+    bidi: super::super::bidi_view::BidiRows,
 }
+
 impl Block {
     pub(super) fn bytes(&self) -> usize {
         std::mem::size_of::<Self>()
+            + self.galley.job.text.len()
             + self.styles.len() * std::mem::size_of::<LayoutSection>()
-            + self.sections.len() * std::mem::size_of::<usize>()
     }
 }
-type Previous<'a> = (
-    &'a Galley,
-    &'a super::super::bidi_view::BidiRows,
-    &'a [Block],
-);
+
+type Previous<'a> = (&'a Galley, &'a [Block]);
 
 fn pieces(text: &str, old: Option<Previous<'_>>) -> Vec<(Range<usize>, Option<usize>)> {
     let mut pieces = Vec::new();
     let mut start = 0;
     let mut tail = Vec::new();
-    if let Some((old, _, blocks)) = old {
+    if let Some((old, blocks)) = old {
         let (prefix, end, inserted) = hedit::workspace::splice(&old.job.text, text);
         for (i, block) in blocks.iter().enumerate() {
             if block.bytes.end > prefix
@@ -75,648 +70,155 @@ fn pieces(text: &str, old: Option<Previous<'_>>) -> Vec<(Range<usize>, Option<us
     }
     pieces
 }
-fn styles(job: &LayoutJob, range: &Range<usize>) -> (Vec<LayoutSection>, Vec<usize>) {
+fn styles(job: &LayoutJob, range: &Range<usize>) -> Vec<LayoutSection> {
     let first = job
         .sections
-        .partition_point(|s| s.byte_range.end <= range.start);
+        .partition_point(|s| s.byte_range.end.0 <= range.start);
     let mut styles = Vec::new();
-    let mut sections = Vec::new();
-    for (i, section) in job.sections.iter().enumerate().skip(first) {
-        if section.byte_range.start >= range.end {
+    for section in &job.sections[first..] {
+        if section.byte_range.start.0 >= range.end {
             break;
         }
         let mut style = section.clone();
-        style.byte_range = section.byte_range.start.max(range.start) - range.start
-            ..section.byte_range.end.min(range.end) - range.start;
+        style.byte_range = ByteIndex(section.byte_range.start.0.max(range.start) - range.start)
+            ..ByteIndex(section.byte_range.end.0.min(range.end) - range.start);
         styles.push(style);
-        sections.push(i);
     }
-    if styles.is_empty() {
-        if let Some((i, section)) = job.sections.iter().enumerate().next_back() {
-            let mut style = section.clone();
-            style.byte_range = 0..0;
-            styles.push(style);
-            sections.push(i);
-        }
+    if let Some(section) = job.sections.last().filter(|_| styles.is_empty()) {
+        let mut style = section.clone();
+        style.byte_range = ByteIndex(0)..ByteIndex(0);
+        styles.push(style);
     }
-    (styles, sections)
+    styles
 }
-fn place(row: &mut Arc<Row>, dy: f32, old: &[usize], new: &[usize], job: &LayoutJob, ppp: f32) {
-    if dy == 0.0 && old == new {
-        return;
-    }
-    let row = Arc::make_mut(row);
-    if old != new {
-        let remap = |id: u32| {
-            new[old
-                .binary_search(&(id as usize))
-                .expect("cached section belongs to its block")] as u32
-        };
-        row.section_index_at_start = remap(row.section_index_at_start);
-        for glyph in &mut row.glyphs {
-            glyph.section_index = remap(glyph.section_index);
-        }
-    }
-    if dy != 0.0 {
-        let pixel = |v: f32| (v * ppp).round() / ppp;
-        let height = pixel(row.layout_rect.height());
-        let top = pixel(row.layout_rect.min.y + dy);
-        let dy = top - row.layout_rect.min.y;
-        row.layout_rect.min.y = top;
-        row.layout_rect.max.y = top + height;
-        row.rect.min.y = top.round_ui();
-        row.rect.max.y = (top + height).round_ui();
-        let mut vertex = row.visuals.glyph_vertex_range.start;
-        let mut corrections = Vec::new();
-        for glyph in &mut row.glyphs {
-            let format = &job.sections[glyph.section_index as usize].format;
-            let y = pixel(
-                top + glyph.font_impl_ascent
-                    + format.valign.to_factor() * (height - glyph.line_height)
-                    + 0.5 * (glyph.font_height - glyph.font_impl_height),
-            );
-            let correction = y - (glyph.pos.y + dy);
-            glyph.pos.y = y;
-            if !glyph.uv_rect.is_nothing() {
-                if correction != 0.0 {
-                    corrections.push((vertex, correction));
-                }
-                vertex += 4;
-            }
-        }
-        row.visuals.translate_mesh(egui::vec2(0.0, dy));
-        if !corrections.is_empty() {
-            // Fractional rounding can move individual baselines differently.
-            // Materialize only these rows, preserving the original corrections.
-            let mesh = row.visuals.mesh_mut();
-            for (vertex, correction) in corrections {
-                if let Some(quad) = mesh.vertices.get_mut(vertex..vertex + 4) {
-                    for v in quad {
-                        v.pos.y += correction;
-                    }
-                }
-            }
-            row.visuals.mesh_bounds = mesh.calc_bounds();
-        }
-    }
-}
+
 pub(super) fn layout(
-    fonts: &Fonts,
+    fonts: &mut FontsView<'_>,
     job: LayoutJob,
     base: super::super::bidi_view::Base,
     old: Option<Previous<'_>>,
 ) -> (Arc<Galley>, super::super::bidi_view::BidiRows, Vec<Block>) {
-    let mut rows = Vec::new();
-    let mut dirs = Vec::new();
-    let mut blocks = Vec::new();
-    let mut y = 0.0;
-    let mut width: f32 = 0.0;
+    use super::super::bidi_view::{apply, BidiRows};
     let ranges = pieces(&job.text, old);
     if ranges.len() == 1 {
-        // Keep the font system's raw galley alive while this page is active.
-        // A second assembled galley would duplicate the job and leave the
-        // renderer's weak append candidate dead after its frame cache expires.
-        let (galley, bidi) = super::super::bidi_view::apply(fonts, fonts.layout_job(job), base);
+        let galley = fonts.layout_job(job);
+        let (galley, bidi) = apply(fonts, galley, base);
         let block = Block {
             bytes: 0..galley.job.text.len(),
-            rows: 0..galley.rows.len(),
+            galley: Arc::clone(&galley),
             styles: galley.job.sections.clone(),
-            sections: (0..galley.job.sections.len()).collect(),
-            width: galley.rect.width(),
+            bidi: bidi.clone(),
         };
         return (galley, bidi, vec![block]);
     }
+    let mut blocks = Vec::with_capacity(ranges.len());
+    let mut galleys = Vec::with_capacity(ranges.len());
+    let mut dirs = Vec::new();
+    let mut row_count = 0;
     for (index, (bytes, previous)) in ranges.iter().enumerate() {
-        let (styles, sections) = styles(&job, bytes);
-        let before = rows.len();
-        let block_width;
-        if let Some((galley, bidi, block)) = previous
-            .and_then(|i| old.map(|(g, b, blocks)| (g, b, &blocks[i])))
-            .filter(|(_, _, block)| block.styles == styles)
+        // Concat restores the line break separating adjacent blocks.
+        let trim = usize::from(index + 1 < ranges.len() && job.text[bytes.clone()].ends_with('\n'));
+        let part = bytes.start..bytes.end - trim;
+        let sections = styles(&job, &part);
+        let (galley, bidi) = if let Some(block) = previous
+            .and_then(|i| old.map(|(_, blocks)| &blocks[i]))
+            .filter(|block| block.styles == sections && block.galley.job.text.len() == part.len())
         {
-            block_width = block.width;
-            let dy = y - galley.rows[block.rows.start].layout_rect.top();
-            rows.extend(galley.rows[block.rows.clone()].iter().cloned());
-            for row in &mut rows[before..] {
-                place(
-                    row,
-                    dy,
-                    &block.sections,
-                    &sections,
-                    &job,
-                    fonts.pixels_per_point(),
-                );
-            }
-            if !dirs.is_empty() || bidi.any() {
-                dirs.resize(before, None);
-                dirs.extend(block.rows.clone().map(|i| bidi.row(i).cloned()));
-            }
+            (Arc::clone(&block.galley), block.bidi.clone())
         } else {
             let mini = LayoutJob {
-                text: job.text[bytes.clone()].into(),
-                sections: styles.clone(),
+                text: job.text[part].into(),
+                sections: sections.clone(),
                 wrap: job.wrap.clone(),
                 first_row_min_height: 0.0,
                 break_on_newline: job.break_on_newline,
                 halign: job.halign,
                 justify: job.justify,
                 round_output_to_gui: job.round_output_to_gui,
+                center_text_in_line_height: job.center_text_in_line_height,
+                keep_trailing_whitespace: job.keep_trailing_whitespace,
             };
-            let (shaped, bidi) =
-                super::super::bidi_view::apply(fonts, fonts.layout_job(mini), base);
-            block_width = shaped.rect.width();
-            let count = shaped.rows.len()
-                - usize::from(index + 1 < ranges.len() && job.text[bytes.clone()].ends_with('\n'));
-            rows.extend(shaped.rows[..count].iter().cloned());
-            let local = (0..sections.len()).collect::<Vec<_>>();
-            for row in &mut rows[before..] {
-                place(row, y, &local, &sections, &job, fonts.pixels_per_point());
-            }
-            if !dirs.is_empty() || bidi.any() {
-                dirs.resize(before, None);
-                dirs.extend((0..count).map(|i| bidi.row(i).cloned()));
-            }
+            let galley = fonts.layout_job(mini);
+            apply(fonts, galley, base)
+        };
+        if !dirs.is_empty() || bidi.any() {
+            dirs.resize(row_count, None);
+            dirs.extend((0..galley.rows.len()).map(|i| bidi.row(i).cloned()));
         }
-        width = width.max(block_width);
-        let ppp = fonts.pixels_per_point();
-        y = rows
-            .last()
-            .map_or(y, |row| (row.layout_rect.bottom() * ppp).round() / ppp);
+        row_count += galley.rows.len();
+        galleys.push(Arc::clone(&galley));
         blocks.push(Block {
             bytes: bytes.clone(),
-            rows: before..rows.len(),
-            styles,
-            sections,
-            width: block_width,
+            galley,
+            styles: sections,
+            bidi,
         });
     }
-    if dirs.iter().all(Option::is_none) {
-        dirs.clear();
-    } else {
-        dirs.resize(rows.len(), None);
-    }
-    let mesh_bounds = rows.iter().fold(Rect::NOTHING, |bounds, row| {
-        bounds.union(row.visuals.mesh_bounds)
-    });
-    let num_vertices = rows.iter().map(|row| row.visuals.mesh.vertices.len()).sum();
-    let num_indices = rows.iter().map(|row| row.visuals.mesh.indices.len()).sum();
-    let galley = Galley {
-        job: Arc::new(job),
-        rows,
-        cursor_cache: Default::default(),
-        elided: false,
-        rect: Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(width, y.round_ui())),
-        mesh_bounds,
-        num_vertices,
-        num_indices,
-        pixels_per_point: fonts.pixels_per_point(),
-    };
-    (
-        Arc::new(galley),
-        super::super::bidi_view::BidiRows { rows: dirs },
-        blocks,
-    )
+    let galley = Arc::new(Galley::concat(
+        Arc::new(job),
+        &galleys,
+        fonts.pixels_per_point(),
+    ));
+    (galley, BidiRows { rows: dirs }, blocks)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    // Independent eager-placement reference from before shared meshes.
-    #[test]
-    fn translated_rows_match_eager_geometry_across_repeated_moves_and_rounding() {
-        for scale in [1.0, 1.25, 1.5, 2.0] {
-            let fonts = Fonts::new(scale, 4096, egui::FontDefinitions::default());
-            let job = code_job(
-                "AVATAR αe\u{301}🦀 text",
-                Language::PlainText,
-                Font {
-                    size: 14.25,
-                    line_height: Some(21.25),
-                },
-                f32::INFINITY,
-                &Theme::default(),
-                None,
-            );
-            let g = fonts.layout_job(job.clone());
-            let mut actual = g.rows[0].clone();
-            let mut expected = actual.clone();
-            for dy in [17.25, -5.5, 42.0, 14.0, -20.0] {
-                let snapshot = actual.clone();
-                let original_vertices = snapshot.visuals.mesh.vertices.clone();
-                place(&mut actual, dy, &[0], &[0], &job, scale);
-                eager_place(&mut expected, dy, &[0], &[0], &job, scale);
-                assert_eq!(actual.glyphs, expected.glyphs);
-                assert_eq!(actual.rect, expected.rect);
-                assert_eq!(actual.visuals.mesh.indices, expected.visuals.mesh.indices);
-                for (a, b) in actual
-                    .visuals
-                    .mesh
-                    .vertices
-                    .iter()
-                    .zip(&expected.visuals.mesh.vertices)
-                {
-                    close(a.pos.x + actual.visuals.mesh_offset.x, b.pos.x);
-                    close(a.pos.y + actual.visuals.mesh_offset.y, b.pos.y);
-                    assert_eq!(a.uv, b.uv);
-                    assert_eq!(a.color, b.color);
-                }
-                assert_eq!(snapshot.visuals.mesh.vertices, original_vertices);
-            }
-        }
-    }
+    use crate::app::bidi_view::Base;
 
-    #[test]
-    #[ignore = "manual optimized paired profile of eager versus shared row-mesh movement"]
-    fn profile_row_mesh_movement() {
-        for (label, text) in [
-            (
-                "40k short rows",
-                "let value = compute(item);\n".repeat(40_000),
-            ),
-            (
-                "100 long rows",
-                format!("{}\n", "abcdefghij".repeat(100)).repeat(100),
-            ),
-        ] {
-            let fonts = Fonts::new(1.0, 4096, egui::FontDefinitions::default());
-            let job = code_job(
-                &text,
-                Language::PlainText,
-                Font {
-                    size: 14.0,
-                    line_height: None,
-                },
-                f32::INFINITY,
-                &Theme::default(),
-                None,
-            );
-            let g = fonts.layout_job(job.clone());
-            let mut samples = [Vec::new(), Vec::new()];
-            let mut shared_bytes = 0;
-            for n in 0..12 {
-                for shared in if n % 2 == 0 {
-                    [false, true]
-                } else {
-                    [true, false]
-                } {
-                    let mut rows = g.rows.clone();
-                    let start = std::time::Instant::now();
-                    for row in &mut rows {
-                        if shared {
-                            place(row, 17.0, &[0], &[0], &job, 1.0)
-                        } else {
-                            eager_place(row, 17.0, &[0], &[0], &job, 1.0)
-                        }
-                    }
-                    samples[usize::from(shared)].push(start.elapsed().as_secs_f64() * 1000.0);
-                    if shared {
-                        shared_bytes = rows
-                            .iter()
-                            .zip(&g.rows)
-                            .filter(|(a, b)| Arc::ptr_eq(&a.visuals.mesh, &b.visuals.mesh))
-                            .map(|(r, _)| {
-                                r.visuals.mesh.vertices.len()
-                                    * std::mem::size_of::<egui::epaint::Vertex>()
-                                    + r.visuals.mesh.indices.len() * 4
-                            })
-                            .sum::<usize>();
-                    }
-                    std::hint::black_box(rows);
-                }
-            }
-            for sample in &mut samples {
-                sample.sort_by(f64::total_cmp)
-            }
-            eprintln!("Row movement {label}: eager p50={:.3} p95={:.3}ms; shared p50={:.3} p95={:.3}ms; mesh bytes reused={shared_bytes}",samples[0][6],samples[0][11],samples[1][6],samples[1][11]);
-        }
-    }
-
-    #[test]
-    fn fractional_baseline_corrections_materialize_only_the_changed_mesh() {
-        let fonts = Fonts::new(1.0, 4096, egui::FontDefinitions::default());
-        let job = code_job(
-            "glyph",
+    fn code(source: &str) -> LayoutJob {
+        code_job(
+            source,
             Language::PlainText,
             Font {
                 size: 14.0,
-                line_height: None,
+                line_height: Some(19.5),
             },
             f32::INFINITY,
             &Theme::default(),
             None,
-        );
-        let g = fonts.layout_job(job.clone());
-        let mut row = (*g.rows[0]).clone();
-        row.glyphs[0].pos.y += 0.125;
-        for vertex in &mut row.visuals.mesh_mut().vertices[..4] {
-            vertex.pos.y += 0.125;
-        }
-        row.visuals.mesh_bounds = row.visuals.mesh.calc_bounds();
-        let original = Arc::new(row);
-        let mut actual = original.clone();
-        let mut expected = original.clone();
-        place(&mut actual, 17.0, &[0], &[0], &job, 1.0);
-        eager_place(&mut expected, 17.0, &[0], &[0], &job, 1.0);
-        assert!(!Arc::ptr_eq(&actual.visuals.mesh, &original.visuals.mesh));
-        assert_eq!(actual.visuals.mesh_offset, egui::Vec2::ZERO);
-        assert_eq!(actual.glyphs, expected.glyphs);
-        assert_eq!(actual.visuals.mesh, expected.visuals.mesh);
+        )
     }
 
     #[test]
-    fn syntax_section_renumbering_keeps_unchanged_meshes_shared() {
-        let fonts = Fonts::new(1.0, 4096, egui::FontDefinitions::default());
-        let mut job = code_job(
-            "value",
-            Language::PlainText,
-            Font {
-                size: 14.0,
-                line_height: None,
-            },
-            f32::INFINITY,
-            &Theme::default(),
-            None,
-        );
-        let g = fonts.layout_job(job.clone());
-        let mut row = g.rows[0].clone();
-        job.sections.insert(0, job.sections[0].clone());
-        place(&mut row, 0.0, &[0], &[1], &job, 1.0);
-        assert!(Arc::ptr_eq(&row.visuals.mesh, &g.rows[0].visuals.mesh));
-        assert!(row.glyphs.iter().all(|g| g.section_index == 1));
-        assert!(g.rows[0].glyphs.iter().all(|g| g.section_index == 0));
-    }
-
-    fn eager_place(
-        row: &mut Arc<Row>,
-        dy: f32,
-        old: &[usize],
-        new: &[usize],
-        job: &LayoutJob,
-        ppp: f32,
-    ) {
-        if dy == 0.0 && old == new {
-            return;
-        }
-        let row = Arc::make_mut(row);
-        row.visuals.mesh_mut();
-        if old != new {
-            let remap = |id: u32| {
-                new[old
-                    .binary_search(&(id as usize))
-                    .expect("cached section belongs to its block")] as u32
-            };
-            row.section_index_at_start = remap(row.section_index_at_start);
-            for glyph in &mut row.glyphs {
-                glyph.section_index = remap(glyph.section_index);
-            }
-        }
-        if dy != 0.0 {
-            let pixel = |v: f32| (v * ppp).round() / ppp;
-            let height = pixel(row.layout_rect.height());
-            let top = pixel(row.layout_rect.min.y + dy);
-            let dy = top - row.layout_rect.min.y;
-            row.layout_rect.min.y = top;
-            row.layout_rect.max.y = top + height;
-            row.rect.min.y = top.round_ui();
-            row.rect.max.y = (top + height).round_ui();
-            for vertex in &mut Arc::make_mut(&mut row.visuals.mesh).vertices {
-                vertex.pos.y += dy;
-            }
-            let mut vertex = row.visuals.glyph_vertex_range.start;
-            for glyph in &mut row.glyphs {
-                let format = &job.sections[glyph.section_index as usize].format;
-                let y = pixel(
-                    top + glyph.font_impl_ascent
-                        + format.valign.to_factor() * (height - glyph.line_height)
-                        + 0.5 * (glyph.font_height - glyph.font_impl_height),
-                );
-                let correction = y - (glyph.pos.y + dy);
-                glyph.pos.y = y;
-                if !glyph.uv_rect.is_nothing() {
-                    if let Some(quad) = Arc::make_mut(&mut row.visuals.mesh)
-                        .vertices
-                        .get_mut(vertex..vertex + 4)
-                    {
-                        for v in quad {
-                            v.pos.y += correction;
-                        }
-                    }
-                    vertex += 4;
-                }
-            }
-            row.visuals.mesh_bounds = row.visuals.mesh.calc_bounds();
-            row.visuals.mesh_cache.invalidate();
-        }
-    }
-    #[test]
-    fn single_block_retains_the_raw_galley_through_idle_frames_and_appends() {
-        let fonts = Fonts::new(1.25, 4096, egui::FontDefinitions::default());
-        let source = "AVATAR α🦀 value ".repeat(5000);
-        let font = Font {
-            size: 14.0,
-            line_height: Some(21.25),
-        };
-        let job = code_job(
-            &source,
-            Language::PlainText,
-            font,
-            f32::INFINITY,
-            &Theme::default(),
-            None,
-        );
-        let base = super::super::super::bidi_view::Base::Auto;
-        let first = layout(&fonts, job.clone(), base, None);
-        assert!(Arc::ptr_eq(&first.0, &fonts.layout_job(job)));
-        fonts.begin_pass(1.25, 4096);
-        fonts.begin_pass(1.25, 4096);
-        let next = format!("{source} append e\u{301}🦀");
-        let job = code_job(
-            &next,
-            Language::PlainText,
-            font,
-            f32::INFINITY,
-            &Theme::default(),
-            None,
-        );
-        let second = layout(
-            &fonts,
-            job.clone(),
-            base,
-            Some((&first.0, &first.1, &first.2)),
-        );
-        let expected = egui::epaint::text::layout(&mut fonts.lock().fonts, Arc::new(job));
-        compare(&second.0, &expected);
-        assert_eq!(first.0.job.text, source);
-        assert_eq!(second.2.len(), 1);
-        assert_eq!(second.2[0].bytes, 0..next.len());
-    }
-
-    #[track_caller]
-    fn close(a: f32, b: f32) {
-        assert!((a - b).abs() < 0.04, "{a} != {b}");
-    }
-    fn compare(actual: &Galley, expected: &Galley) {
-        assert_eq!(actual.job.text, expected.job.text);
-        assert_eq!(actual.rows.len(), expected.rows.len());
-        close(actual.rect.width(), expected.rect.width());
-        close(actual.rect.height(), expected.rect.height());
-        for (a, b) in actual.rows.iter().zip(&expected.rows) {
-            close(a.rect.top(), b.rect.top());
-            close(a.rect.bottom(), b.rect.bottom());
-            assert_eq!(a.ends_with_newline, b.ends_with_newline);
-            assert_eq!(a.glyphs.len(), b.glyphs.len());
-            for (a, b) in a.glyphs.iter().zip(&b.glyphs) {
-                assert_eq!(a.chr, b.chr);
-                close(a.pos.x, b.pos.x);
-                close(a.pos.y, b.pos.y);
-                close(a.advance_width, b.advance_width);
-                assert_eq!(
-                    actual.job.sections[a.section_index as usize].format,
-                    expected.job.sections[b.section_index as usize].format
-                );
-            }
-            assert_eq!(a.visuals.mesh.indices, b.visuals.mesh.indices);
-            assert_eq!(a.visuals.mesh.vertices.len(), b.visuals.mesh.vertices.len());
-            for (av, bv) in a.visuals.mesh.vertices.iter().zip(&b.visuals.mesh.vertices) {
-                close(
-                    av.pos.x + a.visuals.mesh_offset.x,
-                    bv.pos.x + b.visuals.mesh_offset.x,
-                );
-                close(
-                    av.pos.y + a.visuals.mesh_offset.y,
-                    bv.pos.y + b.visuals.mesh_offset.y,
-                );
-                assert_eq!(av.color, bv.color);
-                assert_eq!(av.uv, bv.uv);
-            }
-        }
-    }
-    #[test]
-    fn edits_match_full_layout_with_wrapping_unicode_and_changed_syntax() {
+    fn repositioning_block_rows_shares_the_existing_glyphs_and_meshes() {
+        let source = "value item\n".repeat(3_000);
         for scale in [1.0, 1.25, 1.5, 2.0] {
             let ctx = egui::Context::default();
             ctx.set_pixels_per_point(scale);
-            let _ = ctx.run(Default::default(), |ctx| {
-                ctx.fonts(|fonts| {
-                    for (language, width) in [
-                        (Language::PlainText, f32::INFINITY),
-                        (Language::Rust, 195.0),
-                        (Language::Markdown, 310.0),
-                    ] {
-                        let mut text = (0..500)
-                            .map(|i| {
-                                format!(
-                                    "let value_{i} = \"hello שלום world لا العربية\"; // line\r\n\n"
-                                )
-                            })
-                            .collect::<String>();
-                        let theme = Theme::default();
-                        let font = Font {
-                            size: 14.0,
-                            line_height: Some(19.0),
-                        };
-                        let mut previous: Option<(
-                            Arc<Galley>,
-                            super::super::super::bidi_view::BidiRows,
-                            Vec<Block>,
-                        )> = None;
-                        for edit in 0..8 {
-                            match edit {
-                                1 => text.push_str("tail🦀"),
-                                2 => text.insert_str(0, "// header\n"),
-                                3 => {
-                                    let a = text.find("value_250").unwrap();
-                                    text.replace_range(a..a + 9, "renamed");
-                                }
-                                4 => {
-                                    let a = text.find("value_30").unwrap();
-                                    let end = text[a..].find('\n').unwrap() + a + 1;
-                                    text.replace_range(a..end, "");
-                                }
-                                5 => {
-                                    text = text.lines().take(20).collect::<Vec<_>>().join("\n");
-                                }
-                                6 => text.clear(),
-                                7 => text.push_str("new\n"),
-                                _ => (),
-                            }
-                            let job = code_job(&text, language, font, width, &theme, None);
-                            let (expected, _) = super::super::super::bidi_view::apply(
-                                fonts,
-                                fonts.layout_job(job.clone()),
-                                super::super::super::bidi_view::Base::for_language(language),
-                            );
-                            let old = previous
-                                .as_ref()
-                                .map(|(g, b, c)| (g.as_ref(), b, c.as_slice()));
-                            let current = layout(
-                                fonts,
-                                job,
-                                super::super::super::bidi_view::Base::for_language(language),
-                                old,
-                            );
-                            compare(&current.0, &expected);
-                            previous = Some(current);
-                        }
-                    }
-                });
+            crate::app::tests::run_pass(&ctx, Default::default(), |ctx| {
+                ctx.fonts_mut(|fonts| {
+                    let (first, _, blocks) = layout(fonts, code(&source), Base::Ltr, None);
+                    let edited = format!("inserted line\n{source}");
+                    let (next, _, _) =
+                        layout(fonts, code(&edited), Base::Ltr, Some((&first, &blocks)));
+                    assert_eq!(next.rows.len(), first.rows.len() + 1);
+                    let row = first.rows.len() - 2;
+                    assert_eq!(first.rows[row].text(), next.rows[row + 1].text());
+                    assert!(Arc::ptr_eq(&first.rows[row].row, &next.rows[row + 1].row));
+                    assert!(next.rows[row + 1].pos.y > first.rows[row].pos.y);
+                })
             });
         }
     }
+
     #[test]
-    fn inline_edit_shares_unmodified_rows_while_previous_frame_remains_live() {
+    fn block_boundaries_preserve_newlines_and_logical_offsets_after_an_edit() {
+        let source = "alpha שלום β\n\r\n".repeat(2_000);
         let ctx = egui::Context::default();
-        let _ = ctx.run(Default::default(), |ctx| {
-            ctx.fonts(|fonts| {
-                let source = "a short line\n".repeat(2000);
-                let font = Font {
-                    size: 14.0,
-                    line_height: None,
-                };
-                let theme = Theme::default();
-                let base = super::super::super::bidi_view::Base::Auto;
-                let first = layout(
-                    fonts,
-                    code_job(
-                        &source,
-                        Language::PlainText,
-                        font,
-                        f32::INFINITY,
-                        &theme,
-                        None,
-                    ),
-                    base,
-                    None,
-                );
-                let next = format!("{source}x");
-                let second = layout(
-                    fonts,
-                    code_job(
-                        &next,
-                        Language::PlainText,
-                        font,
-                        f32::INFINITY,
-                        &theme,
-                        None,
-                    ),
-                    base,
-                    Some((&first.0, &first.1, &first.2)),
-                );
-                assert!(Arc::ptr_eq(&first.0.rows[0], &second.0.rows[0]));
-                assert_eq!(first.0.job.text, source);
-                let (expected, _) = super::super::super::bidi_view::apply(
-                    fonts,
-                    fonts.layout_job(code_job(
-                        &next,
-                        Language::PlainText,
-                        font,
-                        f32::INFINITY,
-                        &theme,
-                        None,
-                    )),
-                    base,
-                );
-                compare(&second.0, &expected);
+        let _ = crate::app::tests::run_pass(&ctx, Default::default(), |ctx| {
+            ctx.fonts_mut(|fonts| {
+                let (first, _, blocks) = layout(fonts, code(&source), Base::Auto, None);
+                let edited = format!("{source}last line");
+                let (next, bidi, _) =
+                    layout(fonts, code(&edited), Base::Auto, Some((&first, &blocks)));
+                assert!(bidi.any());
+                assert_eq!(next.end().index.0, edited.chars().count());
+                assert_eq!(next.rows.last().unwrap().text(), "last line");
+                assert!(next.rows[..next.rows.len() - 1]
+                    .iter()
+                    .all(|row| row.ends_with_newline));
             })
         });
     }

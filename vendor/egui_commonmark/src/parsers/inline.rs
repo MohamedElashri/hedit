@@ -49,10 +49,10 @@ fn rich_text(style: &Style, ui: &Ui, text: &str, height: Option<f32>) -> egui::R
         let mut code = TextStyle::Monospace.resolve(ui.style());
         code.size = size;
         let ascent = |font| {
-            ui.fonts(|fonts| {
+            ui.fonts_mut(|fonts| {
                 let galley = fonts.layout_no_wrap("M".into(), font, egui::Color32::WHITE);
                 let glyph = &galley.rows[0].glyphs[0];
-                glyph.font_impl_ascent + 0.5 * (glyph.font_height - glyph.font_impl_height)
+                glyph.font_face_ascent + 0.5 * (glyph.font_height - glyph.font_face_height)
             })
         };
         (height - 2.0 * (ascent(prose) - ascent(code))).max(1.0)
@@ -81,29 +81,31 @@ fn pad_inline_rows(galley: &mut std::sync::Arc<egui::Galley>, height: f32) -> bo
     if !galley
         .rows
         .iter()
-        .any(|row| row.rect.height() < height - 0.5)
+        .any(|row| row.size.y < height - 0.5)
     {
         return false;
     }
     let galley = std::sync::Arc::make_mut(galley);
     let mut offset = 0.0;
     let mut mesh_bounds = egui::Rect::NOTHING;
-    for row in &mut galley.rows {
-        let row = std::sync::Arc::make_mut(row);
-        let padding = (height - row.rect.height()).max(0.0);
-        let shift = egui::vec2(0.0, offset + snap(padding / 2.0));
-        for glyph in &mut row.glyphs {
-            glyph.pos += shift;
+    for placed in &mut galley.rows {
+        placed.pos.y += offset;
+        let padding = (height - placed.size.y).max(0.0);
+        if padding > 0.0 {
+            let row = std::sync::Arc::make_mut(&mut placed.row);
+            let shift = egui::vec2(0.0, snap(padding / 2.0));
+            for glyph in &mut row.glyphs {
+                glyph.pos += shift;
+            }
+            row.visuals.mesh.translate(shift);
+            row.visuals.mesh_bounds = row.visuals.mesh_bounds.translate(shift);
+            row.size.y += padding;
         }
-        row.visuals.translate_mesh(shift);
-        mesh_bounds = mesh_bounds.union(row.visuals.mesh_bounds);
-        row.rect = row.rect.translate(egui::vec2(0.0, offset));
-        row.rect.max.y += padding;
+        mesh_bounds = mesh_bounds.union(placed.visuals.mesh_bounds.translate(placed.pos.to_vec2()));
         offset += padding;
     }
     galley.rect.max.y += offset;
     galley.mesh_bounds = mesh_bounds;
-    galley.invalidate_cursor_index();
     true
 }
 
@@ -400,13 +402,14 @@ impl<'f> InlineRenderer<'f> {
         let width = ui.available_width();
         flow.job.wrap.max_width = width;
         flow.job.first_row_min_height = ui.cursor().height();
+        flow.job.center_text_in_line_height = false;
         flow.job.halign = flow.alignment.unwrap_or(egui::Align::LEFT);
         flow.job.justify = false;
         if let Some(first) = flow.job.sections.first_mut() {
             first.leading_space = width - ui.available_size_before_wrap().x;
         }
         let mut pos = egui::pos2(ui.max_rect().left(), ui.cursor().top());
-        let mut galley = ui.fonts(|fonts| fonts.layout_job(flow.job.clone()));
+        let mut galley = ui.fonts_mut(|fonts| fonts.layout_job(flow.job.clone()));
         let height = self.paragraph_height.unwrap_or_else(|| {
             let body = TextStyle::Body.resolve(ui.style()).size;
             self.text_style.heading.map_or(body * 1.6, |level| {
@@ -431,7 +434,7 @@ impl<'f> InlineRenderer<'f> {
             // Match Label's wrapped-row allocation, then let a native Label
             // paint/select the adjusted galley at exactly the same position.
             for row in &galley.rows {
-                ui.allocate_rect(row.rect.translate(pos.to_vec2()), egui::Sense::hover());
+                ui.allocate_rect(row.rect().translate(pos.to_vec2()), egui::Sense::hover());
             }
             let mut child = ui.new_child(
                 egui::UiBuilder::new()
@@ -450,25 +453,28 @@ impl<'f> InlineRenderer<'f> {
             let label = &galley.text()[range];
             let end = start + label.chars().count();
             let mut character = 0;
+            let mut byte = 0;
             for (row_index, row) in galley.rows.iter().enumerate() {
                 let mut rect = egui::Rect::NOTHING;
                 let mut baseline = 0.0_f32;
                 let mut size = 0.0_f32;
                 for glyph in &row.glyphs {
                     if (start..end).contains(&character) {
-                        rect = rect.union(glyph.logical_rect().translate(pos.to_vec2()));
-                        baseline = baseline.max(pos.y + glyph.pos.y);
+                        let row_origin = pos + row.pos.to_vec2();
+                        rect = rect.union(glyph.logical_rect().translate(row_origin.to_vec2()));
+                        baseline = baseline.max(row_origin.y + glyph.pos.y);
                         size = size.max(
-                            galley.job.sections[glyph.section_index as usize]
-                                .format
+                            galley.job.format_at_byte(egui::epaint::text::ByteIndex(byte))
                                 .font_id
                                 .size,
                         );
                     }
                     character += 1;
+                    byte += glyph.chr.len_utf8();
                 }
                 if row.ends_with_newline {
                     character += 1;
+                    byte += 1;
                 }
                 if !rect.is_positive() {
                     continue;
@@ -476,13 +482,13 @@ impl<'f> InlineRenderer<'f> {
                 let response = ui
                     .interact(
                         rect,
-                        ui.id().with(("reader-link", serial, link, row_index)),
+                        ui.scope_id().with(("reader-link", serial, link, row_index)),
                         egui::Sense::click(),
                     )
                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                     .on_hover_text(&target);
                 response.widget_info(|| {
-                    egui::WidgetInfo::labeled(egui::WidgetType::Link, ui.is_enabled(), label)
+                    egui::WidgetInfo::labeled(egui::Role::Link, ui.is_enabled(), label)
                 });
                 if response.hovered() || response.has_focus() {
                     let y = baseline + (size * 0.1).max(1.0);
@@ -502,7 +508,7 @@ impl<'f> InlineRenderer<'f> {
                 response.context_menu(|ui| {
                     if ui.button("Copy link address").clicked() {
                         ui.ctx().copy_text(target.clone());
-                        ui.close_menu();
+                        ui.close();
                     }
                 });
                 let keyboard =
@@ -685,6 +691,7 @@ impl<'f> InlineRenderer<'f> {
                 self.link = Some(Link {
                     destination: dest_url.to_string(),
                     text: Vec::new(),
+                    chunks: Vec::new(),
                 });
             }
             pulldown_cmark::Tag::Image { dest_url, .. } => {
@@ -785,7 +792,7 @@ fn measured_run(ui: &Ui, job: &mut egui::text::LayoutJob) -> f32 {
     if job.text.is_empty() {
         return 0.0;
     }
-    ui.fonts(|fonts| fonts.layout_job(std::mem::take(job)))
+    ui.fonts_mut(|fonts| fonts.layout_job(std::mem::take(job)))
         .size()
         .x
 }

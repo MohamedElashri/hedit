@@ -654,7 +654,7 @@ impl HeditApp {
         self.apply_workbench_style(ctx);
         self.apply_terminal_font(ctx);
         let (width, blink) = (self.settings.caret_width, self.settings.caret_blink);
-        let cursor = ctx.style().visuals.text_cursor.clone();
+        let cursor = ctx.global_style().visuals.text_cursor.clone();
         if cursor.stroke.width != width || cursor.blink != blink {
             ctx.all_styles_mut(|style| {
                 style.visuals.text_cursor.stroke.width = width;

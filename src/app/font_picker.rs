@@ -21,7 +21,7 @@ impl HeditApp {
     /// Use the shared background inventory without loading each family for preview.
     pub(super) fn ui_font_choice(&mut self, ui: &mut egui::Ui) -> Option<String> {
         self.request_font_families(ui.ctx());
-        let id = egui::Id::new("ui-font-filter");
+        let id = egui::Id::unique("ui-font-filter");
         let mut filter: String = ui.data(|d| d.get_temp(id)).unwrap_or_default();
         let mut choice = None;
         egui::ComboBox::from_id_salt("installed-ui-font")
@@ -33,7 +33,7 @@ impl HeditApp {
                 ui.set_max_width(360.0);
                 ui.add(
                     egui::TextEdit::singleline(&mut filter)
-                        .id(egui::Id::new("ui-font-filter-input"))
+                        .id(egui::Id::unique("ui-font-filter-input"))
                         .hint_text("Filter fonts by family or script")
                         .desired_width(f32::INFINITY),
                 );
@@ -83,7 +83,7 @@ impl HeditApp {
                     }
                 }
                 if choice.is_some() {
-                    ui.close_menu();
+                    ui.close();
                 }
             });
         ui.data_mut(|d| d.insert_temp(id, filter));
@@ -140,7 +140,7 @@ impl HeditApp {
         } else {
             self.settings.font_face.clone()
         };
-        let filter_id = egui::Id::new("font-filter");
+        let filter_id = egui::Id::unique("font-filter");
         let mut filter: String = ui.data(|d| d.get_temp(filter_id)).unwrap_or_default();
         let mut chosen = None;
         egui::ComboBox::from_id_salt("font-face")

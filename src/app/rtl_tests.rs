@@ -49,12 +49,16 @@ fn clicks_and_arrows_follow_the_text_on_screen() {
     let output = frame(&ctx, &mut app, vec![]);
     let (pos, galley) = drawn(&output, text);
     let row = &galley.rows[0];
+    assert_eq!(row.text(), text);
     // The first letter is drawn rightmost; clicking at its right edge puts the
     // caret before it (index 0), and at the line's left edge after the last.
     let first = &row.glyphs[0];
     assert!(first.pos.x > row.glyphs[4].pos.x);
-    let y = pos.y + row.rect.center().y;
-    let right_edge = egui::pos2(pos.x + first.pos.x + first.advance_width - 1.0, y);
+    let y = pos.y + row.rect().center().y;
+    let right_edge = egui::pos2(
+        pos.x + row.pos.x + first.pos.x + first.advance_width - 1.0,
+        y,
+    );
     click_at(&ctx, &mut app, right_edge, SIZE);
     assert_eq!(app.active().view.head, 0);
     // Left moves left on screen: further into the word, so forward in the text.
@@ -68,7 +72,7 @@ fn clicks_and_arrows_follow_the_text_on_screen() {
 
     // Clicking at the line's left edge puts the caret after the last letter.
     let (_directory, ctx, mut app) = app_with(text);
-    let left_edge = egui::pos2(pos.x + row.glyphs[4].pos.x + 1.0, y);
+    let left_edge = egui::pos2(pos.x + row.pos.x + row.glyphs[4].pos.x + 1.0, y);
     click_at(&ctx, &mut app, left_edge, SIZE);
     assert_eq!(app.active().view.head, 5);
 }
@@ -156,8 +160,9 @@ pub(super) fn rasterize_with_textures(
                             (t * font.size[1] as f32) as usize,
                         );
                         [font.pixels
-                            [t.min(font.size[1] - 1) * font.size[0] + u.min(font.size[0] - 1)];
-                            4]
+                            [t.min(font.size[1] - 1) * font.size[0] + u.min(font.size[0] - 1)]
+                        .a() as f32
+                            / 255.0; 4]
                     } else if let Some(texture) = textures.get(&mesh.texture_id) {
                         let x = (mix(&|v| v.uv.x) * texture.size[0] as f32) as usize;
                         let y = (mix(&|v| v.uv.y) * texture.size[1] as f32) as usize;
@@ -220,10 +225,7 @@ fn input_method_commits_without_composing_all_reach_the_editor() {
         frame(
             &ctx,
             &mut app,
-            vec![
-                egui::Event::Ime(egui::ImeEvent::Commit(c.into())),
-                egui::Event::Ime(egui::ImeEvent::Disabled),
-            ],
+            vec![egui::Event::Ime(egui::ImeEvent::Commit(c.into()))],
         );
     }
     assert_eq!(app.active().page.text, "سلام");
@@ -231,18 +233,15 @@ fn input_method_commits_without_composing_all_reach_the_editor() {
     frame(
         &ctx,
         &mut app,
-        vec![
-            egui::Event::Ime(egui::ImeEvent::Enabled),
-            egui::Event::Ime(egui::ImeEvent::Preedit("ni".into())),
-        ],
+        vec![egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: "ni".into(),
+            active_range_chars: None,
+        })],
     );
     frame(
         &ctx,
         &mut app,
-        vec![
-            egui::Event::Ime(egui::ImeEvent::Commit("你".into())),
-            egui::Event::Ime(egui::ImeEvent::Disabled),
-        ],
+        vec![egui::Event::Ime(egui::ImeEvent::Commit("你".into()))],
     );
     assert_eq!(app.active().page.text, "سلام你");
 }

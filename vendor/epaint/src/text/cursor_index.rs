@@ -1,6 +1,6 @@
 //! Logical row offsets shared by cursor conversions. The cache is derived data:
 //! it is omitted from serialization and equality and shared by galley clones.
-use super::{Galley, Row};
+use super::{Galley, PlacedRow};
 use std::sync::{Arc, OnceLock};
 
 #[derive(Clone, Default)]
@@ -42,7 +42,7 @@ pub struct CursorIndex {
     monotonic_x: Vec<OnceLock<bool>>,
 }
 impl CursorIndex {
-    fn new(rows: &[Arc<Row>]) -> Self {
+    fn new(rows: &[PlacedRow]) -> Self {
         let mut index = Self {
             rows: Vec::with_capacity(rows.len()),
             end: CursorRow {
@@ -57,12 +57,12 @@ impl CursorIndex {
         for row in rows {
             index.monotonic_x.push(OnceLock::new());
             index.rows.push(index.end);
-            index.end.start += row.char_count_including_newline();
+            index.end.start += row.char_count_including_newline().0;
             if row.ends_with_newline {
                 index.end.paragraph += 1;
                 index.end.offset = 0;
             } else {
-                index.end.offset += row.char_count_including_newline();
+                index.end.offset += row.char_count_including_newline().0;
             }
             index.disjoint &= row.min_y().is_finite()
                 && row.max_y().is_finite()
@@ -118,7 +118,7 @@ impl Galley {
             r.glyphs
                 .partition_point(|glyph| glyph.logical_rect().center().x <= x)
         } else {
-            r.char_at(x)
+            r.char_at(x).0
         }
     }
     /// First row ending strictly below `y`, or the last row. Used by Hedit's

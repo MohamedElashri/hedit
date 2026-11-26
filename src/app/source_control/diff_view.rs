@@ -24,7 +24,6 @@ struct CodeKey<'a> {
     selected: bool,
     metadata: bool,
     theme: &'a Theme,
-    addition: bool,
 }
 impl Hash for CodeKey<'_> {
     fn hash<H: Hasher>(&self, state: &mut H) {
@@ -36,43 +35,44 @@ impl Hash for CodeKey<'_> {
         self.tab_size.hash(state);
         self.selected.hash(state);
         self.metadata.hash(state);
-        self.addition.hash(state);
         for role in hedit::theme::Role::ALL {
             self.theme.color(role).0.hash(state);
         }
     }
 }
+struct CodeLine {
+    job: egui::text::LayoutJob,
+    emphasis: Vec<Range<usize>>,
+}
+
 #[derive(Default)]
 struct Highlighter;
-impl egui::cache::ComputerMut<CodeKey<'_>, Arc<egui::text::LayoutJob>> for Highlighter {
-    fn compute(&mut self, key: CodeKey<'_>) -> Arc<egui::text::LayoutJob> {
+impl egui::cache::ComputerMut<CodeKey<'_>, Arc<CodeLine>> for Highlighter {
+    fn compute(&mut self, key: CodeKey<'_>) -> Arc<CodeLine> {
         let text: String = key
             .text
             .chars()
             .take(64 * 1024 / key.tab_size.max(4))
             .collect();
         let projection = hedit::advanced::Projection::new(&text, key.tab_size, &[]);
-        let source_bytes: Vec<_> = text
-            .char_indices()
-            .map(|(i, _)| i)
-            .chain([text.len()])
-            .collect();
-        let display_bytes: Vec<_> = projection
-            .text
-            .char_indices()
-            .map(|(i, _)| i)
-            .chain([projection.text.len()])
-            .collect();
-        let emphasis: Vec<_> = key
-            .emphasis
-            .iter()
-            .filter(|r| r.end <= text.len())
-            .map(|r| {
-                let start = source_bytes.partition_point(|i| *i < r.start);
-                let end = source_bytes.partition_point(|i| *i < r.end);
-                display_bytes[projection.display(start)]..display_bytes[projection.display(end)]
-            })
-            .collect();
+        let mut emphasis = Vec::new();
+        if !key.selected && !key.emphasis.is_empty() {
+            let source_bytes: Vec<_> = text
+                .char_indices()
+                .map(|(i, _)| i)
+                .chain([text.len()])
+                .collect();
+            emphasis.extend(
+                key.emphasis
+                    .iter()
+                    .filter(|r| r.end <= text.len())
+                    .map(|r| {
+                        let start = source_bytes.partition_point(|i| *i < r.start);
+                        let end = source_bytes.partition_point(|i| *i < r.end);
+                        projection.display(start)..projection.display(end)
+                    }),
+            );
+        }
         let language =
             syntax::Language::from_id(key.language).unwrap_or(syntax::Language::PlainText);
         let runs =
@@ -89,38 +89,12 @@ impl egui::cache::ComputerMut<CodeKey<'_>, Arc<egui::text::LayoutJob>> for Highl
             for section in &mut job.sections {
                 section.format.color = key.theme.selection_text.color();
             }
-            return Arc::new(job);
-        }
-        if key.metadata {
+        } else if key.metadata {
             for section in &mut job.sections {
                 section.format.color = key.theme.muted.color();
             }
         }
-        let background =
-            status_color(if key.addition { 'A' } else { 'D' }, key.theme).gamma_multiply(0.23);
-        let sections = std::mem::take(&mut job.sections);
-        for section in sections {
-            let mut points = vec![section.byte_range.start, section.byte_range.end];
-            for range in &emphasis {
-                if section.byte_range.start < range.start && range.start < section.byte_range.end {
-                    points.push(range.start);
-                }
-                if section.byte_range.start < range.end && range.end < section.byte_range.end {
-                    points.push(range.end);
-                }
-            }
-            points.sort_unstable();
-            points.dedup();
-            for pair in points.windows(2) {
-                let mut section = section.clone();
-                section.byte_range = pair[0]..pair[1];
-                if emphasis.iter().any(|r| r.contains(&pair[0])) {
-                    section.format.background = background;
-                }
-                job.sections.push(section);
-            }
-        }
-        Arc::new(job)
+        Arc::new(CodeLine { job, emphasis })
     }
 }
 
@@ -132,11 +106,25 @@ pub(super) fn paint_text(
     rect: egui::Rect,
     origin_x: f32,
 ) {
-    let galley = layout_line(ui, theme, line, style);
-    let y = rect.center().y - galley.size().y / 2.0;
-    ui.painter()
-        .with_clip_rect(rect.intersect(ui.clip_rect()))
-        .galley(egui::pos2(origin_x, y), galley, theme.text.color());
+    let (galley, bidi, code) = shaped_line(ui, theme, line, style);
+    let origin = egui::pos2(origin_x, rect.center().y - galley.size().y / 2.0);
+    let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
+    // Keep change backgrounds out of the layout job, so they do not break
+    // kerning or ligatures at the edges of an emphasized span.
+    let background =
+        status_color(if line.kind == '+' { 'A' } else { 'D' }, theme).gamma_multiply(0.23);
+    for range in &code.emphasis {
+        for bounds in bidi_view::range_rects_in_rows(
+            &galley,
+            &bidi,
+            range.start,
+            range.end,
+            0..galley.rows.len(),
+        ) {
+            painter.rect_filled(bounds.translate(origin.to_vec2()), 0.0, background);
+        }
+    }
+    painter.galley(origin, galley, theme.text.color());
 }
 
 pub(super) fn layout_line(
@@ -145,6 +133,15 @@ pub(super) fn layout_line(
     line: &git::DiffLine,
     style: TextStyle,
 ) -> Arc<egui::Galley> {
+    shaped_line(ui, theme, line, style).0
+}
+
+fn shaped_line(
+    ui: &egui::Ui,
+    theme: &Theme,
+    line: &git::DiffLine,
+    style: TextStyle,
+) -> (Arc<egui::Galley>, bidi_view::BidiRows, Arc<CodeLine>) {
     let language = if matches!(line.kind, '+' | '-' | ' ') {
         style.language
     } else {
@@ -159,9 +156,9 @@ pub(super) fn layout_line(
         .char_indices()
         .nth(16_384)
         .map_or(text.len(), |(i, _)| i)];
-    let job = ui.ctx().memory_mut(|m| {
+    let code = ui.ctx().memory_mut(|m| {
         m.caches
-            .cache::<egui::cache::FrameCache<Arc<egui::text::LayoutJob>, Highlighter>>()
+            .cache::<egui::cache::FrameCache<Arc<CodeLine>, Highlighter>>()
             .get(CodeKey {
                 text,
                 emphasis: &line.emphasis,
@@ -171,12 +168,13 @@ pub(super) fn layout_line(
                 selected: style.selected,
                 metadata: !matches!(line.kind, '+' | '-' | ' '),
                 theme,
-                addition: line.kind == '+',
             })
+            .clone()
     });
-    ui.fonts(|f| {
-        let galley = f.layout_job((*job).clone());
-        bidi_view::apply(f, galley, bidi_view::Base::for_language(language)).0
+    ui.fonts_mut(|f| {
+        let galley = f.layout_job(code.job.clone());
+        let (galley, bidi) = bidi_view::apply(f, galley, bidi_view::Base::for_language(language));
+        (galley, bidi, code)
     })
 }
 
@@ -201,7 +199,7 @@ pub(super) fn layout_controls(ui: &mut egui::Ui, prefer_split: &mut bool, can_sp
         *prefer_split = false;
     }
     if ui
-        .add_enabled(can_split, egui::SelectableLabel::new(split, "Side by side"))
+        .add_enabled(can_split, egui::Button::selectable(split, "Side by side"))
         .on_disabled_hover_text("Widen the review area to show side-by-side diffs.")
         .clicked()
     {
@@ -218,11 +216,11 @@ pub(super) fn context_menu(response: &egui::Response, line: &git::DiffLine, diff
                 &line.text
             };
             ui.ctx().copy_text(text.to_owned());
-            ui.close_menu();
+            ui.close();
         }
         if ui.button("Copy diff").clicked() {
             ui.ctx().copy_text(diff.patch.clone());
-            ui.close_menu();
+            ui.close();
         }
     });
 }
@@ -374,7 +372,7 @@ impl HeditApp {
         }
         response.widget_info(|| {
             egui::WidgetInfo::selected(
-                egui::WidgetType::SelectableLabel,
+                egui::Role::ListItem,
                 ui.is_enabled() && !pending,
                 self.source_control.selected_lines.contains(&index),
                 &diff.lines[index].text,
