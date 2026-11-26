@@ -163,6 +163,16 @@ impl HeditApp {
         }
     }
 
+    pub(super) fn restore_goto_page_for_matches(&mut self) {
+        let original = self
+            .goto_origin
+            .as_ref()
+            .and_then(|origin| origin.page.as_ref());
+        if original.is_some_and(|page| page.start != self.active().page.start) {
+            self.cancel_goto_preview();
+        }
+    }
+
     /// Preview a line while choosing, remembering where the cursor was.
     pub(super) fn preview_line(&mut self, ctx: &egui::Context, line: PickerLine) {
         if self.goto_origin.is_none() {
@@ -201,7 +211,11 @@ impl HeditApp {
                 let read = || {
                     let shared = editor.get(id)?;
                     let mut doc = shared.lock().map_err(|e| e.to_string())?;
-                    opening::page_at_location(&mut doc, file_line as u64, column.unwrap_or(1) as u64)
+                    opening::page_at_location(
+                        &mut doc,
+                        file_line as u64,
+                        column.unwrap_or(1) as u64,
+                    )
                 };
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(read))
                     .unwrap_or_else(|_| Err("The line preview could not be loaded.".into()));

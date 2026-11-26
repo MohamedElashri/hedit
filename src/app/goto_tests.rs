@@ -147,6 +147,10 @@ fn go_to_text_previews_and_selects_matches_on_a_later_page() {
     let page_start = app.active().page.start;
     assert!(page_start > 0 && app.active().page.info.paged);
 
+    app.preview_line(&ctx, PickerLine::File(125_000, None));
+    wait_for_preview(&ctx, &mut app);
+    assert_ne!(app.active().page.start, page_start);
+
     palette(&ctx, &mut app, "#unique_marker");
     let started = Instant::now();
     while app.goto_origin.is_none() {

@@ -2224,6 +2224,7 @@ impl HeditApp {
                 // Targets in the current file, previewed as you move.
                 match goto.clone().unwrap() {
                     target @ (goto_anything::Target::Symbol(_) | goto_anything::Target::Text(_)) => {
+                        self.restore_goto_page_for_matches();
                         let buffer = &self.workspace.open[self.workspace.active];
                         if let Some((matches, ready)) = self.goto_matches.get(ctx, buffer, &target) {
                             targets_ready = ready;
