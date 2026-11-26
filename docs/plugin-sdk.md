@@ -16,17 +16,16 @@ A newer SDK does not inherit earlier approval grants or gain undeclared authorit
 
 ## Permissions and compatibility
 
-SDK commands request `document.read` and `document.edit`. Approval lets one command
-read the whole current local document, up to 64 KiB, and propose edits/selections
-anywhere in it. It never authorizes a different document, filesystem path, or
-remote/paged buffer. Existing selection-only approvals do not authorize SDK
-commands. Installation and updates retain exact-copy, command-specific consent.
+| Request | Scope |
+| --- | --- |
+| `document.read` | The current eligible local document, up to 64 KiB. |
+| `document.edit` | Proposed edits and selections in that document. |
+| Approval | Exact installed copy and command. Selection-only approval covers API 2 commands. |
 
-Use `schemas/plugin-manifest.schema.json` for authoring and
-`schemas/hedit-sdk.lua` for Lua annotations. `hedit plugin check` remains the
-runtime authority for byte limits, language IDs, resource references, and argument
-constraints. SDK versions and private worker framing are separate contracts;
-unsupported versions fail before evaluation.
+Use `schemas/plugin-manifest.schema.json` and `schemas/hedit-sdk.lua` when
+writing a plugin. Run `hedit plugin check` for the editor's checks on limits,
+languages, resources, and argument values. SDK versions and private wire
+versions are independent. Unsupported versions fail before evaluation.
 
 ## Command contract
 
@@ -36,13 +35,13 @@ return function(ctx)
 end
 ```
 
-The context supplies `document`, declared `settings`, and validated `arguments`.
-`document.id` is an opaque invocation handle; `document.revision` is an opaque
-string token, not a Lua number. The document contains `text`, `language`, `crlf`,
-and `selections`. Mutating Lua context tables never changes editor state.
+| Context field | Value |
+| --- | --- |
+| `ctx.document` | Opaque `id` and string `revision`, plus `text`, `language`, `crlf`, and `selections`. |
+| `ctx.settings`, `ctx.arguments` | Declared, validated values. Changing either Lua table has no editor effect. |
 
-A command returns one transaction. `hedit.replace(text)` replaces the complete
-snapshot. For multiple edits, return:
+Return one transaction. `hedit.replace(text)` replaces the snapshot. Use
+`hedit.transaction` with `hedit.edit` for multiple edits.
 
 ```lua
 return function(ctx)
@@ -59,26 +58,24 @@ and selections. Forged or stale output is rejected before application.
 
 ## Coordinates and transactions
 
-All positions are zero-based UTF-8 byte offsets into the exact snapshot. Ranges
-are half-open: `start` is included and `finish` is excluded. Edits must be ordered,
-non-overlapping, and have distinct starts. No endpoint may split a UTF-8 code
-point or a CRLF pair. `hedit.line_column(byte)` and `hedit.offset(line, column)`
-convert zero-based line/UTF-8-byte-column coordinates. Line endings are excluded
-from line content; a trailing newline creates an empty last line.
+| Field or helper | Rule |
+| --- | --- |
+| Offset | Zero-based UTF-8 byte index into the snapshot. |
+| `start`, `finish` | Include start, exclude finish. Keep edits ordered with distinct starts and no overlaps. Endpoints must fall outside UTF-8 and CRLF interiors. |
+| `hedit.line_column(byte)`, `hedit.offset(line, column)` | Convert zero-based lines and UTF-8 byte columns. Line content excludes its ending. A trailing newline creates an empty line. |
+| Replacement text | Newlines follow the document policy. Lone carriage returns stay as text. |
+| Resulting `selections` | Use final, normalized text. Invalid selections reject the transaction. |
+| Omitted `selections` | The caret follows the last edit, moving before a split CRLF. If text is unchanged, selections stay in place. |
+| Undo | One step for an applied text edit. Selection-only transactions leave text Undo alone. |
 
-Replacement newlines follow the host document's line-ending policy; lone carriage
-returns remain text. Optional transaction `selections` refer to the final,
-normalized text. Omitted selections become a caret after the last edit, or remain
-unchanged when the text is unchanged. If an omitted caret would fall inside a
-new CRLF pair, it moves before that pair. Invalid final selections reject the complete
-transaction. A successful document edit uses one Undo step; selection-only
-transactions do not add a text Undo entry.
-
-The host validates both raw and normalized output before effects. Limits are:
-64 KiB snapshot text, 64 edits, 16 resulting selections, 256 KiB combined normalized
-replacement text, 16 KiB script source, 16 MiB Lua allocations, one million
-instructions, and two seconds including worker startup and transport. Save hooks
-retain their 400 ms deadline and explicit language binding.
+| Resource | Limit |
+| --- | --- |
+| Snapshot | 64 KiB |
+| Edits and resulting selections | 64 edits and 16 selections |
+| Replacement text | 256 KiB combined. The host checks raw and normalized data. |
+| Source and Lua allocations | 16 KiB source and 16 MiB allocations |
+| Instructions and time | One million instructions. Two seconds including startup and transport. |
+| Save hook | 400 ms and an explicit language binding |
 
 ## Declared inputs
 
@@ -103,35 +100,33 @@ worker as editor commands; it does not create persistent approvals.
 
 ## Verified modules and text resources
 
-API 3 may declare `modules` mapping simple `.lua` names to source and `resources`
-mapping lowercase IDs to UTF-8 text. `hedit.import("helper.lua")` evaluates only a
-reviewed module from that package, caches its returned value for this invocation,
-and rejects cycles or import depth above eight. A module must return a value.
-`hedit.resource("defaults")` returns the named text resource. Neither operation
-opens a path, resolves a URI, loads native code, or accesses another package.
-Module state is discarded with the worker.
+| Need | Manifest field | Lua |
+| --- | --- | --- |
+| Lua module | `modules` or `module_files` with simple sibling `.lua` names | `hedit.import("helper.lua")` evaluates reviewed source. It caches the returned value for the invocation. Cycles and depth above eight fail. |
+| Text resource | `resources` or `resource_files` with lowercase IDs. Files can be sibling `.txt`, `.md`, `.json`, or `.csv`. | `hedit.resource("defaults")` returns reviewed text. |
 
-Use `module_files` for a list of simple sibling Lua files and `resource_files`
-for a map from resource IDs to sibling `.txt`, `.md`, `.json`, or `.csv` files.
-These are authoring conveniences for CLI check/test/pack. Packaging embeds the
-reviewed contents; installed bundles never interpret paths. Do not combine an
-inline map with its corresponding file map/list.
+Use one inline or file-backed form for each field. The CLI embeds file contents.
+Installed workers receive bytes and resolve no paths or URIs. Module state
+ends with the invocation.
 
-A package permits at most 16 modules and 16 text resources, each up to 16 KiB.
-Total command source, modules, and resources together must fit 64 KiB. API 3
-manifests may occupy up to 128 KiB and bundles up to 256 KiB. APIs 1/2 retain their
-32 KiB manifest and 96 KiB bundle limits, and their script limits are unchanged.
+| Limit | Size |
+| --- | --- |
+| Module and resource counts | 16 modules and 16 resources |
+| Each module or resource | 16 KiB |
+| Command source, modules, and resources | 64 KiB combined |
+| API 3 manifest and bundle | 128 KiB and 256 KiB |
+| API 1/2 manifest and bundle | 32 KiB and 96 KiB |
 
 ## Private command storage
 
-A package may declare `storage.private`; each command that uses it must also set
-`private_storage: true`. Other commands in that package do not receive storage.
-The approval review shows this extra authority. Storage requires persistent
-command approval; Allow once and save hooks are unavailable for such commands.
+Declare `storage.private` at the package level and `private_storage: true` on
+the command. Persistent approval is required. Save hooks and **Allow once**
+are unavailable for that command.
 
-Authorized invocations receive `ctx.storage`, a snapshot of up to 16 named scalar
-values. Keys use the same lowercase ID rules as settings, and values have the
-same 256-byte string / 32-bit integer / boolean limits. To replace the bucket:
+`ctx.storage` holds up to 16 scalar entries. Use lowercase setting IDs.
+Values are booleans, signed 32-bit integers, or strings up to 256 bytes.
+
+To replace the bucket:
 
 ```lua
 return function(ctx)
@@ -141,26 +136,20 @@ return function(ctx)
 end
 ```
 
-Storage proposals cannot include document edits or explicit resulting selections.
-The host reviews the proposal, rechecks approval and the storage snapshot, and
-atomically replaces only that command's private bucket on a background thread.
-A conflicting update rejects the proposal; no last-writer-wins overwrite occurs.
-Document text/revision and text Undo history are unaffected. This separation does
-not promise a transaction spanning a document and a filesystem write.
+| Rule | Effect |
+| --- | --- |
+| Storage proposal | Submit it without edits or resulting selections. |
+| Commit | The host checks approval and compares the current bucket with the snapshot. It atomically replaces that command's bucket off the UI thread. Conflicts fail. |
+| Scope | The persistent command approval identifies the bucket. Text, revision, and text Undo are unchanged. |
+| Revocation, disable, uninstall, or update | Removes buckets for revoked approvals. Reapproval starts empty. |
+| Unsafe storage | Fails closed. Revoke to clear the bucket before reviewing again. |
 
-Buckets are keyed by the persistent command approval, not a worker-supplied name.
-Commands do not share buckets automatically. Revocation, disablement, uninstall,
-or an update that removes that approval clears its bucket. Reapproval starts with
-empty storage; it does not transfer private data to a replacement package.
-Corrupt or unsafe storage fails closed. Revoke approval to clear its bucket before
-reviewing it again. Quotas apply to keys, values, serialized files, and active
-buckets. Unix owner-only permissions (with extended ACL grants rejected on macOS)
-and Windows owner-only inherited ACLs protect
-these host-managed files; no path or handle is exposed to Lua.
+Quotas cover entries, serialized files, and active buckets. Host-managed files
+use owner-only permissions on Unix and inherited owner-only ACLs on Windows.
+macOS rejects extended ACL grants. Lua gets no storage path or handle.
 
-Fixtures may provide `storage` and `expected_storage` for storage-capable commands.
-They execute against fixture data and never read or write configuration buckets.
-An unexpected storage proposal or a mismatch fails the fixture.
+Fixtures use `storage` and `expected_storage`. They leave real buckets alone
+and fail on unexpected proposals or mismatches.
 
 ## Compatibility policy
 
@@ -182,15 +171,12 @@ a general CSV parser. The formatter supports explicitly bound Save hooks.
 
 ## Errors and diagnostics
 
-SDK failures have fixed error categories and messages. Syntax errors may identify
-`plugin:line` or a reviewed module name and line. The host verifies that name and
-line against the original package before displaying them. Worker responses never
-supply arbitrary diagnostic prose. Runtime errors, tracebacks, document contents,
-settings, arguments, and storage values are not included in public errors.
+Failures use fixed categories and messages. A syntax error can include a host-verified
+`plugin:line` or module location. Runtime values, document text, and tracebacks
+stay out of public errors.
 
-The private SDK reply has its own versioned success/failure envelope. It cannot be
-interpreted as a legacy replacement array. Both paths retain bounded messages,
-one request per worker, native confinement, and host validation before effects.
+SDK replies use a separate versioned envelope. Both SDK and legacy workers
+use bounded frames, one request, native confinement, and host validation.
 
 ## Validation and performance probes
 

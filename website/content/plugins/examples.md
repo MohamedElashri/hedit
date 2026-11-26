@@ -5,43 +5,36 @@ weight = 50
 template = "page"
 +++
 
-The repository includes complete manifests and fixtures under
-[examples/extensions](https://github.com/MohamedElashri/hedit/tree/main/examples/extensions).
-Installed packages also include these reference files with their documentation.
-Use them as working examples of the contracts, and keep their capability limits
-when adapting them.
+Open the [example sources](https://github.com/MohamedElashri/hedit/tree/main/examples/extensions)
+or find the same files in an installed package's documentation.
 
 ## Document commands
 
 | Example | What to study |
 | --- | --- |
-| `sdk-markdown` | Declared arguments, reviewed modules, Unicode, and full-document replacement |
-| `sdk-table` | Structured edits and conversion of tab-separated text into a Markdown table |
-| `sdk-trim` | Settings, line endings, and an explicitly bound Save hook |
+| `sdk-markdown` | Declared arguments, reviewed modules, Unicode, full-document replacement |
+| `sdk-table` | Structured edits that turn tab-separated text into a Markdown table |
+| `sdk-trim` | Settings, line endings, and a bound Save hook |
 
-The table example handles tab-separated text; it is not a general CSV parser.
-The document SDK explains [transactions and coordinates](@/reference/document-sdk.md#coordinates-and-transactions).
+See [transactions and coordinates](@/reference/document-sdk.md#coordinates-and-transactions).
 
 ## Providers and visual packs
 
-`document-assist` demonstrates typed diagnostics, hover, navigation, and formatting
-with deterministic fixtures. `demo-visuals` demonstrates declarative language and
-theme contributions. Start with the
-[provider contract](@/reference/providers.md#registration) before adapting callbacks.
+| Example | What to study |
+| --- | --- |
+| `document-assist` | Diagnostics, hover, navigation, and formatting fixtures |
+| `demo-visuals` | Declarative language and theme contributions |
+
+See [provider registration](@/reference/providers.md#registration).
 
 ## Scoped services
 
-| Example | Behavior | Additional resource review |
+| Example | Behavior | Review |
 | --- | --- | --- |
-| `scoped-json` | Native JSON formatting and persistent document-bound project assistance | Exact `hedit-json-tools` image; a directory for project features |
-| `scoped-rename` | Reviewed ASCII identifier replacement across existing files | Directory discovery, read, and edit access |
-| `scoped-markdown-html` | Send the selected Markdown to GitHub and insert returned HTML as text | The exact declared public HTTPS endpoint |
+| `scoped-json` | JSON formatting and native project assistance | The exact `hedit-json-tools` image and a project directory |
+| `scoped-rename` | Textual ASCII identifier replacement in existing files | Directory discovery, read, and edit grants |
+| `scoped-markdown-html` | Sends the selection to GitHub and inserts the returned HTML as text | The declared public HTTPS endpoint |
 
-These are bounded references. The JSON example does not provide JSON Schema
-completion; identifier replacement is textual rather than language-aware symbol
-renaming. The HTTPS example discloses the selection to GitHub and can fail or be
-rate-limited. Returned HTML is text, never executed.
-
-The [reference integration guide](@/reference/broker.md#reference-integrations)
-links the manifests and explains native-image locations, project copies, and limits.
-Use the [threat model](@/reference/security.md) to understand what the boundary enforces.
+The JSON example omits JSON Schema completion. The HTTPS example can fail or
+be rate-limited. See [reference integrations](@/reference/broker.md#reference-integrations)
+for manifests and native-image setup.

@@ -103,7 +103,7 @@ def rewrite_target(target, source, routes, anchors, base_path, root=ROOT):
     return REPOSITORY + '/blob/main/' + relative + (f'#{parsed.fragment}' if parsed.fragment else '')
 
 
-def rewrite_links(body, rewrite):
+def rewrite_links(body, rewrite, base_path):
     """Leave example code intact while remapping prose links and HTML assets."""
     result, fence = [], None
     for line in body.splitlines(keepends=True):
@@ -117,6 +117,16 @@ def rewrite_links(body, rewrite):
             result.append(line)
             continue
         if not fence:
+            image = re.fullmatch(r'<!-- docs-screenshot (\S+) \| (.+) -->\n?', line)
+            if image:
+                target, alt = image.groups()
+                url = rewrite(target)
+                if not url.startswith(base_path + '/images/'):
+                    raise ValueError(f'Screenshot must refer to a local docs image: {target}')
+                file = json.dumps(url.removeprefix(base_path + '/'), ensure_ascii=False)
+                alt = json.dumps(alt, ensure_ascii=False)
+                result.append(f'{{{{< screenshot file={file} alt={alt} >}}}}\n')
+                continue
             line = re.sub(r'(\]\()([^\s)]+)(\))', lambda m: m[1] + rewrite(m[2]) + m[3], line)
             line = re.sub(r'((?:href|src|srcset)=")([^"]+)(")', lambda m: m[1] + rewrite(m[2]) + m[3], line)
         result.append(line)
@@ -165,7 +175,7 @@ def prepare(base_url=None):
         if destination.exists():
             raise ValueError(f"Authored/imported page collision: {page['path']}")
         destination.parent.mkdir(parents=True, exist_ok=True)
-        body = rewrite_links(body, lambda target: rewrite_target(target, page['source'], routes, anchors, base_path))
+        body = rewrite_links(body, lambda target: rewrite_target(target, page['source'], routes, anchors, base_path), base_path)
         destination.write_text(front_matter(page, line) + body)
     for page in (SITE / 'content').rglob('*.md'):
         destination = OUTPUT / 'content' / page.relative_to(SITE / 'content')

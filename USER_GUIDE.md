@@ -93,17 +93,18 @@ Settings and [recovery data](#recovery) are retained; back them up before deleti
 
 ## Updates
 
-**Help → Check for updates…** installs stable releases on Linux and macOS when
-you request it. Choose **Restart hedit** after installation or **Later** to keep
-working. Checks, downloads, and restarts never happen automatically. Checksums,
-the candidate version, and macOS signatures are verified; installation failures
-restore the previous version.
+| Installation | How to update |
+| --- | --- |
+| Writable Linux tarball install | **Help → Check for updates…**. Requires `curl` and GNU `tar`. |
+| Writable macOS app | **Help → Check for updates…**. Keep custom themes outside the signed bundle. |
+| Linux DEB / RPM | Update through the package manager. |
+| Linux AppImage | Replace the AppImage. |
+| System-owned tarball or source build | Rerun the installer or rebuild the checkout. |
+| Windows portable | Close hedit and [replace the ZIP](#windows-installation). |
 
-Linux needs `curl`, GNU `tar`, and a writable packaged installation. On macOS,
-use a writable application folder and keep custom themes outside the signed app.
-Use the package manager for DEB/RPM and replace AppImages. Rebuild source
-checkouts or rerun the installer for system-owned tarball installations,
-and [replace the portable ZIP](#windows-installation) on Windows.
+The in-app updater runs on request. It verifies checksums, the candidate version,
+and the macOS signature. An installation failure restores the previous version.
+Choose **Restart hedit** after installation or **Later** to keep working.
 
 ## Files and folders
 
@@ -119,224 +120,184 @@ and [replace the portable ZIP](#windows-installation) on Windows.
 | Refresh or hide folders | **File → Refresh folders**; **Ctrl+K, Ctrl+B** toggles the sidebar |
 | Create another window | **Ctrl+Shift+N**; each window has its own tabs and recovery |
 
-A dot marks unsaved changes. File opening runs in the background; **Cancel opening**
-or **Esc** cancels pending opens after dismissing overlays. Typing, scrolling, or
-switching tabs while a file loads keeps it from taking focus. Folder trees and
-filename searches are bounded; notices identify incomplete results. Exclusions
-live in **Settings → Folders & Search**; filename indexing skips directory symlinks.
+| What you see | What it means |
+| --- | --- |
+| Dot on a tab | The file has unsaved changes. |
+| **Cancel opening** | Cancels a background open. Esc also works after dismissing overlays. Typing or switching tabs while it loads keeps it from taking focus. |
+| **Save**, **Don't Save**, **Cancel** | Closing a modified tab asks what to do. Don't Save reopens a disk file from disk. Untitled text stays in **Closed Files**. |
+| **Closed Files** | Keeps about 50 entries and retains unsaved notes beyond that limit. Empty untitled notes are discarded. |
 
-Closing a modified tab asks **Save**, **Don't Save**, or **Cancel**. Don't Save
-reopens disk files from disk; untitled notes keep their text in **Closed Files**.
-Empty notes are discarded. The shelf normally keeps 50 files, retaining unsaved
-notes beyond that limit. Quitting preserves open tabs and edits for next time
-without writing them to their original files. Failed recovery keeps the window
-open. Settings, key bindings, snippets, macros, and themes are shared by windows.
+Quitting keeps tabs and edits in recovery. A failed checkpoint keeps the window
+open. Windows share settings, key bindings, snippets, macros, and themes.
 
-**Project → Save project as…** stores folders and formatting in `.hedit-project`.
-Open it through Project or the CLI. Its adjacent `.hedit-workspace` holds personal
-tabs, unsaved text, and layout; exclude it from version control. **Project settings…**
-has GUI/JSON views, project defaults, and language overrides. **Save settings**
-applies the draft; invalid JSON stays available to fix. `.editorconfig` takes
-precedence over project settings, then editor settings.
-
-UTF-8 and BOM-marked UTF-16 open directly. **File → File encoding…** reopens or
-saves legacy encodings; unrepresentable characters are refused. **Edit → Line
-endings** converts LF/CRLF. Binary files are unsupported.
+| Project or file setting | Where |
+| --- | --- |
+| Folder list and formatting | **Project → Save project as…** writes `.hedit-project`. Open it from Project or the CLI. |
+| Personal tabs, unsaved text, layout | The adjacent `.hedit-workspace`. Exclude it from version control. |
+| Defaults and language overrides | **Project settings…** offers GUI and JSON views. **Save settings** applies a valid draft. `.editorconfig` can override project settings. |
+| Encoding | UTF-8 and BOM-marked UTF-16 open directly. **File → File encoding…** reopens or saves other supported encodings. Unrepresentable text and binary files are refused. |
+| Line endings | **Edit → Line endings** converts LF and CRLF. |
 
 ### Explorer interaction
 
-Explorer, Source Control, editor tabs and Go to File use built-in icons for
-common file types and project files such as `Cargo.toml`, `package.json` and
-`.gitignore`.
-Folders such as `src`, `tests`, `docs` and `assets` have their own icons, with
-open and closed states. Icons work in both local and SSH projects.
+Choose **View → Side bar → Focus Explorer**. The VS Code preset uses
+**Ctrl+Shift+E** (**Cmd+Shift+E** on macOS). Personal global bindings take priority.
 
-**View → Side bar → Focus Explorer** gives the folder tree keyboard focus. The
-optional VS Code preset uses Ctrl+Shift+E (Cmd+Shift+E on macOS). Arrows expand,
-collapse and navigate; Home/End and Page Up/Down move the selection. Type a name
-to jump to a matching row, Enter opens it, F2 renames it inline, Delete opens the
-existing trash confirmation, and Escape returns to the editor. Tab leaves the
-roving tree selection. Personal global bindings retain priority.
+| Key | In Explorer |
+| --- | --- |
+| Arrows | Navigate, expand, or collapse folders. |
+| Home, End, Page Up, Page Down | Move the selection. |
+| Type a name | Jump to a matching row. |
+| Enter | Open the selected entry. |
+| F2 | Rename inline. For a compact chain, rename the last folder. |
+| Delete | Open the trash confirmation. |
+| Tab / Escape | Leave tree selection / return to the editor. |
 
-Right-click a folder for inline **New file…** or **New folder…**; rename is inline
-too. Enter or the action button submits the name, and Escape cancels before the
-operation starts. Invalid names and filesystem conflicts keep the draft available
-to correct. Renaming an open dirty file retargets it without saving its text.
+Right-click a folder for **New file…** or **New folder…**. Enter submits and
+Escape cancels before the operation starts. Invalid names and conflicts keep
+the draft editable. Renaming a modified file keeps its unsaved text.
 
-Settings → Folders & Search controls automatic active-file reveal, compact
-single-child folder chains, Git badges and diagnostic counts. Automatic reveal
-runs when Files is visible and leaves Search/Source Control inputs intact. In a
-compact chain, F2 renames the final segment. Badges are cached and computed in
-background/on-demand work; showing diagnostic badges never starts a language
-server. Git refresh follows filesystem and Git-metadata events, explicit refresh,
-and refocusing; SSH Git badges require execution trust and refresh on focus or
-explicit refresh. Decoration budgets bound large repositories; hover Refresh
-folders for status. Unsaved editor text is independent of disk Git status.
+Built-in file and folder icons work in both local and SSH projects.
+**Settings → Folders & Search** controls exclusions, automatic reveal, compact
+folders, Git badges, and diagnostic counts. Reveal runs while Files is visible.
+Diagnostic badges use existing results. Local Git badges follow metadata events
+and refreshes. SSH badges require execution trust and refresh on focus or
+**Refresh folders**. Hover that control for coverage or indexing limits.
+Filename indexing skips directory symlinks. Git badges describe disk state.
 
 ## SSH remote workspaces
 
-Experimental SSH workspaces use a separate native window. Files, search, Git,
-builds, terminals, and recovery run on the host; the interface runs locally.
+SSH support is experimental. hedit opens a separate local window. The host
+handles files, search, recovery, and any trusted Git, build, or shell commands.
 
 ### Connect
 
-Choose **Connect via SSH…** from the Command Palette or **+ Connect…** in
-**Remote Explorer**. Type a hostname, SSH alias, `user@host`, or part of a saved
-workspace path. Use the arrow keys to select a result, **Enter** to connect, and
-**Escape** to dismiss the picker. A host opens the remote account's home
-directory. A saved workspace reopens its saved folder. You can also select either
-directly in Remote Explorer.
+Choose **Connect via SSH…** in the Command Palette or **+ Connect…** in
+Remote Explorer. Search for a hostname, SSH alias, `user@host`, or saved path.
+Use the arrow keys and **Enter** to connect. A host opens its home directory.
+A saved workspace opens its saved folder.
 
-hedit discovers aliases from `~/.ssh/config`, the system config, and included
-files. User and port come from OpenSSH unless explicitly overridden. Wildcard and
-negated selectors do not appear as destinations.
+<!-- docs-screenshot docs/images/ssh.png | Remote Explorer with SSH hosts and saved workspaces -->
 
-Choose **Import SSH hosts…** in Remote Explorer to select which aliases appear
-in the sidebar. **Import selected** saves that list across restarts. **Sync all
-hosts** also shows aliases added to SSH config later and is the default. Changes
-to SSH config and included files update the list automatically. A selected
-alias disappears when removed from SSH config and returns if you add it back.
-Connections use the current OpenSSH settings for the alias. The connection
-picker can still find any discovered alias.
+| In Remote Explorer | Use it to |
+| --- | --- |
+| **Import SSH hosts…** | Show all aliases with **Sync all hosts** (default), or keep a list with **Import selected**. The picker can find every discovered alias. |
+| **Reopen last workspace** | Restore tabs and the active file from the last successful host session. |
+| **Choose remote folder…** | Preview directories before opening a workspace or acquiring a writer. Each workspace has its own recovery directory. |
+| **Connection settings…** | Choose a workspace and override the user, port, trusted config, or private recovery directory. Manual helpers need absolute helper and recovery paths. |
+| **SSH configuration…** | Open or refresh SSH config. hedit reads user, system, and included config for aliases. OpenSSH resolves the options at connection time. |
 
-Remote Explorer groups saved workspaces under their SSH host. **Reopen last
-workspace** uses the last successful connection and restores its open tabs and
-active file from host recovery. **Choose remote folder…** previews directories
-before opening a workspace or acquiring a writer. A new workspace uses its own
-recovery directory. If you use a manually installed helper, enter that new
-directory in connection settings before opening it.
+Use trusted SSH config files. Alias discovery skips wildcard and negated entries
+and reads configuration without executing `Match exec`. Saved aliases follow
+changes to SSH config. Removing an alias hides it until it returns.
 
-hedit checks the host platform, installs the matching helper for the non-root SSH
-account, and opens a separate remote window. It uses a bundled helper when the
-platform matches, or downloads the exact editor version and verifies its SHA-256
-checksum locally before transferring it over SSH. The host needs no Cargo,
-compiler, internet access, or elevated privileges. Later connections reuse the
-versioned user-local installation. Setup progress and cancellation appear in the
-sidebar. Automatic setup refuses root accounts and unsafe directory permissions.
+Verify the host key with OpenSSH first. Automatic setup transfers the
+matching helper to a non-root account with safe directory permissions. hedit
+uses its bundled helper when possible. Otherwise it downloads the exact editor
+version and verifies SHA-256 locally before transfer. Future connections reuse
+the versioned user-local helper. The host needs SSH and compatible storage.
+The client handles downloads and compilation is unnecessary. Setup progress
+and cancellation appear in the sidebar.
 
-Open **Connection settings…** from the picker or a host's context menu to choose
-a workspace and override the user, port, trusted config, or private recovery
-directory. Existing recovery paths are retained when enabling automatic helper
-management. The host context menu also has **SSH configuration…**.
-For an existing custom installation, enable **Use a manually installed helper**
-and supply absolute helper and private recovery paths. Saved workspaces also
-have right-click actions to edit or remove them. Filter by host or workspace path.
-SSH configuration settings provide **Open SSH config…** and **Refresh hosts**.
-Discovery reads files without executing `Match exec`; OpenSSH resolves options
-when connecting, so configuration files must be trusted.
-
-On Linux and macOS clients, **Use SSH config jump hosts** applies the alias's
-`ProxyJump` route. Pin the keys of every hop and of the destination first.
-**Forward SSH config ports to localhost** enables the alias's TCP `LocalForward`
-rules for the life of the connection. Use a numeric port or a loopback bind
-such as `localhost:8080`. Remote Explorer shows the active local ports. An
-occupied port or a host that refuses forwarding is reported during connection.
-Both options are saved with the workspace and are available on the command
-line as `--ssh-use-config-jump` and `--ssh-forward-config-ports`.
-
-Verify the host key with OpenSSH before connecting. Keys or an existing SSH
-agent are the default. On Linux and macOS, enable **Allow interactive SSH
-authentication** in **Connection settings…** for hosts that prompt for a
-password, key passphrase, or keyboard-interactive verification code. Setup and
-remote tools may prompt when they open separate SSH connections. Use **Reconnect**
-to authenticate again after a disconnect. Scheduled retries use key or agent
-authentication. Saved metadata contains host names, paths, and connection
-preferences. Credentials and document content stay out of that metadata.
-
-The command line uses the same automatic setup:
+| Connection option | Behavior |
+| --- | --- |
+| Default authentication | OpenSSH keys or an existing agent. Saved metadata contains host names, paths, and preferences. |
+| **Allow interactive SSH authentication** | Linux and macOS clients can prompt for a password, key passphrase, or verification code. Separate SSH connections may prompt again. Use **Reconnect** to retry interactively. Scheduled retries use keys or an agent. |
+| **Use SSH config jump hosts** | Linux and macOS clients can use `ProxyJump`. Pin every hop and destination key. CLI flag: `--ssh-use-config-jump`. |
+| **Forward SSH config ports to localhost** | Linux and macOS clients can use TCP `LocalForward` for this connection. Use a numeric port or loopback bind, such as `localhost:8080`. Remote Explorer shows active ports and reports conflicts. CLI flag: `--ssh-forward-config-ports`. |
 
 ```sh
 hedit --ssh devbox
 hedit --ssh devbox --ssh-root /home/me/project src/main.rs
 ```
 
-Advanced flags: `--ssh-user USER`, `--ssh-port PORT`,
-`--ssh-config /absolute/config`, `--ssh-interactive`, and `--ssh-takeover`. `--ssh-state` can retain an existing private recovery directory while managing
-the helper automatically. Supplying `--ssh-helper` also requires `--ssh-state` and
-`--ssh-root` and selects a manually managed helper. Takeover fences the previous writer and does not merge edits.
+| CLI flags | Use |
+| --- | --- |
+| `--ssh-user USER`, `--ssh-port PORT`, `--ssh-config /absolute/config` | Override connection settings. |
+| `--ssh-interactive` | Allow interactive authentication on Linux or macOS clients. |
+| `--ssh-state` | Keep a private recovery path while managing the helper automatically. |
+| `--ssh-helper`, `--ssh-state`, `--ssh-root` | Use all three for a manually installed helper. Set a new recovery path before opening a different workspace. |
+| `--ssh-takeover` | Fence the previous writer. Each session retains its own edits. |
 
-The **SSH · host** menu and Remote Explorer show connection status, pending edits,
-reconnect, disconnect, and execution trust. Disconnect retains documents and
-pending edits and stops automatic retries; Reconnect resumes the same host
-recovery session. Paths stay inside the workspace. New files start as recoverable
-host scratchpads, and Save As refuses existing targets. Keep at least one remote
-tab open. **Trust for Git, builds and terminal…** permits host scripts, hooks and
-shells to execute as the SSH account. Reconnect clears trust; revoking it stops
-tracked jobs. Terminals also need their regular opt-in setting.
-
-Choose **Show SSH Output** in Remote Explorer, the SSH menu, or the Command
-Palette to see recent connection, helper setup, workspace opening, and reconnect
-events. **Copy SSH summary** copies the last 64 events as fixed descriptions
-without raw SSH messages, host names, paths, or credentials. From that view you
-can retry a failed launch, reconnect a remote window, or open your SSH config
-from a local window.
-
-In a remote window, choose **File → Open folder…** to browse within the active
-SSH workspace. Use the arrow keys and **Enter** to browse subfolders, or type a
-path relative to the workspace and press **Enter**. **Up** returns to the parent
-inside the workspace. **Add Folder** shows the current folder in the Files
-sidebar and keeps the same SSH connection and recovery directory. Use **Tab**
-to reach the buttons and **Escape** to dismiss the browser.
+| In the remote window | What happens |
+| --- | --- |
+| **File → Open folder…** | Browse with arrows and **Enter**, or enter a relative path. **Up** stays inside the workspace. **Add Folder** adds it to Files using the same connection and recovery directory. **Tab** reaches the buttons. |
+| New file or **Save As** | New files start as recoverable host scratchpads. **Save As** refuses existing targets. Keep at least one remote tab open. |
+| **Trust for Git, builds and terminal…** | Allows scripts, hooks, and shells to execute as the SSH account. Revocation stops tracked jobs. Reconnect clears trust. Enable the terminal separately. |
+| **Show SSH Output** | Inspect setup and connection events. Retry a launch, reconnect, or open local SSH config. **Copy SSH summary** copies up to 64 fixed event descriptions without host names, paths, raw SSH messages, or credentials. |
 
 ### Privacy and recovery
 
-Remote content, drafts, undo history, searches, patches, and terminal output stay
-out of local recovery. Local launch metadata/diagnostics may contain host names
-and paths. OS swap, crash collectors, clipboard managers, screenshots, and explicit
-exports are outside this application guarantee. Trust the host with recovery data.
+| Status or action | What it means |
+| --- | --- |
+| **Durable on SSH host** | The host journal has committed the edits. **Save** writes the source file. |
+| Connection lost | Pending edits stay in memory. Editing pauses until reconnect reconciles receipts. Transport failures trigger up to five automatic retries with increasing delays. |
+| Retries stop | Use **Reconnect**. A changed recovery session or reconciliation conflict stops retries. Automatic retries never take over a writer or repeat an uncertain save. |
+| **Disconnect** | Stops retries and keeps pending edits. **Reconnect** resumes the same host recovery session. |
+| Save or storage failure | Text stays in the editor. Outside changes, stale writers, lag, quota, and storage errors can pause edits. Try **Save As** if needed. |
+| Client crash | Edits without a durable receipt can be lost. Recovery lives on the host. |
 
-**Durable on SSH host** means accepted edits committed to the host journal;
-**Save** separately writes the source file. Disconnects preserve pending edits in
-memory and pause editing until reconnect reconciles receipts. Transport failures
-trigger up to five automatic reconnect attempts with increasing delays. Retries
-stop on recovery-session changes or reconciliation conflicts; they never take over
-another writer or repeat uncertain saves. After retries stop, use **Reconnect** to
-try again. Reconnect always clears execution trust. A client crash can
-lose edits without a durable receipt; there is no local recovery fallback.
-Outside changes, stale writers, lag, quota, or storage errors pause edits rather
-than discarding recovery. Failed saves retain editor text; use Save As if needed.
-Keep state and SQLite sidecars together; never manipulate a live state directory.
-Closing ends tracked tools; idle workers exit after five minutes, leaving recovery.
+Remote drafts, content, undo, searches, patches, and terminal output stay out
+of local recovery. Local launch diagnostics may retain host names and paths.
+Trust the host with recovery data. OS swap, crash collectors, clipboard
+managers, screenshots, and exports are outside the application boundary.
+
+Keep state and SQLite sidecars together. Leave the live state directory alone.
+Closing ends tracked tools. Idle workers leave recovery in place and exit
+after five minutes.
 
 ### Limits
 
-- Linux/macOS hosts and Windows clients are supported. Jump hosts and localhost
-  TCP forwarding require a Linux or macOS client and explicit opt-in. Arbitrary
-  `ProxyCommand`, reverse and dynamic forwarding, and Windows helpers are unavailable.
-- Private host-local ext-family, XFS, btrfs, ZFS (Linux) or APFS (macOS) recovery
-  storage; ancestor permissions are checked. Network filesystems and tmpfs are
-  unsupported. Recovery and undo capacity are bounded.
-- Up to 128 retained documents, each with at most 8 MiB decoded text.
-- Remote browsing skips symlinks and non-UTF-8 names; directory duplication and
-  cross-filesystem trash moves are unavailable.
-- No remote project persistence, Markdown preview, CUDA/debugging, compare-disk,
-  or mini-diff tools. Trusted language servers on the host can provide code
-  navigation within the workspace.
+| Area | Limit |
+| --- | --- |
+| Platforms | Linux and macOS hosts. Linux, macOS, and Windows clients. Jump hosts and localhost TCP forwarding require a Linux or macOS client and opt-in. |
+| SSH routes | Supported jump routes use `ProxyJump`. Arbitrary `ProxyCommand`, reverse forwarding, and dynamic forwarding are unavailable. |
+| Storage | Private host-local ext-family, XFS, btrfs, ZFS, or APFS. Ancestor permissions are checked. Network filesystems and tmpfs are unsupported. |
+| Recovery | Up to 128 retained documents. Each can hold up to 8 MiB of decoded text. Recovery and undo capacity are bounded. |
+| Files | Browsing skips symlinks and non-UTF-8 names. Directory duplication and cross-filesystem trash moves are unavailable. |
+| Editor tools | Trusted host language servers provide navigation in the workspace. Remote project persistence, Markdown preview, CUDA/debugging, compare-disk, and mini-diff are unavailable. |
 
-Helper details and tests: [developer guide](DEVELOPER_GUIDE.md#ssh-architecture-and-testing).
+See the [developer guide](DEVELOPER_GUIDE.md#ssh-architecture-and-testing) for helper details.
 
 ## Editing
 
-Undo/redo survives restarts for fully loaded files. The **Edit** menu groups
-selection, line, text, and indentation commands; right-click offers common actions.
+Use **Edit** or right-click the text for editing commands. Undo and redo survive
+restarts for fully loaded files.
 
-| Feature | Usage |
+| Task | Shortcut or menu |
 | --- | --- |
-| Clipboard | With no selection, Copy/Cut takes the line; pasting places it above. **Ctrl+Shift+V** adjusts indentation; **Ctrl+K, Ctrl+V** opens the last 15 clips |
-| Line editing | Duplicate, delete, move, join, comment, indent, and add lines above/below. With no selection these act on the current line |
-| Text cleanup | Sort/reverse/deduplicate lines, change case, trim whitespace, reindent, and convert tabs/spaces; whole-file cleanup applies when nothing is selected |
-| Multiple cursors | **Ctrl+D** adds the next occurrence; **Ctrl+K, Ctrl+D** skips; **Alt+F3** selects all. **Alt+click**, **Alt+Shift+Up/Down**, or **Alt+Shift+drag** adds cursors/rectangles; **Ctrl+Shift+L** splits lines. Up to 1,000 cursors, one undo step |
-| Selection | **Shift+click** extends; **Ctrl+Shift+Space** expands by word/quotes/brackets/line/file; **Ctrl+Shift+M** selects brackets; **Ctrl+Shift+J** selects equal indentation; **Ctrl+U** undoes selection changes |
-| HTML/XML selection | **Ctrl+Shift+A** grows through contents, tags, then enclosing elements. Uses explicit balanced tags, including self-closing/void elements; no inferred closing tags or JSX parsing |
-| Brackets | Typing a pair wraps selections or adds its closer; Backspace removes empty pairs. **Ctrl+M** jumps to the match |
-| Indentation | Enter preserves/detects style and indents after brackets. **Edit → Indentation** changes width, spaces/tabs, or detects again |
-| Macros | **Ctrl+Alt+Q** records editor typing/keys, then stops; **Ctrl+Alt+Shift+Q** replays. **Tools → Save macro… / Run saved macro…** keeps named macros. Menu clicks are not recorded |
-| Spell check | **F6** checks English prose and code comments/strings, excluding code-like words. Right-click for suggestions, dictionary additions, or Ignore; **Ctrl+F6** jumps to the next |
+| Copy or cut a line | Use Copy or Cut with no selection. Pasting a whole line inserts it above the current line. |
+| Paste with indentation | **Ctrl+Shift+V** |
+| Reuse a clipboard entry | **Ctrl+K, Ctrl+V** shows the last 15 clips. |
+| Edit lines | Use **Edit** to duplicate, delete, move, join, comment, indent, or insert lines. With no selection, the command acts on the current line. |
+| Clean up text | **Edit** can sort, reverse, deduplicate, change case, trim, reindent, or convert tabs and spaces. Whole-file cleanup applies when there is no selection. |
+| Set indentation | **Edit → Indentation** sets width and spaces or tabs. It can also detect the style. Enter follows the style and indents after brackets. |
 
-Arabic/Hebrew use joined letters and visual caret navigation while keeping logical
-file order. Prose follows the first letter's direction; code lines stay left to
-right. System font fallback covers other scripts; install fonts if glyphs are
-missing. **Esc** returns to one cursor after dismissing open panels/dialogs.
+| Selection task | Shortcut |
+| --- | --- |
+| Add or skip the next occurrence | **Ctrl+D** / **Ctrl+K, Ctrl+D** |
+| Select all occurrences | **Alt+F3** |
+| Add more cursors | **Alt+click** or **Alt+Shift+Up/Down** |
+| Select a rectangle | **Alt+Shift+drag** |
+| Split a selection by line | **Ctrl+Shift+L** |
+| Extend or expand | **Shift+click** extends. **Ctrl+Shift+Space** expands through words, quotes, brackets, lines, and the file. |
+| Select brackets or matching indentation | **Ctrl+Shift+M** / **Ctrl+Shift+J** |
+| Grow an HTML/XML selection | **Ctrl+Shift+A** expands through content, tags, and parent elements. It uses explicit balanced tags, including void and self-closing tags. Inferred tags and JSX are unsupported. |
+| Undo selection movement | **Ctrl+U** |
+| Return to one cursor | **Esc** after closing panels and dialogs. |
+
+An edit can use up to 1,000 cursors and takes one Undo step. Typing an opening
+bracket wraps a selection or inserts its closer. Backspace removes an empty
+pair. **Ctrl+M** jumps to the matching bracket.
+
+| Tool | Controls |
+| --- | --- |
+| Macros | **Ctrl+Alt+Q** starts or stops recording. **Ctrl+Alt+Shift+Q** replays. **Tools → Save macro… / Run saved macro…** keeps named macros. Recording follows typing and keys. |
+| Spell check | **F6** checks English prose and code comments or strings. Right-click for suggestions, dictionary additions, or Ignore. **Ctrl+F6** jumps to the next misspelling. Code-like words are skipped. |
+
+Arabic and Hebrew use joined letters and visual caret movement. File order
+stays logical. Prose follows its first letter and code stays left-to-right.
+Install script fonts if glyphs are missing.
 
 ## Finding and navigating
 
@@ -355,123 +316,110 @@ missing. **Esc** returns to one cursor after dismissing open panels/dialogs.
 | Path under cursor | **Alt+D** opens a path/include/`file:line:column` in the line or selection. Quote spaces. Checks beside the file, then open folders and `include/`; existing files only, no URLs |
 | Bookmarks | **Ctrl+F2** toggles; **F2/Shift+F2** navigates; **Goto → Bookmarks…** lists; **Alt+F2** adds cursors; **Ctrl+Shift+F2** clears |
 
-Large find, file-picker, symbol, and text searches run in the background. New
-input takes priority over pending navigation. Filename indexes stay in memory. **Settings → General → Automatically refresh
-workspace** enables debounced native watching of local roots and open-file
-parents. Watches cover up to 1,024 directories, skip directory symlinks and
-excluded folders, and stop scanning after two seconds or the path-memory limit.
-Hover Refresh folders for coverage status. Refocusing or Refresh folders updates
-caches beyond watch coverage; SSH workspaces continue to use explicit refresh.
-Clean active files reload after external changes; unsaved text is kept with a
-conflict banner and the existing save guard. Notices report
-indexing progress, unreadable folders, and incomplete results.
+<!-- docs-screenshot docs/images/search.png | Search results grouped by file in the sidebar -->
+
+Searches run in the background. New input takes priority. Filename indexes
+stay in memory. Notices report incomplete results and unreadable folders.
+
+Enable **Settings → General → Automatically refresh workspace** to watch local
+folders and open-file parents. The watcher covers up to 1,024 directories.
+It skips exclusions and directory symlinks. Its scan stops after two seconds
+or at the path-memory limit. Hover **Refresh folders** for coverage. Refocus
+or refresh to update paths outside coverage. Use explicit refresh over SSH.
+
+External changes reload a clean active file. A conflict banner protects
+unsaved text and guards the next save.
 
 ### Breadcrumbs and Outline
 
-**View → Editor → Show breadcrumbs** displays the file location above each
-group. Click a segment to reveal it in an open folder’s Files tree; hover for
-the full path. SSH breadcrumbs include the host and relative file path.
-**Show Outline** opens a filterable list of functions and types for the active
-file. Click a symbol to navigate; Escape in its filter returns typing to the
-editor. Outline is off by default, scans only while visible, and shows up to
-500 symbols for files up to 2 MiB. Use Go to symbol for larger files. Both
-visibility preferences are also available in Settings → General.
+| **View → Editor** | What it does |
+| --- | --- |
+| **Show breadcrumbs** | Shows the path above each group. Click a segment to reveal it in Files. Hover for the full path. SSH shows the host and relative path. |
+| **Show Outline** | Shows functions and types in the active file. Filter and click to jump. Escape returns to editing. |
+
+Outline is off by default. It scans while visible and lists up to 500 symbols
+in files up to 2 MiB. Use **Go to symbol** for larger files. Both switches also
+appear in **Settings → General**.
 
 ## Writing code
 
-**Completions:** language-server suggestions, words from fully loaded open files,
-and matching snippets appear as you type. Up/Down chooses, Tab/Enter accepts, Esc dismisses; **Ctrl+Space** opens
-the list. Background indexing prioritizes the active file and notes incomplete
-results. Set `auto_complete_commit_on_tab` to keep Enter for new lines.
+| Task | Where to go |
+| --- | --- |
+| Complete text | **Ctrl+Space** or completions as you type. Choose with Up/Down, accept with Tab or Enter, and dismiss with Esc. |
+| Insert a snippet | Type its trigger and press Tab, or use **Tools → Insert snippet…**. Change snippets in **Settings → Snippets**. |
+| Inspect a change | Hover a gutter marker. Use **Ctrl+K, Ctrl+.** or **Ctrl+K, Ctrl+,** to move between changes. **Ctrl+K, Ctrl+Z** reverts a change with Undo. |
+| Build | **Ctrl+B** saves and builds. **Ctrl+Shift+B** picks a system. Click a diagnostic or use **F4 / Shift+F4**. |
 
-**Snippets:** type a trigger then Tab, or **Tools → Insert snippet…**. Edit in
-**Settings → Snippets**. `$1`, `${1:default}`, `$2` define fields; repeated numbers
-mirror edits; `$0` is the final cursor and `${SELECTION}` inserts selected text.
-Tab/Shift+Tab moves between fields; `\$` and `\}` escape literals.
+Completion uses language servers, matching snippets, and words from fully
+loaded open files. Background indexing prioritizes the active file. Set
+`auto_complete_commit_on_tab` to keep Enter for new lines.
 
-**Change markers:** gutter markers compare with Git HEAD, or the saved file outside
-Git (`mini_diff`). Hover to inspect; **Ctrl+K, Ctrl+.** / **Ctrl+K, Ctrl+,** navigates changes,
-**Ctrl+K, Ctrl+Z** reverts as an undoable edit. **Tools → Compare file with Git HEAD…**
-compares editor text; use [Source Control](#source-control) for staging.
+| Snippet syntax | Effect |
+| --- | --- |
+| `$1`, `${1:default}`, `$2` | Fields. Repeated numbers mirror edits. Use Tab or Shift+Tab to move between fields. |
+| `$0` | Final cursor |
+| `${SELECTION}` | Selected text |
+| `\$`, `\}` | Literal characters |
 
-**Builds:** **Ctrl+B** saves and builds; **Ctrl+Shift+B** picks a system. Built-ins
-cover CUDA, C/C++, Rust, Python, and Make. Click diagnostics or use F4/Shift+F4.
-Install the tools separately. Commands use `sh` on Linux/macOS and `cmd.exe` on
-Windows. Custom `build_systems` in settings accept `name`, `shell_cmd`, `selector`,
-and `file_regex` (file, line, optional column, message capture groups).
+Change markers compare with Git HEAD or the saved file outside Git
+(`mini_diff`). Use **Tools → Compare file with Git HEAD…** to compare editor
+text. Stage changes in [Source Control](#source-control).
+
+Built-in build systems cover CUDA, C/C++, Rust, Python, and Make. Install the
+tools separately. Builds use `sh` on Linux/macOS and `cmd.exe` on Windows.
+A custom `build_systems` entry accepts `name`, `shell_cmd`, `selector`, and
+`file_regex` (file, line, optional column, and message groups).
 Commands expand `$file`, `$file_path`, `$file_name`, `$file_base_name`,
-`$file_extension`, and `$folder`; matching a built-in name overrides it.
+`$file_extension`, and `$folder`. A matching name overrides a built-in.
 
 ### Language servers
 
 Open **Settings → Language Servers**, **Preferences → Language servers: manage…**,
-or the **LSP** button in the status bar. The manager lists available and registered
-servers, installation source/version, workspace status, failures, and logs
-(**Refresh** updates logs). No server downloads until you select **Install**.
+or **LSP** in the status bar. Use **Refresh** to update logs. Managed downloads
+start when you choose **Install**.
 
-- **Managed installs:** rust-analyzer (Rust), clangd (C/C++/CUDA), ty and Ruff
-  (Python), LuaLS (Lua), and Tombi (TOML). Select
-  **Install**, **Update / Repair**, or **Remove**. Packages come from the upstream
-  GitHub release, require a release-provided SHA-256 digest, and install under
-  hedit's user data directory. Downloads require `curl`; updating is manual.
-  Rust projects also need a Rust toolchain (and `rust-src` for standard-library
-  sources); C/C++ projects benefit from `compile_commands.json`. Unsupported
-  OS/architecture combinations report an error and can use an external server.
-- **External servers:** presets cover gopls, TypeScript/JavaScript, HTML, CSS, JSON,
-  YAML, shell, pylsp, and Taplo. Select **Configure → Detect installed on PATH**
-  to find a preset on the current computer or SSH host. Detection does not install
-  dependencies or run the executable. For other servers, select **Add external
-  server…**, enter an ID, comma-separated syntax IDs such as `python` or `go`,
-  an absolute executable path, arguments as a
-  JSON array, and settings as a JSON object. For example, a Python server may use
-  `/absolute/path/to/pylsp` with `[]`; a Node-based server may need `["--stdio"]`.
-  On Windows, npm wrappers need an explicit `node.exe` path with the server script
-  and `--stdio` in the argument array. Install runtimes/dependencies separately.
-  Removing a registration preserves external executables. **Configure** can also override a built-in server.
-- **Control:** installed, enabled, and running are separate states. Change defaults
-  or choose **Use default**, **Enabled**, or **Disabled** for the current workspace.
-  **Configure** opens a dedicated detail view for feature switches and priority. Advanced settings include
-  environment overrides (a JSON object of strings), project root markers (files or
-  directories), and initialization options separate from runtime server settings.
-  Presets scaffold the server's settings namespace (for example, LuaLS uses
-  `{"Lua": {"runtime": {"version": "LuaJIT"}}}`). Root discovery stays within the
-  workspace. Arguments can override managed defaults too. Empty initialization options (`{}`) send no extra options; a blank field
-  preserves the older behavior of also sending server settings at initialization.
-  **Stop** lasts for this window; **Restart** starts it again. Repeated crashes require an explicit
-  restart. Stop a server in other hedit windows before changing its registration
-  or installation; shared installations are protected by cross-window locks.
+| Install choice | Servers and setup |
+| --- | --- |
+| Managed | rust-analyzer, clangd, ty, Ruff, LuaLS, Tombi. Install, repair, or remove in Settings. Upstream GitHub releases need a SHA-256 digest. Downloads need `curl`. Updates are manual. |
+| External preset | gopls, TypeScript/JavaScript, HTML, CSS, JSON, YAML, shell, pylsp, Taplo. **Configure → Detect installed on PATH** finds an installed executable without running or installing it. |
+| Other external server | **Add external server…**. Supply an ID, comma-separated syntax IDs, an absolute executable, arguments as a JSON array, and settings as a JSON object. Install its runtime separately. |
 
-**Ctrl+Space** and automatic completion include plain-text LSP completions and
-additional text edits. **F12 / Shift+F12** requests definitions/references.
-Use the command palette or Tools menu for **Language server: show hover
-information**, **format document**, **toggle problems**, and **restart**.
-The Problems panel lists diagnostics for open files; select one to navigate.
-Formatting and accepted completion edits remain unsaved and use normal Undo and
-recovery. Delayed results are discarded after relevant document, cursor,
-selection, pane, or workspace changes. Source indexing and word completion remain
-available without a server.
+Rust projects need a Rust toolchain and `rust-src` for standard-library sources.
+C/C++ projects can use `compile_commands.json`. Use an external server if its
+platform has no managed build. A pylsp registration can use
+`/absolute/path/to/pylsp` and `[]`. For npm wrappers on Windows, point to
+`node.exe` and put the script and `--stdio` in the arguments. Removing a
+registration preserves external executables. Use **Configure** to override a
+built-in.
 
-Servers start as needed for saved, fully loaded files up to 4 MiB. A workspace
-synchronizes up to 32 documents / 32 MiB and runs up to eight server sessions;
-the active file is prioritized. SSH uses a 4 MiB aggregate snapshot budget to
-stay within its bounded JSON transfer limit. Paged logs, follow mode, and untitled notes do
-not start servers. Multiple enabled servers can share a file. Each action uses
-the highest-priority server that supports it and has that feature enabled; ties
-use server-ID order. Diagnostics are combined and labeled by server. Python
-defaults pair ty for language intelligence with Ruff for linting and formatting.
-The session cap favors focused documents, then server priority. Rename, code actions, semantic
-highlighting, server-supplied snippets/commands, and unsolicited workspace edits are not yet
-supported.
+| In the server manager | What it changes |
+| --- | --- |
+| **Use default**, **Enabled**, **Disabled** | Workspace override. Installation, enablement, and running state are separate. |
+| **Configure** | Feature switches, priority, arguments, environment strings, root markers, and initialization options. Root discovery stays within the workspace. |
+| Initialization options | `{}` sends no extra options. A blank field also sends runtime settings at initialization. Some presets supply a namespace, such as LuaLS `{"Lua":{"runtime":{"version":"LuaJIT"}}}`. |
+| **Stop** / **Restart** | Stop for this window or start again. Repeated crashes need an explicit restart. Stop the server in other hedit windows before changing a shared install or registration. |
 
-In **SSH workspaces**, the manager targets the host. Execution trust is required
-for management and execution; revoking trust or disconnecting stops its workers.
-Packages and registrations live in the helper state's `language-servers` directory;
-executable paths and runtime requirements refer to the host. LSP document text,
-logs, and diagnostics remain memory-only on the client. Results outside the
-remote workspace are excluded from navigation. Install the matching updated
-helper; the language-server feature uses the updated SSH protocol.
+| Editor action | Where |
+| --- | --- |
+| Completion | **Ctrl+Space** or automatic suggestions. Supports plain text and additional text edits. |
+| Definitions and references | **F12 / Shift+F12**. Local indexing can answer when a server cannot. |
+| Hover, format, problems, restart | Tools menu or Command Palette. Choose a diagnostic from Problems to jump to it. |
+| Formatting or completion edits | Apply to unsaved text and support Undo and recovery. The editor drops results after relevant context changes. |
 
-Local management also works without opening a window:
+Servers start for saved, fully loaded files up to 4 MiB. A workspace synchronizes
+up to 32 documents totaling up to 32 MiB and runs up to eight server sessions. SSH uses a
+4 MiB total snapshot budget. Paged logs, follow mode, and untitled notes skip
+servers. Active files have priority. For each action, the highest-priority
+eligible server wins. Server ID breaks ties. Diagnostics are combined and
+labeled. Python defaults use ty for intelligence and Ruff for linting/formatting.
+Semantic highlighting, server snippets or commands, and unsolicited workspace
+edits are unsupported.
+
+In SSH workspaces, install the matching helper. The manager targets the host
+and requires execution trust. Revocation or disconnect stops its workers.
+The servers live under the helper state's `language-servers` directory.
+Executables and runtimes run on the host. Client snapshots, logs, and diagnostics
+stay in memory. Navigation stays inside the remote workspace.
 
 ```sh
 hedit --lsp list
@@ -480,98 +428,89 @@ hedit --lsp remove rust-analyzer
 hedit --lsp-dir /absolute/private/server-store --lsp list
 ```
 
-`list` returns JSON containing the catalog and registrations. `install` resolves
-the latest stable release and records its exact version, hash, and source;
-`remove` deletes only hedit-owned package directories and the registration.
-Downloads install through temporary directories, a bounded executable version
-check, and atomic activation. Failures or cancellation before activation preserve
-the active installation. If a receipt write cannot be confirmed, hedit preserves
-package files and reports the uncertainty; refresh the manager to inspect the
-active version. The previous managed
-installation is retained until the next successful update or removal.
+`list` returns the catalog and registrations as JSON. `install` resolves the
+latest stable release and records its version, hash, and source. Temporary
+directories and a bounded version check protect the active installation before
+atomic activation. If a receipt is uncertain, hedit keeps the package files.
+Refresh to inspect the active version. The previous managed package stays
+until the next successful update or removal. `remove` deletes only the
+registration and hedit-owned packages.
 
 #### Rename Symbol and Quick Fixes
 
-Tools → Language server includes Rename symbol and Quick fixes. The optional
-VS Code shortcut preset uses F2 and Primary+Period. In Explorer, F2 still renames
-the selected file. Each server's Configure page can enable or disable these
-features independently.
+| Command | What to do |
+| --- | --- |
+| **Tools → Language server → Rename symbol** | Enter a new name and review its edit preview. The VS Code preset uses **F2**. In Explorer, **F2** renames the file. |
+| **Tools → Language server → Quick fixes** | Choose an offered text edit and review it. The VS Code preset uses **Primary+Period**. |
 
-Rename requests a new name and opens a preview. Quick fixes lists available
-text edits; choose one to review it. Inspect each file's Before and After text,
-then choose Apply all text changes. The preview shows the first 500 characters
-of long lines. Changes stay unsaved, and each changed file has its own normal
-Undo history and session recovery. Opening a preview never changes file text.
+Compare **Before** and **After**, then choose **Apply all text changes**. The
+preview shows up to 500 characters per line. Changes stay unsaved. Each file has
+its own Undo and recovery. Enable these features per server in **Configure**.
 
-The editor rejects stale previews, stale versions, overlapping edits and paths
-outside the project root. File resource operations and server commands are
-unavailable. A batch supports up to 64 complete files, 2 MiB per file and 8 MiB of
-combined source and proposed text. Local batches preflight every source and
-commit no edits if preparation fails. SSH batches preflight every source too;
-if a later host edit fails, the editor reports the completed files and keeps
-their text and Undo history visible. Files are never saved automatically.
+Batches accept up to 64 complete files, 2 MiB per file, and 8 MiB of combined
+source and proposed text. The editor rejects stale previews, overlapping edits,
+paths outside the root, file operations, and server commands. Local batches
+apply only after every file passes preflight. SSH also preflights all files.
+If a later host edit fails, completed files and their Undo remain visible.
 
 ### Syntax highlighting
 
-Click the status-bar language to override detection or return to
-Automatic. The 58 formats include common programming languages, CUDA, web/config
-formats, Markdown, LaTeX, CSV, and logs. Embedded languages and multiline strings
-use syntax definitions; large files show quick colors before full highlighting.
+Click the status-bar language to choose a syntax or return to **Automatic**.
+The 58 formats include common languages, CUDA, configuration files, Markdown,
+LaTeX, CSV, and logs. Definitions support embedded languages and multiline
+strings. Large files show quick colors before full highlighting.
 
 ## Bottom panel
 
-**Problems**, **Output**, and **Terminal** share one resizable bottom panel.
-Choose a tab to keep the editor visible while reviewing diagnostics, build output,
-or a shell. Problems combines build locations and language-server diagnostics;
-click a row to navigate. Output retains the latest build and its Cancel action.
-The close button hides the panel without stopping a build or shell. Escape hides
-Problems or Output; while focused in Terminal, Escape goes to the shell.
+| Bottom panel tab | What it shows |
+| --- | --- |
+| **Problems** | Build locations and language-server diagnostics. Click a row to jump. |
+| **Output** | The latest build and its Cancel action. |
+| **Terminal** | The running shell. Escape goes to the shell when focused. |
+
+Drag the top edge to resize. Close the panel to hide it while work continues.
+Escape also hides Problems or Output.
 
 ### Filtering Problems
 
-The Problems panel combines build results and language-server diagnostics in one
-list. Filter by message, filename or source, select a severity or source, and use
-Current file to follow the active editor. Group by file adds location headers.
-Counts show the filtered total and overall severity totals. Build messages with
-no explicit error or warning prefix appear as information.
+| Control | Effect |
+| --- | --- |
+| Text filter | Matches message, filename, or source. |
+| Severity and source | Narrows the list. Build messages without a severity prefix are informational. |
+| **Current file** | Follows the active editor. |
+| **Group by file** | Adds file headers. |
+| **Next diagnostic / Previous diagnostic** | Follows active filters and wraps. The VS Code preset uses **F8 / Shift+F8**. Stale language positions are rejected. |
 
-Next diagnostic and Previous diagnostic follow the current filters and wrap at
-the ends. The optional VS Code shortcut preset binds them to F8 and Shift+F8.
-These commands preserve the Problems panel and reject stale language positions.
-Explorer diagnostic badges include build results as well as language diagnostics.
-The combined catalogue is limited to 10,000 entries and 8 MiB.
+Counts show filtered results and overall severity totals. Explorer badges
+include build and language diagnostics. The catalogue holds up to 10,000
+entries and 8 MiB.
 
 ### Panel and focus controls
 
-View → Panel includes Toggle last used panel and Maximize or restore panel.
-Closing or toggling the panel preserves its selected tab, output and shell.
-Maximize expands the panel while remembering its normal height; Restore returns
-to that height. These layout choices are remembered for the current window.
-The VS Code shortcut preset uses Primary+J to toggle the panel.
+| Action | Where |
+| --- | --- |
+| **Toggle last used panel** | **View → Panel**. The VS Code preset uses **Primary+J**. |
+| **Maximize or restore panel** | **View → Panel**. Restore returns to the remembered height. |
+| **Focus editor**, **Focus Explorer**, **Focus Search**, **Focus terminal** | Command Palette or your own key bindings. The VS Code preset uses **Primary+1–4** to focus editor groups. |
 
-Focus editor, Focus Explorer, Focus Search and Focus terminal are available in
-the command palette and custom keybindings. Primary+1 through Primary+4 in the
-VS Code preset move from the terminal to an editor group. Sidebar focus leaves
-the panel and active document intact. Focusing a terminal shows its existing
-session, or starts one when explicitly requested and enabled. A disabled terminal
-never starts when restoring the last panel; Problems is shown instead.
+Hiding the panel preserves the selected tab, output, and shell. Sidebar focus
+keeps the current document and panel. Explicit terminal focus can start a
+session when enabled. Restoring a disabled terminal shows Problems.
 
 ### Notifications and progress
 
-Use Notifications in the status bar, View → Panel, or the command palette to
-review recent messages. Messages do not take keyboard focus. The window keeps
-up to 128 entries and 256 KiB of history, combines consecutive repeated messages,
-and shows unread counts. Dismiss individual entries or clear the history; this
-does not dismiss recovery errors or cancel running work. History lasts for the
-current window and is not written to disk.
+Open **Notifications** from the status bar, **View → Panel**, or the Command
+Palette. History stays in this window. It combines consecutive repeats and
+keeps up to 128 entries or 256 KiB. Dismiss entries without interrupting work.
 
-Failed saves provide Retry save when the original document is still open at the
-same path. Save As retries ask for a destination again. Build completions link to
-Output; language and Git failures link to their existing management/log views.
-Progress controls can cancel builds, folder searches and language-server work
-cooperatively. Cancelling server work clears stale diagnostics and stops owned
-servers; Refresh in Language servers resumes them. Generic file-writing jobs
-are not cancelled by notification controls.
+| Message or progress | Action |
+| --- | --- |
+| Failed save | **Retry save** while the same document and path are open. Retrying **Save As** asks for a destination. |
+| Build completed | Open **Output**. |
+| Language or Git failure | Open its manager or log. |
+| Running build, search, or language job | Cancel cooperatively. Cancelling language work clears stale diagnostics and stops owned servers. Refresh in Language Servers to resume. |
+
+Recovery errors and file-writing jobs have their own controls.
 
 ## Integrated terminal
 
@@ -591,31 +530,34 @@ start a new shell in that folder or the file's parent folder.
 | **…** / right-click | Rename, restart, stop, close, copy selection |
 | Panel close button / toggle shortcut | Hide panel while shells keep running |
 
+<!-- docs-screenshot docs/images/terminal.png | Integrated terminal below a Rust project -->
+
 These keys apply while terminal-focused; macOS uses Cmd for new/close, Control
 for tab switching. **Ctrl+C** interrupts; copy/paste uses **Ctrl+Shift+C/V**
 (**Cmd+C/V** on macOS). Esc, Tab, arrows, and Control keys go to the shell; click
 the editor to resume editing. The command palette remains available.
 
-Pastes use bracketed paste where supported, capped at 256 KiB; scrollback keeps
-10,000 lines. Hidden/inactive tabs drain output. Titles follow the shell unless
-renamed; **Use shell title** restores that. Restart clears output; Stop retains
-it. Disabling the feature or quitting ends shells; sessions/output are not restored.
-RTL shaping affects display only; turn it off if a terminal app already reorders
-text. Graphics and mouse-event forwarding are unsupported.
+| Behavior | What to expect |
+| --- | --- |
+| Paste | Bracketed paste where supported. Limit 256 KiB. |
+| Scrollback | Up to 10,000 lines. Hidden tabs still receive output. |
+| Titles | Follow the shell by default. **Use shell title** clears a custom title. |
+| Stop / Restart | Stop keeps output. Restart clears it. |
+| Disable terminal or quit | Ends shells. Sessions and output are discarded. |
+| RTL shaping | Changes display. Disable it if a terminal program already reorders text. |
+| Graphics or mouse-event forwarding | Unsupported. |
 
-**Settings → Terminal** also has independent appearance controls. **Use app font
-and size** and **Use app colors** are enabled by default. Turn either off to
-choose a terminal font (family or font-file path, 8–40 pt), foreground, background,
-cursor and selection colors, or an optional 16-color ANSI palette. Copy a theme
-as a starting point and adjust individual colors. Terminal programs can still
-set their own colors. Changes apply to existing local and SSH shells without
-restarting them; app/editor colors and fonts keep their own settings.
+**Settings → Terminal** can use the app font and colors or set them separately.
+The app appearance is the default. Terminal font size ranges from 8–40 pt.
+Change the terminal colors or a 16-color ANSI palette without restarting local
+or SSH shells. A terminal program can still set its own colors.
 
-In `settings.json`, omitted or `null` `terminal_font` and `terminal_colors` use
-the app appearance. For example, a separate font can be set with
-`"terminal_font": {"face": "", "size": 18}` (empty face uses the built-in font).
-Color objects use six-digit hex values for `foreground`, `background`, `cursor`,
-`selection`, and `selection_text`; `ansi` is an optional array of 16 colors.
+| `settings.json` key | Example or fields |
+| --- | --- |
+| `terminal_font` | `{"face":"","size":18}`. An empty face uses the built-in font. A family or font-file path also works. |
+| `terminal_colors` | Six-digit hex values for `foreground`, `background`, `cursor`, `selection`, and `selection_text`. Optional `ansi` array of 16 colors. |
+
+Leave the keys out or use `null` to follow the app appearance.
 
 ## Source Control
 
@@ -641,6 +583,8 @@ prompts are disabled. Signing and hooks follow Git configuration.
 | Undo/revert | Undo last commit confirms the reviewed HEAD, moves to its first parent, and leaves changes staged. Unavailable for initial commits/operations in progress. Revert shared commits; Branch here creates without switching |
 | Remotes | Fetch updates references; Pull fast-forwards only; Push uses the configured destination; Publish sets upstream. No force-push; merge/rebase divergence explicitly |
 
+<!-- docs-screenshot docs/images/git.png | Source Control with a syntax-colored file diff -->
+
 Conflicts show **Current · ours**, **Incoming · theirs**, and the ancestor.
 **Use Current/Incoming…** confirms and backs up; **Open to resolve** combines in
 the editor. Review and stage afterwards, including deletions. During rebase,
@@ -654,28 +598,35 @@ help and editing work without Git installed.
 
 ## Markdown preview
 
-Markdown has **Source**, **Split**, and **Preview** modes (also in **View →
-Markdown**). Split follows unsaved edits and synchronizes source/preview scroll;
-narrow windows stack the panes. Drag the divider, use its focused arrow keys, or
-double-click to equalize. Preview fills the editor; switch back to type. Modes
-survive restarts. Choose Markdown syntax for untitled notes.
+Choose **Source**, **Split**, or **Preview** in **View → Markdown**. Split follows
+unsaved source and scrolls with it. Narrow windows stack the panes. Drag the
+divider, use its arrow keys, or double-click to restore equal sizes. Choose
+Markdown syntax for an untitled note. The mode survives a restart.
 
-**Contents** jumps to headings. Text/code are selectable; code blocks offer Copy.
-Tables wrap/scroll; lists, tasks, quotes, and GitHub alerts render natively.
-Section links stay in-document; Markdown links open in Preview with fragments,
-other files in the editor. Right-click links to copy addresses.
+<!-- docs-screenshot docs/images/markdown.png | Markdown source beside rendered tables, an equation, and a diagram -->
 
-Local PNG/JPEG images resolve beside the document, changing base after Save As.
-Web/`file://` images and Windows network/device paths are blocked. Comments are
-hidden, `<br>` inserts a break, other HTML stays text. Preview requires a fully
-loaded file up to 2 MiB.
+| Task | Use |
+| --- | --- |
+| Jump to a heading | **Contents** |
+| Copy text or code | Select it or use **Copy** on a code block. |
+| Follow a link | Section links stay in the document. Markdown links open in Preview. Other files open in the editor. Right-click to copy the address. |
+| Show local images | PNG or JPEG next to the file. **Save As** changes the base path. Remote images, `file://`, and Windows network/device image paths are blocked. |
+| Add an equation | Use `$E = mc^2$` inline or `$$ … $$` and fenced `math` for display. Escape a dollar as `\$`. |
+| Add a diagram | Use a fenced `mermaid` block. |
+| Refresh media | Click **Refresh** or return from Source. |
 
-Use `$E = mc^2$` inline, `$$ … $$` or fenced `math` for display equations, and
-fenced `mermaid` for diagrams. Escape dollars as `\$`. Rendering is local and
-asynchronous; unsupported input stays as source with a hover error and **Copy
-source**. Limits: 16 KiB/equation; 64 KiB, 1,000 lines, 256 nodes, and 1,024 edges
-per diagram. **Refresh** reloads media, including repaired images; returning
-from Source also refreshes. Find/Replace/Go to line/search results expose source.
+Tables, lists, tasks, quotes, and GitHub alerts render natively. HTML comments
+are hidden. `<br>` adds a line break. Other HTML stays text. Find, Replace,
+Go to line, and search results show source.
+
+| Limit | Maximum |
+| --- | --- |
+| Fully loaded Markdown file | 2 MiB |
+| Equation | 16 KiB |
+| Diagram | 64 KiB, 1,000 lines, 256 nodes, 1,024 edges |
+
+Equations and diagrams render locally. Unsupported input stays as source with
+a hover error and **Copy source**.
 
 ## Views and layout
 
@@ -688,18 +639,13 @@ from Source also refreshes. Find/Replace/Go to line/search results expose source
 | Font | **Preferences → Editor font…** filters installed fonts by family/script. **Ctrl++ / Ctrl+- / Ctrl+0** changes/resets size |
 | Editor details | **View → Editor** toggles numbers, current-line highlight, whitespace, guides, minimap, tabs, and status bar |
 
-Search and Source Control stay beside the document while you switch tools.
-Search inputs, results and commit drafts survive sidebar switches. Selecting a
-changed file opens a reusable **Git review** tab; select a file tab to resume
-editing, or close the review without closing your document. Search has its own
-query and options, separate from Find within the current file. Search's **More…**
-menu can detach it into a window.
+<!-- docs-screenshot docs/images/split-panes.png | Two files open in independent editor groups -->
 
-The activity bar provides Files, Source Control, Find in files, Remote Explorer
-and Settings.
-Click the active Files or Source Control icon to hide its sidebar. Turn off
-`show_activity_bar` in Settings to use the text workspace switcher and a compact
-Remote Explorer icon.
+| Workspace control | Behavior |
+| --- | --- |
+| Search and Source Control | Keep search inputs, results, and commit drafts while switching sidebars. Search has its own query. **More… → Open search window** detaches it. |
+| **Git review** tab | Open a changed file from Source Control. Switch back to an editor tab or close the review independently. |
+| Activity bar | Open Files, Source Control, Find in files, Remote Explorer, or Settings. Click an active Files or Source Control icon to hide it. Turn off `show_activity_bar` for the text switcher. |
 
 The status bar shows position, selected characters and lines, indentation, line
 endings, encoding, syntax, and recovery. Hover for details or click the recovery
@@ -707,76 +653,65 @@ dot for settings.
 
 ### Tabs in editor groups
 
-Each editor group has its own tab strip. Opening a file adds it to the focused
-group; the same file can appear in several groups with independent cursor and
-scroll positions. Edits and undo belong to the shared document. Tab position,
-next/previous tab, Close others, Close to the right and Close all apply to the
-focused group. Drag a tab to another group’s strip or editor, or use Move file
-to other group. Closing a shared tab removes that view; the final dirty tab
-asks before discarding. Empty groups close automatically. Reducing the layout
-merges remaining tabs, and recovery retains their documents and view metadata.
-Git reviews use a reusable tab in one group while other groups remain editable.
-Paged files share the currently loaded page across their groups.
+Each group has its own tab strip. Open a file in the focused group. The same
+document can have different cursor and scroll positions in another group. Text
+edits and Undo are shared. Paged files also share the loaded page.
+
+Tab navigation and **Close others**, **Close to the right**, and **Close all**
+apply to the focused group. Drag a tab to another group or use **Move file to
+other group**. Closing the final dirty view asks before discarding edits.
+Empty groups close automatically. Reducing the layout merges the remaining
+tabs. Recovery keeps the documents and view positions.
 
 ## Large files and logs
 
-Files over 2 MiB use roughly 256 KiB pages, with Start/Previous/Next/End controls.
-Find and Go to line cover the whole file; whole-document commands such as multiple
-cursors, folding, and Markdown preview are unavailable. **View → Follow log (read
-only)** follows a saved file's end. External changes reload unchanged files;
-modified files offer **Compare changes…**, keeping replaced editor text in Undo.
+| Need | Use |
+| --- | --- |
+| Browse a file over 2 MiB | **Start**, **Previous**, **Next**, or **End**. Pages are about 256 KiB. |
+| Find text or go to a line | Find and **Go to line** can use the whole file. |
+| Follow a log | **View → Follow log (read only)** follows the end of a saved file. |
+| Handle an outside change | Clean files reload. For a modified file, **Compare changes…** keeps replaced editor text in Undo. |
+
+Paged files support a subset of editor commands. Multiple cursors, code
+folding, and Markdown preview require a fully loaded file.
 
 ## Settings
 
-**Preferences → Settings…** (**Ctrl+,**) opens a resizable settings window.
-Choose **User** for shared preferences or **Project** for workspace formatting and
-language overrides. Switching scopes preserves the project draft. **Save settings**
-applies that draft; **Discard draft and reload** replaces it with saved values.
-Ctrl+S saves the visible scope and Ctrl+W closes Settings without closing a file.
-Project saves refuse conflicting disk changes or an unsaved project-file buffer.
+Open **Preferences → Settings…** with **Ctrl+,**. Choose **User** or **Project**.
 
-Expand **Resolved settings for the active file** in Project or User → Formatting
-to see the saved defaults and their winning sources, including language overrides
-and `.editorconfig`. Click an `.editorconfig` source to open it; **Refresh sources**
-rereads external changes. The inspector runs only while expanded. File detection
-and per-file indentation choices can differ from these formatting defaults.
-Search by setting name, description, or JSON key; searches span categories, and
-selecting a category narrows the results. Focus a category and use **Up/Down**,
-**Home** or **End** to navigate without leaving the keyboard. **Modified** shows values that differ
-from defaults. Common settings show their default and offer an individual
-**Reset**. Invalid edits display an explanation and keep the last valid value;
-incomplete list entries remain available to correct after changing focus.
+| Need | Use |
+| --- | --- |
+| Find an option | Search by setting name, description, or JSON key. A selected category narrows the search. Use Up/Down, Home, and End to switch categories. |
+| Restore defaults | **Modified** shows changes from defaults. Use the individual **Reset** button where offered. |
+| Save the visible scope | **Ctrl+S** saves. **Ctrl+W** closes Settings. Valid user changes also save after a short delay. Language servers use **Save configuration** in their detail view. |
+| Edit project formatting | **Project** holds defaults and language overrides. Switching scopes keeps the draft. **Save settings** applies it. **Discard draft and reload** reloads saved values. |
+| Check which value wins | Expand **Resolved settings for the active file** under Project or User → Formatting. Open an `.editorconfig` source or choose **Refresh sources**. File detection and tab-specific indentation can differ from these defaults. |
+| Adjust formatting rules | Choose **Inherit**, **Enabled**, or **Disabled**. `.editorconfig` can override project rules, which can override user defaults. |
+| Rebind a command | Open **Key Bindings**. Use one or two keys. `Primary` means Ctrl or macOS Cmd. Reset one binding or all bindings. |
 
-The scope label distinguishes personal preferences on this computer from
-language-server settings on an SSH host. User preferences apply across projects;
-project settings, per-language rules and `.editorconfig` can override formatting.
-Formatting save rules offer **Inherit**, **Enabled**, and **Disabled**, including
-explicitly disabling a rule inherited from the user defaults.
+<!-- docs-screenshot docs/images/settings.png | Settings window with the category list and editable preferences -->
 
-Categories include General, Terminal, Editor, Formatting, Folders & Search,
-Appearance, Key Bindings, Snippets, Language Servers, Recovery and Linux CUDA
-Tools. Valid personal changes save after a short delay. Server configuration uses
-**Save configuration** in its dedicated detail view; advanced JSON options are
-collapsed until needed. Key bindings retain per-command Reset and Reset all.
-Two-key bindings are supported; `Primary` means Ctrl or macOS Cmd.
+Invalid settings keep the last valid value. Incomplete list entries stay
+editable. Project saves refuse disk conflicts or an unsaved project-file tab.
+The scope label shows whether a setting belongs to this computer or an SSH host.
 
 ### Interface appearance
 
-**Settings → Appearance → Interface** controls `ui_font_face`, `ui_font_size`
-(10–20 logical pixels), and `ui_density` (`compact`, `default`, or `comfortable`).
-The bundled Noto Sans is the default UI font; an installed family or absolute
-font-file path can replace it. Use **Choose installed font…** to filter families
-by name or supported script, or type a family or font-file path directly.
-These preferences affect menus, tabs and panels
-independently of editor zoom, editor fonts and terminal overrides. Font files
-load in the background, with the built-in font as fallback when unavailable.
+| Setting in **Appearance → Interface** | Values |
+| --- | --- |
+| `ui_font_face` | Bundled Noto Sans by default. Choose an installed family or an absolute font-file path. |
+| `ui_font_size` | 10–20 logical pixels |
+| `ui_density` | `compact`, `default`, `comfortable` |
+
+Use **Choose installed font…** to filter by family or script. Settings apply to
+menus, tabs, and panels. Editor zoom and terminal overrides have separate
+controls. Font files load in the background with a built-in fallback.
 
 ### The settings file
 
-**Open settings.json** opens the editable configuration. Saving applies changes;
-external edits reload on focus. Comments/trailing commas are accepted; unknown
-keys are reported and invalid files are never overwritten. Unset formatting
-preserves file style; project settings and `.editorconfig` override editor defaults.
+**Open settings.json** opens the current config. Saving applies changes.
+External changes reload on focus. Comments and trailing commas are accepted.
+hedit reports unknown keys and preserves invalid files for editing.
 
 | Platform | Configuration folder |
 | --- | --- |
@@ -784,41 +719,32 @@ preserves file style; project settings and `.editorconfig` override editor defau
 | macOS | `~/Library/Application Support/hedit.hedit/` |
 | Windows | `%APPDATA%\hedit\hedit\config\` |
 
-Override with `HEDIT_CONFIG_DIR`. The folder also holds `keybindings.json`,
-`snippets.json`, `macros.json`, and `themes/`. Use the settings pages to discover
-options/defaults; JSON also supports `syntax_specific` formatting overrides,
-such as `{"python": {"tab_size": 4}}`, and custom `build_systems`.
+Use `HEDIT_CONFIG_DIR` to override it. The folder also holds
+`keybindings.json`, `snippets.json`, `macros.json`, and `themes/`. Use
+`syntax_specific` for entries such as `{"python":{"tab_size":4}}` or
+`build_systems` for custom builds. Unset formatting follows the file style.
 
 ### Extensions
 
-Extensions add editing commands, file templates, language assistance, syntax/theme
-packs and scoped project integrations. Open
-**Settings → Extensions** to install, update, disable, or uninstall them. Run
-commands from the Command Palette or assign a personal key binding. Templates
-appear under **New File from Template…**.
+| Task | Where |
+| --- | --- |
+| Install, update, disable, or uninstall | **Settings → Extensions**. Disabling or updating revokes approvals. |
+| Run a command | Command Palette or a personal key binding. |
+| Create from a template | **New File from Template…** |
+| Change plugin settings | Configure declared settings in **Extensions**. |
+| See outcomes and timing | **Recent Lua activity** in **Extensions**. |
 
-Lua runs in local buffers on supported macOS, Linux, and Windows builds. Review
-each command's declared permissions before approving it. Where offered,
-**Allow once** authorizes a single invocation. With edit previews enabled,
-inspect the proposed changes before applying them; one Undo restores the
-original text and selections.
-Disabling or updating an extension revokes its approvals.
+| Access | What to review |
+| --- | --- |
+| Lua document command | Review each command's permissions. **Allow once** covers one invocation where offered. Edit previews let you inspect changes. Undo restores text and selections. |
+| **Lua on Save** | Bind a persistently approved command to a language. It can replace the entire eligible local file on Save. Rebind after update or reapproval. A failed hook saves the current editor text. |
+| Provider | Persistent approval lists triggers and document access. Results appear in the editor. Stop or revoke to cancel its work. |
+| Scoped command | Review each directory, public endpoint, or native tool image separately. Preview workspace edits file by file before **Apply**. An incomplete application retains a recovery record. |
 
-Configure declared plugin settings and review **Recent Lua activity** in the
-same page. **Lua on Save** separately enables a persistently approved command
-for a language; it can replace the whole local file when you save. Updated or
-reapproved commands need a new save binding. Failed hooks save the current editor
-text without applying the hook's proposed changes.
-
-Providers need separate persistent approval for their triggers and document
-access. Their typed results appear in native editor UI; Stop and revocation
-cancel their work. Scoped commands can request selected folders, fixed public
-endpoints or exact native tool images through additional resource reviews.
-Workspace edits require a file-by-file preview and Apply; incomplete application
-keeps a recovery record. Signing a bundle does not grant these permissions.
-
-See the [extension reference](docs/extensions.md) for installable examples, Lua
-limits, manifest fields, fixture tests, and signed bundles.
+Lua runs in eligible local buffers on supported macOS, Linux, and Windows builds.
+Signature verification identifies the publisher. Command and resource approval
+remain separate. See the [extension reference](docs/extensions.md) for examples,
+manifest fields, fixture tests, and bundle signing.
 
 ## Appearance
 
@@ -827,6 +753,8 @@ Esc restores the previous choice. **Settings → Appearance** has a gallery and
 system light/dark following with a separate theme for each. Hedit Ink and Hedit
 Paper are defaults; [palette credits](assets/licenses/theme-palettes.md) cover
 additional themes.
+
+<!-- docs-screenshot docs/images/themes.png | Appearance settings with built-in theme previews -->
 
 **Customize colors** previews interface/syntax/status colors and contrast.
 **Save as new theme…** keeps a copy; Import accepts hedit JSON and TextMate
@@ -961,16 +889,19 @@ With the terminal focused, some keys have different actions:
 
 ## Recovery
 
-Recovery checkpoints preserve open files, unsaved notes, and fully loaded undo
-history separately from source files. They run every few seconds; the last edits
-before power loss can be lost. Save important work. The status dot reports
-Pending/Checkpointing/Up to date. If it fails, keep hedit open, fix disk space or
-permissions, then **Retry checkpoint**. Closing waits for a final checkpoint.
-[SSH recovery](#privacy-and-recovery) lives on the host instead.
+Recovery checkpoints keep tabs, unsaved notes, and fully loaded undo history.
+They run every few seconds. A power loss can interrupt the latest checkpoint.
+Save important work to write the source file. Closing waits for a final
+checkpoint. [SSH recovery](#privacy-and-recovery) lives on the host.
 
-For missing work, check tabs, Ctrl+P, Closed Files, and the session you launched.
-Unreadable latest recovery falls back to the previous copy; `preserved-*` data is
-retained. Damaged undo history can be dropped with a warning while retaining text.
+| Situation | What to do |
+| --- | --- |
+| Recovery dot says **Pending** or **Checkpointing** | Wait for **Up to date**. |
+| Checkpoint fails | Keep hedit open. Fix disk space or permissions, then choose **Retry checkpoint**. |
+| A tab is missing | Check open tabs, **Ctrl+P**, **Closed Files**, and the session you launched. |
+| The latest recovery is unreadable | hedit tries the previous copy and keeps `preserved-*` data. Damaged undo can be dropped with a warning while text survives. |
+
+<!-- docs-screenshot docs/images/recovery.png | Closed Files with an unsaved note available to reopen -->
 
 | Platform | Default local session |
 | --- | --- |

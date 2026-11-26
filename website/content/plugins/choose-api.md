@@ -5,52 +5,40 @@ weight = 20
 template = "page"
 +++
 
-Manifest API and SDK numbers identify contracts, not plugin release versions.
-Use the smallest contract with the authority your feature requires.
-The manifest checker rejects unsupported API/SDK combinations before execution.
-
 ## Match the feature to the contract
 
 | You want to build | Manifest / SDK | Start here |
 | --- | --- | --- |
-| Snippets or new-file templates | API 1 / no SDK | [Declarative contributions](@/reference/manifests.md#declarative-example) |
-| A transform over selected strings | API 2 / no SDK | [Selection-only Lua](@/reference/manifests.md#lua-api) |
-| Structured document edits, selections, inputs, or private command storage | API 3 / SDK 1 | [Document SDK](@/reference/document-sdk.md) |
-| Diagnostics, completion, hover, symbols, formatting, or native presentation | API 4 / SDK 2 | [Providers](@/reference/providers.md) |
-| Scoped project reads/search/watch/edit plans, reviewed filters/LSP, or public HTTPS | API 5 / SDK 3 | [Service broker](@/reference/broker.md) |
-| Declarative language or theme packs | API 1 / no SDK | [Visual packs](@/reference/providers.md#fixtures-and-declarative-packs) |
+| Snippets or file templates | API 1 | [Declarative contributions](@/reference/manifests.md#declarative-example) |
+| A transform over selected strings | API 2 | [Selection-only Lua](@/reference/manifests.md#lua-api) |
+| Document edits, inputs, or private command storage | API 3 / SDK 1 | [Document SDK](@/reference/document-sdk.md) |
+| Diagnostics, completion, hover, symbols, formatting, or native UI | API 4 / SDK 2 | [Providers](@/reference/providers.md) |
+| Project reads, watches, edit plans, native tools, or public HTTPS | API 5 / SDK 3 | [Service broker](@/reference/broker.md) |
+| Language or theme packs | API 1 | [Visual packs](@/reference/providers.md#fixtures-and-declarative-packs) |
 
-All five manifest versions remain supported. A newer SDK does not inherit the
-approvals of an older command. Each command declares its own authority.
+All five manifest APIs are supported. The manifest API and SDK identify contracts.
+Use your bundle version for releases. Approval is specific to each installed command.
 
 ## Design for the process boundary
 
-Lua callbacks are short-lived computations over bounded input. Each callback
-starts in a fresh confined process, and Lua globals do not survive it.
-Package-local modules are reviewed source, not filesystem imports.
+{{< flow "Host supplies input" "Fresh Lua worker" "Worker returns a proposal" "Host checks and applies" caption="The host checks approval before sending input and again before applying an effect." >}}
 
-- Document commands return transactions for the host to validate.
-- Providers return typed results and may return bounded scalar cache state.
-- SDK 3 callbacks yield one intent. The broker performs an authorized operation,
-  then starts a fresh callback with the response and explicit cache.
-- Native language servers may persist within a reviewed document scope under
-  finite limits; they run separately from Lua.
+| Contract | What survives a callback |
+| --- | --- |
+| Document command | A transaction the host accepts |
+| Provider | A typed result and optional scalar cache |
+| SDK 3 continuation | Explicit cache and the broker's response. The next step starts a fresh worker. |
+| Approved native language server | A separate process within a reviewed document scope and finite limits |
 
-Do not design around an always-running plugin object, arbitrary editor RPC,
-direct document pointers, or ambient filesystem access. See the
-[threat model](@/reference/security.md#process-and-authority-boundaries).
+Package-local modules are reviewed source. Lua globals end with each worker.
 
 ## Understand the current limits
 
-The API exposes native, typed UI rather than arbitrary webviews or custom editor
-widgets. Plugins cannot run shell commands, load native Lua modules, obtain
-credentials, choose arbitrary executables, or use unrestricted network access.
-Scoped HTTPS requests target separately declared and reviewed public endpoints.
+Document operations use eligible local, fully loaded buffers. Workspace edit plans
+need a complete preview and a separate commit. The host owns native UI, document
+access, and resource selection.
 
-Plugin document operations apply to eligible local buffers. Remote and paged
-documents are outside this extension contract. Workspace edit plans operate on
-reviewed existing files; they require a complete preview and a separate commit flow.
-
-Check each reference's limits before choosing an approach. For example, document
-snapshots are bounded, provider results expire, and native service lifetimes are finite.
-The [broker reference](@/reference/broker.md) describes the precise available operations.
+SDK 3 can reach reviewed public endpoints and exact native images. Arbitrary
+shell commands, native Lua modules, credentials, webviews, and unrestricted
+network access are outside the contract. See the
+[threat model](@/reference/security.md#process-and-authority-boundaries).

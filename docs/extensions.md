@@ -105,26 +105,20 @@ limit. hedit loads up to 32 manifests.
 
 ## Permissions
 
-The [extension threat model](extension-security.md) describes isolation, consent,
-worker validation, and the limits of these protections.
+| In **Settings → Extensions** | Effect |
+| --- | --- |
+| **Approve command** | Review one command in the exact installed copy. |
+| **Allow once** | Authorize the next attempt in this window. |
+| **Lua on Save** | Bind a persistently approved command to one language. It can replace the whole eligible local buffer on Save. Rebind after update or reapproval. |
+| **Recent Lua activity** | See the latest 64 command outcomes and durations in this window. |
+| Revoke or disable | Remove the applicable Lua approvals. |
+| **Update…** | Review the new installed copy. Approve changed commands again. |
+| **Uninstall…** | Remove the installed copy and its approvals. Keep the original download. |
+| **Reset Lua approvals…** | Back up an unreadable approval file and clear grants for review. |
 
-Lua commands start unapproved. Each approval covers one command and the exact
-installed copy’s manifest and source. **Allow once** covers the next attempt in
-that window. **Recent Lua activity** shows the latest 64 command outcomes and
-durations in the window. **Revoke approval** withdraws access. Disabling an
-extension clears its Lua approvals.
-
-**Lua on Save** lets you explicitly allow a persistently approved, save-capable
-command to read and replace the whole local file for one language on ordinary
-**Save**. A failed hook saves the current editor text without applying the
-hook's changes. Updated or reapproved commands need a fresh save binding.
-Save hooks do not run on remote, read-only, or paged buffers.
-
-Use **Update…** to review and replace an installed manifest from a file.
-Updated commands require fresh approval. Use **Uninstall…** to remove the
-installed copy and its approvals. hedit keeps your original download.
-If the approval file is unreadable, **Reset Lua approvals…** preserves a backup
-and clears access so you can review commands again.
+Save hooks skip remote, read-only, and paged buffers. If a hook fails, Save
+writes the current editor text. See the [threat model](extension-security.md)
+for consent, confinement, and validation.
 
 ## Develop and package
 
@@ -168,22 +162,19 @@ describes native checks and deliberate capability limits.
 
 ## Native filter approval
 
-API 5 / SDK 3 commands and providers can request native filter or LSP profiles. In
-**Review resources…**, select a standalone executable and inspect its filename,
-SHA-256 digest, argument choices and data scope before approving the review.
-Selection imports a private copy; it grants no execution access until approval.
-Updating the original file does not replace that copy. Reimport and review an
-update explicitly. Remove tool access or revoke resources to stop future use.
+For an SDK 3 native profile, open **Review resources…**. Select the executable
+and check its filename, SHA-256, argument choices, and data scope. Selection
+imports a private copy. Approve it separately to grant execution. To update the
+copy, reimport and review. Remove tool access or revoke resources to stop use.
 
-Native filters receive command-supplied text and, only with separate workspace
-discover/read approval, an immutable copy of eligible project files. They receive
-no live workspace mount or writable scratch. Bounds, OS enforcement and residual
-risks are described in the [security model](extension-security.md).
-Language-server profiles retain one source/document-bound process under finite
-CPU, traffic and lifetime limits. They use the same private project-copy model,
-exact host-issued document URI and separately reviewed image; they do not inherit
-built-in server permissions. See the [scoped broker contract](plugin-broker.md)
-for supported results, grants and reference integrations.
+| Profile | Input and lifetime |
+| --- | --- |
+| Filter | Command-supplied text. Separate discover/read grants can add a read-only project copy. |
+| Language server | A private project copy and an exact issued document URI. One process per approved source/document scope with finite CPU, traffic, and lifetime. |
+
+Profiles use their own grants and private copies. See the
+[broker contract](plugin-broker.md) for results and limits and the
+[threat model](extension-security.md) for OS enforcement.
 
 ## Workspace recovery
 

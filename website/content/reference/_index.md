@@ -6,9 +6,15 @@ template = "section"
 sort_by = "weight"
 +++
 
-Use the [tutorial](@/plugins/first-plugin.md) for a guided introduction. These
-references specify behavior and limits. The manifest schema helps with authoring;
-`hedit plugin check` remains the runtime authority for accepted manifests.
+| Contract | Use it for |
+| --- | --- |
+| [Manifests](@/reference/manifests.md) | Contributions, selection transforms, packages |
+| [Document SDK](@/reference/document-sdk.md) | Text transactions, inputs, private storage |
+| [Provider SDK](@/reference/providers.md) | Events, diagnostics, completion, native UI |
+| [Service broker](@/reference/broker.md) | Scoped workspace, tools, LSP, public HTTPS |
+| [Threat model](@/reference/security.md) | Consent, isolation, limits, and residual risks |
+
+Run `hedit plugin check` to verify a manifest against the installed editor.
 
 {{< download file="downloads/schemas/plugin-manifest.schema.json" name="plugin-manifest.schema.json" text="Download the manifest JSON schema" >}}
 

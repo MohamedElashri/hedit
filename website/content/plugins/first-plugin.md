@@ -1,61 +1,55 @@
 +++
 title = "Write your first plugin"
-description = "Create a document command, test it in the sandbox, and install a bundle."
+description = "Add a prefix to the current document with a Lua command."
 weight = 10
 template = "page"
 +++
 
-This tutorial adds a prefix to the current document. It uses **manifest API 3 /
-SDK 1**, the document-editing contract. Later SDKs add capabilities; this contract
-remains supported.
-
-Use an installed hedit package with sandbox support and the `hedit` command on
-your `PATH`. On macOS, you can also use `hedit.app/Contents/MacOS/hedit` directly.
+Use **manifest API 3 / SDK 1** for this command. Install hedit with sandbox
+support and put `hedit` on your `PATH`.
+On macOS you can use `hedit.app/Contents/MacOS/hedit` directly.
 
 {{< download file="downloads/first-plugin.zip" name="first-plugin.zip" text="Download the complete example" >}}
 
+{{< flow "Write the command" "Run the fixtures" "Pack the bundle" "Install and approve" caption="Use the hedit CLI for fixtures and packing. Review permissions in Settings." >}}
+
 ## Create the manifest
 
-Create a folder called `first-plugin` and save this as `extension.json`:
+Save `extension.json` in a folder called `first-plugin`.
 
 {{< code file="examples/first-plugin/extension.json" language="json" >}}
 
-The package ID and command ID form `first-plugin.prefix`. `script_files` reads
-sibling source during authoring; packing embeds those bytes in the bundle.
-The two permissions request access to the whole eligible current local document
-and permission to propose an edit. Installation alone does not grant either.
+| Field | What it does |
+| --- | --- |
+| Package and command IDs | Form `first-plugin.prefix`. |
+| `script_files` | Reads sibling Lua source. Packing embeds it in the bundle. |
+| `document.read` | Requests access to the current eligible local document. |
+| `document.edit` | Requests permission to propose edits. Review both permissions after installation. |
 
 ## Write the command
 
-Save `prefix.lua` beside the manifest:
+Save `prefix.lua` beside the manifest.
 
 {{< code file="examples/first-plugin/prefix.lua" language="lua" >}}
 
-The host supplies a snapshot in `ctx.document.text` and collects the declared
-`prefix` argument before starting the worker. `hedit.replace` returns a proposed
-transaction bound to that document and revision. Changing a Lua table does not
-change the editor; the host owns validation and application.
-
-This example replaces the whole document. For smaller changes, use
-[`hedit.transaction` and `hedit.edit`](@/reference/document-sdk.md#command-contract).
-All offsets in that API are zero-based **UTF-8 bytes**, not characters or UTF-16 units.
+The host collects `prefix` and supplies `ctx.document.text`. `hedit.replace`
+returns a proposal tied to the snapshot and revision. The host validates and
+applies it. Use [transaction helpers](@/reference/document-sdk.md#command-contract)
+for smaller edits. They take zero-based UTF-8 byte offsets.
 
 ## Add fixtures
 
-Save `fixtures.json` in the same folder:
+Save `fixtures.json` in the same folder.
 
 {{< code file="examples/first-plugin/fixtures.json" language="json" >}}
-
-From that folder, validate and test:
 
 ```sh
 hedit plugin check extension.json
 hedit plugin test extension.json fixtures.json
 ```
 
-`check` validates without executing Lua. `test` uses the real confined worker
-with synthetic documents and creates no persistent editor approvals.
-The fixtures exercise Unicode, CRLF line endings, and a declared argument override.
+`check` validates the manifest. `test` runs the confined worker with sample
+documents and creates no persistent approvals.
 
 ## Pack and install
 
@@ -63,20 +57,14 @@ The fixtures exercise Unicode, CRLF line endings, and a declared argument overri
 hedit plugin pack extension.json first-plugin.hedit-plugin --version 1.0.0
 ```
 
-Open **Settings → Extensions → Install from file…**, select the bundle, and choose
-**Install**. Open **Review permissions…** for **Prefix document**. On a disposable
-local note, choose **Allow once** where offered or approve the command.
-
-Run **Prefix document** from the Command Palette. Choose a prefix, review the edit
-when previews are enabled, and apply it. One **Undo** restores the original text.
-Use **Recent Lua activity** to inspect the result and timing.
+1. Open **Settings → Extensions → Install from file…** and select the bundle.
+2. Open **Review permissions…** for **Prefix document**. Use a disposable note
+   and choose **Allow once** where available.
+3. Run **Prefix document** from the Command Palette. Enter a prefix and apply
+   the edit. If previews are on, review it first.
+4. Use **Undo** to restore the note. See **Recent Lua activity** for the result and timing.
 
 ## Change the installed version
 
-The installed bundle is a copy. Editing your source files does not alter it.
-Rerun the fixtures, pack a new version, and use **Update…** to review the new copy.
-Changed commands need fresh approval. Revoke approval or uninstall the example
-when you have finished.
-
-Next, [choose a contract](@/plugins/choose-api.md) for the capabilities you need,
-or read the [document SDK reference](@/reference/document-sdk.md).
+The installed bundle is a copy. After changing the source, rerun the fixtures,
+pack a higher version, and choose **Update…**. Review and approve changed commands.

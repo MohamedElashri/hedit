@@ -6,4 +6,4 @@ template = "section"
 sort_by = "weight"
 +++
 
-Start with a stable package for your platform. You do not need a compiler to use hedit.
+Choose the package for your platform, then open a project folder.
