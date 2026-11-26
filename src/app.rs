@@ -73,6 +73,8 @@ mod markup_selection;
 mod markup_selection_tests;
 mod minimap;
 mod native_perf;
+#[cfg(test)]
+mod navigation_bug_tests;
 mod notifications;
 mod opening;
 #[cfg(test)]
@@ -180,7 +182,14 @@ enum Action {
     Page(u64, Page, Option<(usize, usize)>),
     GotoPreview(u64, Result<(Page, usize), String>),
     Reloaded(u64, Page, Option<(usize, usize)>),
-    History(u64, Page, bool, Vec<hedit::advanced::Selection>),
+    History(
+        u64,
+        Page,
+        bool,
+        Vec<hedit::advanced::Selection>,
+        Option<hedit::document::HistorySplice>,
+    ),
+    CopyFileLocation(String),
     Saved(u64, Info),
     SaveTo(u64, PathBuf),
     SaveCancelled,
@@ -1113,12 +1122,11 @@ impl HeditApp {
         let cursors = self.selections();
         let editor = Arc::clone(&self.workspace.editor);
         self.job(ctx, move || {
-            let page = editor
-                .get(id)?
-                .lock()
-                .map_err(|e| e.to_string())?
-                .history(redo, offset, revision)?;
-            Ok(Action::History(id, page, redo, cursors))
+            let shared = editor.get(id)?;
+            let mut document = shared.lock().map_err(|e| e.to_string())?;
+            let splice = document.history_splice(redo);
+            let page = document.history(redo, offset, revision)?;
+            Ok(Action::History(id, page, redo, cursors, splice))
         });
     }
     fn find(&mut self, ctx: &egui::Context) {
@@ -1252,7 +1260,7 @@ impl HeditApp {
                 Action::Page(id, page, _)
                 | Action::Reloaded(id, page, _)
                 | Action::ReopenRead(id, page, _)
-                | Action::History(id, page, _, _)
+                | Action::History(id, page, _, _, _)
                 | Action::Discarded(id, Some(page)),
             ) = &event
             {
@@ -1422,7 +1430,7 @@ impl HeditApp {
                 Ok(Action::AddTemplate(doc, page, template)) => {
                     self.finish_opened_document(*doc, page, 0, None, false, Some(template));
                 }
-                Ok(Action::History(id, page, redo, current)) => {
+                Ok(Action::History(id, page, redo, current, splice)) => {
                     if let Some(index) = self
                         .workspace
                         .open
@@ -1442,6 +1450,21 @@ impl HeditApp {
                             } else {
                                 buffer.cursor_redo.push(current);
                             }
+                        }
+                        if let Some(edit) = splice {
+                            buffer.remap_bookmarks(edit);
+                        } else if !buffer.page.info.paged
+                            && !page.info.paged
+                            && buffer.page.text != page.text
+                        {
+                            // Recovery files saved by older versions lack explicit splice data.
+                            let (start, end, added) =
+                                hedit::workspace::splice(&buffer.page.text, &page.text);
+                            buffer.remap_bookmarks(hedit::document::HistorySplice {
+                                start: start as u64,
+                                removed: (end - start) as u64,
+                                inserted: added.len() as u64,
+                            });
                         }
                         buffer.set_page(page);
                         buffer.external = false;
@@ -1635,6 +1658,10 @@ impl HeditApp {
                 }
                 Ok(Action::FallbackFonts) => {
                     self.rebuild_fonts(ctx);
+                }
+                Ok(Action::CopyFileLocation(location)) => {
+                    ctx.copy_text(location);
+                    self.notice = "File location copied.".into();
                 }
                 Ok(Action::OpenFailed(error)) => {
                     self.quality.preview_request = false;
