@@ -5,6 +5,18 @@ use std::fs;
 #[cfg(unix)]
 use std::path::Path;
 
+#[cfg(unix)]
+#[test]
+fn cli_location_prefers_an_existing_filename_with_a_numeric_suffix() {
+    let directory = tempfile::tempdir().unwrap();
+    let file = directory.path().join("report:2026");
+    fs::write(&file, "one\ntwo\nthree\n").unwrap();
+    let line = directory.path().join("report:2026:3");
+    let column = directory.path().join("report:2026:3:2");
+    assert_eq!(hedit::cli::location(&line), (file.clone(), 3, 1));
+    assert_eq!(hedit::cli::location(&column), (file, 3, 2));
+}
+
 #[test]
 fn configuration_reads_enforce_byte_limits() {
     let directory = tempfile::tempdir().unwrap();

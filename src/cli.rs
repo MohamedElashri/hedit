@@ -225,12 +225,15 @@ pub fn location(path: &Path) -> (PathBuf, u64, u64) {
     let Some(last) = last.parse::<u64>().ok().filter(|n| *n > 0) else {
         return (path.to_owned(), 1, 1);
     };
+    if Path::new(prefix).is_file() {
+        return (prefix.into(), last, 1);
+    }
     if let Some((file, line)) = prefix.rsplit_once(':') {
         if let Some(line) = line.parse::<u64>().ok().filter(|n| *n > 0) {
             return (PathBuf::from(file), line, last);
         }
     }
-    (PathBuf::from(prefix), last, 1)
+    (prefix.into(), last, 1)
 }
 
 #[cfg(test)]
