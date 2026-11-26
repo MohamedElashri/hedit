@@ -255,6 +255,17 @@ pub fn apply(
     if operation == Operation::JoinLines && !selected && end < text.len() {
         end = line_range(text, end, end).1;
     }
+    if operation == Operation::DeleteLine
+        && end == text.len()
+        && start > 0
+        && !text[start..end].ends_with('\n')
+    {
+        start -= if text[..start].ends_with("\r\n") {
+            2
+        } else {
+            1
+        };
+    }
     let block = &text[start..end];
     let lines: Vec<_> = block.split_inclusive('\n').collect();
     if operation == Operation::JoinLines && lines.len() < 2 {

@@ -137,7 +137,11 @@ pub fn occurrences(text: &str, selections: &[Selection], all: bool) -> Vec<Selec
         ranges.push(Selection::caret(0));
     }
     if ranges[0].start() == ranges[0].end() {
-        return vec![word(text, ranges[0].head)];
+        let at = word(text, ranges[0].head);
+        if !all || at.start() == at.end() {
+            return vec![at];
+        }
+        ranges[0] = at;
     }
     let needle = &text[byte(text, ranges[0].start())..byte(text, ranges[0].end())];
     if needle.is_empty() {
@@ -446,6 +450,18 @@ pub fn newline(
     smart: bool,
     crlf: bool,
 ) -> Batch {
+    newline_with_colon(text, selection, width, tabs, smart, crlf, false)
+}
+
+pub fn newline_with_colon(
+    text: &str,
+    selection: Selection,
+    width: usize,
+    tabs: bool,
+    smart: bool,
+    crlf: bool,
+    indent_after_colon: bool,
+) -> Batch {
     let before = &text[..byte(text, selection.start())];
     let line = before.rsplit('\n').next().unwrap_or("");
     let mut indent: String = line
@@ -458,8 +474,11 @@ pub fn newline(
     } else {
         " ".repeat(width)
     };
-    let opens = line.trim_end().ends_with(['{', '[', '(']);
-    let closes = after.trim_start().starts_with(['}', ']', ')']);
+    let opener = line.trim_end().chars().next_back();
+    let closing = opener.filter(|ch| OPENERS.contains(ch)).and_then(closer);
+    let opens = closing.is_some() || (indent_after_colon && opener == Some(':'));
+    let closes =
+        closing.is_some_and(|close| after.trim_start_matches([' ', '\t']).starts_with(close));
     let ending = if crlf { "\r\n" } else { "\n" };
     if smart && opens {
         indent.push_str(&unit);
@@ -1038,7 +1057,11 @@ pub fn split_into_lines(text: &str, selections: &[Selection]) -> Vec<Selection> 
             if c == '\n' {
                 out.push(Selection {
                     anchor: start,
-                    head: i,
+                    head: if i > start && chars[i - 1] == '\r' {
+                        i - 1
+                    } else {
+                        i
+                    },
                 });
                 start = i + 1;
             }
