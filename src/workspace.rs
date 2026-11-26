@@ -30,6 +30,8 @@ pub struct Buffer {
     pub cursor_undo: Vec<Vec<crate::advanced::Selection>>,
     pub cursor_redo: Vec<Vec<crate::advanced::Selection>>,
     pub pending_selection: Option<Vec<crate::advanced::Selection>>,
+    pub format_indent: Option<&'static str>,
+    pub format_tab_size: Option<u8>,
 }
 impl Buffer {
     pub fn language_override(&self) -> Option<Language> {
@@ -85,6 +87,8 @@ impl Buffer {
             cursor_undo: vec![],
             cursor_redo: vec![],
             pending_selection: None,
+            format_indent: None,
+            format_tab_size: None,
             page,
             view,
             untitled_number: None,

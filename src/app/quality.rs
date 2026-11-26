@@ -223,7 +223,7 @@ pub(super) enum Event {
     ProjectLoaded(
         PathBuf,
         projects::Project,
-        projects::State,
+        Option<projects::State>,
         Vec<(Document, Page, hedit::session::TabView)>,
     ),
     ProjectSaved(PathBuf),
@@ -482,6 +482,8 @@ impl HeditApp {
                 self.notice = "Project and workspace saved.".into();
             }
             Event::ProjectLoaded(path, project, state, tabs) => {
+                let saved_layout = state.is_some();
+                let state = state.unwrap_or_default();
                 self.opens.cancel();
                 if let Err(e) = self.workspace.checkpoint() {
                     self.error = Some(e);
@@ -554,7 +556,9 @@ impl HeditApp {
                         self.panes = panes;
                     }
                 }
-                self.settings.word_wrap = state.wrap;
+                if saved_layout {
+                    self.settings.word_wrap = state.wrap;
+                }
                 if state.font_size.is_finite() && state.font_size >= 10.0 {
                     self.settings.font_size = state.font_size.min(28.0);
                 }
@@ -631,19 +635,27 @@ impl HeditApp {
                     }
                 }
                 let b = &mut self.workspace.open[self.workspace.active];
-                if let Some(style) = format.indent_style {
-                    b.view.indent = Some(
-                        if matches!(style.as_str(), "tab" | "tabs") {
-                            "tabs"
-                        } else {
-                            "spaces"
-                        }
-                        .into(),
-                    );
+                let indentation = format.indent_style.map(|style| {
+                    if matches!(style.as_str(), "tab" | "tabs") {
+                        "tabs"
+                    } else {
+                        "spaces"
+                    }
+                });
+                if indentation.is_some()
+                    || b.format_indent
+                        .is_some_and(|prior| b.view.indent.as_deref() == Some(prior))
+                {
+                    b.view.indent = indentation.map(str::to_owned);
                 }
-                if let Some(size) = format.indent_size {
-                    b.view.tab_size = Some(size);
+                if format.indent_size.is_some()
+                    || b.format_tab_size
+                        .is_some_and(|prior| b.view.tab_size == Some(prior))
+                {
+                    b.view.tab_size = Some(format.indent_size.unwrap_or(4));
                 }
+                b.format_indent = indentation;
+                b.format_tab_size = format.indent_size;
             }
             Err(e) => self.error = Some(e),
         }
@@ -1260,8 +1272,7 @@ impl HeditApp {
                     }
                 }
             }
-            projects::atomic_json(&projects::workspace_path(&path), &state)?;
-            projects::atomic_json(&path, &project)?;
+            projects::save(&path, &project, &state)?;
             Ok(Action::Quality(Box::new(Event::ProjectSaved(path))))
         });
     }
@@ -1270,7 +1281,7 @@ impl HeditApp {
         if let Some(current) = self.quality.project_path.clone() {
             match self
                 .project_snapshot()
-                .and_then(|s| projects::atomic_json(&projects::workspace_path(&current), &s))
+                .and_then(|s| projects::save_workspace(&current, &s))
             {
                 Ok(()) => (),
                 Err(e) => {
@@ -1290,9 +1301,9 @@ impl HeditApp {
                 None => return Ok(Action::Nothing),
             };
             let path = std::fs::canonicalize(path).map_err(|e| e.to_string())?;
-            let (project, state) = projects::load(&path)?;
+            let (project, state) = projects::load_with_workspace(&path)?;
             let mut tabs = Vec::new();
-            for tab in &state.tabs {
+            for tab in state.iter().flat_map(|state| &state.tabs) {
                 let mut doc = if let Some(path) = &tab.path {
                     Document::open_or_new_with_encoding(editor.id(), path, &tab.encoding)?
                 } else {

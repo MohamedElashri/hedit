@@ -340,9 +340,17 @@ fn draft_is_ignored(path: &Path, root: &Path) -> bool {
     false
 }
 pub fn glob(pattern: &str, text: &str) -> bool {
+    glob_matches(pattern, text, false)
+}
+
+pub fn glob_escaped(pattern: &str, text: &str) -> bool {
+    glob_matches(pattern, text, true)
+}
+
+fn glob_matches(pattern: &str, text: &str, backslash_escape: bool) -> bool {
     globset::GlobBuilder::new(pattern)
         .literal_separator(true)
-        .backslash_escape(false)
+        .backslash_escape(backslash_escape)
         .build()
         .is_ok_and(|g| g.compile_matcher().is_match(text))
 }
