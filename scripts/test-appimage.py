@@ -44,6 +44,9 @@ def main():
                 time.sleep(.1)
 
         def keys(window, sequence):
+            # Xvfb has no window manager to raise the focused window.
+            # eframe waits for a visible window before processing its UI input.
+            xdo('windowraise', window)
             xdo('windowfocus', '--sync', window)
             xdo('key', '--clearmodifiers', '--delay', '100', sequence)
 
