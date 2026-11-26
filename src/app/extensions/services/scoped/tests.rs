@@ -4,7 +4,7 @@ use crate::app::{
         manifest,
         tests::{app_with, prepare_native},
     },
-    tests::{click_label, frame},
+    tests::{click_at, click_label, frame, text_rect},
 };
 use hedit_broker::{
     state::{Approval, SelectedScope, State as BrokerState},
@@ -247,7 +247,26 @@ fn native_workspace_provider_never_receives_document_text_and_interactions_prese
     click_label(&ctx, &mut app, "Stop");
     assert!(app.plugin_services.entries[0].state.stopped);
     assert!(status(&app).is_none());
-    click_label(&ctx, &mut app, "Resume");
+    // The permission watcher can briefly remove entries while refreshing the
+    // catalog. Click Resume once the stopped provider is visible again.
+    let started = Instant::now();
+    loop {
+        let output = frame(&ctx, &mut app, vec![]);
+        if let Some(rect) = output
+            .shapes
+            .iter()
+            .find_map(|shape| text_rect(&shape.shape, "Resume"))
+        {
+            click_at(&ctx, &mut app, rect.center(), egui::vec2(1280.0, 820.0));
+            break;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(15),
+            "Stopped provider did not reappear: {:?}",
+            app.plugin_services.error
+        );
+        std::thread::sleep(Duration::from_millis(3));
+    }
     assert!(app.run_extension_by_id(&ctx, "scoped-provider.run"));
     pump(&mut app, &ctx, |app| status(app) == Some("Calls 1"));
     catalog::revoke_resources(config.path(), "scoped-provider.run").unwrap();

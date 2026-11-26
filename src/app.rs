@@ -4135,9 +4135,6 @@ impl HeditApp {
         self.poll_build();
         self.poll_terminal(ctx);
         self.track_waits();
-        self.poll_lua_transform(ctx);
-        self.poll_broker_command(ctx);
-        self.poll_plugin_services(ctx);
         self.persist_settings();
         if let Some(after) = self.next_wake(ctx) {
             ctx.request_repaint_after(after);
@@ -4233,6 +4230,9 @@ impl eframe::App for HeditApp {
         self.quality_windows(ctx);
         self.record_copies(ctx);
         self.close_dialog(ctx);
+        self.poll_lua_transform(ctx);
+        self.poll_broker_command(ctx);
+        self.poll_plugin_services(ctx);
         self.terminal_onboarding(ctx);
         self.notification_center(ctx);
         let paths: Vec<_> = ctx.input(|i| {
