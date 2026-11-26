@@ -78,10 +78,26 @@ pub fn scoped_matches<'r, 'h>(
     text: &'h str,
     scope: Range<usize>,
 ) -> impl Iterator<Item = regex::Match<'h>> + use<'r, 'h> {
-    regex
-        .find_iter(text)
-        .skip_while(move |hit| hit.start() < scope.start)
-        .take_while(move |hit| hit.end() <= scope.end)
+    let mut at = scope.start;
+    let mut previous_end = None;
+    std::iter::from_fn(move || {
+        while at <= scope.end.min(text.len()) {
+            let hit = regex.find_at(text, at)?;
+            if hit.end() > scope.end {
+                return None;
+            }
+            at = hit.end();
+            if hit.is_empty() {
+                at += text[at..].chars().next().map_or(1, char::len_utf8);
+                if previous_end == Some(hit.end()) {
+                    continue;
+                }
+            }
+            previous_end = Some(hit.end());
+            return Some(hit);
+        }
+        None
+    })
 }
 
 pub fn replace(
@@ -96,17 +112,11 @@ pub fn replace(
     let mut out = String::with_capacity(text.len());
     let mut at = 0;
     if options.regex {
-        for captures in re.captures_iter(text) {
-            let hit = captures.get(0).unwrap();
-            if hit.start() < scope.start {
-                continue;
-            }
-            if hit.end() > scope.end {
-                break;
-            }
-            out.push_str(&text[at..hit.start()]);
+        for hit in &found {
+            let captures = re.captures_at(text, hit.start).unwrap();
+            out.push_str(&text[at..hit.start]);
             captures.expand(replacement, &mut out);
-            at = hit.end();
+            at = hit.end;
             if out.len() > 64 * 1024 * 1024 {
                 return Err("Replacement exceeds 64 MiB; narrow the search.".into());
             }
@@ -171,6 +181,14 @@ pub struct Results {
 }
 
 pub fn walk(roots: &[PathBuf], filter: &str, cancel: &AtomicBool) -> Result<Vec<PathBuf>, String> {
+    walk_counting_skips(roots, filter, cancel).map(|(paths, _)| paths)
+}
+
+fn walk_counting_skips(
+    roots: &[PathBuf],
+    filter: &str,
+    cancel: &AtomicBool,
+) -> Result<(Vec<PathBuf>, usize), String> {
     let Some(first) = roots.first() else {
         return Err("Open a folder first.".into());
     };
@@ -190,17 +208,10 @@ pub fn walk(roots: &[PathBuf], filter: &str, cancel: &AtomicBool) -> Result<Vec<
         .follow_links(false)
         .require_git(false)
         .filter_entry(|entry| {
-            if entry
-                .file_name()
-                .to_string_lossy()
-                .ends_with(".hedit-workspace")
-            {
-                return false;
-            }
-            !crate::folder::excluded(
-                &entry.file_name().to_string_lossy(),
-                entry.file_type().is_some_and(|t| t.is_dir()),
-            )
+            let name = entry.file_name().to_string_lossy();
+            let directory = entry.file_type().is_some_and(|t| t.is_dir());
+            (directory || !name.ends_with(".hedit-workspace"))
+                && !crate::folder::excluded(&name, directory)
         });
     if filter.len() > 4096 {
         return Err("Filename filters are limited to 4096 bytes.".into());
@@ -208,11 +219,13 @@ pub fn walk(roots: &[PathBuf], filter: &str, cancel: &AtomicBool) -> Result<Vec<
     let patterns = filename_patterns(filter)?;
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
+    let mut skipped = 0;
     for entry in builder.build() {
         if cancel.load(Ordering::Relaxed) {
             return Err("Search cancelled.".into());
         }
         let Ok(entry) = entry else {
+            skipped += 1;
             continue;
         };
         if !entry.file_type().is_some_and(|t| t.is_file()) {
@@ -222,7 +235,10 @@ pub fn walk(roots: &[PathBuf], filter: &str, cancel: &AtomicBool) -> Result<Vec<
         if !filename_matches(&path, roots, &patterns) {
             continue;
         }
-        let path = std::fs::canonicalize(&path).map_err(|e| e.to_string())?;
+        let Ok(path) = std::fs::canonicalize(&path) else {
+            skipped += 1;
+            continue;
+        };
         if seen.insert(path.clone()) {
             out.push(path);
         }
@@ -231,12 +247,30 @@ pub fn walk(roots: &[PathBuf], filter: &str, cancel: &AtomicBool) -> Result<Vec<
         }
     }
     out.sort();
-    Ok(out)
+    Ok((out, skipped))
 }
 
 fn filename_patterns(filter: &str) -> Result<Vec<globset::GlobMatcher>, String> {
-    filter
-        .split(',')
+    let mut start = 0;
+    let mut braces = 0usize;
+    let mut class = false;
+    let mut patterns = Vec::new();
+    for (at, ch) in filter.char_indices() {
+        match ch {
+            '[' => class = true,
+            ']' => class = false,
+            '{' if !class => braces += 1,
+            '}' if !class => braces = braces.saturating_sub(1),
+            ',' if !class && braces == 0 => {
+                patterns.push(&filter[start..at]);
+                start = at + 1;
+            }
+            _ => (),
+        }
+    }
+    patterns.push(&filter[start..]);
+    patterns
+        .into_iter()
         .map(str::trim)
         .filter(|p| !p.is_empty())
         .map(|pattern| {
@@ -267,7 +301,8 @@ fn draft_is_ignored(path: &Path, root: &Path) -> bool {
     if relative.ancestors().any(|part| {
         part.file_name().is_some_and(|name| {
             let name = name.to_string_lossy();
-            crate::folder::excluded(&name, part != relative) || name.ends_with(".hedit-workspace")
+            crate::folder::excluded(&name, part != relative)
+                || (part == relative && name.ends_with(".hedit-workspace"))
         })
     }) {
         return true;
@@ -285,6 +320,20 @@ fn draft_is_ignored(path: &Path, root: &Path) -> bool {
                 if !matched.is_none() {
                     return matched.is_ignore();
                 }
+            }
+        }
+    }
+    if let Some(repo) = path
+        .ancestors()
+        .skip(1)
+        .find(|dir| dir.join(".git").is_dir())
+    {
+        let rules = repo.join(".git/info/exclude");
+        if rules.is_file() {
+            let mut builder = ignore::gitignore::GitignoreBuilder::new(repo);
+            builder.add(rules);
+            if let Ok(matcher) = builder.build() {
+                return matcher.matched_path_or_any_parents(path, false).is_ignore();
             }
         }
     }
@@ -375,7 +424,8 @@ pub fn folders(
     let regex = options.compile(query)?;
     let mut result = Results::default();
     let mut retained = 0;
-    let mut paths = walk(roots, filter, cancel)?;
+    let (mut paths, skipped) = walk_counting_skips(roots, filter, cancel)?;
+    result.skipped = skipped;
     let unsaved = open.keys().filter(|path| {
         path.is_absolute()
             && path

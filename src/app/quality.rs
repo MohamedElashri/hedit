@@ -322,6 +322,7 @@ impl HeditApp {
                 self.quality.preview_rendered = None;
             }
             Event::Applied(pages, count, mut errors, restore) => {
+                let paged_edited = pages.len();
                 for (id, page) in pages {
                     if let Some(b) = self.workspace.open.iter_mut().find(|b| b.view.id == id) {
                         b.set_page(page);
@@ -333,6 +334,7 @@ impl HeditApp {
                 self.quality.replace_undo = restore;
                 self.quality.results = Default::default();
                 self.quality.preview_query = None;
+                let edited = edited + paged_edited;
                 self.notice = match edited {
                     0 => format!("Updated {count} files."),
                     _ => format!(
@@ -374,6 +376,15 @@ impl HeditApp {
                 }
             }
             Event::FileChanged(from, to) => {
+                if let Some(relative) = self
+                    .quality
+                    .folder_scope
+                    .as_ref()
+                    .and_then(|path| path.strip_prefix(&from).ok())
+                {
+                    let scope = to.as_ref().map(|path| path.join(relative));
+                    self.set_folder_search_scope(scope);
+                }
                 if let Some(to) = to {
                     for b in &mut self.workspace.open {
                         if let Some(path) = &b.page.info.path {
@@ -978,11 +989,15 @@ impl HeditApp {
             .open
             .iter()
             .filter_map(|b| {
-                b.page
-                    .info
-                    .path
-                    .as_ref()
-                    .map(|p| (PathBuf::from(p), b.view.id, b.page.info.dirty, b.follow))
+                b.page.info.path.as_ref().map(|p| {
+                    (
+                        search_path(p),
+                        b.view.id,
+                        b.page.info.dirty,
+                        b.follow,
+                        b.page.start,
+                    )
+                })
             })
             .collect::<Vec<_>>();
         self.job(ctx, move || {
@@ -992,8 +1007,8 @@ impl HeditApp {
             let mut restore = vec![];
             for plan in plans {
                 let result = (|| {
-                    if let Some((_, id, dirty, follow)) =
-                        open.iter().find(|(p, _, _, _)| p == &plan.path)
+                    if let Some((_, id, dirty, follow, page_start)) =
+                        open.iter().find(|(p, _, _, _, _)| p == &plan.path)
                     {
                         if *dirty || *follow {
                             return Err(format!(
@@ -1018,17 +1033,17 @@ impl HeditApp {
                         let size = candidate.info().size;
                         let revision = candidate.info().revision;
                         candidate.replace(0, size, plan.after, revision)?;
-                        candidate.save(None)?;
-                        let page = candidate.page(0)?;
+                        let page = candidate.page(*page_start)?;
                         *doc = candidate;
                         pages.push((*id, page));
+                        Ok(false)
                     } else {
                         restore.push(search::apply_recorded(&plan)?);
+                        Ok(true)
                     }
-                    Ok(())
                 })();
                 match result {
-                    Ok(()) => count += 1,
+                    Ok(wrote_disk) => count += usize::from(wrote_disk),
                     Err(e) => errors.push(e),
                 }
             }

@@ -571,7 +571,7 @@ impl HeditApp {
         }
         if let Some(forward) = navigate {
             self.quality.results_newer = true;
-            self.next_result(forward);
+            self.next_result(ctx, forward);
         }
         if choose_folder {
             self.open_folder(ctx);
@@ -759,11 +759,7 @@ impl HeditApp {
             self.quality.result_current = hit;
             self.quality.result_shown = hit;
             self.quality.results_newer = true;
-            self.pending_paths.push_back(PathBuf::from(format!(
-                "{}:{line}:{}",
-                path.display(),
-                column.unwrap_or(1)
-            )));
+            self.open_existing_location(ui.ctx(), path, line as u64, column.unwrap_or(1) as u64);
         }
     }
 
