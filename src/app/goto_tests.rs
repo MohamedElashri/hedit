@@ -40,6 +40,35 @@ fn palette(ctx: &egui::Context, app: &mut HeditApp, query: &str) {
 }
 
 #[test]
+fn go_to_file_restores_the_focused_groups_cursor() {
+    use hedit::advanced::Selection;
+
+    let directory = tempfile::tempdir().unwrap();
+    let (mut workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+    workspace.open[0].page.text = "abcdefghijk".into();
+    workspace.edit(0, "").unwrap();
+    workspace.name_scratchpad(0, "first").unwrap();
+    workspace.new_buffer().unwrap();
+    workspace.name_scratchpad(1, "second").unwrap();
+    workspace.active = 0;
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    app.set_selections(vec![Selection::caret(1)]);
+    app.split(1);
+    app.focus_group(1, false);
+    app.set_selections(vec![Selection::caret(4)]);
+    app.select_tab(1);
+    app.focus_group(0, false);
+    assert_eq!(app.active().view.head, 1);
+    app.focus_group(1, false);
+
+    palette(&ctx, &mut app, "first");
+    frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)]);
+    assert_eq!(app.active().view.name, "first");
+    assert_eq!(app.active().view.head, 4);
+}
+
+#[test]
 fn cancelling_a_goto_preview_restores_extra_selections_and_horizontal_scroll() {
     let directory = tempfile::tempdir().unwrap();
     let (mut workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
