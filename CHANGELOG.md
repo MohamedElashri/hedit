@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.5] - 2026-11-26
+
+- Search an Explorer folder and open a terminal in a selected directory.
+- Copy file locations and see selection counts in the status bar.
+- Fix folder search, replacement undo, file jumps, selections, and terminal state.
+- Shorten the docs and add lookup tables, screenshots, and plugin workflow diagrams.
+
 ## [0.7.4] - 2026-11-26
 
 - Add built-in file and folder icons to Explorer, Source Control, tabs, and Go to File.
