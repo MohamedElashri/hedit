@@ -61,6 +61,16 @@ pub(super) fn resolve(text: &str, path: &Path, target: &Target) -> Option<(usize
     }
 }
 
+pub(super) fn parse_file_query(query: &str) -> (&str, Option<Target>) {
+    match query.as_bytes() {
+        [drive, b':', b'/' | b'\\', ..] if drive.is_ascii_alphabetic() => {
+            let (path, target) = parse(&query[2..]);
+            (&query[..2 + path.len()], target)
+        }
+        _ => parse(query),
+    }
+}
+
 /// Symbols matching `query`, best first, as (name, 1-based line).
 pub(super) fn symbol_matches(text: &str, path: &Path, query: &str) -> Vec<(String, usize)> {
     let mut found: Vec<(i64, String, usize)> = hedit::intelligence::symbols(text, path)
@@ -321,9 +331,13 @@ impl HeditApp {
                 .clone()
                 .map(PathBuf::from)
                 .unwrap_or_default();
-            if let Some((line, column)) = resolve(&b.page.text.clone(), &path, &target) {
+            if let Some((line, column)) = resolve(&b.page.text, &path, &target) {
                 self.navigation_mark();
-                self.jump_to_line(ctx, line, column);
+                if matches!(target, Target::Line(..)) {
+                    self.jump_to_line(ctx, line, column);
+                } else {
+                    self.jump_to_page_line(ctx, line, column);
+                }
             }
             return;
         };
