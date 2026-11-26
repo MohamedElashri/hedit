@@ -19,6 +19,7 @@ use std::{
 
 const IO_CHUNK: usize = 8192;
 const QUEUE_SIZE: usize = 32;
+const CONNECTING_STATUS: &str = "Connecting to SSH shell…";
 pub const PASTE_LIMIT: usize = 256 * 1024;
 
 pub struct Cell {
@@ -138,7 +139,7 @@ impl Session {
             input,
             output,
             directory: directory.to_owned(),
-            status: "Connecting to SSH shell…".into(),
+            status: CONNECTING_STATUS.into(),
             running: true,
             output_generation: 0,
             size,
@@ -285,17 +286,21 @@ impl Session {
             };
             match output {
                 Output::Bytes(bytes) => {
+                    if self.status == CONNECTING_STATUS {
+                        self.status = "Running".into();
+                    }
                     self.vt.vt_write(&bytes);
                     self.output_generation = self.output_generation.wrapping_add(1);
                 }
-                Output::Error(error) => {
+                Output::Error(error) if self.running => {
                     self.status = error;
                     self.running = false;
                 }
-                Output::Exit => {
+                Output::Exit if self.running => {
                     self.status = "Shell exited".into();
                     self.running = false;
                 }
+                Output::Error(_) | Output::Exit => {}
             }
             count += 1;
         }
@@ -466,6 +471,44 @@ mod tests {
     use super::*;
     #[cfg(unix)]
     use std::time::{Duration, Instant};
+
+    fn remote_terminal() -> (Session, mpsc::SyncSender<Output>) {
+        let (input, _commands) = mpsc::sync_channel(1);
+        let (_events, output) = mpsc::channel();
+        let mut session = Session::from_remote(
+            Path::new("/"),
+            hedit_core::backend::RemotePty {
+                input,
+                output,
+                resize: std::sync::Arc::new(|_, _, _, _| Ok(())),
+                stop: std::sync::Arc::new(|| {}),
+            },
+            || {},
+        )
+        .unwrap();
+        let (tx, rx) = mpsc::sync_channel(4);
+        session.output = rx;
+        (session, tx)
+    }
+
+    #[test]
+    fn regression_remote_terminal_leaves_connecting_when_output_arrives() {
+        let (mut session, events) = remote_terminal();
+        events.send(Output::Bytes(b"shell ready".to_vec())).unwrap();
+        session.poll();
+        assert!(session.running);
+        assert_eq!(session.status, "Running");
+    }
+
+    #[test]
+    fn regression_remote_terminal_keeps_stopped_status_after_exit_arrives() {
+        let (mut session, events) = remote_terminal();
+        session.stop();
+        events.send(Output::Exit).unwrap();
+        session.poll();
+        assert!(!session.running);
+        assert_eq!(session.status, "Stopped");
+    }
 
     #[test]
     fn ghostty_encodes_control_keys_application_arrows_and_bracketed_paste() {

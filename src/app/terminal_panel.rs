@@ -509,10 +509,8 @@ impl HeditApp {
                 .active
                 .min(self.terminal.tabs.len().saturating_sub(1));
             self.terminal.binding_prefix = None;
-            self.terminal.open = !self.terminal.tabs.is_empty();
-            self.terminal.focus = self.terminal.open;
-            self.focus_editor = !self.terminal.open;
-            if !self.terminal.open {
+            if self.terminal.open && self.terminal.tabs.is_empty() {
+                self.hide_panel();
                 ctx.memory_mut(|m| m.surrender_focus(input_id()));
             }
         }

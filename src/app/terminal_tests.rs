@@ -11,6 +11,22 @@ fn app_in(directory: &std::path::Path) -> (egui::Context, HeditApp) {
     (ctx, app)
 }
 
+#[cfg(feature = "terminal")]
+#[test]
+fn regression_closing_a_hidden_terminal_keeps_output_visible() {
+    let dir = tempfile::tempdir().unwrap();
+    let (ctx, mut app) = app_in(dir.path());
+    app.choose_terminal(true);
+    app.execute(&ctx, Command::NewTerminal);
+    app.execute(&ctx, Command::NewTerminal);
+    app.show_build_output();
+    app.execute(&ctx, Command::CloseTerminal);
+    assert_eq!(app.terminal.tabs.len(), 1);
+    assert!(!app.terminal.open);
+    assert!(!app.terminal.focus);
+    assert!(app.build.open);
+}
+
 #[test]
 fn terminal_setup_is_opt_in_persisted_and_does_not_start_a_shell() {
     let directory = tempfile::tempdir().unwrap();
