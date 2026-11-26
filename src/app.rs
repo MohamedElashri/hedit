@@ -651,6 +651,7 @@ impl HeditApp {
                 .all(|b| b.page.text.is_empty() && b.page.info.path.is_none())
     }
     fn changed(&mut self) {
+        self.workspace.refresh_untitled_names();
         self.generation = self.generation.wrapping_add(1);
     }
     fn report(&mut self, result: Result<(), String>) {
@@ -1505,7 +1506,6 @@ impl HeditApp {
                         .iter_mut()
                         .find(|b| b.page.info.id == id)
                     {
-                        buffer.view.name = info.name.clone();
                         buffer.page.info = info;
                         buffer.refresh_name();
                         buffer.external = false;

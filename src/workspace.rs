@@ -20,6 +20,8 @@ pub struct Change {
 pub struct Buffer {
     pub page: Page,
     pub view: TabView,
+    // Zero means this buffer is the only one using the fallback title.
+    untitled_number: Option<usize>,
     pub external: bool,
     pub follow: bool,
     pub restore_cursor: bool,
@@ -51,10 +53,10 @@ impl Buffer {
     }
     pub fn new(page: Page, view: Option<TabView>) -> Self {
         let detect = view.is_none() && page.info.path.is_some();
-        let mut view = view.unwrap_or(TabView {
+        let mut view = view.unwrap_or_else(|| TabView {
             pinned: false,
             id: page.info.id,
-            name: label(&page),
+            name: String::new(),
             page_start: page.start,
             anchor: 0,
             head: 0,
@@ -78,18 +80,21 @@ impl Buffer {
         view.selections = crate::advanced::normalize(&view.selections, page.text.chars().count());
         view.selections
             .truncate(crate::advanced::MAX_SELECTIONS - 1);
-        Self {
+        let mut buffer = Self {
             changes: std::collections::VecDeque::new(),
             cursor_undo: vec![],
             cursor_redo: vec![],
             pending_selection: None,
             page,
             view,
+            untitled_number: None,
             external: false,
             follow: false,
             restore_cursor: true,
             reveal_cursor: false,
-        }
+        };
+        buffer.refresh_name();
+        buffer
     }
     pub fn set_page(&mut self, page: Page) {
         if !page.info.paged
@@ -118,14 +123,30 @@ impl Buffer {
         self.restore_cursor = true;
     }
     pub fn refresh_name(&mut self) {
-        self.view.name = if self.page.info.path.is_none() {
+        let name = if self.page.info.path.is_none() {
             self.view
                 .custom_name
                 .clone()
-                .unwrap_or_else(|| label(&self.page))
+                .or_else(|| draft_name(&self.page.text))
         } else {
-            self.page.info.name.clone()
+            Some(self.page.info.name.clone())
         };
+        if let Some(name) = name {
+            self.view.name = name;
+            self.untitled_number = None;
+        } else if self.untitled_number.is_none() {
+            self.set_untitled_number(0);
+        }
+    }
+    fn set_untitled_number(&mut self, number: usize) {
+        if self.untitled_number != Some(number) {
+            self.untitled_number = Some(number);
+            self.view.name = if number == 0 {
+                "Untitled".into()
+            } else {
+                format!("Untitled {number}")
+            };
+        }
     }
     pub fn cursor_offset(&self) -> u64 {
         self.page.start
@@ -236,6 +257,7 @@ impl Workspace {
                 .and_then(|id| open.iter().position(|b| b.view.id == *id))
                 .unwrap_or(0);
             workspace.open = open;
+            workspace.refresh_untitled_names();
             for view in &workspace.closed {
                 workspace.editor.close_document_lifetime(view.id)?;
             }
@@ -311,6 +333,8 @@ impl Workspace {
         };
         if workspace.open.is_empty() {
             workspace.new_buffer()?;
+        } else {
+            workspace.refresh_untitled_names();
         }
         Ok((workspace, errors))
     }
@@ -318,6 +342,9 @@ impl Workspace {
         self.editor.insert(document)?;
         self.open.push(Buffer::new(page, None));
         self.active = self.open.len() - 1;
+        if self.open[self.active].untitled_number.is_some() {
+            self.refresh_untitled_names();
+        }
         Ok(())
     }
     pub fn new_buffer(&mut self) -> Result<(), String> {
@@ -329,6 +356,24 @@ impl Workspace {
         let mut document = Document::empty(self.editor.id());
         let page = document.page(0)?;
         self.add(document, page)
+    }
+    /// Derive fallback titles from the current open tabs in workspace order.
+    pub fn refresh_untitled_names(&mut self) {
+        let mut tabs = self
+            .open
+            .iter_mut()
+            .filter(|b| b.untitled_number.is_some())
+            .peekable();
+        let Some(first) = tabs.next() else {
+            return;
+        };
+        if tabs.peek().is_none() {
+            first.set_untitled_number(0);
+            return;
+        }
+        for (ordinal, buffer) in std::iter::once(first).chain(tabs).enumerate() {
+            buffer.set_untitled_number(ordinal + 1);
+        }
     }
     pub fn view(&self) -> SessionView {
         SessionView {
@@ -419,7 +464,12 @@ impl Workspace {
         }
         self.editor
             .close_document_lifetime(self.open[index].view.id)?;
-        let buffer = self.open.remove(index);
+        let mut buffer = self.open.remove(index);
+        if buffer.untitled_number.is_some() {
+            // Whitespace-only drafts can be recovered from the shelf. Give
+            // them stable labels even as the set of open tabs changes.
+            buffer.view.name = format!("Untitled {}", buffer.view.id);
+        }
         self.closed.push(buffer.view);
         self.after_close(index)
     }
@@ -445,6 +495,8 @@ impl Workspace {
         self.active = self.active.min(self.open.len().saturating_sub(1));
         if self.open.is_empty() {
             self.new_buffer()?;
+        } else {
+            self.refresh_untitled_names();
         }
         Ok(())
     }
@@ -471,6 +523,9 @@ impl Workspace {
         self.closed.remove(index);
         self.open.push(Buffer::new(page, Some(view)));
         self.active = self.open.len() - 1;
+        if self.open[self.active].untitled_number.is_some() {
+            self.refresh_untitled_names();
+        }
         Ok(())
     }
     pub fn name_scratchpad(&mut self, index: usize, name: &str) -> Result<(), String> {
@@ -494,6 +549,7 @@ impl Workspace {
             Some(name.into())
         };
         buffer.refresh_name();
+        self.refresh_untitled_names();
         Ok(())
     }
     pub fn toggle_bookmark(&mut self, index: usize) -> Result<bool, String> {
@@ -626,7 +682,11 @@ impl Workspace {
         }
         buffer.view.bookmarks.sort_by_key(|b| b.offset);
         buffer.view.bookmarks.dedup_by_key(|b| b.offset);
+        let was_untitled = buffer.untitled_number.is_some();
         buffer.refresh_name();
+        if buffer.untitled_number.is_some() != was_untitled {
+            self.refresh_untitled_names();
+        }
         Ok(())
     }
 }
@@ -729,25 +789,14 @@ pub fn splice<'a>(old: &str, new: &'a str) -> (usize, usize, &'a str) {
     (prefix, old.len() - suffix, &new[prefix..new.len() - suffix])
 }
 
-fn label(page: &Page) -> String {
-    if page.info.path.is_some() {
-        return page.info.name.clone();
+fn draft_name(text: &str) -> Option<String> {
+    let line = text.lines().map(str::trim).find(|line| !line.is_empty())?;
+    let mut chars = line.chars();
+    let mut label: String = chars.by_ref().take(40).collect();
+    if chars.next().is_some() {
+        label.push('…');
     }
-    let line = page
-        .text
-        .lines()
-        .find(|line| !line.trim().is_empty())
-        .unwrap_or("")
-        .trim();
-    if line.is_empty() {
-        format!("Untitled {}", page.info.id)
-    } else {
-        let mut label: String = line.chars().take(40).collect();
-        if line.chars().count() > 40 {
-            label.push('…');
-        }
-        label
-    }
+    Some(label)
 }
 
 #[cfg(test)]
