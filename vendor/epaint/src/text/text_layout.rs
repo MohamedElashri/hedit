@@ -291,7 +291,13 @@ fn layout_section(
 
     paragraph.cursor_x += leading_space;
 
-    for chr in job.text[byte_range.clone()].chars() {
+    let text = &job.text[byte_range.clone()];
+    // Long ASCII lines tend to repeat glyph pairs thousands of times. Keep
+    // kerning local to this font and layout section.
+    let mut kerning = (text.len() >= LONG_PARAGRAPH_BYTES && text.is_ascii())
+        .then(|| vec![f32::NAN; 128 * 128]);
+    let mut previous_ascii: Option<usize> = None;
+    for chr in text.chars() {
         if job.break_on_newline && chr == '\n' {
             let capacity = capacities.get(out_paragraphs.len()).copied().unwrap_or(0);
             out_paragraphs.push(Paragraph::from_section_index(section_index, capacity));
@@ -301,7 +307,16 @@ fn layout_section(
             let (font_impl, glyph_info) = font.font_impl_and_glyph_info(chr);
             if let Some(font_impl) = font_impl {
                 if let Some(last_glyph_id) = last_glyph_id {
-                    paragraph.cursor_x += font_impl.pair_kerning(last_glyph_id, glyph_info.id);
+                    let kern = if let (Some(entries), Some(previous)) = (&mut kerning, previous_ascii) {
+                        let cached = &mut entries[previous * 128 + chr as usize];
+                        if cached.is_nan() {
+                            *cached = font_impl.pair_kerning(last_glyph_id, glyph_info.id);
+                        }
+                        *cached
+                    } else {
+                        font_impl.pair_kerning(last_glyph_id, glyph_info.id)
+                    };
+                    paragraph.cursor_x += kern;
                     paragraph.cursor_x += extra_letter_spacing;
                 }
             }
@@ -322,6 +337,7 @@ fn layout_section(
             paragraph.cursor_x += glyph_info.advance_width;
             paragraph.cursor_x = font.round_to_pixel(paragraph.cursor_x);
             last_glyph_id = Some(glyph_info.id);
+            previous_ascii = Some(chr as usize);
         }
     }
 }

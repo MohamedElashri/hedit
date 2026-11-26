@@ -36,6 +36,15 @@ pub(super) struct TerminalTab {
     selection_start: Option<(u16, u32)>,
     scroll_remainder: f32,
     palette: Option<Option<[hedit::theme::Rgb; 16]>>,
+    colors: Option<[hedit::theme::Rgb; 3]>,
+    layout: Option<TerminalLayout>,
+}
+
+#[cfg(feature = "terminal")]
+struct TerminalLayout {
+    grid: Arc<hedit::terminal::Grid>,
+    bidi: bool,
+    rows: Vec<terminal_text::Row>,
 }
 
 impl TerminalState {
@@ -478,6 +487,8 @@ impl HeditApp {
                         selection_start: None,
                         scroll_remainder: 0.0,
                         palette: None,
+                        colors: None,
+                        layout: None,
                     });
                     self.terminal.active = self.terminal.tabs.len() - 1;
                     self.set_panel(super::workbench_panel::Panel::Terminal);
@@ -1126,15 +1137,19 @@ mod surface {
         {
             session.status = error;
         }
-        let _ = session
-            .vt
-            .set_default_fg_color(Some(rgb(theme.text.color())));
-        let _ = session
-            .vt
-            .set_default_bg_color(Some(rgb(theme.surface.color())));
-        let _ = session
-            .vt
-            .set_default_cursor_color(Some(rgb(theme.accent.color())));
+        let defaults = [theme.text, theme.surface, theme.accent];
+        if tab.colors != Some(defaults) {
+            let _ = session
+                .vt
+                .set_default_fg_color(Some(rgb(theme.text.color())));
+            let _ = session
+                .vt
+                .set_default_bg_color(Some(rgb(theme.surface.color())));
+            let _ = session
+                .vt
+                .set_default_cursor_color(Some(rgb(theme.accent.color())));
+            tab.colors = Some(defaults);
+        }
         let selected_palette = palette.copied();
         if tab.palette != Some(selected_palette) {
             let colors = palette.map(|colors| {
@@ -1162,14 +1177,25 @@ mod surface {
                 ctx.input_mut(|i| i.smooth_scroll_delta = egui::Vec2::ZERO);
             }
         }
-        let mut grid = match session.grid() {
+        let mut grid = match session.shared_grid() {
             Ok(grid) => grid,
             Err(error) => {
                 session.status = format!("Terminal rendering: {error}");
                 return;
             }
         };
-        let layout = terminal_text::layout(&grid, bidi);
+        if tab
+            .layout
+            .as_ref()
+            .is_none_or(|layout| layout.bidi != bidi || !Arc::ptr_eq(&layout.grid, &grid))
+        {
+            tab.layout = Some(TerminalLayout {
+                grid: grid.clone(),
+                bidi,
+                rows: terminal_text::layout(&grid, bidi),
+            });
+        }
+        let layout = &tab.layout.as_ref().unwrap().rows;
         let logical_position = |pos: egui::Pos2| {
             let y = ((pos.y - rect.top()) / cell.y)
                 .floor()
@@ -1205,13 +1231,13 @@ mod surface {
                 }
             }
             // Refresh selection flags in the same frame as the drag.
-            if let Ok(updated) = session.grid() {
+            if let Ok(updated) = session.shared_grid() {
                 grid = updated;
             }
         }
         let painter = ui.painter().with_clip_rect(rect);
         painter.rect_filled(rect, 0.0, color(grid.background));
-        for (y, (cells, row)) in grid.rows.iter().zip(&layout).enumerate() {
+        for (y, (cells, row)) in grid.rows.iter().zip(layout).enumerate() {
             for (visual, &logical) in row.visual_to_logical.iter().enumerate() {
                 let c = &cells[logical];
                 let pos = rect.min + egui::vec2(visual as f32 * cell.x, y as f32 * cell.y);

@@ -2373,7 +2373,7 @@ impl HeditApp {
         });
         let projection = self.projections[pane_id]
             .projection(buffer.view.tab_size.unwrap_or(4), &buffer.view.folds);
-        let mut display = projection.text.clone();
+        let mut display = std::borrow::Cow::Borrowed(projection.text.as_str());
         let original_selection = hedit::advanced::Selection {
             anchor: buffer.view.anchor,
             head: buffer.view.head,
@@ -2473,13 +2473,17 @@ impl HeditApp {
         } else {
             column_width * f32::from(self.settings.wrap_width)
         };
-        // Each group keeps its own layout and highlighting.
+        // Reuse a matching primary layout while keeping each group's view local.
+        let document = (buffer.view.id, buffer.page.start);
         let layout_cache = if pane_id == 0 {
+            self.editor_layout.activate(document);
             &mut self.editor_layout
         } else {
-            &mut self.extra_layouts[pane_id - 1]
+            let cache = &mut self.extra_layouts[pane_id - 1];
+            cache.activate(document);
+            cache.offer_shared(&self.editor_layout);
+            cache
         };
-        layout_cache.activate((buffer.view.id, buffer.page.start));
         layout_cache.custom = extensions::syntax_for(
             &self.extensions,
             self.extension_syntax.get(&buffer.page.info.id),
@@ -2608,6 +2612,7 @@ impl HeditApp {
         // 2 MiB; it goes back, possibly edited, right after the editor is drawn.
         let old = std::mem::take(&mut buffer.page.text);
         let mut edited_text: Option<String> = None;
+        let mut known_splice = None;
         let scroll_output = ui
             .scope_builder(egui::UiBuilder::new().max_rect(editor_area), |ui| {
                 ui.set_clip_rect(ui.clip_rect().intersect(editor_area));
@@ -2628,6 +2633,7 @@ impl HeditApp {
                         )));
                         let mut editor_text = clipboard_lines::EditorText {
                             text: &mut display,
+                            change: None,
                             crlf: buffer.page.info.eol == "CRLF",
                             index: projection.is_identity().then(|| source_index.clone()),
                         };
@@ -2684,6 +2690,8 @@ impl HeditApp {
                             ui.visuals_mut().text_cursor.stroke.color = egui::Color32::TRANSPARENT;
                         }
                         let mut output = edit.show(ui);
+                        let edited_chars = editor_text.index.as_ref().map(|index| index.chars);
+                        known_splice = editor_text.change.filter(|_| edited_chars.is_some());
                         ui.visuals_mut().selection.bg_fill = selection_color;
                         let row_index = self.row_indexes[pane_id].get(&output.galley);
                         let visible_rows =
@@ -3176,7 +3184,20 @@ impl HeditApp {
                                 head: range.primary.index,
                             };
                             if output.response.changed() {
-                                let edited = projection.edited(&old, &display, selection);
+                                let changed_chars = edited_chars.filter(|_| {
+                                    known_splice.is_some() && buffer.view.folds.is_empty()
+                                });
+                                let edited = if let Some(count) = changed_chars {
+                                    hedit::advanced::Batch {
+                                        text: std::mem::take(&mut display).into_owned(),
+                                        selections: vec![hedit::advanced::Selection {
+                                            anchor: selection.anchor.min(count),
+                                            head: selection.head.min(count),
+                                        }],
+                                    }
+                                } else {
+                                    projection.edited(&old, &display, selection)
+                                };
                                 let touched = if buffer.view.folds.is_empty() {
                                     false
                                 } else {
@@ -3538,7 +3559,10 @@ impl HeditApp {
             let mut cursors = b.view.selections.clone();
             cursors.push(original_selection);
             b.pending_selection = Some(cursors);
-            match self.workspace.edit(index, &old) {
+            match self
+                .workspace
+                .edit_with_splice(index, &old, None, known_splice)
+            {
                 Ok(()) => self.changed(),
                 Err(error) => {
                     // If an external writer invalidates a paged source, keep

@@ -77,9 +77,10 @@ pub(super) fn code_job(
 #[derive(Default)]
 pub(super) struct LayoutCache {
     pub(super) custom: Option<Arc<syntax::declarative::Definition>>,
-    entry: Option<Entry>,
+    entry: Option<Arc<Entry>>,
+    shared: Option<Arc<Entry>>,
     document: Option<(u64, u64)>,
-    inactive: Vec<((u64, u64), Entry)>,
+    inactive: Vec<((u64, u64), Arc<Entry>)>,
     grammar: syntax::grammar::Grammar,
     /// A grammar highlight running on a background thread.
     job: Option<HighlightJob>,
@@ -186,6 +187,13 @@ impl LayoutCache {
         let entry = self.entry.as_ref()?;
         Some((Arc::clone(&entry.galley), Arc::clone(&entry.bidi)))
     }
+    pub(super) fn offer_shared(&mut self, other: &Self) {
+        self.shared = other
+            .entry
+            .clone()
+            .filter(|_| self.document == other.document);
+    }
+
     pub(super) fn layout(
         &mut self,
         ui: &egui::Ui,
@@ -200,6 +208,21 @@ impl LayoutCache {
             (None, None) => true,
             _ => false,
         };
+        if let Some(entry) = self.shared.take().filter(|entry| {
+            let atlas = ui.fonts(|fonts| fonts.texture_atlas());
+            entry.language == language
+                && entry.font == font
+                && entry.wrap_width == wrap_width
+                && entry.pixels_per_point == ui.ctx().pixels_per_point()
+                && entry.atlas.ptr_eq(&Arc::downgrade(&atlas))
+                && entry.theme == *theme
+                && custom_matches(entry)
+                && entry.galley.job.text == text
+        }) {
+            let galley = Arc::clone(&entry.galley);
+            self.entry = Some(entry);
+            return galley;
+        }
         let runs = if let Some(custom) = &self.custom {
             self.entry
                 .as_ref()
@@ -267,7 +290,7 @@ impl LayoutCache {
                 (galley, bidi, None)
             }
         });
-        self.entry = Some(Entry {
+        self.entry = Some(Arc::new(Entry {
             custom: self.custom.clone(),
             language,
             font,
@@ -279,7 +302,7 @@ impl LayoutCache {
             galley: Arc::clone(&galley),
             blocks,
             bidi: Arc::new(bidi),
-        });
+        }));
         galley
     }
     /// Grammar colors for `text`, or `None` to use the lexer: for languages
