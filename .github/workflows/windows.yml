@@ -7,6 +7,10 @@ on:
         description: Validate without building or uploading release packages
         type: boolean
         default: false
+      package_only:
+        description: Build and verify packages when validation runs separately
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -35,6 +39,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Build storage and cleanup tests
+        if: ${{ !inputs.package_only }}
         run: python scripts/test-build-storage.py
       - name: Install pinned Zig for Ghostty VT
         run: python scripts/setup-zig.py
@@ -74,20 +79,28 @@ jobs:
           key: windows-x86_64
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Clippy
+        if: ${{ !inputs.package_only }}
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Rust tests
+        if: ${{ !inputs.package_only }}
         run: cargo test --locked --workspace --no-fail-fast
       - name: Patched renderer tests
+        if: ${{ !inputs.package_only }}
         run: cargo test --locked -p egui -p epaint --lib
       - name: Numeric native trace tests
+        if: ${{ !inputs.package_only }}
         run: python scripts/test-native-trace.py
       - name: SSH test fixture setup tests
+        if: ${{ !inputs.package_only }}
         run: python scripts/test-remote-live-setup.py
       - name: Release metadata tests
+        if: ${{ !inputs.package_only }}
         run: python scripts/test-release.py
       - name: Compiler setup tests
+        if: ${{ !inputs.package_only }}
         run: python scripts/test-zig-setup.py
       - name: Package tests
+        if: ${{ !inputs.package_only }}
         run: python scripts/test-windows-package.py
       - name: Build portable release
         if: ${{ !inputs.checks_only }}
