@@ -80,6 +80,8 @@ mod panes;
 mod paste_history;
 mod preferences;
 mod project;
+#[cfg(test)]
+mod project_format_tests;
 mod project_settings;
 #[cfg(test)]
 mod project_settings_tests;
@@ -772,7 +774,7 @@ impl HeditApp {
         self.checkpoint_job(ctx, self.generation, move || {
             store.save_snapshot(snapshot).and_then(|()| {
                 if let Some((ref path, state)) = project_state {
-                    hedit::projects::atomic_json(&hedit::projects::workspace_path(path), &state?)
+                    hedit::projects::save_workspace(path, &state?)
                 } else {
                     Ok(())
                 }
@@ -4184,9 +4186,10 @@ impl eframe::App for HeditApp {
             let _ = std::fs::remove_dir_all(&session);
         }
         if let Some(path) = &self.quality.project_path {
-            if let Err(error) = self.project_snapshot().and_then(|state| {
-                hedit::projects::atomic_json(&hedit::projects::workspace_path(path), &state)
-            }) {
+            if let Err(error) = self
+                .project_snapshot()
+                .and_then(|state| hedit::projects::save_workspace(path, &state))
+            {
                 eprintln!("hedit: final project workspace checkpoint failed: {error}");
             }
         }
