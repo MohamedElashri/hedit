@@ -85,6 +85,8 @@ mod project;
 mod project_settings;
 #[cfg(test)]
 mod project_settings_tests;
+#[cfg(test)]
+mod project_state_tests;
 mod quality;
 #[cfg(test)]
 mod quality_tests;
@@ -772,8 +774,8 @@ impl HeditApp {
         };
         self.checkpoint_job(ctx, self.generation, move || {
             store.save_snapshot(snapshot).and_then(|()| {
-                if let Some((path, state)) = project_state {
-                    hedit::projects::atomic_json(&path.with_extension("hedit-workspace"), &state?)
+                if let Some((ref path, state)) = project_state {
+                    hedit::projects::atomic_json(&hedit::projects::workspace_path(path), &state?)
                 } else {
                     Ok(())
                 }
@@ -4230,7 +4232,7 @@ impl eframe::App for HeditApp {
         }
         if let Some(path) = &self.quality.project_path {
             if let Err(error) = self.project_snapshot().and_then(|state| {
-                hedit::projects::atomic_json(&path.with_extension("hedit-workspace"), &state)
+                hedit::projects::atomic_json(&hedit::projects::workspace_path(path), &state)
             }) {
                 eprintln!("hedit: final project workspace checkpoint failed: {error}");
             }

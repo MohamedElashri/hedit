@@ -72,6 +72,8 @@ pub struct Tab {
     pub text: Option<String>,
     pub view: crate::session::TabView,
     pub encoding: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bom: Option<bool>,
 }
 #[derive(Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -108,6 +110,18 @@ fn read_bytes(path: &Path, limit: u64) -> Result<Vec<u8>, String> {
     let file = crate::file_io::open_regular(path).map_err(|e| e.to_string())?;
     crate::file_io::read_bounded(file, limit).map_err(|e| e.to_string())
 }
+pub fn workspace_path(project: &Path) -> PathBuf {
+    let reserved_extension = project
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("hedit-workspace"));
+    if !reserved_extension {
+        return project.with_extension("hedit-workspace");
+    }
+    let mut distinct = project.as_os_str().to_owned();
+    distinct.push(".hedit-workspace");
+    distinct.into()
+}
+
 pub fn load(path: &Path) -> Result<(Project, State), String> {
     let mut project: Project = read_json(path, 1024 * 1024)?;
     let parent = path.parent().unwrap_or(Path::new("."));
@@ -121,11 +135,13 @@ pub fn load(path: &Path) -> Result<(Project, State), String> {
             return Err("Project roots must be folders.".into());
         }
     }
+    let mut seen = std::collections::HashSet::new();
+    project.folders.retain(|folder| seen.insert(folder.clone()));
     project.settings.formatting.validate()?;
     for f in project.settings.languages.values() {
         f.validate()?;
     }
-    let state_path = path.with_extension("hedit-workspace");
+    let state_path = workspace_path(path);
     let state: State = if state_path.exists() {
         read_json(&state_path, 64 * 1024 * 1024)?
     } else {
@@ -379,16 +395,58 @@ fn resolve_formatting(
     Ok(format)
 }
 fn editor_glob(pattern: &str, text: &str) -> bool {
-    if let Some(a) = pattern.find('{') {
-        if let Some(b) = pattern[a..].find('}') {
-            return pattern[a + 1..a + b].split(',').any(|choice| {
-                editor_glob(
-                    &format!("{}{}{}", &pattern[..a], choice, &pattern[a + b + 1..]),
-                    text,
-                )
-            });
+    // Expand ranges to the numeric spellings present in this path. A large
+    // range costs the same as a small one and never enumerates the interval.
+    static RANGE: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"\{(-?[0-9]+)\.\.(-?[0-9]+)\}").unwrap());
+    let mut rewritten = String::new();
+    let mut end = 0;
+    for range in RANGE.captures_iter(pattern) {
+        let whole = range.get(0).unwrap();
+        let (Ok(first), Ok(last)) = (range[1].parse::<i64>(), range[2].parse::<i64>()) else {
+            return false;
+        };
+        if first >= last {
+            return false;
         }
+        let mut choices = std::collections::BTreeSet::new();
+        for (start, ch) in text.char_indices() {
+            if !ch.is_ascii_digit() && ch != '-' {
+                continue;
+            }
+            let digits = start + usize::from(ch == '-');
+            for (index, digit) in text[digits..].bytes().take(19).enumerate() {
+                if !digit.is_ascii_digit() {
+                    break;
+                }
+                let candidate = &text[start..digits + index + 1];
+                if candidate
+                    .parse::<i64>()
+                    .is_ok_and(|n| (first..=last).contains(&n))
+                {
+                    choices.insert(candidate);
+                }
+            }
+        }
+        if choices.is_empty() {
+            return false;
+        }
+        rewritten.push_str(&pattern[end..whole.start()]);
+        if choices.len() == 1 {
+            rewritten.push_str(choices.first().unwrap());
+        } else {
+            rewritten.push('{');
+            rewritten.push_str(&choices.into_iter().collect::<Vec<_>>().join(","));
+            rewritten.push('}');
+        }
+        end = whole.end();
     }
+    let pattern = if end == 0 {
+        pattern
+    } else {
+        rewritten.push_str(&pattern[end..]);
+        &rewritten
+    };
     crate::search::glob(pattern, text)
         || pattern
             .strip_prefix("**/")
