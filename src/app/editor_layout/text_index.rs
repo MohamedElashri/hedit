@@ -46,6 +46,20 @@ impl TextIndex {
             .nth(cursor - chars)
             .map_or(text.len() - byte, |(at, _)| at)
     }
+    /// One-based file coordinates, with UTF-16 columns as used by file navigation.
+    pub fn navigation_position(&self, text: &str, cursor: usize) -> (usize, usize) {
+        let cursor = cursor.min(self.chars);
+        let line = self
+            .lines
+            .partition_point(|line| line.1 <= cursor)
+            .saturating_sub(1);
+        let prefix = &text[self.lines[line].0..self.byte(text, cursor)];
+        (
+            line + 1,
+            prefix.trim_end_matches('\r').encode_utf16().count() + 1,
+        )
+    }
+
     /// A UTF-8 boundary within one small chunk before the requested character.
     pub fn checkpoint(&self, cursor: usize) -> (usize, usize) {
         self.point(

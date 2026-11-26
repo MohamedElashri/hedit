@@ -19,17 +19,21 @@ pub(super) enum PickerLine {
 
 /// Split `app.rs@save` into the file query and what to go to inside it.
 pub(super) fn parse(query: &str) -> (&str, Option<Target>) {
-    if let Some(quoted) = query
+    let (file, suffix) = if let Some((quoted, suffix)) = query
         .strip_prefix('"')
-        .and_then(|text| text.strip_suffix('"'))
+        .and_then(|text| text.rsplit_once('"'))
+        .filter(|(_, suffix)| suffix.is_empty() || suffix.starts_with(['@', ':', '#']))
     {
-        return (quoted, None);
-    }
-    let Some(at) = query.find(['@', ':', '#']) else {
-        return (query, None);
+        (quoted, suffix)
+    } else if let Some(at) = query.find(['@', ':', '#']) {
+        (query[..at].trim(), &query[at..])
+    } else {
+        (query, "")
     };
-    let (file, rest) = (query[..at].trim(), &query[at + 1..]);
-    let target = match query.as_bytes()[at] {
+    let Some((delimiter, rest)) = suffix.split_at_checked(1) else {
+        return (file, None);
+    };
+    let target = match delimiter.as_bytes()[0] {
         b'@' => Target::Symbol(rest.trim().to_owned()),
         b':' => {
             let mut parts = rest.trim().splitn(2, ':');

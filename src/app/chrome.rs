@@ -456,13 +456,20 @@ impl HeditApp {
                                                             Command::CloseOthers,
                                                             Command::CloseRight,
                                                             Command::CopyPath,
+                                                            Command::CopyFileLocation,
                                                             Command::RevealInSidebar,
                                                         ] {
                                                             if matches!(
                                                                 command,
                                                                 Command::CopyPath
+                                                                    | Command::CopyFileLocation
                                                                     | Command::RevealInSidebar
                                                             ) && buffer.page.info.path.is_none()
+                                                            {
+                                                                continue;
+                                                            }
+                                                            if command == Command::CopyFileLocation
+                                                                && buffer.page.start != 0
                                                             {
                                                                 continue;
                                                             }

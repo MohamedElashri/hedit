@@ -12,6 +12,10 @@ fn queries_split_into_a_file_and_a_target() {
     );
     assert_eq!(parse(":42:7"), ("", Some(Target::Line(Some(42), Some(7)))));
     assert_eq!(
+        parse(r#""src/app@debug.rs":42:7"#),
+        ("src/app@debug.rs", Some(Target::Line(Some(42), Some(7))))
+    );
+    assert_eq!(
         parse("kernel.cu:12"),
         ("kernel.cu", Some(Target::Line(Some(12), None)))
     );
@@ -20,6 +24,34 @@ fn queries_split_into_a_file_and_a_target() {
         parse("#todo item"),
         ("", Some(Target::Text("todo item".into())))
     );
+}
+
+#[test]
+fn copied_file_location_round_trips_tabs_unicode_and_literal_filename() {
+    use hedit::advanced::Selection;
+
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("project");
+    std::fs::create_dir(&root).unwrap();
+    let path = root.join("app@debug.rs");
+    std::fs::write(&path, "first\n\t🙂x\n").unwrap();
+    let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    assert!(!app.command_enabled(Command::CopyFileLocation));
+    app.set_folder(hedit::folder::read_directory(root).unwrap());
+    app.open(&ctx, Some(path));
+    finish_app_job(&mut app, &ctx);
+    let cursor = "first\n\t🙂".chars().count();
+    app.set_selections(vec![Selection::caret(cursor)]);
+    app.execute(&ctx, Command::CopyFileLocation);
+    frame(&ctx, &mut app, vec![]);
+    let copied = app.paste_history[0].clone();
+    assert_eq!(copied, r#""app@debug.rs":2:4"#);
+    app.set_selections(vec![Selection::caret(0)]);
+    palette(&ctx, &mut app, &copied);
+    frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)]);
+    assert_eq!(app.active().view.head, cursor);
 }
 
 fn line_of(app: &HeditApp) -> usize {
