@@ -862,21 +862,20 @@ pub fn transform(
         operation,
         editing::Operation::Uppercase | editing::Operation::Lowercase
     ) {
-        for s in &mut ranges {
+        let bytes: Vec<_> = byte_ranges(text, &ranges).collect();
+        let (mut start_byte, mut start_char) = (0, 0);
+        let (mut end_byte, mut end_char) = (0, 0);
+        for (s, span) in ranges.iter_mut().zip(bytes) {
             if operation == editing::Operation::Duplicate && s.start() != s.end() {
                 continue;
             }
             let original = *s;
-            let start = byte(text, s.start());
-            let end = byte(text, s.end());
-            let a = text[..start].rfind('\n').map_or(0, |n| n + 1);
-            let b = if start != end && text[..end].ends_with('\n') {
-                end
-            } else {
-                text[end..].find('\n').map_or(text.len(), |n| end + n + 1)
-            };
-            s.anchor = text[..a].chars().count();
-            s.head = text[..b].chars().count();
+            let (a, b) = editing::line_range(text, span.start, span.end);
+            start_char += text[start_byte..a].chars().count();
+            end_char += text[end_byte..b].chars().count();
+            (start_byte, end_byte) = (a, b);
+            s.anchor = start_char;
+            s.head = end_char;
             if operation == editing::Operation::Duplicate {
                 duplicate_carets
                     .entry((s.start(), s.end()))
@@ -884,6 +883,60 @@ pub fn transform(
             }
         }
         ranges = normalize(&ranges, text.chars().count());
+    }
+    // An empty range can make a global command operate on the entire buffer.
+    // Other block-local edits can be assembled against the original text.
+    let local = !global || ranges.iter().all(|range| range.start() < range.end());
+    if local
+        && matches!(
+            operation,
+            editing::Operation::SelectLine
+                | editing::Operation::JoinLines
+                | editing::Operation::Indent
+                | editing::Operation::Unindent
+                | editing::Operation::Uppercase
+                | editing::Operation::Lowercase
+                | editing::Operation::SortLines
+                | editing::Operation::SortLinesIgnoreCase
+                | editing::Operation::ReverseLines
+                | editing::Operation::UniqueLines
+                | editing::Operation::TrimWhitespace
+                | editing::Operation::ToSpaces
+                | editing::Operation::ToTabs
+                | editing::Operation::ToggleComment
+        )
+    {
+        let mut output = String::with_capacity(text.len());
+        let mut selections = Vec::with_capacity(ranges.len());
+        let mut previous = 0;
+        let mut shift = 0isize;
+        for (s, bytes) in ranges.iter().zip(byte_ranges(text, &ranges)) {
+            output.push_str(&text[previous..bytes.start]);
+            let start = s.start();
+            let edit = editing::apply(
+                &text[bytes.clone()],
+                s.anchor - start,
+                s.head - start,
+                operation,
+                width,
+                tabs,
+                comment,
+            );
+            let base = start.saturating_add_signed(shift);
+            selections.push(Selection {
+                anchor: base + edit.anchor,
+                head: base + edit.head,
+            });
+            shift += edit.text.chars().count() as isize - (s.end() - start) as isize;
+            output.push_str(&edit.text);
+            previous = bytes.end;
+        }
+        output.push_str(&text[previous..]);
+        let selections = normalize(&selections, output.chars().count());
+        return Batch {
+            text: output,
+            selections,
+        };
     }
     let mut output = text.to_owned();
     let mut final_ranges: Vec<Selection> = vec![];
@@ -904,9 +957,10 @@ pub fn transform(
         });
         output = edit.text;
     }
+    let selections = normalize(&final_ranges, output.chars().count());
     Batch {
-        text: output.clone(),
-        selections: normalize(&final_ranges, output.chars().count()),
+        text: output,
+        selections,
     }
 }
 

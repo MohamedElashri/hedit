@@ -182,8 +182,13 @@ impl Git {
             }
             match child.try_wait().map_err(|e| e.to_string())? {
                 Some(status) if out.is_finished() && err.is_finished() => break status,
-                Some(_) => std::thread::sleep(Duration::from_millis(10)),
-                None => std::thread::sleep(Duration::from_millis(10)),
+                _ => std::thread::sleep(Duration::from_millis(
+                    if start.elapsed() < Duration::from_millis(10) {
+                        1
+                    } else {
+                        10
+                    },
+                )),
             }
         };
         if let Some(reason) = stopped {
@@ -316,6 +321,10 @@ impl Git {
             snapshot.commits = self.history(root, limit)?;
             snapshot.graph = history_graph(&snapshot.commits);
         }
+        // These operation markers are private to the current worktree,
+        // including when its .git file points at a linked worktree directory.
+        let directory = self.command(root, &["rev-parse", "--absolute-git-dir"])?;
+        let directory = Path::new(directory.strip_suffix('\n').unwrap_or(&directory));
         for (file, label) in [
             ("MERGE_HEAD", "Merge in progress"),
             ("CHERRY_PICK_HEAD", "Cherry-pick in progress"),
@@ -323,9 +332,7 @@ impl Git {
             ("rebase-merge", "Rebase in progress"),
             ("rebase-apply", "Rebase in progress"),
         ] {
-            let path = self.command(root, &["rev-parse", "--git-path", file])?;
-            let path = PathBuf::from(path.trim_end());
-            if root.join(path).exists() {
+            if directory.join(file).exists() {
                 snapshot.operation = Some(label.into());
                 break;
             }

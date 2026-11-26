@@ -54,15 +54,23 @@ pub fn matches(
     options: &Options,
     scope: Range<usize>,
 ) -> Result<Vec<Range<usize>>, String> {
+    let re = options.compile(query)?;
+    matching_ranges(&re, text, scope)
+}
+
+fn matching_ranges(
+    re: &Regex,
+    text: &str,
+    scope: Range<usize>,
+) -> Result<Vec<Range<usize>>, String> {
     if !text.is_char_boundary(scope.start)
         || !text.is_char_boundary(scope.end)
         || scope.start > scope.end
     {
         return Err("Invalid search selection.".into());
     }
-    let re = options.compile(query)?;
     let mut found = Vec::new();
-    for m in scoped_matches(&re, text, scope) {
+    for m in scoped_matches(re, text, scope) {
         if found.len() == MATCH_LIMIT {
             return Err("More than 20,000 matches; narrow the search.".into());
         }
@@ -107,12 +115,21 @@ pub fn replace(
     options: &Options,
     scope: Range<usize>,
 ) -> Result<(String, usize), String> {
-    let found = matches(text, query, options, scope.clone())?;
     let re = options.compile(query)?;
+    let found = matching_ranges(&re, text, scope)?;
+    replace_matches(text, replacement, options.regex.then_some(&re), &found)
+}
+
+fn replace_matches(
+    text: &str,
+    replacement: &str,
+    captures: Option<&Regex>,
+    found: &[Range<usize>],
+) -> Result<(String, usize), String> {
     let mut out = String::with_capacity(text.len());
     let mut at = 0;
-    if options.regex {
-        for hit in &found {
+    if let Some(re) = captures {
+        for hit in found {
             let captures = re.captures_at(text, hit.start).unwrap();
             out.push_str(&text[at..hit.start]);
             captures.expand(replacement, &mut out);
@@ -122,7 +139,7 @@ pub fn replace(
             }
         }
     } else {
-        for hit in &found {
+        for hit in found {
             out.push_str(&text[at..hit.start]);
             out.push_str(replacement);
             at = hit.end;
@@ -495,6 +512,7 @@ pub fn folders(
         };
         let first_hit = result.hits.len();
         let mut matched = Vec::new();
+        let mut spans = Vec::new();
         let mut line = 1;
         let mut column = 1;
         let mut previous = 0;
@@ -523,6 +541,9 @@ pub fn folders(
                     excerpt(&text[line_start..end], hit.start() - line_start),
                 ));
             }
+            if replacement.is_some() {
+                spans.push(hit.range());
+            }
             result.hits.push(Hit {
                 path: path.clone(),
                 line,
@@ -545,7 +566,8 @@ pub fn folders(
             break;
         }
         if let Some(replacement) = replacement {
-            let (after, _) = replace(&text, query, replacement, options, 0..text.len())?;
+            let (after, _) =
+                replace_matches(&text, replacement, options.regex.then_some(&regex), &spans)?;
             if after == text {
                 continue;
             }

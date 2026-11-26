@@ -938,8 +938,13 @@ impl Document {
         if self.paged || self.undo.is_empty() && self.redo.is_empty() {
             return Ok(None);
         }
-        let save = |states: &[EditState],
-                    sources: &mut SnapshotSources|
+        // Keep the on-disk history format readable by older editors and
+        // bound both the manifest and the number of source files they open.
+        const MIN_SHARED_HISTORY_BYTES: u64 = 64 * 1024;
+        let mut shared_sources = std::collections::HashSet::new();
+        let mut shared_references = 0;
+        let mut save = |states: &[EditState],
+                        sources: &mut SnapshotSources|
          -> Result<Vec<SavedHistoryState>, String> {
             let mut total = 0;
             let mut out = Vec::new();
@@ -953,17 +958,57 @@ impl Document {
                 historical.size = state.size;
                 historical.recovered = state.recovered;
                 historical.check_source()?;
-                let bytes = historical.read_range(0, state.size)?;
-                historical.check_source()?;
-                let pieces = if bytes.is_empty() {
-                    vec![]
+                // Flatten small states to avoid syncing a separate recovery
+                // source for each keystroke in a short note.
+                let candidates: Option<std::collections::HashSet<_>> =
+                    if state.size >= MIN_SHARED_HISTORY_BYTES {
+                        state
+                            .pieces
+                            .iter()
+                            .map(|piece| match &piece.source {
+                                Source::Edit(bytes) if bytes.len() as u64 <= SMALL_LIMIT => {
+                                    Some(Arc::as_ptr(bytes) as usize)
+                                }
+                                Source::Disk(file, stamp) if stamp.size <= SMALL_LIMIT => {
+                                    Some(Arc::as_ptr(file) as usize)
+                                }
+                                _ => None,
+                            })
+                            .collect()
+                    } else {
+                        None
+                    };
+                let pieces = if let Some(candidates) = candidates.filter(|candidates| {
+                    shared_references + state.pieces.len() <= 2_048
+                        && shared_sources.len() + candidates.difference(&shared_sources).count()
+                            <= 896
+                }) {
+                    shared_references += state.pieces.len();
+                    shared_sources.extend(candidates);
+                    state
+                        .pieces
+                        .iter()
+                        .map(|piece| {
+                            Ok(SavedPiece {
+                                buffer: sources.copy(&piece.source, directory, relative)?,
+                                start: piece.start,
+                                len: piece.len,
+                            })
+                        })
+                        .collect::<Result<Vec<_>, String>>()?
                 } else {
-                    vec![SavedPiece {
-                        buffer: sources.history(&bytes, directory, relative)?,
-                        start: 0,
-                        len: state.size,
-                    }]
+                    let bytes = historical.read_range(0, state.size)?;
+                    if bytes.is_empty() {
+                        vec![]
+                    } else {
+                        vec![SavedPiece {
+                            buffer: sources.history(&bytes, directory, relative)?,
+                            start: 0,
+                            len: state.size,
+                        }]
+                    }
                 };
+                historical.check_source()?;
                 out.push(SavedHistoryState {
                     splice: state.splice,
                     pieces,
