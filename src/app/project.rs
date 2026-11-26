@@ -631,6 +631,21 @@ impl HeditApp {
                 ui.close_menu();
             }
         }
+        if cfg!(feature = "terminal")
+            && ui
+                .add_enabled(
+                    self.command_enabled(Command::NewTerminal),
+                    egui::Button::new("Open Terminal Here"),
+                )
+                .on_disabled_hover_text("Enable the terminal in Settings to start a shell.")
+                .clicked()
+        {
+            let path = std::path::Path::new(path);
+            if let Some(directory) = if directory { Some(path) } else { path.parent() } {
+                self.new_terminal_in(ui.ctx(), Some(directory.to_path_buf()));
+            }
+            ui.close_menu();
+        }
         if ui.button("Reveal in file manager").clicked() {
             let path = path.to_owned();
             self.job(ui.ctx(), move || {
