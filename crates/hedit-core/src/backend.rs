@@ -47,6 +47,7 @@ pub enum FsQuery {
     Duplicate(PathBuf),
     DuplicateSibling(String),
     Trash,
+    Delete,
     Read { limit: u64 },
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -129,6 +130,7 @@ impl Call {
                     value(crate::folder::duplicate_sibling(&path, &name)?)
                 }
                 FsQuery::Trash => value(crate::folder::trash_path(&path)?),
+                FsQuery::Delete => value(crate::folder::delete_path(&path)?),
                 FsQuery::Read { limit } => value(
                     crate::file_io::read_bounded(
                         crate::file_io::open_regular(&path).map_err(|e| e.to_string())?,

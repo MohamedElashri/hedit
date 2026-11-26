@@ -406,6 +406,13 @@ fn catalog() -> &'static [Setting] {
         );
         setting!(
             Folders,
+            Bool,
+            "confirm_trash",
+            "Confirm Move to Trash",
+            "Ask before moving a file or folder to the trash."
+        );
+        setting!(
+            Folders,
             List,
             "file_exclude_patterns",
             "Excluded files",

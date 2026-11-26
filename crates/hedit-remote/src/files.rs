@@ -300,6 +300,24 @@ impl Files {
                     trash.sync_all().map_err(|_| Error::Storage)?;
                     serde_json::Value::Null
                 }
+                FsQuery::Delete => {
+                    let target = self.actual(path)?;
+                    if self.state.starts_with(&target) || target.starts_with(&self.state) {
+                        return Err(Error::Permission);
+                    }
+                    let (parent, name) = host::parent(&self.root, &Self::relative(path)?)?;
+                    let dir = cap_std::fs::Dir::from_std_file(parent);
+                    let kind = dir.symlink_metadata(&name).map_err(|_| Error::Permission)?;
+                    if kind.is_dir() {
+                        dir.remove_dir_all(&name).map_err(|_| Error::Storage)?;
+                    } else if kind.is_file() {
+                        dir.remove_file(&name).map_err(|_| Error::Storage)?;
+                    } else {
+                        return Err(Error::Permission);
+                    }
+                    dir.into_std_file().sync_all().map_err(|_| Error::Storage)?;
+                    serde_json::Value::Null
+                }
             })
         })();
         run.map_err(|e| format!("Remote filesystem operation: {e}"))

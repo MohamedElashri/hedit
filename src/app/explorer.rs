@@ -478,7 +478,11 @@ impl HeditApp {
             return true;
         }
         if tab_switch::take_exact(ctx, Modifiers::NONE, Key::Delete) {
-            self.begin_file_action(PathBuf::from(&node.path), quality::FileOperation::Trash);
+            self.begin_file_action(
+                ctx,
+                PathBuf::from(&node.path),
+                quality::FileOperation::Trash,
+            );
             return true;
         }
         if tab_switch::take_exact(ctx, Modifiers::NONE, Key::Enter)

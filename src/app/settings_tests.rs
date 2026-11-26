@@ -31,6 +31,56 @@ fn fake_frame() -> eframe::Frame {
 }
 
 #[test]
+fn trash_confirmation_can_be_disabled_only_by_confirming() {
+    let directory = tempfile::tempdir().unwrap();
+    let (ctx, mut app) = app_in(directory.path(), None);
+    // The missing parent lets the dialog submit without touching the system trash.
+    let path = directory.path().join("missing/file.txt");
+    let click_dialog = |app: &mut HeditApp, label| {
+        frame(&ctx, app, vec![]);
+        let output = frame(&ctx, app, vec![]);
+        let rect = output
+            .shapes
+            .iter()
+            .filter_map(|shape| super::tests::text_rect(&shape.shape, label))
+            .max_by(|a, b| a.top().total_cmp(&b.top()))
+            .unwrap_or_else(|| panic!("Missing dialog control: {label}"));
+        super::tests::click_at(&ctx, app, rect.center(), egui::vec2(1280.0, 820.0));
+    };
+
+    app.begin_file_action(&ctx, path.clone(), quality::FileOperation::Trash);
+    click_dialog(&mut app, "Don't show again");
+    click_dialog(&mut app, "Cancel");
+    assert!(app.settings.confirm_trash);
+    assert!(app.quality.file_action.is_none());
+
+    app.begin_file_action(&ctx, path.clone(), quality::FileOperation::Trash);
+    assert!(
+        !app.quality
+            .file_action
+            .as_ref()
+            .unwrap()
+            .skip_trash_confirmation
+    );
+    click_dialog(&mut app, "Don't show again");
+    click_dialog(&mut app, "Move to Trash");
+    assert!(!app.settings.confirm_trash);
+    assert!(app.quality.file_action.is_none());
+    assert!(app.error.take().is_some());
+    drop(app);
+
+    let (ctx, mut app) = app_in(directory.path(), None);
+    assert!(!app.settings.confirm_trash);
+    app.begin_file_action(&ctx, path, quality::FileOperation::Trash);
+    assert!(app.quality.file_action.is_none());
+    assert!(
+        app.error.is_some(),
+        "the action should run without a dialog"
+    );
+    settings_store::TEST_CONFIG_DIR.with(|dir| *dir.borrow_mut() = None);
+}
+
+#[test]
 fn first_run_imports_older_preferences_into_settings_files() {
     let directory = tempfile::tempdir().unwrap();
     let mut storage = MemoryStorage::default();

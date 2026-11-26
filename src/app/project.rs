@@ -612,13 +612,21 @@ impl HeditApp {
             ("Rename…", quality::FileOperation::Rename),
             ("Move…", quality::FileOperation::Move),
             ("Duplicate…", quality::FileOperation::Duplicate),
-            ("Move to trash…", quality::FileOperation::Trash),
+            (
+                if self.settings.confirm_trash {
+                    "Move to Trash…"
+                } else {
+                    "Move to Trash"
+                },
+                quality::FileOperation::Trash,
+            ),
+            ("Delete…", quality::FileOperation::Delete),
         ] {
             if ui.button(label).clicked() {
                 if operation == quality::FileOperation::Rename {
                     self.start_explorer_entry(ui.ctx(), path.to_owned(), directory, true);
                 } else {
-                    self.begin_file_action(PathBuf::from(path), operation);
+                    self.begin_file_action(ui.ctx(), PathBuf::from(path), operation);
                 }
                 ui.close_menu();
             }

@@ -655,6 +655,28 @@ pub fn trash_path(path: &Path) -> Result<(), String> {
     trash::delete(path).map_err(|e| e.to_string())
 }
 
+/// Permanently remove the entry, without traversing symlink targets.
+pub fn delete_path(path: &Path) -> Result<(), String> {
+    if let Some(result) = crate::backend::file(path, crate::backend::FsQuery::Delete) {
+        return result;
+    }
+
+    let path = entry_path(path)?;
+    let kind = fs::symlink_metadata(&path)
+        .map_err(|e| e.to_string())?
+        .file_type();
+    #[cfg(windows)]
+    if std::os::windows::fs::FileTypeExt::is_symlink_dir(&kind) {
+        return fs::remove_dir(path).map_err(|e| e.to_string());
+    }
+    if kind.is_dir() {
+        fs::remove_dir_all(path)
+    } else {
+        fs::remove_file(path)
+    }
+    .map_err(|e| e.to_string())
+}
+
 #[cfg(windows)]
 fn rename_no_replace(from: &Path, target: &Path) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt;

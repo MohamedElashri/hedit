@@ -2146,6 +2146,7 @@ name = "hedit-remote"
 version = "0.7.3"
 dependencies = [
  "base64 0.22.1",
+ "cap-std",
  "getrandom 0.4.3",
  "hedit-core",
  "libc",

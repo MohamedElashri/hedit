@@ -309,7 +309,7 @@ fn rename_retargets_open_and_closed_buffers_and_retains_external_save_guard() {
     app.open(&ctx, Some(old.clone()));
     finish_app_job(&mut app, &ctx);
     std::fs::write(&old, "external version").unwrap();
-    app.begin_file_action(old, quality::FileOperation::Rename);
+    app.begin_file_action(&ctx, old, quality::FileOperation::Rename);
     app.quality.file_name = "renamed.txt".into();
     app.perform_file_action(&ctx);
     finish_app_job(&mut app, &ctx);
@@ -327,6 +327,57 @@ fn rename_retargets_open_and_closed_buffers_and_retains_external_save_guard() {
         std::fs::read_to_string(directory.path().join("renamed.txt")).unwrap(),
         "external version"
     );
+}
+
+#[test]
+fn deleting_a_folder_confirms_and_preserves_open_and_shelved_buffers() {
+    let directory = tempfile::tempdir().unwrap();
+    let session = directory.path().join("session");
+    let folder = directory.path().join("project");
+    std::fs::create_dir(&folder).unwrap();
+    let closed = folder.join("closed.txt");
+    let open = folder.join("open.txt");
+    std::fs::write(&closed, "closed file on disk").unwrap();
+    std::fs::write(&open, "open file on disk").unwrap();
+
+    let (ws, _) = Workspace::restore(session.clone()).unwrap();
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, ws, vec![], vec![]);
+    app.open(&ctx, Some(closed));
+    finish_app_job(&mut app, &ctx);
+    app.workspace.close(app.workspace.active).unwrap();
+    app.open(&ctx, Some(open));
+    finish_app_job(&mut app, &ctx);
+    let active = app.workspace.active;
+    app.workspace.open[active].page.text = "unsaved work".into();
+    app.workspace.edit(active, "open file on disk").unwrap();
+
+    app.settings.confirm_trash = false;
+    app.begin_file_action(&ctx, session.clone(), quality::FileOperation::Delete);
+    app.perform_file_action(&ctx);
+    assert!(app.error.take().unwrap().contains("active recovery data"));
+    assert!(session.is_dir());
+
+    app.begin_file_action(&ctx, folder.clone(), quality::FileOperation::Delete);
+    frame(&ctx, &mut app, vec![]);
+    let output = frame(&ctx, &mut app, vec![]);
+    assert!(folder.exists(), "delete must wait for confirmation");
+    let button = output
+        .shapes
+        .iter()
+        .find_map(|shape| text_rect(&shape.shape, "Delete"))
+        .unwrap();
+    super::tests::click_at(&ctx, &mut app, button.center(), egui::vec2(1280.0, 820.0));
+    finish_app_job(&mut app, &ctx);
+    assert!(!folder.exists());
+    assert_eq!(app.active().page.text, "unsaved work");
+    drop(app);
+
+    let (mut ws, errors) = Workspace::restore(session).unwrap();
+    assert!(errors.is_empty(), "{errors:?}");
+    assert_eq!(ws.open[ws.active].page.text, "unsaved work");
+    ws.reopen().unwrap();
+    assert_eq!(ws.open[ws.active].page.text, "closed file on disk");
 }
 
 #[cfg(unix)]
@@ -353,7 +404,7 @@ fn rename_through_symlinked_parent_retargets_folder_and_open_and_closed_buffers(
     app.workspace.close(app.workspace.active).unwrap();
     app.open(&ctx, Some(alias.join("src/open.txt")));
     finish_app_job(&mut app, &ctx);
-    app.begin_file_action(alias.join("src"), quality::FileOperation::Rename);
+    app.begin_file_action(&ctx, alias.join("src"), quality::FileOperation::Rename);
     app.quality.file_name = "renamed".into();
     app.perform_file_action(&ctx);
     finish_app_job(&mut app, &ctx);
