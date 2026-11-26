@@ -868,25 +868,28 @@ pub fn transform(
         }
         ranges = normalize(&ranges, text.chars().count());
     }
-    // These commands only touch their selected block. Process those blocks
-    // against the original text and assemble the result in a single pass.
-    if matches!(
-        operation,
-        editing::Operation::SelectLine
-            | editing::Operation::JoinLines
-            | editing::Operation::Indent
-            | editing::Operation::Unindent
-            | editing::Operation::Uppercase
-            | editing::Operation::Lowercase
-            | editing::Operation::SortLines
-            | editing::Operation::SortLinesIgnoreCase
-            | editing::Operation::ReverseLines
-            | editing::Operation::UniqueLines
-            | editing::Operation::TrimWhitespace
-            | editing::Operation::ToSpaces
-            | editing::Operation::ToTabs
-            | editing::Operation::ToggleComment
-    ) {
+    // An empty range can make a global command operate on the entire buffer.
+    // Other block-local edits can be assembled against the original text.
+    let local = !global || ranges.iter().all(|range| range.start() < range.end());
+    if local
+        && matches!(
+            operation,
+            editing::Operation::SelectLine
+                | editing::Operation::JoinLines
+                | editing::Operation::Indent
+                | editing::Operation::Unindent
+                | editing::Operation::Uppercase
+                | editing::Operation::Lowercase
+                | editing::Operation::SortLines
+                | editing::Operation::SortLinesIgnoreCase
+                | editing::Operation::ReverseLines
+                | editing::Operation::UniqueLines
+                | editing::Operation::TrimWhitespace
+                | editing::Operation::ToSpaces
+                | editing::Operation::ToTabs
+                | editing::Operation::ToggleComment
+        )
+    {
         let mut output = String::with_capacity(text.len());
         let mut selections = Vec::with_capacity(ranges.len());
         let mut previous = 0;

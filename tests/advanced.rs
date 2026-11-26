@@ -1,6 +1,27 @@
 use hedit::advanced::{self as a, Fold, Projection, Selection as S};
 
 #[test]
+fn sort_with_a_caret_on_the_empty_final_line_keeps_whole_buffer_behavior() {
+    let input = "z\na\n";
+    let result = a::transform(
+        input,
+        &[S::caret(input.len())],
+        hedit::editing::Operation::SortLines,
+        4,
+        false,
+        None,
+    );
+    assert_eq!(result.text, "a\nz\n");
+    assert_eq!(
+        result.selections,
+        [S {
+            anchor: 0,
+            head: input.len(),
+        }]
+    );
+}
+
+#[test]
 fn byte_ranges_match_unicode_boundaries_for_normalized_selection_sets() {
     for text in ["", "ascii", "λ東京🦀", "aλ🦀\r\n東京"] {
         let offsets: Vec<_> = text
