@@ -646,8 +646,31 @@ impl Workspace {
         old: &str,
         crlf: Option<bool>,
     ) -> Result<(), String> {
+        self.edit_with_splice(index, old, crlf, None)
+    }
+
+    /// Apply a widget edit whose changed span is expressed in old and new bytes.
+    pub fn edit_with_splice(
+        &mut self,
+        index: usize,
+        old: &str,
+        crlf: Option<bool>,
+        changed: Option<(usize, usize, usize)>,
+    ) -> Result<(), String> {
         let buffer = &mut self.open[index];
-        let (start, end, replacement) = splice(old, &buffer.page.text);
+        let changed = changed.filter(|&(start, old_end, new_end)| {
+            old.get(start..old_end).is_some()
+                && buffer.page.text.get(start..new_end).is_some()
+                && old.len() - old_end == buffer.page.text.len() - new_end
+        });
+        let (start, end, replacement) = match changed {
+            Some((start, old_end, new_end)) => {
+                let (local_start, local_end, replacement) =
+                    splice(&old[start..old_end], &buffer.page.text[start..new_end]);
+                (start + local_start, start + local_end, replacement)
+            }
+            None => splice(old, &buffer.page.text),
+        };
         let editor = self.editor.get(buffer.page.info.id)?;
         let mut document = editor.lock().map_err(|e| e.to_string())?;
         if document.workspace_frozen() {

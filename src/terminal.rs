@@ -13,7 +13,10 @@ use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
     rc::Rc,
-    sync::mpsc::{self, Receiver, SyncSender},
+    sync::{
+        mpsc::{self, Receiver, SyncSender},
+        Arc,
+    },
     thread,
 };
 
@@ -48,6 +51,7 @@ enum Output {
 pub struct Session {
     pub vt: Terminal<'static, 'static>,
     render: RenderState<'static>,
+    grid_cache: Option<Arc<Grid>>,
     row_iter: RowIterator<'static>,
     cell_iter: CellIterator<'static>,
     encoder: key::Encoder<'static>,
@@ -130,6 +134,7 @@ impl Session {
         Ok(Self {
             vt,
             render,
+            grid_cache: None,
             row_iter,
             cell_iter,
             encoder,
@@ -261,6 +266,7 @@ impl Session {
         Ok(Self {
             vt,
             render,
+            grid_cache: None,
             row_iter,
             cell_iter,
             encoder,
@@ -386,6 +392,16 @@ impl Session {
     }
 
     pub fn grid(&mut self) -> Result<Grid, libghostty_vt::Error> {
+        self.render_grid(false)
+            .map(|grid| Arc::into_inner(grid).expect("uncached grid has one owner"))
+    }
+
+    pub fn shared_grid(&mut self) -> Result<Arc<Grid>, libghostty_vt::Error> {
+        self.render_grid(true)
+    }
+
+    fn render_grid(&mut self, reuse: bool) -> Result<Arc<Grid>, libghostty_vt::Error> {
+        use libghostty_vt::render::Dirty;
         let snapshot = self.render.update(&self.vt)?;
         let colors = snapshot.colors()?;
         let cursor = if snapshot.cursor_visible()? {
@@ -393,6 +409,15 @@ impl Session {
         } else {
             None
         };
+        if reuse && snapshot.dirty()? == Dirty::Clean {
+            if let Some(grid) = self
+                .grid_cache
+                .as_ref()
+                .filter(|grid| grid.cursor == cursor && grid.background == colors.background)
+            {
+                return Ok(grid.clone());
+            }
+        }
         let mut rows = Vec::new();
         let mut continuations = Vec::new();
         let mut row_iter = self.row_iter.update(&snapshot)?;
@@ -415,14 +440,18 @@ impl Session {
                     selected: cell.is_selected()?,
                 });
             }
+            row.set_dirty(false)?;
             rows.push(cells);
         }
-        Ok(Grid {
+        snapshot.set_dirty(Dirty::Clean)?;
+        let grid = Arc::new(Grid {
             rows,
             continuations,
             background: colors.background,
             cursor,
-        })
+        });
+        self.grid_cache = reuse.then(|| grid.clone());
+        Ok(grid)
     }
 
     /// Terminate this shell while retaining its screen and scrollback.
@@ -489,6 +518,21 @@ mod tests {
         let (tx, rx) = mpsc::sync_channel(4);
         session.output = rx;
         (session, tx)
+    }
+
+    #[test]
+    fn unchanged_terminal_screen_reuses_its_grid_until_output_changes() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut session = Session::start(directory.path(), || {}).unwrap();
+        session.vt.vt_write(b"first");
+        let first = session.shared_grid().unwrap();
+        let unchanged = session.shared_grid().unwrap();
+        assert!(Arc::ptr_eq(&first, &unchanged));
+
+        session.vt.vt_write(b"\rnext ");
+        let changed = session.shared_grid().unwrap();
+        assert!(!Arc::ptr_eq(&changed, &first));
+        assert_eq!(changed.rows[0][0].text, "n");
     }
 
     #[test]

@@ -751,16 +751,21 @@ fn galley_from_rows(
             max_row_height = max_row_height.max(prefix.layout_rect.height());
         }
         first_row_min_height = 0.0;
-        for glyph in &row.glyphs[prefix_len..] {
-            max_row_height = max_row_height.max(glyph.line_height);
+        let glyphs = &mut row.glyphs[prefix_len..];
+        if job.sections.len() == 1 {
+            // Line height comes from the section, including fallback glyphs.
+            if let Some(glyph) = glyphs.first() {
+                max_row_height = max_row_height.max(glyph.line_height);
+            }
+        } else {
+            for glyph in &*glyphs {
+                max_row_height = max_row_height.max(glyph.line_height);
+            }
         }
         max_row_height = point_scale.round_to_pixel(max_row_height);
 
-        // Now position each glyph vertically:
-        for glyph in &mut row.glyphs[prefix_len..] {
-            let format = &job.sections[glyph.section_index as usize].format;
-
-            glyph.pos.y = cursor_y
+        let glyph_y = |glyph: &Glyph, format: &super::TextFormat| {
+            let y = cursor_y
                 + glyph.font_impl_ascent
 
                 // Apply valign to the different in height of the entire row, and the height of this `Font`:
@@ -769,8 +774,28 @@ fn galley_from_rows(
                 // When mixing different `FontImpl` (e.g. latin and emojis),
                 // we always center the difference:
                 + 0.5 * (glyph.font_height - glyph.font_impl_height);
-
-            glyph.pos.y = point_scale.round_to_pixel(glyph.pos.y);
+            point_scale.round_to_pixel(y)
+        };
+        // Long runs in one font share their baseline. Fallback fonts can have
+        // different metrics even when they are in the same layout section.
+        if let [section] = &job.sections[..] {
+            if let Some(first) = glyphs.first().copied() {
+                let baseline = glyph_y(&first, &section.format);
+                for glyph in glyphs {
+                    glyph.pos.y = if glyph.font_impl_ascent == first.font_impl_ascent
+                        && glyph.font_impl_height == first.font_impl_height
+                    {
+                        baseline
+                    } else {
+                        glyph_y(glyph, &section.format)
+                    };
+                }
+            }
+        } else {
+            for glyph in glyphs {
+                let format = &job.sections[glyph.section_index as usize].format;
+                glyph.pos.y = glyph_y(glyph, format);
+            }
         }
 
         row.rect.min.y = cursor_y;
