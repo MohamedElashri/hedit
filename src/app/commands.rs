@@ -1641,8 +1641,8 @@ impl HeditApp {
             Command::NextTerminal => self.cycle_terminal(true),
             Command::PreviousTerminal => self.cycle_terminal(false),
             Command::RestartTerminal => self.restart_terminal(ctx),
-            Command::NextResult => self.next_result(true),
-            Command::PreviousResult => self.next_result(false),
+            Command::NextResult => self.next_result(ctx, true),
+            Command::PreviousResult => self.next_result(ctx, false),
             Command::SkipOccurrence => {
                 let ranges =
                     hedit::advanced::skip_occurrence(&self.active().page.text, &self.selections());

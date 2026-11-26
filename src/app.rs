@@ -182,6 +182,7 @@ enum Action {
     ThemeImported(Theme),
     DebugProgram(PathBuf),
     OpenFailed(String),
+    OpenProject(PathBuf),
     /// A font loaded for the `font_face` setting.
     /// A font for `font_face`: its name, file bytes, and face index.
     Font(String, Vec<u8>, u32),
@@ -778,21 +779,27 @@ impl HeditApp {
         });
     }
     fn open(&mut self, ctx: &egui::Context, path: Option<PathBuf>) {
-        self.open_path(ctx, path, true);
+        self.open_path(ctx, path, true, None);
     }
     fn open_existing(&mut self, ctx: &egui::Context, path: PathBuf) {
-        self.open_path(ctx, Some(path), false);
+        self.open_path(ctx, Some(path), false, None);
     }
-    fn open_path(&mut self, ctx: &egui::Context, path: Option<PathBuf>, allow_new: bool) {
-        if self.workspace.remote.is_none()
-            && allow_new
-            && path
-                .as_ref()
-                .is_some_and(|p| p.extension().is_some_and(|e| e == "hedit-project"))
-        {
-            self.load_project(ctx, path);
-            return;
-        }
+    fn open_existing_location(
+        &mut self,
+        ctx: &egui::Context,
+        path: PathBuf,
+        line: u64,
+        column: u64,
+    ) {
+        self.open_path(ctx, Some(path), false, Some((line, column)));
+    }
+    fn open_path(
+        &mut self,
+        ctx: &egui::Context,
+        path: Option<PathBuf>,
+        allow_new: bool,
+        location: Option<(u64, u64)>,
+    ) {
         if let Some(remote) = self.workspace.remote.clone() {
             let Some(path) = path else {
                 self.remote_ui.picker = Some(remote::Picker::Open);
@@ -804,7 +811,11 @@ impl HeditApp {
                     Some("Open remote files using paths inside this SSH workspace.".into());
                 return;
             }
-            let (path, location) = opening::remote_location(&path);
+            let (path, location) = if location.is_some() {
+                (path, location)
+            } else {
+                opening::remote_location(&path)
+            };
             if let Some(buffer) = self
                 .workspace
                 .open
@@ -901,9 +912,17 @@ impl HeditApp {
                 }
                 return hedit::folder::read_directory(path).map(Action::Folder);
             }
-            let (file, line, col) = hedit::cli::location(&path);
-            let plain_path = file == path;
-            let path = file;
+            if allow_new && path.extension().is_some_and(|ext| ext == "hedit-project") {
+                return Ok(Action::OpenProject(path));
+            }
+            let (path, line, col, plain_path) = match location {
+                Some((line, column)) => (path, line, column, false),
+                None => {
+                    let (file, line, col) = hedit::cli::location(&path);
+                    let plain_path = file == path;
+                    (file, line, col, plain_path)
+                }
+            };
             let path = if path.is_absolute() {
                 path
             } else {
@@ -1343,6 +1362,7 @@ impl HeditApp {
                         self.attach_open_tab(request.as_ref().map(opening::Request::group), id);
                     }
                 }
+                Ok(Action::OpenProject(path)) => self.load_project(ctx, Some(path)),
                 Ok(Action::Folder(listing)) => self.set_folder(listing),
                 Ok(Action::Folders(listings)) => {
                     for listing in listings {

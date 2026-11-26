@@ -212,7 +212,7 @@ impl HeditApp {
         }
     }
     /// Jump to the next (or previous) location in the build output.
-    pub(super) fn next_result(&mut self, forward: bool) {
+    pub(super) fn next_result(&mut self, ctx: &egui::Context, forward: bool) {
         // Find in folders results, when they are newer than the build's.
         let hits = self.quality.results.hits.len();
         if self.quality.results_newer && hits > 0 {
@@ -224,12 +224,7 @@ impl HeditApp {
             };
             self.quality.result_current = Some(next);
             let hit = &self.quality.results.hits[next];
-            self.pending_paths.push_back(PathBuf::from(format!(
-                "{}:{}:{}",
-                hit.path.display(),
-                hit.line,
-                hit.column
-            )));
+            self.open_existing_location(ctx, hit.path.clone(), hit.line as u64, hit.column as u64);
             self.notice = format!("Match {} of {hits}", next + 1);
             return;
         }

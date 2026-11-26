@@ -1,5 +1,6 @@
 use super::tests::{click_label, finish_app_job, frame_size, text_rect};
 use super::*;
+use std::{fs, path::Path};
 
 fn fixture(lines: usize) -> (tempfile::TempDir, egui::Context, HeditApp) {
     let directory = tempfile::tempdir().unwrap();
@@ -172,7 +173,7 @@ fn f4_reveals_offscreen_matches_and_expands_their_file_group() {
     let path = app.quality.results.hits[last].path.clone();
     app.quality.folder_collapsed.insert(path.clone());
     app.quality.result_current = Some(last - 1);
-    app.next_result(true);
+    app.next_result(&ctx, true);
     finish_app_job(&mut app, &ctx);
     for _ in 0..3 {
         frame_size(&ctx, &mut app, vec![], size);
@@ -196,7 +197,7 @@ fn clicking_a_match_sets_the_start_for_next_result_navigation() {
     assert_eq!(app.quality.result_current, Some(1));
     assert!(app.quality.results_newer);
     finish_app_job(&mut app, &ctx);
-    app.next_result(true);
+    app.next_result(&ctx, true);
     assert_eq!(app.quality.result_current, Some(2));
 }
 
@@ -413,5 +414,122 @@ fn regression_folder_undo_can_retry_a_temporarily_missing_file() {
     assert_eq!(
         std::fs::read_to_string(file).unwrap(),
         "needle in configuration\n"
+    );
+}
+
+fn app_at(directory: &Path) -> (egui::Context, HeditApp) {
+    let (workspace, _) = Workspace::restore(directory.join("session")).unwrap();
+    let ctx = egui::Context::default();
+    let app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    (ctx, app)
+}
+
+fn open(app: &mut HeditApp, ctx: &egui::Context, path: &Path) {
+    app.open(ctx, Some(path.into()));
+    finish_app_job(app, ctx);
+}
+
+fn add_folder(app: &mut HeditApp, path: &Path) {
+    app.set_folder(hedit::folder::read_directory(path.into()).unwrap());
+}
+
+fn drain(app: &mut HeditApp, ctx: &egui::Context) {
+    let started = Instant::now();
+    while app.busy || app.opens.pending() || !app.pending_paths.is_empty() {
+        assert!(started.elapsed() < Duration::from_secs(5));
+        app.receive(ctx);
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[test]
+fn renaming_a_scoped_folder_keeps_search_pointed_at_that_folder() {
+    let d = tempfile::tempdir().unwrap();
+    let (ctx, mut app) = app_at(d.path());
+    let project = d.path().canonicalize().unwrap().join("project");
+    let scope = project.join("before");
+    fs::create_dir_all(&scope).unwrap();
+    fs::write(scope.join("notes.txt"), "needle").unwrap();
+    add_folder(&mut app, &project);
+    app.set_folder_search_scope(Some(scope.clone()));
+    app.start_explorer_entry(&ctx, scope.to_string_lossy().into_owned(), true, true);
+    app.project.create.as_mut().unwrap().name = "after".into();
+    app.submit_explorer_entry(&ctx);
+    finish_app_job(&mut app, &ctx);
+    let renamed = project.join("after");
+    assert!(renamed.join("notes.txt").is_file());
+    assert_eq!(app.folder_search_roots(), vec![renamed]);
+}
+
+#[test]
+fn directory_named_like_project_file_can_be_opened_as_a_folder() {
+    let d = tempfile::tempdir().unwrap();
+    let (ctx, mut app) = app_at(d.path());
+    let folder = d
+        .path()
+        .canonicalize()
+        .unwrap()
+        .join("archive.hedit-project");
+    fs::create_dir(&folder).unwrap();
+    app.open(&ctx, Some(folder.clone()));
+    drain(&mut app, &ctx);
+    assert!(
+        app.workspace
+            .folders
+            .iter()
+            .any(|f| Path::new(&f.path) == folder),
+        "folder did not open: {:?}",
+        app.error
+    );
+}
+
+#[test]
+fn folder_replace_leaves_an_open_paged_file_unsaved() {
+    let d = tempfile::tempdir().unwrap();
+    let (ctx, mut app) = app_at(d.path());
+    let root = d.path().canonicalize().unwrap().join("project");
+    fs::create_dir(&root).unwrap();
+    let file = root.join("large.txt");
+    let text = format!("needle\n{}", "long filler line\n".repeat(130_000));
+    fs::write(&file, &text).unwrap();
+    add_folder(&mut app, &root);
+    open(&mut app, &ctx, &file);
+    assert!(app.active().page.info.paged);
+    app.quality.folder_query = "needle".into();
+    app.quality.folder_replacement = "changed".into();
+    app.folder_search(&ctx, true);
+    finish_app_job(&mut app, &ctx);
+    assert_eq!(app.quality.results.plans.len(), 1);
+    app.apply_folder_replacements(&ctx);
+    finish_app_job(&mut app, &ctx);
+    assert!(app.active().page.info.dirty);
+    assert!(app.active().page.text.starts_with("changed\n"));
+    assert!(
+        fs::read_to_string(file).unwrap().starts_with("needle\n"),
+        "Apply wrote the open tab to disk"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn folder_result_opens_the_hit_when_a_literal_colon_filename_also_exists() {
+    let d = tempfile::tempdir().unwrap();
+    let (ctx, mut app) = app_at(d.path());
+    let root = d.path().canonicalize().unwrap().join("project");
+    fs::create_dir(&root).unwrap();
+    let intended = root.join("notes.txt");
+    let lookalike = root.join("notes.txt:2:1");
+    fs::write(&intended, "intro\nneedle\n").unwrap();
+    fs::write(&lookalike, "a different real file").unwrap();
+    add_folder(&mut app, &root);
+    app.quality.folder_query = "needle".into();
+    app.folder_search(&ctx, false);
+    finish_app_job(&mut app, &ctx);
+    assert_eq!(app.quality.results.hits.len(), 1);
+    app.next_result(&ctx, true);
+    finish_app_job(&mut app, &ctx);
+    assert_eq!(
+        Path::new(app.active().page.info.path.as_deref().unwrap()),
+        intended
     );
 }
