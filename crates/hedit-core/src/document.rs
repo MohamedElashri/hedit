@@ -739,7 +739,10 @@ impl Document {
         String::from_utf8(self.read_range(0, self.size)?).map_err(err)
     }
     /// Preserve text before deliberately removing its disk source.
-    pub fn preserve_as_unsaved(&mut self) -> Result<RemovalState, String> {
+    pub fn preserve_as_unsaved(&mut self) -> Result<(), String> {
+        self.prepare_removal().map(|_| ())
+    }
+    pub fn prepare_removal(&mut self) -> Result<RemovalState, String> {
         self.ensure_workspace_writable()?;
         let state = RemovalState {
             dirty: self.dirty,

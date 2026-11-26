@@ -1587,7 +1587,7 @@ impl HeditApp {
                     if let Some(source) =
                         doc.info().path.filter(|p| Path::new(p).starts_with(&path))
                     {
-                        preserved.push((view.id, source, doc.preserve_as_unsaved()?));
+                        preserved.push((view.id, source, doc.prepare_removal()?));
                     }
                 }
                 self.workspace.checkpoint()
