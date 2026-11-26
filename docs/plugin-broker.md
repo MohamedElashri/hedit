@@ -1,10 +1,9 @@
 # Workspace and service broker
 
-Manifest API 5 / SDK 3 adds scoped workspace operations, HTTPS and supervised
-native tools to the shared Lua engine. Commands and providers use the same
-continuation contract. APIs 1–4 retain their existing meanings. The manager
-supports exact-image filter/LSP selection and separate workspace/endpoint review.
-See the [security model](extension-security.md) for enforcement and residuals.
+API 5 / SDK 3 adds scoped workspace operations, public HTTPS, and supervised
+native tools. Commands and providers share the same continuation contract.
+Review each directory, endpoint, or exact native image separately. See the
+[threat model](extension-security.md) for enforcement and residual risks.
 
 ## Author contract
 
@@ -175,102 +174,57 @@ supported platform.
 
 ## Implementation boundary
 
-The host crate implements scoped workspace access, search, versioned resources,
-watch continuations, edit plans, recovery storage, exact-endpoint HTTPS, isolated
-native filters and a bounded asynchronous driver. Lua runs in a fresh confined process for each
-continuation. The driver uses a trusted host thread for filesystem and network
-work; that thread does not evaluate plugin source.
+| Component | Owns |
+| --- | --- |
+| Editor | Installation, consent, live document revisions, previews, and UI |
+| Broker | Policy checks, resources, file/network effects, recovery, and native service lifetimes |
+| Confined Lua worker | One callback with bounded input. It returns one intent and exits. |
 
-```text
-Trusted editor: installed source, consent, document revisions, native UI
-         |
-   Bounded capability host: policy checks, resource tables, review state
-         |                       |
-   Versioned IPC             Scoped files / HTTPS transport
-         |
-   Fresh confined Lua worker: one bounded intent, then exit
-```
-
-The editor routes ordinary scoped commands through exact-source approval and
-separate directory/endpoint review, complete paged workspace previews, clean
-buffer preflight, and off-thread reconciliation. Providers share the same source,
-resource, revocation and commit checks. Explicit recovery is available in
-Extensions settings. The CLI validates offline continuation transcripts and all
-shipped references are included in extracted-package smoke tests.
-Native filters require separate image selection and final exact-source resource
-approval. Language-server requests use persistent source/document-bound owners in the host;
-the manager exposes separate exact-image review for these profiles. There is no unsandboxed fallback.
+The host driver handles filesystem and network work off the UI thread.
+Ordinary commands and providers use the same resource, revocation, and commit
+checks. Native filters need exact-image approval. Persistent LSP owners also
+bind to the source and document. Confinement failure stops the invocation.
 
 ## Authority and threat model
 
-Assets include granted document/workspace text, private editor configuration and
-recovery copies, original file contents, host credentials, and editor availability.
-Treat Lua source and replies, package updates, workspace directory entries,
-filesystem races, and endpoint responses as untrusted. Another extension's grant
-or a built-in editor service supplies no authority.
+Treat package source, replies, filesystem entries and races, and endpoint
+responses as untrusted. The [threat model](extension-security.md) lists the
+trusted components and residual risks. It assumes a trusted editor, OS, and
+user configuration. System routing, DNS, and CA trust also apply.
 
-The trusted computing base includes the editor's approval UI and policy store,
-this broker and its host-only filesystem/DNS/TLS dependencies, the shared worker
-supervisor, native sandbox adapters, the OS, and system trust/resolver settings.
-An unrestricted process already running as the user, an administrator, a compromised
-OS, and a compromised editor are outside the isolation guarantee. Owner-only
-storage does not protect against those attackers.
+| At | Broker check |
+| --- | --- |
+| Session start | Exact installed package and command, capabilities, physical root, and policy generation. `Definition` requests access. Trusted Rust `Config`, `Root`, and `Endpoint` supply it. |
+| Each operation | Current policy guard, request nonce, and callback step. Resource, version, watch, and request IDs are random 128-bit values local to the session. |
+| Change or revocation | Publish cancellation before waiting for the exclusive lock. File events cancel transports without UI polling. Pending mutations block admission. A writer lock serializes mutations, and orphan repair advances the generation. |
+| Result consumption | Recheck authorization and live scope before displaying or editing. Updates, scope changes, closure, and Stop discard pending work. |
+| Close callback | Empty text and cache. It cannot request edits or I/O. |
 
-The host must bind every session to the exact installed package copy,
-command/provider, explicit capabilities, selected physical root, and current
-policy generation. `Definition` is a request, not an approval. `Config`, `Root`,
-`Endpoint`, and authorization callbacks are trusted Rust objects; none is
-constructed from a plugin's permission assertions. An ordinary command approval
-cannot create workspace, tool, endpoint, or background-event grants.
-
-Every sensitive delivery/effect obtains a current shared policy guard. Revocation
-publishes an owner-verified cancellation generation before waiting for the
-exclusive policy lock. Native file events directly cancel transports even when
-the UI is inactive. New sessions reject a pending mutation. A separate writer
-lock prevents one mutation from clearing another's intent; orphan repair obtains
-both locks and advances the generation before admitting sessions.
-Callbacks, updates, scope changes, closure and Stop must invalidate pending data
-and registrations. Final document edits and presentation require fresh editor
-checks when consumed. Revocation cannot retract disclosed text or completed
-network requests, or automatically reverse completed edits.
-
-Opaque resource/version/watch/request IDs are session-local, canonical 128-bit
-random values. Copying an ID into another session cannot resolve its resource.
-Request nonce and callback step are checked before authorization or I/O. Close
-callbacks receive no document text/cache or edit authority and cannot request I/O.
+Revocation stops new effects. It leaves disclosed text, completed requests, and
+committed edits as they are.
 
 ## Continuation and scheduling contract
 
-A callback returns one typed intent and exits. The host performs the approved
-operation and passes its bounded response to a fresh callback. Globals,
-coroutines, library mutations and Lua heaps do not survive; only the explicit
-bounded scalar cache does. Existing command/provider framing remains unchanged.
-SDK 3 uses an explicit private protocol version and a 2 MiB frame ceiling.
+A callback returns one intent and exits. The next fresh worker gets the approved
+response and explicit scalar cache. The SDK 3 private frame limit is 2 MiB.
 
-Limits include 32 callbacks, 10 seconds of aggregate active work, 64 MiB of chain
-I/O, 16 bounded session/host contexts, four active broker operations, and four native
-worker slots. Providers may occupy at most 12 contexts and three active broker
-operations. Background native callbacks (including SDK 2 providers) leave one of
-the four service-worker slots available for an ordinary command. Admission is
-cancellable; a capacity retry preserves the exact callback input and never repeats
-a previously completed host operation. The worker retains the service role's readiness deadline, 750 ms
-processing deadline, 200,000 instructions, 16 MiB Lua allocation limit and native
-resource/confinement policy. A reply cannot select a weaker launch role.
+| Budget | Limit |
+| --- | --- |
+| Continuation chain | 32 callbacks, 10 seconds of active work, 64 MiB of I/O |
+| Contexts and operations | 16 contexts, four active operations. Providers can use 12 and three, respectively. |
+| Native service callbacks | Four slots globally. Background work leaves one for an ordinary command. |
+| Each worker | Service startup deadline, 750 ms processing, 200,000 Lua instructions, 16 MiB Lua allocations, and native confinement limits |
+| UI handoff | One pending event and one preview decision per host. Terminal results replace stale previews. |
 
-The driver reserves admission before starting setup. Each host has one pending
-UI event and one preview-decision slot. A terminal event replaces a stale preview;
-there is no unbounded event queue. Stop/drop signals cancellation without joining
-threads. Setup, filesystem scans, hashing, journal writes, watcher teardown and
-worker waits belong off the UI thread. UI methods only take a ready event or
-submit a decision without blocking. Wake callbacks must be nonblocking.
+Admission is cancellable. Retrying capacity preserves callback input and avoids
+repeating completed operations. Stop and Drop signal cancellation without waiting.
+Keep setup, filesystem work, watcher teardown, and worker waits off the UI thread.
+Wake callbacks must return promptly.
 
-Watch notifications discard raw native paths and coalesce into one dirty bit and
-wake. `wait_changes` parks without a Lua worker, periodic UI polling, filesystem
-scan or held policy lock. A fresh authorized scan produces changed relative names
-at most twice per second. An idle wait expires after 30 seconds; active scans
-consume the chain budget. Watch grants disclose names and changes, not file text.
-A provider scheduler must also enforce owner/event rate limits, coalescing,
-quarantine and lifecycle invalidation when the editor integration is enabled.
+Watchers coalesce native changes into a dirty flag. `wait_changes` releases its
+worker and policy guard while parked. A fresh authorized scan returns changed
+relative names at most twice per second. Idle waits expire after 30 seconds.
+Scans spend active-work time. Watch approval covers names and changes.
 
 ## Scoped workspace access
 
@@ -315,124 +269,81 @@ unrelated new file. Removing the registry while private stages survive is unsafe
 
 ## Installed providers
 
-API 5 provider declarations bind the provider kind, triggers, debounce, capabilities
-and source digest in the command approval. Automatic document events and typed
-document providers require `document.read`. A presentation provider without that
-capability starts only on an explicit manual action and receives a neutral empty
-snapshot, including when the active buffer cannot support document plugins.
-Resource grants remain separate; event approval supplies no directory or endpoint.
+The command approval binds the kind, triggers, debounce, capabilities, and
+source digest. Automatic document events require `document.read`.
+A presentation provider without it is manual-only and gets an empty snapshot.
+Directory and endpoint grants are separate.
 
-The editor coalesces events, checks document/revision/selection lifetimes, bounds
-per-owner work, and preserves Stop, Resume, quarantine and idle-cache behavior.
-Close callbacks receive empty text/cache, have no edit authority, and may only
-finish with the closed result. Workspace proposals always use a complete trusted
-preview and explicit acceptance, including proposals from automatic callbacks.
-Successful edits carry their originating package so providers do not immediately
-react to their own changes.
+The scheduler coalesces events and checks document, revision, and selections.
+It preserves Stop, Resume, quarantine, idle expiry, and per-owner work limits.
+Close gets empty text and cache and can only return closed. Successful edits
+carry their package ID to suppress feedback. Workspace edits always need a
+complete preview and acceptance.
 
-Only the selected provider draws details. Diagnostics use validated byte ranges
-converted to editor coordinates. Results expire after 120 seconds; callbacks
-recheck source policy and scope. Parked SDK 3 hosts wake the editor through native
-notifications rather than periodic 50 ms UI polls. Capacity contention uses a
-bounded off-UI retry; human preview dwell is excluded from work accounting.
-No Lua worker or document/policy lock is retained during the preview wait.
+Only the selected provider shows details. Diagnostics have validated byte
+ranges. Results expire after 120 seconds. Parked hosts wake from native
+notifications. Capacity retries stay off the UI thread. Preview dwell spends
+no active-work time and holds no worker, document lock, or policy lock.
 
 ## Workspace edits and recovery
 
-Plans reuse the shared Unicode/CRLF edit validator: at most 32 existing files,
-64 edits/file, and 256 KiB aggregate raw **and normalized** replacement text.
-Each proposal binds a resource version, physical identity and content hash.
-The initial journal requires files on the selected root's volume; edits across
-nested mount points are refused before review.
-Preview preparation does not modify disk. A preview expires after 120 seconds;
-its exact host-created plan ID must be accepted before journal preparation.
+Plans use at most 32 existing files and 64 edits per file. The 256 KiB aggregate
+replacement limit applies to raw and normalized text. Each edit binds the resource version,
+physical identity, and content hash. Files must be on the root volume.
 
-The command UI shows the selected directory and complete before/after text for
-every file. Preview pages are indexed during preparation, so drawing a page does
-not scan the full file. Host preflight inspects the window's open and shelved
-buffers using physical identities and complete before text, refusing dirty,
-followed, paged or non-UTF-8 matches. It checks at most 4,096 buffers in five
-seconds and charges that work to the chain budget.
+| Stage | Host behavior |
+| --- | --- |
+| Preview | Show complete before/after text in pages. The exact plan ID expires after 120 seconds. Preparing a preview leaves disk untouched. |
+| Preflight | Compare physical identities and complete before text for up to 4,096 open or shelved buffers in five seconds. Refuse dirty, followed, paged, or non-UTF-8 matches. Charge the chain budget. |
+| Commit | Freeze affected clean buffers with a generation-checked lease. Keep other buffers editable. Flush replacements and the immutable journal before changing originals. |
+| Reconcile | Release leases on success, cancellation, or failure. Replaced files advance revision and clear their history. Unchanged files keep Undo. Unexpected disk contents preserve original buffer text unsaved. Reread deferred opens off-thread. |
 
-A generation-checked lease freezes affected clean buffers and defers incoming
-opens/reloads while the journal runs. Unrelated buffers remain editable. No
-document mutex is held through journal or reconciliation I/O. Independent buffer
-backups have a separate 64 MiB global reservation; this includes pending refresh
-pages. Successful replacements advance revisions and clear affected history.
-Unchanged files retain Undo; unexpected disk contents preserve the original
-buffer text unsaved. Cancellation and errors reconcile and release every lease.
-Deferred opens reread disk off-thread, and stale replies cannot roll back a
-reconciled page. Other windows/processes remain external writers and receive the
-existing external-change/conflict behavior; this is not a cross-window Undo or
-transaction service.
+The commit captures each original, then publishes its replacement. Both
+renames refuse overwrites. **The destination can be absent between renames.**
+A crash, competing creator, or I/O failure can leave a partial plan. The host
+attempts a no-clobber restore on ordinary failures and retains the journal
+when recovery is needed. Other windows remain external writers.
 
-All replacements, permission checks and the immutable journal are prepared and
-flushed before original-file changes. Retention reserves up to 32 journals and
-64 MiB of logical payload plus per-journal overhead globally, including failed
-preparations. File counts are bounded; filesystem allocation units, ACLs and other
-metadata affect physical disk use. Dropping a session never silently frees a
-reservation or deletes recovery data.
+| Reservation | Limit |
+| --- | --- |
+| Journals | 32 globally, 64 MiB of logical payload plus per-journal overhead. Failed preparation retains its reservation. |
+| Clean-buffer backup and refresh | 64 MiB globally. Document locks are released during I/O. |
+| Recovery views | 16 MiB per view from a 64 MiB pool. Views expire after 120 seconds. |
+| Recovery jobs | Two globally. Closing a review cancels pending work. |
 
-Application uses no-clobber capture of the original followed by no-clobber
-publication of the replacement. **There is a visibility gap between those two
-renames.** It is not a single atomic replacement or a globally atomic transaction.
-Ordinary errors attempt a no-clobber restoration while authority is still held.
-Crashes, I/O errors or a competing creator can leave an absent destination or a
-partial plan; originals and replacements remain available for explicit recovery.
-Compensating recovery never overwrites a competing write. An interrupted apply
-is reported separately from a fully completed edit, including when affected files
-were not open; the UI directs the user to retained workspace recovery.
+Open **Settings → Extensions → Workspace recovery…** and select the original
+physical directory. Compare the original, replacement, and current file.
+New journals list the command and approved source digest. Older journals may
+lack attribution. Inspection works after uninstall and runs no plugin code.
 
-**Settings → Extensions → Workspace recovery…** lists retained journals.
-Choose the original physical directory to inspect complete original/replacement
-text and current file state. New journals record the command and exact approved
-source digest; legacy journals explicitly lack attribution. Inspection does not
-run Lua, make network requests, or resume edits. Views expire after 120 seconds.
-They reserve at most 16 MiB each from the same global 64 MiB snapshot budget.
+Resume, restore, and history removal authenticate the journal, recheck directory
+identity and birth time, and compare the current view with the reviewed one.
+Recovery cancels plugin sessions under the policy mutation guard. It uses the
+same buffer leases and off-thread reconciliation as commit.
 
-Explicit resume, restore and history deletion reopen the selected directory,
-recheck its identity and birth time, authenticate the journal and compare a fresh
-view with the reviewed one. The exclusive policy mutation guard cancels plugin
-sessions before recovery, and the same per-window buffer lease protects clean
-buffers during effects and reconciliation. At most two recovery jobs run globally;
-I/O and hashing run off the UI thread. Closing the review cancels pending work.
-No plugin/source approval is needed to recover an uninstalled plugin's journal:
-this is a new, trusted user action rather than reused plugin authority.
-
-Unavailable original/replacement bytes, damaged metadata, unknown stage entries
-or conflicting writes are preserved. An in-place external write can destroy a
-version that was only present in the live file; recovery cannot reconstruct it.
-The incomplete-preparation action only removes verified replacement-only stages.
-There is no automatic repair, quota reset or deletion of ambiguous records. Startup never resumes plugin source or silently applies an old plan.
-History discard refuses missing destinations, competing contents and unknown or
-tampered private entries. Interrupted-preparation cleanup accepts only recorded
-private stages with bounded known replacement files and no ledger, receipts or
-captured originals. Ambiguous/moved stages retain their reservation for review.
-There is no global multi-file Undo. Unix directory fsyncs and file flushes are
-used; Windows file flushes are not a directory-fsync/power-loss guarantee.
+History removal refuses competing contents, missing destinations, and unknown
+or damaged stages. Incomplete-preparation cleanup removes only verified
+replacement-only stages without receipts, a ledger, or captured originals.
+Ambiguous data keeps its reservation. A missing version that existed only in
+a live file cannot be reconstructed. Recovery requires a user action. There is
+no global multi-file Undo. Unix flushes files and directories. Windows file
+flushes provide no directory-fsync or power-loss guarantee.
 
 ## Network boundary
 
-An endpoint approval binds the exact HTTPS URL, GET/POST method, text/JSON content
-type, upload limit and response limit. Port 443 only; no redirects, proxies,
-arbitrary headers, cookies, compression, raw sockets or environment credentials.
-Combining text reads and network access requires disclosure of the data scope
-that can leave the editor. JSON helpers are pure, bounded and strict; decoding
-untrusted JSON cannot create authority or execute source.
+Approve the exact public HTTPS URL, GET/POST method, content type, and limits.
+Combining text reads and network access discloses what can leave the editor.
 
-DNS has a deadline, bounded answers and no application cache. Reject mixed or
-nonpublic destinations, including local/private/link-local/metadata/transition
-ranges. Pin the approved addresses while retaining TLS hostname verification;
-verify the connected peer too. System routing, DNS infrastructure and native CA
-trust remain assumptions, not protections against a compromised OS.
+| Check | Limit |
+| --- | --- |
+| URL and transport | Port 443, text or JSON. Redirects, proxies, arbitrary headers, cookies, compression, raw sockets, and credentials are unavailable. |
+| DNS and TLS | Bounded answers and a DNS deadline. All addresses must be public. The broker pins them and verifies the peer and TLS hostname. |
+| Bodies and headers | Up to 64 KiB each for upload and response. Strict UTF-8 without NUL. Response headers have separate byte and count caps. |
+| Time and rate | Eight seconds for transport, ten for the request. Four global concurrent requests. Five seconds per owner and 32 requests per 30 seconds globally. |
+| Failure or cancellation | Failures spend rate budget. Cancelling drops the request and disclosure guard. |
 
-Upload/response bodies are at most 64 KiB, strict UTF-8 without NUL. Responses
-also have header count/byte limits. Transport is bounded by eight seconds and the
-whole request by ten, with four global concurrent requests, five seconds between
-requests per authenticated owner, and 32 requests per 30 seconds globally.
-Cancellation drops the transport and its disclosure guard. Failed requests count
-against rate limits. Credential references are not implemented; no plaintext or
-ambient-secret fallback exists.
+DNS, system routing, and native CA trust remain dependencies. The JSON helpers
+are bounded data transforms and grant no network or execution access.
 
 ## External tools and validation
 

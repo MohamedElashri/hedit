@@ -204,7 +204,7 @@ weight = 40
 source = "docs/extension-security.md"
 path = "reference/security.md"
 title = "Threat model and isolation"
-description = "Trust boundaries, consent, protocol validation, OS enforcement, resource limits, and residual risks."
+description = "Plugin consent, worker isolation, and platform limits."
 weight = 50
 
 [[pages]]

@@ -6,9 +6,6 @@ template = "section"
 sort_by = "weight"
 +++
 
-Shortcuts use Linux/Windows keys unless a page says otherwise. On macOS,
-use **Cmd** for **Ctrl** and **Option** for **Alt**, with the exceptions in the
-[shortcut reference](@/guide/shortcuts.md). Menus always show your platform's keys.
-
-These pages share their source with the **F1** guide shipped in the application.
-New to hedit? Start with [your first project](@/getting-started/quick-start.md).
+The tables use Linux and Windows keys. On macOS, use **Cmd** for **Ctrl** and
+**Option** for **Alt** unless the [shortcut reference](@/guide/shortcuts.md)
+lists an exception. Menus show the keys for your platform.

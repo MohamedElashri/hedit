@@ -1,0 +1,6 @@
+<figure class="flow-figure">
+  <ol class="flow-steps" role="list">
+    {{ range .Pos }}<li>{{ . }}</li>{{ end }}
+  </ol>
+  {{ with .Get "caption" }}<figcaption>{{ . }}</figcaption>{{ end }}
+</figure>

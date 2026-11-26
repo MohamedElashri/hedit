@@ -3,11 +3,11 @@
 <main id="main" class="article home" tabindex="-1">
   {{ template "article-header" . }}
   <div class="start-paths">
-    <section><h2>Use the editor</h2><p>From your first file to a workspace that feels familiar.</p><ul><li><a href="{{ .BasePath }}/getting-started/install/">Install hedit</a></li><li><a href="{{ .BasePath }}/getting-started/quick-start/">Open your first project</a></li><li><a href="{{ .BasePath }}/guide/">Browse the user guide</a></li></ul></section>
-    <section><h2>Build a plugin</h2><p>Start with a small command. Grow with explicit capabilities.</p><ul><li><a href="{{ .BasePath }}/plugins/first-plugin/">Write your first plugin</a></li><li><a href="{{ .BasePath }}/plugins/choose-api/">Choose an API</a></li><li><a href="{{ .BasePath }}/reference/">Read the API reference</a></li></ul></section>
+    <section><h2>Use the editor</h2><ul><li><a href="{{ .BasePath }}/getting-started/install/">Install hedit</a></li><li><a href="{{ .BasePath }}/getting-started/quick-start/">Open your first project</a></li><li><a href="{{ .BasePath }}/guide/">Browse the user guide</a></li></ul></section>
+    <section id="follow-a-complete-example"><h2>Build a plugin</h2><ul><li><a href="{{ .BasePath }}/plugins/first-plugin/">Write your first plugin</a></li><li><a href="{{ .BasePath }}/plugins/choose-api/">Choose an API</a></li><li><a href="{{ .BasePath }}/reference/">Read the API reference</a></li></ul></section>
   </div>
-  <figure class="editor-preview"><picture><source media="(prefers-color-scheme: dark)" srcset="{{ asset "images/screenshot-dark.png" }}"><img src="{{ asset "images/screenshot-light.png" }}" alt="hedit with a Rust project open, an Explorer sidebar, file tabs, and recovery status" width="2560" height="1640" loading="lazy"></picture><figcaption>A native workspace for code, technical notes, and remote projects.</figcaption></figure>
-  <div class="prose">{{ unsafeHTML .Section.BodyHTML }}</div>
+  <figure class="editor-preview"><picture><source media="(prefers-color-scheme: dark)" srcset="{{ asset "images/screenshot-dark.png" }}"><img src="{{ asset "images/screenshot-light.png" }}" alt="hedit with a Rust project open, an Explorer sidebar, file tabs, and recovery status" width="2560" height="1640" loading="lazy"></picture></figure>
+  <div class="prose" id="find-an-answer">{{ unsafeHTML .Section.BodyHTML }}</div>
   {{ template "article-footer" . }}
 </main>
 {{ template "outline" . }}

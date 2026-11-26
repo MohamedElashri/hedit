@@ -25,24 +25,23 @@ Declare `api_version: 4`, `sdk_version: 2`. Each Lua command may declare:
 }
 ```
 
-Kinds are `diagnostics`, `completions`, `hover`, `symbols`, `formatting`,
-`code_actions`, and `presentation`. Triggers also include `selection` and `save`.
-`interaction` is reserved for a host-validated action on a current result.
-Providers cannot declare ordinary command arguments, save hooks, or persistent
-private storage. Package-local modules/resources and typed settings are shared
-with SDK 1. The package permission ceiling is exactly the union of its roles:
-`document.read`, `events.observe`, `ui.present`, and `document.edit` for editing
-providers. Formatting/completion require edit authority. Ordinary SDK commands
-may coexist, retaining their separate approvals and optional private storage.
+| Registration field | Values |
+| --- | --- |
+| `kind` | `diagnostics`, `completions`, `hover`, `symbols`, `formatting`, `code_actions`, `presentation` |
+| `events` | `open`, `change`, `close`, `manual`, `selection`, `save`. The host supplies `interaction` for current result actions. |
+| `may_edit` | Declare edit authority for formatting and completion. |
+| `priority` | −100 to 100. Higher runs first. Command ID breaks ties. |
+| Permissions | Union of roles in the package. Providers use `document.read`, `events.observe`, `ui.present`, and `document.edit` when editing. |
 
-Registration uses existing language/filename/selection conditions. Priority
-ranges from -100 to 100; higher priority runs first, then command ID breaks ties.
-At most 32 approved providers register per window; the results window reports an
-excess. Results remain grouped by owner; one provider cannot replace another's
-results. Editor decorations deduplicate identical ranges/messages across owners and show
-at most 256 ranges across priority order. Result lists render visible rows for
-one selected provider; long output uses bounded pages.
-There is no implicit call to a built-in LSP, executable, or internal editor command.
+Providers use SDK 1 settings, modules, and resources. Command arguments,
+Save hooks, and private storage belong to separately approved commands.
+Language, filename, and selection conditions still apply.
+
+Each window can register 32 approved providers. Results are grouped by owner.
+Editor decorations deduplicate identical ranges and messages and show up to
+256 ranges in priority order. The result window renders visible rows for
+one provider and pages long output. Built-in LSP and editor commands are
+outside the provider contract.
 
 ## Callback and state
 
@@ -108,29 +107,23 @@ filesystem links, network fetches, or arbitrary host command strings.
 
 ## Lifecycle and limits
 
-The host lazily manages sessions and rotates a fresh native worker/VM for every
-callback. A trusted launch argument selects this role before reading IPC. The
-worker sends one fixed readiness byte only after isolation succeeds; the parent
-allows two seconds for startup and then 750 ms for request processing, response,
-EOF, and exit. The callback also has 200,000 Lua instructions, 16 MiB Lua memory,
-and the existing native 256 MiB/two-second CPU ceilings. Unix service workers
-lower their scheduling priority; Linux cannot change it after seccomp. Windows
-uses a below-normal Job Object priority and a 10% hard CPU-rate cap. There is no
-resident VM whose cumulative CPU ceiling is silently removed.
+Each callback gets a fresh confined worker. The launcher selects its role
+before IPC. The worker signals readiness only after confinement.
 
-Four provider workers may run globally, including authorization. Callbacks
-serialize per package within a window. Each provider starts at most every 100 ms,
-uses a declared 50–1000 ms debounce, and has a conservative 10-second wall-work
-budget per 30 seconds. Idle cache expires after 30 seconds. Failures back off;
-three failures quarantine the provider until explicit Resume. Stop clears pending
-work, results and cache. A permission/source watcher invalidates registrations;
-watcher failure disables providers. Authorization is checked before delivery,
-before publishing results, and before effects. Provider disclosure/publication
-guards permit concurrent readers; policy changes and private storage writes stay
-exclusive. UI authorization receipts expire after 200 ms if unconsumed, so an
-inactive window cannot retain a policy lock indefinitely. User prompt/preview
-dwell holds no such receipt. Filesystem checks and Lua/IPC
-never wait on the UI thread. Revocation cannot retract already disclosed data.
+| Limit | Value |
+| --- | --- |
+| Startup and callback | Two seconds to start. 750 ms for processing, response, EOF, and exit. |
+| Lua and native ceilings | 200,000 instructions, 16 MiB Lua memory, 256 MiB native memory, two CPU seconds. |
+| Scheduling | Four workers globally, including authorization. Serialize callbacks per package/window. Workers lower OS priority. Windows also uses a 10% job CPU rate. |
+| Event timing | At most one start per 100 ms, 50–1,000 ms debounce, ten seconds of work in 30 seconds. |
+| Idle and failure | Cache expires after 30 seconds idle. Failures back off. Three failures quarantine the provider until **Resume**. |
+
+Stop clears work, cache, and results. A watcher invalidates stale permissions
+or source. Watcher failure disables providers. The host rechecks access before
+delivery, publication, and effects. Shared guards protect reads. Policy changes
+and storage writes are exclusive. A UI receipt expires after 200 ms.
+User prompts and previews hold no receipt. Filesystem checks, Lua, and IPC
+run off the UI thread. Revocation cannot retract disclosed text.
 
 ## Fixtures and declarative packs
 

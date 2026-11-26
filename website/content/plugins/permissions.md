@@ -5,55 +5,41 @@ weight = 30
 template = "page"
 +++
 
-hedit treats installed code and worker output as untrusted. Isolation limits
-what a worker can do; the broker separately decides which effects are authorized.
-Design the plugin's behavior around both boundaries.
-
 ## Request only the data you need
 
-A selection transform should stay a selection transform when it does not need
-the whole document. A formatter that only uses the current document should not
-request a project copy. Keep optional project or endpoint features in commands
-whose grants explain those features clearly.
+| Feature | Ask for |
+| --- | --- |
+| A transform over a selection | Selection-only access |
+| A formatter | The current document |
+| A project command | The directory and the capabilities it uses |
+| An external integration | The exact approved tool image or public endpoint |
+| Automatic editing on Save | Persistent command approval and a language binding |
 
-Document approval belongs to an exact installed command and source copy.
-Workspace, endpoint, native-image, and Save-hook approvals have separate scopes.
-A publisher signature proves provenance and integrity; it does not make a plugin
-safe or approve any capability.
+Approval applies to the reviewed installed command and source. Review workspace,
+endpoint, native-image, and Save-hook grants separately. A publisher signature
+identifies the signer and verifies the bundle's integrity.
 
 ## Make effects reviewable
 
-Return a document transaction or workspace edit plan through the supported API.
-Keep ranges tied to the supplied snapshot and revision. Do not retry a stale edit
-against new text without recomputing it.
-
-For multi-file work, reject incomplete discovery or truncated search results.
-Stage a complete plan and let the host review it. A workspace commit is separate
-from single-document Undo; retained journals support explicit recovery.
-See [workspace edits and recovery](@/reference/broker.md#workspace-edits-and-recovery).
+Return a transaction tied to the snapshot and revision. Recompute an edit if the
+document changes. For a multi-file edit, require complete results before staging
+a plan. The host previews and commits it separately. See
+[workspace edits and recovery](@/reference/broker.md#workspace-edits-and-recovery).
 
 ## Handle refusal and cancellation
 
-For scoped operations, inspect the fixed failure category before consuming a
-response. Missing, changed, denied, or revoked resources are ordinary outcomes.
-Never reinterpret a failed or partial response as an empty successful result.
+| Outcome | What the plugin should do |
+| --- | --- |
+| Missing, changed, denied, or revoked resource | Inspect the fixed failure category. Stop or offer an action the user can take. |
+| Partial or truncated result | End the edit flow. |
+| User revokes a grant | Expect future effects to fail authorization. Text already sent and edits already committed remain. |
 
-Use no-op completion where appropriate, or a bounded typed result that helps the
-user understand the action they can take. Do not place document contents,
-credentials, or unbounded service output in diagnostic messages.
-
-Revocation stops future authorized effects. It cannot retract text already
-disclosed to an approved worker or endpoint, and it cannot undo a committed edit.
-This matters when describing a feature that sends text to an external service.
+Keep diagnostics short. Leave document contents, credentials, and full service
+responses out of messages.
 
 ## Treat Save hooks as a separate feature
 
-Supported save-capable commands need persistent command approval and an explicit
-language binding. Hooks can replace the whole eligible local document on Save,
-without an edit preview. Keep them predictable, deterministic, and comfortably
-inside the hook deadline. SDK 3 commands do not declare legacy Save hooks;
-automatic SDK 3 work uses provider events instead.
-
-Read the [full threat model](@/reference/security.md) for OS-specific enforcement,
-monitored limits, trust assumptions, and residual risks. Tests do not establish
-security outside the boundary they actually exercise.
+A bound hook can replace the whole eligible local document on Save without a
+preview. Use a deterministic command that finishes within the hook deadline.
+For SDK 3, use provider events for automatic work. See the
+[threat model](@/reference/security.md) for platform enforcement and limits.
