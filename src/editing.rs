@@ -45,7 +45,7 @@ fn body(line: &str) -> (&str, &str) {
         (line, "")
     }
 }
-fn line_range(text: &str, start: usize, end: usize) -> (usize, usize) {
+pub(crate) fn line_range(text: &str, start: usize, end: usize) -> (usize, usize) {
     let left = text[..start].rfind('\n').map_or(0, |n| n + 1);
     let right = if start != end && text[..end].ends_with('\n') {
         end
