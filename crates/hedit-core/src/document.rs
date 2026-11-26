@@ -1565,8 +1565,8 @@ impl Document {
         let mut previous_cr = false;
         while cursor < self.size && current_line < line {
             let bytes = self.read_range(cursor, (self.size - cursor).min(IO_SIZE))?;
-            for index in memchr::memchr_iter(b'\n', &bytes) {
-                if self.eol == "Unknown" {
+            if self.eol == "Unknown" {
+                if let Some(index) = memchr::memchr(b'\n', &bytes) {
                     let crlf = if index == 0 {
                         previous_cr
                     } else {
@@ -1574,11 +1574,16 @@ impl Document {
                     };
                     self.eol = if crlf { "CRLF" } else { "LF" };
                 }
-                current_line += 1;
+            }
+            let count = memchr::memchr_iter(b'\n', &bytes).count() as u64;
+            if count >= line - current_line {
+                let index = memchr::memchr_iter(b'\n', &bytes)
+                    .nth((line - current_line - 1) as usize)
+                    .unwrap();
                 line_start = cursor + index as u64 + 1;
-                if current_line == line {
-                    break;
-                }
+                current_line = line;
+            } else {
+                current_line += count;
             }
             previous_cr = bytes.last() == Some(&b'\r');
             cursor += bytes.len() as u64;
