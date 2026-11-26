@@ -344,7 +344,8 @@ impl HeditApp {
                                 let active =
                                     index == self.workspace.active && !self.source_control.open;
                                 let can_close = self.workspace.can_close(index);
-                                let title = self.tab_strip.title(
+                                let button = self.tab_strip.button(
+                                    ui,
                                     index,
                                     if active {
                                         theme.text.color()
@@ -391,16 +392,8 @@ impl HeditApp {
                                         .show(ui, |ui| {
                                             ui.push_id(buffer.page.info.id, |ui| {
                                                 ui.horizontal(|ui| {
-                                                    let response = ui
-                                                        .add(
-                                                            egui::Button::new(title)
-                                                                .frame(false)
-                                                                .min_size(egui::vec2(96.0, 20.0))
-                                                                .sense(
-                                                                    egui::Sense::click_and_drag(),
-                                                                ),
-                                                        )
-                                                        .on_hover_text(tooltip);
+                                                    let response =
+                                                        ui.add(button).on_hover_text(tooltip);
                                                     response.widget_info(|| {
                                                         egui::WidgetInfo::labeled(
                                                             egui::WidgetType::Button,

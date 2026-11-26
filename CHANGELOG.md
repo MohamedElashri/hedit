@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Add built-in file and folder icons to Explorer and Source Control, and file icons to editor tabs and Go to File. Icons distinguish common languages, project files, and folder roles in light and dark themes.
+
 ## [0.7.3] - 2026-11-23
 
 - Make the optional Ko-fi tip easy to find in About and keep it visible while browsing the app information.

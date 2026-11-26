@@ -94,7 +94,8 @@ impl HeditApp {
                                 let selected = index == self.workspace.active
                                     && !(review_here && self.source_control.review_selected);
                                 let label = self.tab_strip.label(index).to_owned();
-                                let title = self.tab_strip.title(
+                                let button = self.tab_strip.button(
+                                    ui,
                                     index,
                                     if selected {
                                         theme.text.color()
@@ -133,16 +134,11 @@ impl HeditApp {
                                         .inner_margin(egui::Margin::symmetric(10, 3))
                                         .show(ui, |ui| {
                                             ui.horizontal(|ui| {
-                                                let response = ui
-                                                    .add(
-                                                        egui::Button::new(title)
-                                                            .frame(false)
-                                                            .min_size(egui::vec2(96.0, 20.0))
-                                                            .sense(egui::Sense::click_and_drag()),
-                                                    )
-                                                    .on_hover_text(path.as_deref().unwrap_or(
+                                                let response = ui.add(button).on_hover_text(
+                                                    path.as_deref().unwrap_or(
                                                         "Unsaved file · included in recovery",
-                                                    ));
+                                                    ),
+                                                );
                                                 response.widget_info(|| {
                                                     egui::WidgetInfo::labeled(
                                                         egui::WidgetType::Button,

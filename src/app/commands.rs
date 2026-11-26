@@ -2318,12 +2318,38 @@ impl HeditApp {
                 scroll = scroll.vertical_scroll_offset((self.palette_index as f32 * stride - height / 2.0).max(0.0));
             }
             scroll.show_rows(ui, 28.0, items.len(), |ui, rows| {
+                use hedit::icons::FileIcon;
+
                 for index in rows {
                     let (label, shortcut, item) = &items[index];
-                    let response = ui.add(egui::Button::new(highlighted(ui, label, &filter, self.theme.accent.color()))
-                        .selected(index == self.palette_index).shortcut_text(shortcut)
-                        .min_size(egui::vec2(ui.available_width(), 28.0)));
-                    if response.clicked() { chosen = Some(item.clone()); }
+                    let icon = match item {
+                        Item::Buffer(index) => {
+                            let info = &self.workspace.open[*index].page.info;
+                            Some(info.path.as_ref().map_or(FileIcon::Generic, |_| {
+                                FileIcon::for_name(&info.name)
+                            }))
+                        }
+                        Item::File(_) => Some(
+                            std::path::Path::new(label)
+                                .file_name()
+                                .and_then(|name| name.to_str())
+                                .map_or(FileIcon::Generic, FileIcon::for_name),
+                        ),
+                        _ => None,
+                    };
+                    let text = highlighted(ui, label, &filter, self.theme.accent.color());
+                    let response = ui.add(
+                        egui::Button::opt_image_and_text(
+                            icon.map(|icon| icon.image(ui, self.theme.muted.color())),
+                            Some(text),
+                        )
+                        .selected(index == self.palette_index)
+                        .shortcut_text(shortcut)
+                        .min_size(egui::vec2(ui.available_width(), 28.0)),
+                    );
+                    if response.clicked() {
+                        chosen = Some(item.clone());
+                    }
                 }
             });
             if items.is_empty() && !targets_pending {

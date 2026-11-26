@@ -145,6 +145,12 @@ endings** converts LF/CRLF. Binary files are unsupported.
 
 ### Explorer interaction
 
+Explorer, Source Control, editor tabs and Go to File use built-in icons for
+common file types and project files such as `Cargo.toml`, `package.json` and
+`.gitignore`.
+Folders such as `src`, `tests`, `docs` and `assets` have their own icons, with
+open and closed states. Icons work in both local and SSH projects.
+
 **View → Side bar → Focus Explorer** gives the folder tree keyboard focus. The
 optional VS Code preset uses Ctrl+Shift+E (Cmd+Shift+E on macOS). Arrows expand,
 collapse and navigate; Home/End and Page Up/Down move the selection. Type a name

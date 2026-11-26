@@ -1,12 +1,13 @@
 //! Derived tab geometry only; no document text or persistent UI cache.
 use super::*;
 use egui::Color32;
+use hedit::icons::{FileIcon, FILE_ICON_SIZE};
 use std::path::Path;
 #[derive(Default)]
 pub(super) struct Cache {
     entries: Vec<Entry>,
     offsets: Vec<f32>,
-    style: Option<(egui::FontId, f32, egui::Vec2)>,
+    style: Option<(egui::FontId, f32, f32)>,
     last_active: Option<(u64, usize)>,
     last_width: f32,
     dirty: bool,
@@ -124,6 +125,7 @@ struct Entry {
     label: String,
     pinned: bool,
     close: bool,
+    icon: FileIcon,
     pub title: String,
     width: f32,
 }
@@ -137,11 +139,7 @@ impl Cache {
         let metrics = hedit::ui_style::Metrics::for_ui(ui);
         self.height = metrics.tab;
         let font = ui.style().text_styles[&egui::TextStyle::Button].clone();
-        let style = (
-            font,
-            ui.ctx().pixels_per_point(),
-            ui.spacing().button_padding,
-        );
+        let style = (font, ui.ctx().pixels_per_point(), ui.spacing().icon_spacing);
         let restyle = self.style.as_ref() != Some(&style) || self.font_refresh > 0;
         self.font_refresh = self.font_refresh.saturating_sub(1);
         let locations = (self.entries.len() != workspace.open.len()
@@ -195,7 +193,7 @@ impl Cache {
                 egui::TextStyle::Button,
             );
             let width = 20.0
-                + (galley.size().x + ui.spacing().button_padding.x * 2.0).max(96.0)
+                + (galley.size().x + FILE_ICON_SIZE + ui.spacing().icon_spacing).max(96.0)
                 + if close { metrics.control + 2.0 } else { 0.0 };
             let entry = Entry {
                 id: b.view.id,
@@ -205,6 +203,12 @@ impl Cache {
                 label,
                 pinned: b.view.pinned,
                 close,
+                icon: b
+                    .page
+                    .info
+                    .path
+                    .as_ref()
+                    .map_or(FileIcon::Generic, |_| FileIcon::for_name(&b.page.info.name)),
                 title,
                 width,
             };
@@ -231,22 +235,27 @@ impl Cache {
         self.style = Some(style);
         self.dirty = false;
     }
-    pub fn title(
+    pub fn button(
         &self,
+        ui: &egui::Ui,
         i: usize,
         color: Color32,
         muted: Color32,
         italics: bool,
-    ) -> egui::text::LayoutJob {
+    ) -> egui::Button<'static> {
         let entry = &self.entries[i];
-        title_job(
+        let title = title_job(
             &entry.title,
             entry.location.as_deref(),
             color,
             muted,
             italics,
             self.style.as_ref().map_or(13.0, |s| s.0.size),
-        )
+        );
+        egui::Button::image_and_text(entry.icon.image(ui, muted), title)
+            .frame(false)
+            .min_size(egui::vec2(96.0, 20.0))
+            .sense(egui::Sense::click_and_drag())
     }
     pub fn label(&self, i: usize) -> &str {
         &self.entries[i].label

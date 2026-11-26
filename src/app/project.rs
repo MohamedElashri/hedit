@@ -555,6 +555,10 @@ impl HeditApp {
                             tree_row::Row {
                                 name: &node.name,
                                 path: &node.path,
+                                icon_name: node
+                                    .name
+                                    .split_once(" / ")
+                                    .map_or(&node.name, |(first, _)| first),
                                 directory,
                                 expanded: node.expanded,
                                 selected: if tree_has_focus {

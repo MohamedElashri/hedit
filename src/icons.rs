@@ -1,6 +1,9 @@
 //! Pinned Codicons rendered from embedded vectors, independent of chosen fonts.
 use eframe::egui::{self, Color32, TextureHandle};
 
+mod entries;
+pub use entries::{FileIcon, FolderIcon, FILE_ICON_SIZE};
+
 macro_rules! icons {
     ($($variant:ident => $file:literal),* $(,)?) => {
         #[derive(Clone,Copy,Debug,PartialEq,Eq,Hash)]
@@ -31,35 +34,7 @@ impl Icon {
     }
     /// Keep at most four pixel sizes per icon/context; no unbounded DPI cache.
     pub fn texture(self, ctx: &egui::Context, points: f32) -> TextureHandle {
-        let points = if points.is_finite() { points } else { 16.0 };
-        let pixels = (points * ctx.pixels_per_point()).ceil().clamp(8.0, 128.0) as u32;
-        let cache = ctx
-            .data(|d| d.get_temp::<Cached>(self.key()))
-            .unwrap_or_default();
-        if let Some((_, texture)) = cache
-            .0
-            .lock()
-            .unwrap()
-            .iter()
-            .find(|(size, _)| *size == pixels)
-        {
-            return texture.clone();
-        }
-        let image = rasterize(self, pixels).expect("embedded Codicons are validated by tests");
-        let texture = ctx.load_texture(
-            format!("codicon-{self:?}-{pixels}"),
-            image,
-            egui::TextureOptions::LINEAR,
-        );
-        {
-            let mut entries = cache.0.lock().unwrap();
-            if entries.len() >= 4 {
-                drop(entries.remove(0));
-            }
-            entries.push((pixels, texture.clone()));
-        }
-        ctx.data_mut(|d| d.insert_temp(self.key(), cache));
-        texture
+        cached_texture(ctx, points, self.key(), || self.svg())
     }
     pub fn matches_texture(self, ctx: &egui::Context, id: egui::TextureId) -> bool {
         ctx.data(|d| d.get_temp::<Cached>(self.key()))
@@ -68,17 +43,56 @@ impl Icon {
     pub fn paint(self, ui: &egui::Ui, rect: egui::Rect, color: Color32) {
         if ui.is_rect_visible(rect) {
             let texture = self.texture(ui.ctx(), rect.width().max(rect.height()));
-            ui.painter().image(
-                texture.id(),
-                rect,
-                egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
-                color,
-            );
+            paint_texture(ui, rect, &texture, color);
         }
     }
 }
 
-fn rasterize(icon: Icon, pixels: u32) -> Result<egui::ColorImage, String> {
+fn cached_texture<S: AsRef<[u8]>>(
+    ctx: &egui::Context,
+    points: f32,
+    key: egui::Id,
+    svg: impl FnOnce() -> S,
+) -> TextureHandle {
+    let points = if points.is_finite() { points } else { 16.0 };
+    let pixels = (points * ctx.pixels_per_point()).ceil().clamp(8.0, 128.0) as u32;
+    let cache = ctx.data(|d| d.get_temp::<Cached>(key)).unwrap_or_default();
+    if let Some((_, texture)) = cache
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(size, _)| *size == pixels)
+    {
+        return texture.clone();
+    }
+    let image = rasterize(svg().as_ref(), pixels).expect("embedded icon must be valid SVG");
+    let texture = ctx.load_texture(
+        format!("icon-{key:?}-{pixels}"),
+        image,
+        egui::TextureOptions::LINEAR,
+    );
+    {
+        let mut entries = cache.0.lock().unwrap();
+        if entries.len() >= 4 {
+            drop(entries.remove(0));
+        }
+        entries.push((pixels, texture.clone()));
+    }
+    ctx.data_mut(|d| d.insert_temp(key, cache));
+    texture
+}
+
+fn paint_texture(ui: &egui::Ui, rect: egui::Rect, texture: &TextureHandle, tint: Color32) {
+    ui.painter().image(
+        texture.id(),
+        rect,
+        egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+        tint,
+    );
+}
+
+fn rasterize(svg: &[u8], pixels: u32) -> Result<egui::ColorImage, String> {
     use resvg::{tiny_skia, usvg};
     let options = usvg::Options {
         image_href_resolver: usvg::ImageHrefResolver {
@@ -87,7 +101,7 @@ fn rasterize(icon: Icon, pixels: u32) -> Result<egui::ColorImage, String> {
         },
         ..Default::default()
     };
-    let tree = usvg::Tree::from_data(icon.svg(), &options).map_err(|e| e.to_string())?;
+    let tree = usvg::Tree::from_data(svg, &options).map_err(|e| e.to_string())?;
     let size = tree.size();
     let mut pixmap = tiny_skia::Pixmap::new(pixels, pixels).ok_or("Invalid icon size")?;
     resvg::render(
@@ -169,7 +183,7 @@ mod tests {
                 !source.contains("href=") && !source.contains("<text") && !source.contains("url(")
             );
             for pixels in [16, 24, 32, 64] {
-                let image = rasterize(icon, pixels).unwrap();
+                let image = rasterize(icon.svg(), pixels).unwrap();
                 assert_eq!(image.size, [pixels as usize, pixels as usize]);
                 let visible: Vec<_> = image.pixels.iter().filter(|c| c.a() > 0).collect();
                 assert!(visible.len() > 4, "{icon:?}");
