@@ -22,6 +22,22 @@ fn type_text(ctx: &egui::Context, app: &mut HeditApp, text: &str) {
 }
 
 #[test]
+fn automatic_indent_cleanup_clamps_a_selection_to_the_cleared_line() {
+    let (_directory, ctx, mut app) = app_with("    use\nend\n");
+    app.settings.trim_automatic_white_space = true;
+    app.settings.smart_indent = true;
+    app.set_selections(vec![hedit::advanced::Selection::caret(7)]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)]);
+    assert_eq!(app.active().page.text, "    use\n    \nend\n");
+
+    app.set_selections(vec![hedit::advanced::Selection { anchor: 9, head: 1 }]);
+    app.trim_auto_indent();
+    assert_eq!(app.active().page.text, "    use\n\nend\n");
+    assert_eq!((app.active().view.anchor, app.active().view.head), (8, 1));
+}
+
+#[test]
 fn typing_pairs_brackets_and_backspace_removes_both() {
     let (_directory, ctx, mut app) = app_with("");
     app.set_syntax(Some(syntax::Language::Python));
