@@ -81,7 +81,7 @@ pub fn scoped_matches<'r, 'h>(
     let mut at = scope.start;
     let mut previous_end = None;
     std::iter::from_fn(move || {
-        while at <= scope.end {
+        while at <= scope.end.min(text.len()) {
             let hit = regex.find_at(text, at)?;
             if hit.end() > scope.end {
                 return None;
