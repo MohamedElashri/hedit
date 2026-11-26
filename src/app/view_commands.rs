@@ -5,15 +5,20 @@ use super::*;
 /// How many recent files are kept.
 const RECENT: usize = 20;
 
+fn location_text(path: &str, line: u64, column: u64) -> String {
+    if path.contains(['@', ':', '#', '"']) || path.trim() != path {
+        format!("\"{path}\":{line}:{column}")
+    } else {
+        format!("{path}:{line}:{column}")
+    }
+}
+
 impl HeditApp {
     pub(super) fn copy_file_location(&mut self, ctx: &egui::Context) {
         let buffer = &self.workspace.open[self.workspace.active];
         let Some(path) = buffer.page.info.path.as_deref() else {
             return;
         };
-        if buffer.page.start != 0 {
-            return;
-        }
         let roots: Vec<_> = self
             .workspace
             .folders
@@ -21,15 +26,26 @@ impl HeditApp {
             .map(|f| PathBuf::from(&f.path))
             .collect();
         let path = hedit::folder::display_path(&roots, std::path::Path::new(path));
+        if buffer.page.start != 0 {
+            let id = buffer.view.id;
+            let offset = buffer.cursor_offset();
+            let revision = buffer.page.info.revision;
+            let editor = self.workspace.editor.clone();
+            self.job(ctx, move || {
+                let shared = editor.get(id)?;
+                let doc = shared.lock().map_err(|error| error.to_string())?;
+                if doc.revision() != revision {
+                    return Err("The file changed before copying its location.".into());
+                }
+                let (line, column) = doc.navigation_position(offset)?;
+                Ok(Action::CopyFileLocation(location_text(&path, line, column)))
+            });
+            return;
+        }
         let (line, column) = self.projections[self.panes.focused]
             .source_index(&buffer.page.text)
             .navigation_position(&buffer.page.text, buffer.view.head);
-        let location = if path.contains(['@', ':', '#', '"']) || path.trim() != path {
-            format!("\"{path}\":{line}:{column}")
-        } else {
-            format!("{path}:{line}:{column}")
-        };
-        ctx.copy_text(location);
+        ctx.copy_text(location_text(&path, line as u64, column as u64));
         self.notice = "File location copied.".into();
     }
     /// Note the active file as the most recently used.
@@ -94,7 +110,7 @@ impl HeditApp {
             .bookmarks
             .iter()
             .filter_map(|mark| {
-                let mut at = (mark.offset.checked_sub(b.page.start)? as usize).min(text.len());
+                let mut at = b.bookmark_on_page(mark.offset)?;
                 while !text.is_char_boundary(at) {
                     at -= 1;
                 }
@@ -104,7 +120,12 @@ impl HeditApp {
             })
             .collect();
         if ranges.is_empty() {
-            self.notice = "No bookmarks in this file.".into();
+            self.notice = if b.page.info.paged {
+                "No bookmarks on this page."
+            } else {
+                "No bookmarks in this file."
+            }
+            .into();
         } else {
             self.set_selections(ranges);
         }

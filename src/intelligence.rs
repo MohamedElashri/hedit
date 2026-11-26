@@ -11,7 +11,7 @@ pub struct Symbol {
     pub line: usize,
 }
 pub fn symbols(text: &str, path: &Path) -> Vec<Symbol> {
-    let definitions=regex::Regex::new(r"(?x)^\s*(?:(?:pub(?:\([^)]*\))?|async|export|default|static|inline|virtual|const|unsafe|extern)\s+)*(?:(?:fn|def|class|struct|enum|trait|interface|function|type|mod|namespace)\s+([\pL_][\pL\pN_]*)|([\pL_][\pL\pN_:<>*&\s]*)\s+([\pL_][\pL\pN_]*)\s*\([^;]*\)\s*(?:const\s*)?\{)").unwrap();
+    let definitions=regex::Regex::new(r#"(?x)^\s*(?:(?:pub(?:\([^)]*\))?|async|export|default|static|inline|virtual|const|unsafe|extern(?:\s+"[^"\n]*")?)\s+)*(?:(?:fn|def|class|struct|enum|trait|interface|function|type|mod|namespace)\s+([\pL_][\pL\pN_]*)|([\pL_][\pL\pN_:<>*&\s]*)\s+([\pL_][\pL\pN_]*)\s*\([^;]*\)\s*(?:const\s*)?\{)"#).unwrap();
     text.lines()
         .enumerate()
         .filter_map(|(line, text)| {
@@ -364,12 +364,10 @@ pub fn git_diff(path: &Path, text: &str) -> Result<String, String> {
 /// The file's text in Git's HEAD commit.
 pub fn git_base(path: &Path) -> Result<String, String> {
     let parent = path.parent().ok_or("No file directory.")?;
-    let root = git_output(parent, &["rev-parse", "--show-toplevel"])?;
-    let root = PathBuf::from(root.trim_end_matches(['\r', '\n']));
+    let root = crate::git::Git::default().discover(parent)?;
     // Git reports the real location; resolve symlinks (such as /var → /private/var
     // on macOS) in the file path too, so the repository prefix matches.
     let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
-    let root = std::fs::canonicalize(&root).unwrap_or(root);
     let relative = resolved.strip_prefix(&root).map_err(|e| e.to_string())?;
     let relative = relative.to_str().ok_or("Git paths must be UTF-8.")?;
     #[cfg(windows)]

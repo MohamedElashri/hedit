@@ -62,7 +62,6 @@ impl HeditApp {
     /// Build the active file with the chosen (or automatic) build system,
     /// saving it first.
     pub(super) fn build(&mut self, ctx: &egui::Context) {
-        self.quality.results_newer = false;
         let b = self.active();
         let Some(path) = b.page.info.path.clone() else {
             self.error = Some("Save the file before building it.".into());
@@ -124,6 +123,7 @@ impl HeditApp {
         };
         match Running::start_with_variables(&system.shell_cmd, &dir, &variables, wake) {
             Ok(running) => {
+                self.quality.results_newer = false;
                 self.build = BuildState {
                     problems_revision: self.build.problems_revision.wrapping_add(1),
                     open: true,
@@ -212,7 +212,7 @@ impl HeditApp {
         }
     }
     /// Jump to the next (or previous) location in the build output.
-    pub(super) fn next_result(&mut self, forward: bool) {
+    pub(super) fn next_result(&mut self, ctx: &egui::Context, forward: bool) {
         // Find in folders results, when they are newer than the build's.
         let hits = self.quality.results.hits.len();
         if self.quality.results_newer && hits > 0 {
@@ -224,12 +224,7 @@ impl HeditApp {
             };
             self.quality.result_current = Some(next);
             let hit = &self.quality.results.hits[next];
-            self.pending_paths.push_back(PathBuf::from(format!(
-                "{}:{}:{}",
-                hit.path.display(),
-                hit.line,
-                hit.column
-            )));
+            self.open_existing_location(ctx, hit.path.clone(), hit.line as u64, hit.column as u64);
             self.notice = format!("Match {} of {hits}", next + 1);
             return;
         }

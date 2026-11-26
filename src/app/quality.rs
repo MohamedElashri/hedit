@@ -219,14 +219,38 @@ pub(super) enum Event {
     ),
     Diff(u64, u64, String, String, bool),
     FileChanged(PathBuf, Option<PathBuf>),
+    FileRemovalFailed(String, Vec<(u64, hedit::document::RemovalState)>),
     ProjectLoaded(
         PathBuf,
         projects::Project,
-        projects::State,
+        Option<projects::State>,
         Vec<(Document, Page, hedit::session::TabView)>,
     ),
     ProjectSaved(PathBuf),
 }
+/// Save-time cleanup preserves lines and only changes their trailing whitespace
+/// and separators. Keep the cursor on the same line and clamp it to the body.
+fn cursor_after_save_cleanup(before: &str, after: &str, cursor: usize) -> usize {
+    let mut remaining = cursor;
+    let mut result = 0;
+    let mut after = after.split_inclusive('\n');
+    for line in before.split_inclusive('\n') {
+        let next = after.next().unwrap_or("");
+        let length = line.chars().count();
+        let has_newline = line.ends_with('\n');
+        if remaining < length || !has_newline {
+            let body = next
+                .strip_suffix("\r\n")
+                .or_else(|| next.strip_suffix('\n'))
+                .unwrap_or(next);
+            return result + remaining.min(body.chars().count());
+        }
+        remaining -= length;
+        result += next.chars().count();
+    }
+    result
+}
+
 impl HeditApp {
     pub(super) fn init_quality(&mut self, storage: Option<&dyn eframe::Storage>) {
         self.quality.recent = storage
@@ -321,6 +345,7 @@ impl HeditApp {
                 self.quality.preview_rendered = None;
             }
             Event::Applied(pages, count, mut errors, restore) => {
+                let paged_edited = pages.len();
                 for (id, page) in pages {
                     if let Some(b) = self.workspace.open.iter_mut().find(|b| b.view.id == id) {
                         b.set_page(page);
@@ -332,6 +357,7 @@ impl HeditApp {
                 self.quality.replace_undo = restore;
                 self.quality.results = Default::default();
                 self.quality.preview_query = None;
+                let edited = edited + paged_edited;
                 self.notice = match edited {
                     0 => format!("Updated {count} files."),
                     _ => format!(
@@ -352,6 +378,11 @@ impl HeditApp {
                     self.error = Some(errors.join("\n"));
                 }
             }
+            Event::FileRemovalFailed(error, states) => {
+                self.rollback_file_removal(states);
+                self.refresh_folder();
+                self.error = Some(error);
+            }
             Event::Symbols(symbols) => self.quality.symbols = symbols,
             Event::Locations(references, name, found) => {
                 self.show_locations(ctx, references, name, found)
@@ -368,6 +399,15 @@ impl HeditApp {
                 }
             }
             Event::FileChanged(from, to) => {
+                if let Some(relative) = self
+                    .quality
+                    .folder_scope
+                    .as_ref()
+                    .and_then(|path| path.strip_prefix(&from).ok())
+                {
+                    let scope = to.as_ref().map(|path| path.join(relative));
+                    self.set_folder_search_scope(scope);
+                }
                 if let Some(to) = to {
                     for b in &mut self.workspace.open {
                         if let Some(path) = &b.page.info.path {
@@ -442,6 +482,8 @@ impl HeditApp {
                 self.notice = "Project and workspace saved.".into();
             }
             Event::ProjectLoaded(path, project, state, tabs) => {
+                let saved_layout = state.is_some();
+                let state = state.unwrap_or_default();
                 self.opens.cancel();
                 if let Err(e) = self.workspace.checkpoint() {
                     self.error = Some(e);
@@ -514,7 +556,9 @@ impl HeditApp {
                         self.panes = panes;
                     }
                 }
-                self.settings.word_wrap = state.wrap;
+                if saved_layout {
+                    self.settings.word_wrap = state.wrap;
+                }
                 if state.font_size.is_finite() && state.font_size >= 10.0 {
                     self.settings.font_size = state.font_size.min(28.0);
                 }
@@ -591,19 +635,27 @@ impl HeditApp {
                     }
                 }
                 let b = &mut self.workspace.open[self.workspace.active];
-                if let Some(style) = format.indent_style {
-                    b.view.indent = Some(
-                        if matches!(style.as_str(), "tab" | "tabs") {
-                            "tabs"
-                        } else {
-                            "spaces"
-                        }
-                        .into(),
-                    );
+                let indentation = format.indent_style.map(|style| {
+                    if matches!(style.as_str(), "tab" | "tabs") {
+                        "tabs"
+                    } else {
+                        "spaces"
+                    }
+                });
+                if indentation.is_some()
+                    || b.format_indent
+                        .is_some_and(|prior| b.view.indent.as_deref() == Some(prior))
+                {
+                    b.view.indent = indentation.map(str::to_owned);
                 }
-                if let Some(size) = format.indent_size {
-                    b.view.tab_size = Some(size);
+                if format.indent_size.is_some()
+                    || b.format_tab_size
+                        .is_some_and(|prior| b.view.tab_size == Some(prior))
+                {
+                    b.view.tab_size = Some(format.indent_size.unwrap_or(4));
                 }
+                b.format_indent = indentation;
+                b.format_tab_size = format.indent_size;
             }
             Err(e) => self.error = Some(e),
         }
@@ -619,6 +671,22 @@ impl HeditApp {
                 return false;
             }
         };
+        let charset = format
+            .charset
+            .as_deref()
+            .map(|charset| {
+                let bom = charset == "utf-8-bom";
+                let charset = if bom { "UTF-8" } else { charset };
+                hedit::text_encoding::canonical(charset).map(|encoding| (encoding, bom))
+            })
+            .transpose();
+        let charset = match charset {
+            Ok(charset) => charset,
+            Err(error) => {
+                self.error = Some(error);
+                return false;
+            }
+        };
         if self.active().page.info.paged {
             if format.insert_final_newline == Some(true)
                 || format.trim_trailing_whitespace == Some(true)
@@ -628,6 +696,13 @@ impl HeditApp {
                     .is_some_and(|e| !e.eq_ignore_ascii_case(self.active().page.info.eol))
             {
                 self.error=Some("Save-time formatting requires a fully loaded file. Disable these rules to save this paged file unchanged.".into());
+                return false;
+            }
+            let info = &self.active().page.info;
+            if charset.is_some_and(|(encoding, bom)| {
+                info.encoding != encoding || (encoding == "UTF-8" && info.bom != bom)
+            }) {
+                self.error = Some("Save-time encoding conversion requires a fully loaded file. Disable the encoding rule to save this paged file unchanged.".into());
                 return false;
             }
             return true;
@@ -654,28 +729,23 @@ impl HeditApp {
             )
             .text;
         }
-        if text != self.active().page.text
-            || crlf.is_some_and(|c| c != (self.active().page.info.eol == "CRLF"))
-        {
-            let n = text.chars().count();
-            if !self.apply_edit(
-                hedit::editing::Edit {
-                    text,
-                    anchor: self.active().view.anchor.min(n),
-                    head: self.active().view.head.min(n),
-                },
-                crlf,
-            ) {
+        if let Some((encoding, bom)) = charset {
+            if let Err(error) = hedit::text_encoding::encode(&text, encoding, bom) {
+                self.error = Some(error);
                 return false;
             }
         }
-        if let Some(charset) = format.charset {
-            let needs_bom = charset == "utf-8-bom";
-            let charset = if charset == "utf-8-bom" {
-                "UTF-8"
-            } else {
-                &charset
-            };
+        if text != self.active().page.text
+            || crlf.is_some_and(|c| c != (self.active().page.info.eol == "CRLF"))
+        {
+            let buffer = self.active();
+            let anchor = cursor_after_save_cleanup(&buffer.page.text, &text, buffer.view.anchor);
+            let head = cursor_after_save_cleanup(&buffer.page.text, &text, buffer.view.head);
+            if !self.apply_edit(hedit::editing::Edit { text, anchor, head }, crlf) {
+                return false;
+            }
+        }
+        if let Some((charset, needs_bom)) = charset {
             let shared = self.workspace.editor.get(self.active().view.id).unwrap();
             let mut doc = shared.lock().unwrap();
             if let Err(e) = doc.set_encoding(charset) {
@@ -972,11 +1042,15 @@ impl HeditApp {
             .open
             .iter()
             .filter_map(|b| {
-                b.page
-                    .info
-                    .path
-                    .as_ref()
-                    .map(|p| (PathBuf::from(p), b.view.id, b.page.info.dirty, b.follow))
+                b.page.info.path.as_ref().map(|p| {
+                    (
+                        search_path(p),
+                        b.view.id,
+                        b.page.info.dirty,
+                        b.follow,
+                        b.page.start,
+                    )
+                })
             })
             .collect::<Vec<_>>();
         self.job(ctx, move || {
@@ -986,8 +1060,8 @@ impl HeditApp {
             let mut restore = vec![];
             for plan in plans {
                 let result = (|| {
-                    if let Some((_, id, dirty, follow)) =
-                        open.iter().find(|(p, _, _, _)| p == &plan.path)
+                    if let Some((_, id, dirty, follow, page_start)) =
+                        open.iter().find(|(p, _, _, _, _)| p == &plan.path)
                     {
                         if *dirty || *follow {
                             return Err(format!(
@@ -1012,17 +1086,17 @@ impl HeditApp {
                         let size = candidate.info().size;
                         let revision = candidate.info().revision;
                         candidate.replace(0, size, plan.after, revision)?;
-                        candidate.save(None)?;
-                        let page = candidate.page(0)?;
+                        let page = candidate.page(*page_start)?;
                         *doc = candidate;
                         pages.push((*id, page));
+                        Ok(false)
                     } else {
                         restore.push(search::apply_recorded(&plan)?);
+                        Ok(true)
                     }
-                    Ok(())
                 })();
                 match result {
-                    Ok(()) => count += 1,
+                    Ok(wrote_disk) => count += usize::from(wrote_disk),
                     Err(e) => errors.push(e),
                 }
             }
@@ -1078,6 +1152,7 @@ impl HeditApp {
             self.error = Some("Save the file first.".into());
             return;
         };
+        let encoding = b.page.info.encoding.clone();
         let id = b.view.id;
         let revision = b.page.info.revision;
         let editor = Arc::clone(&self.workspace.editor);
@@ -1102,8 +1177,7 @@ impl HeditApp {
                 return Err("Disk comparison supports files up to 32 MiB.".into());
             }
             let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
-            let (disk, _) =
-                hedit::text_encoding::decode(&bytes, hedit::text_encoding::detect(&bytes))?;
+            let (disk, _) = hedit::text_encoding::decode(&bytes, &encoding)?;
             let diff = search::diff(&disk, &text, &path);
             Ok(Action::Quality(Box::new(Event::Diff(
                 id, revision, disk, diff, false,
@@ -1136,6 +1210,7 @@ impl HeditApp {
                 text,
                 view: b.view.clone(),
                 encoding: b.page.info.encoding.clone(),
+                bom: b.page.info.dirty.then_some(b.page.info.bom),
             });
         }
         Ok(projects::State {
@@ -1197,8 +1272,7 @@ impl HeditApp {
                     }
                 }
             }
-            projects::atomic_json(&path.with_extension("hedit-workspace"), &state)?;
-            projects::atomic_json(&path, &project)?;
+            projects::save(&path, &project, &state)?;
             Ok(Action::Quality(Box::new(Event::ProjectSaved(path))))
         });
     }
@@ -1207,7 +1281,7 @@ impl HeditApp {
         if let Some(current) = self.quality.project_path.clone() {
             match self
                 .project_snapshot()
-                .and_then(|s| projects::atomic_json(&current.with_extension("hedit-workspace"), &s))
+                .and_then(|s| projects::save_workspace(&current, &s))
             {
                 Ok(()) => (),
                 Err(e) => {
@@ -1227,9 +1301,9 @@ impl HeditApp {
                 None => return Ok(Action::Nothing),
             };
             let path = std::fs::canonicalize(path).map_err(|e| e.to_string())?;
-            let (project, state) = projects::load(&path)?;
+            let (project, state) = projects::load_with_workspace(&path)?;
             let mut tabs = Vec::new();
-            for tab in &state.tabs {
+            for tab in state.iter().flat_map(|state| &state.tabs) {
                 let mut doc = if let Some(path) = &tab.path {
                     Document::open_or_new_with_encoding(editor.id(), path, &tab.encoding)?
                 } else {
@@ -1240,6 +1314,9 @@ impl HeditApp {
                 }
                 if doc.info().encoding != tab.encoding {
                     doc.set_encoding(&tab.encoding)?;
+                }
+                if let Some(bom) = tab.bom {
+                    doc.set_bom(bom)?;
                 }
                 let page = doc.page(tab.view.page_start)?;
                 tabs.push((doc, page, tab.view.clone()));
@@ -1567,36 +1644,57 @@ impl HeditApp {
         }
         let name = self.quality.file_name.clone();
         if matches!(operation, FileOperation::Trash | FileOperation::Delete) {
-            for view in self
-                .workspace
-                .open
-                .iter()
-                .map(|b| &b.view)
-                .chain(&self.workspace.closed)
-            {
-                if let Ok(shared) = self.workspace.editor.get(view.id) {
-                    let mut doc = shared.lock().unwrap();
-                    if doc
-                        .info()
-                        .path
-                        .as_ref()
-                        .is_some_and(|p| Path::new(p).starts_with(&path))
+            let mut preserved = Vec::new();
+            let checkpoint = (|| {
+                for view in self
+                    .workspace
+                    .open
+                    .iter()
+                    .map(|b| &b.view)
+                    .chain(&self.workspace.closed)
+                {
+                    let shared = self.workspace.editor.get(view.id)?;
+                    let mut doc = shared.lock().map_err(|error| error.to_string())?;
+                    if let Some(source) =
+                        doc.info().path.filter(|p| Path::new(p).starts_with(&path))
                     {
-                        if let Err(error) = doc.preserve_as_unsaved() {
-                            self.error = Some(error);
-                            return;
-                        }
+                        preserved.push((view.id, source, doc.prepare_removal()?));
                     }
                 }
+                self.workspace.checkpoint()
+            })();
+            if let Err(error) = checkpoint {
+                self.rollback_file_removal(preserved.into_iter().map(|(id, _, state)| (id, state)));
+                self.error = Some(error);
+                return;
             }
-            for b in &mut self.workspace.open {
-                if let Ok(shared) = self.workspace.editor.get(b.view.id) {
-                    b.page.info = shared.lock().unwrap().info();
-                }
-            }
-            self.changed();
+            self.refresh_removal_buffer_info();
+            self.job(ctx, move || {
+                let result = if operation == FileOperation::Trash {
+                    hedit::folder::trash_path(&path)
+                } else {
+                    hedit::folder::delete_path(&path)
+                };
+                let event = match result {
+                    Ok(()) => Event::FileChanged(path, None),
+                    Err(error) => {
+                        let remaining = preserved
+                            .into_iter()
+                            .filter(|(_, source, _)| {
+                                !std::fs::symlink_metadata(source).is_err_and(|error| {
+                                    error.kind() == std::io::ErrorKind::NotFound
+                                })
+                            })
+                            .map(|(id, _, state)| (id, state))
+                            .collect();
+                        Event::FileRemovalFailed(error, remaining)
+                    }
+                };
+                Ok(Action::Quality(Box::new(event)))
+            });
+            return;
         }
-        // Snapshot first so moving or removing a source preserves recoverable buffers.
+        // Snapshot first so moving a source preserves recoverable buffers.
         if let Err(e) = self.workspace.checkpoint() {
             self.error = Some(e);
             return;
@@ -1626,18 +1724,34 @@ impl HeditApp {
                         target.is_dir(),
                     ));
                 }
-                FileOperation::Trash => {
-                    hedit::folder::trash_path(&path)?;
-                    None
-                }
-                FileOperation::Delete => {
-                    hedit::folder::delete_path(&path)?;
-                    None
+                FileOperation::Trash | FileOperation::Delete => {
+                    unreachable!("removal handled separately")
                 }
             };
             Ok(Action::Quality(Box::new(Event::FileChanged(path, to))))
         });
     }
+    fn refresh_removal_buffer_info(&mut self) {
+        for buffer in &mut self.workspace.open {
+            if let Ok(shared) = self.workspace.editor.get(buffer.view.id) {
+                buffer.page.info = shared.lock().unwrap().info();
+            }
+        }
+        self.changed();
+    }
+
+    fn rollback_file_removal(
+        &mut self,
+        states: impl IntoIterator<Item = (u64, hedit::document::RemovalState)>,
+    ) {
+        for (id, state) in states {
+            if let Ok(shared) = self.workspace.editor.get(id) {
+                shared.lock().unwrap().rollback_removal(state);
+            }
+        }
+        self.refresh_removal_buffer_info();
+    }
+
     pub(super) fn poll_incoming(&mut self, ctx: &egui::Context) {
         if self.closing {
             return;

@@ -30,6 +30,8 @@ pub struct Buffer {
     pub cursor_undo: Vec<Vec<crate::advanced::Selection>>,
     pub cursor_redo: Vec<Vec<crate::advanced::Selection>>,
     pub pending_selection: Option<Vec<crate::advanced::Selection>>,
+    pub format_indent: Option<&'static str>,
+    pub format_tab_size: Option<u8>,
 }
 impl Buffer {
     pub fn language_override(&self) -> Option<Language> {
@@ -85,6 +87,8 @@ impl Buffer {
             cursor_undo: vec![],
             cursor_redo: vec![],
             pending_selection: None,
+            format_indent: None,
+            format_tab_size: None,
             page,
             view,
             untitled_number: None,
@@ -148,6 +152,29 @@ impl Buffer {
             };
         }
     }
+    pub fn remap_bookmarks(&mut self, edit: crate::document::HistorySplice) {
+        let end = edit.start.saturating_add(edit.removed);
+        for bookmark in &mut self.view.bookmarks {
+            if bookmark.offset >= end {
+                bookmark.offset = bookmark
+                    .offset
+                    .saturating_sub(edit.removed)
+                    .saturating_add(edit.inserted);
+            } else if bookmark.offset > edit.start {
+                bookmark.offset = edit.start;
+            }
+        }
+        self.view.bookmarks.sort_by_key(|b| b.offset);
+        self.view.bookmarks.dedup_by_key(|b| b.offset);
+    }
+
+    pub fn bookmark_on_page(&self, offset: u64) -> Option<usize> {
+        let end = self.page.start + self.page.text.len() as u64;
+        let visible = offset < end || (offset == end && end == self.page.info.size);
+        visible.then_some(())?;
+        usize::try_from(offset.checked_sub(self.page.start)?).ok()
+    }
+
     pub fn cursor_offset(&self) -> u64 {
         self.page.start
             + self
@@ -619,8 +646,31 @@ impl Workspace {
         old: &str,
         crlf: Option<bool>,
     ) -> Result<(), String> {
+        self.edit_with_splice(index, old, crlf, None)
+    }
+
+    /// Apply a widget edit whose changed span is expressed in old and new bytes.
+    pub fn edit_with_splice(
+        &mut self,
+        index: usize,
+        old: &str,
+        crlf: Option<bool>,
+        changed: Option<(usize, usize, usize)>,
+    ) -> Result<(), String> {
         let buffer = &mut self.open[index];
-        let (start, end, replacement) = splice(old, &buffer.page.text);
+        let changed = changed.filter(|&(start, old_end, new_end)| {
+            old.get(start..old_end).is_some()
+                && buffer.page.text.get(start..new_end).is_some()
+                && old.len() - old_end == buffer.page.text.len() - new_end
+        });
+        let (start, end, replacement) = match changed {
+            Some((start, old_end, new_end)) => {
+                let (local_start, local_end, replacement) =
+                    splice(&old[start..old_end], &buffer.page.text[start..new_end]);
+                (start + local_start, start + local_end, replacement)
+            }
+            None => splice(old, &buffer.page.text),
+        };
         let editor = self.editor.get(buffer.page.info.id)?;
         let mut document = editor.lock().map_err(|e| e.to_string())?;
         if document.workspace_frozen() {
@@ -667,21 +717,11 @@ impl Workspace {
         }
         buffer.page.end = buffer.page.start + buffer.page.text.len() as u64;
         buffer.page.info = info;
-        let absolute_start = buffer.page.start + start as u64;
-        let absolute_end = buffer.page.start + end as u64;
-        let added = replacement.len() as u64;
-        for bookmark in &mut buffer.view.bookmarks {
-            if bookmark.offset >= absolute_end {
-                bookmark.offset = bookmark
-                    .offset
-                    .saturating_sub(absolute_end - absolute_start)
-                    .saturating_add(added);
-            } else if bookmark.offset > absolute_start {
-                bookmark.offset = absolute_start;
-            }
-        }
-        buffer.view.bookmarks.sort_by_key(|b| b.offset);
-        buffer.view.bookmarks.dedup_by_key(|b| b.offset);
+        buffer.remap_bookmarks(crate::document::HistorySplice {
+            start: buffer.page.start + start as u64,
+            removed: (end - start) as u64,
+            inserted: replacement.len() as u64,
+        });
         let was_untitled = buffer.untitled_number.is_some();
         buffer.refresh_name();
         if buffer.untitled_number.is_some() != was_untitled {

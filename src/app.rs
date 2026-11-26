@@ -31,6 +31,8 @@ pub(crate) use extensions::run_plugin_cli;
 mod file_reference;
 #[cfg(test)]
 mod file_reference_tests;
+#[cfg(test)]
+mod filesystem_operation_tests;
 mod find_live;
 mod find_tools;
 mod fold_gutter;
@@ -71,6 +73,8 @@ mod markup_selection;
 mod markup_selection_tests;
 mod minimap;
 mod native_perf;
+#[cfg(test)]
+mod navigation_bug_tests;
 mod notifications;
 mod opening;
 #[cfg(test)]
@@ -80,9 +84,13 @@ mod panes;
 mod paste_history;
 mod preferences;
 mod project;
+#[cfg(test)]
+mod project_format_tests;
 mod project_settings;
 #[cfg(test)]
 mod project_settings_tests;
+#[cfg(test)]
+mod project_state_tests;
 mod quality;
 #[cfg(test)]
 mod quality_tests;
@@ -99,6 +107,8 @@ mod render_tests;
 mod row_index;
 #[cfg(test)]
 mod rtl_tests;
+#[cfg(test)]
+mod save_format_tests;
 #[cfg(test)]
 mod screenshot_tests;
 mod settings_browser;
@@ -174,7 +184,14 @@ enum Action {
     Page(u64, Page, Option<(usize, usize)>),
     GotoPreview(u64, Result<(Page, usize), String>),
     Reloaded(u64, Page, Option<(usize, usize)>),
-    History(u64, Page, bool, Vec<hedit::advanced::Selection>),
+    History(
+        u64,
+        Page,
+        bool,
+        Vec<hedit::advanced::Selection>,
+        Option<hedit::document::HistorySplice>,
+    ),
+    CopyFileLocation(String),
     Saved(u64, Info),
     SaveTo(u64, PathBuf),
     SaveCancelled,
@@ -182,6 +199,7 @@ enum Action {
     ThemeImported(Theme),
     DebugProgram(PathBuf),
     OpenFailed(String),
+    OpenProject(PathBuf),
     /// A font loaded for the `font_face` setting.
     /// A font for `font_face`: its name, file bytes, and face index.
     Font(String, Vec<u8>, u32),
@@ -769,8 +787,8 @@ impl HeditApp {
         };
         self.checkpoint_job(ctx, self.generation, move || {
             store.save_snapshot(snapshot).and_then(|()| {
-                if let Some((path, state)) = project_state {
-                    hedit::projects::atomic_json(&path.with_extension("hedit-workspace"), &state?)
+                if let Some((ref path, state)) = project_state {
+                    hedit::projects::save_workspace(path, &state?)
                 } else {
                     Ok(())
                 }
@@ -778,21 +796,27 @@ impl HeditApp {
         });
     }
     fn open(&mut self, ctx: &egui::Context, path: Option<PathBuf>) {
-        self.open_path(ctx, path, true);
+        self.open_path(ctx, path, true, None);
     }
     fn open_existing(&mut self, ctx: &egui::Context, path: PathBuf) {
-        self.open_path(ctx, Some(path), false);
+        self.open_path(ctx, Some(path), false, None);
     }
-    fn open_path(&mut self, ctx: &egui::Context, path: Option<PathBuf>, allow_new: bool) {
-        if self.workspace.remote.is_none()
-            && allow_new
-            && path
-                .as_ref()
-                .is_some_and(|p| p.extension().is_some_and(|e| e == "hedit-project"))
-        {
-            self.load_project(ctx, path);
-            return;
-        }
+    fn open_existing_location(
+        &mut self,
+        ctx: &egui::Context,
+        path: PathBuf,
+        line: u64,
+        column: u64,
+    ) {
+        self.open_path(ctx, Some(path), false, Some((line, column)));
+    }
+    fn open_path(
+        &mut self,
+        ctx: &egui::Context,
+        path: Option<PathBuf>,
+        allow_new: bool,
+        location: Option<(u64, u64)>,
+    ) {
         if let Some(remote) = self.workspace.remote.clone() {
             let Some(path) = path else {
                 self.remote_ui.picker = Some(remote::Picker::Open);
@@ -804,7 +828,11 @@ impl HeditApp {
                     Some("Open remote files using paths inside this SSH workspace.".into());
                 return;
             }
-            let (path, location) = opening::remote_location(&path);
+            let (path, location) = if location.is_some() {
+                (path, location)
+            } else {
+                opening::remote_location(&path)
+            };
             if let Some(buffer) = self
                 .workspace
                 .open
@@ -901,9 +929,17 @@ impl HeditApp {
                 }
                 return hedit::folder::read_directory(path).map(Action::Folder);
             }
-            let (file, line, col) = hedit::cli::location(&path);
-            let plain_path = file == path;
-            let path = file;
+            if allow_new && path.extension().is_some_and(|ext| ext == "hedit-project") {
+                return Ok(Action::OpenProject(path));
+            }
+            let (path, line, col, plain_path) = match location {
+                Some((line, column)) => (path, line, column, false),
+                None => {
+                    let (file, line, col) = hedit::cli::location(&path);
+                    let plain_path = file == path;
+                    (file, line, col, plain_path)
+                }
+            };
             let path = if path.is_absolute() {
                 path
             } else {
@@ -1032,6 +1068,31 @@ impl HeditApp {
         let Some(index) = self.workspace.open.iter().position(|b| b.view.id == id) else {
             return;
         };
+        let target = match target
+            .map(|path| hedit::document::save_destination(&path))
+            .transpose()
+        {
+            Ok(target) => target,
+            Err(error) => {
+                self.error = Some(error);
+                return;
+            }
+        };
+        if let Some(target) = target.as_deref() {
+            let open_elsewhere = self.workspace.open.iter().any(|buffer| {
+                buffer.view.id != id
+                    && buffer
+                        .page
+                        .info
+                        .path
+                        .as_deref()
+                        .is_some_and(|path| std::path::Path::new(path) == target)
+            });
+            if open_elsewhere {
+                self.error = Some("This file is already open in another tab.".into());
+                return;
+            }
+        }
         let retry = notifications::Action::RetrySave {
             view: id,
             path: self.workspace.open[index].page.info.path.clone(),
@@ -1063,12 +1124,11 @@ impl HeditApp {
         let cursors = self.selections();
         let editor = Arc::clone(&self.workspace.editor);
         self.job(ctx, move || {
-            let page = editor
-                .get(id)?
-                .lock()
-                .map_err(|e| e.to_string())?
-                .history(redo, offset, revision)?;
-            Ok(Action::History(id, page, redo, cursors))
+            let shared = editor.get(id)?;
+            let mut document = shared.lock().map_err(|e| e.to_string())?;
+            let splice = document.history_splice(redo);
+            let page = document.history(redo, offset, revision)?;
+            Ok(Action::History(id, page, redo, cursors, splice))
         });
     }
     fn find(&mut self, ctx: &egui::Context) {
@@ -1202,7 +1262,7 @@ impl HeditApp {
                 Action::Page(id, page, _)
                 | Action::Reloaded(id, page, _)
                 | Action::ReopenRead(id, page, _)
-                | Action::History(id, page, _, _)
+                | Action::History(id, page, _, _, _)
                 | Action::Discarded(id, Some(page)),
             ) = &event
             {
@@ -1343,6 +1403,7 @@ impl HeditApp {
                         self.attach_open_tab(request.as_ref().map(opening::Request::group), id);
                     }
                 }
+                Ok(Action::OpenProject(path)) => self.load_project(ctx, Some(path)),
                 Ok(Action::Folder(listing)) => self.set_folder(listing),
                 Ok(Action::Folders(listings)) => {
                     for listing in listings {
@@ -1371,7 +1432,7 @@ impl HeditApp {
                 Ok(Action::AddTemplate(doc, page, template)) => {
                     self.finish_opened_document(*doc, page, 0, None, false, Some(template));
                 }
-                Ok(Action::History(id, page, redo, current)) => {
+                Ok(Action::History(id, page, redo, current, splice)) => {
                     if let Some(index) = self
                         .workspace
                         .open
@@ -1391,6 +1452,21 @@ impl HeditApp {
                             } else {
                                 buffer.cursor_redo.push(current);
                             }
+                        }
+                        if let Some(edit) = splice {
+                            buffer.remap_bookmarks(edit);
+                        } else if !buffer.page.info.paged
+                            && !page.info.paged
+                            && buffer.page.text != page.text
+                        {
+                            // Recovery files saved by older versions lack explicit splice data.
+                            let (start, end, added) =
+                                hedit::workspace::splice(&buffer.page.text, &page.text);
+                            buffer.remap_bookmarks(hedit::document::HistorySplice {
+                                start: start as u64,
+                                removed: (end - start) as u64,
+                                inserted: added.len() as u64,
+                            });
                         }
                         buffer.set_page(page);
                         buffer.external = false;
@@ -1584,6 +1660,10 @@ impl HeditApp {
                 }
                 Ok(Action::FallbackFonts) => {
                     self.rebuild_fonts(ctx);
+                }
+                Ok(Action::CopyFileLocation(location)) => {
+                    ctx.copy_text(location);
+                    self.notice = "File location copied.".into();
                 }
                 Ok(Action::OpenFailed(error)) => {
                     self.quality.preview_request = false;
@@ -2373,7 +2453,7 @@ impl HeditApp {
         });
         let projection = self.projections[pane_id]
             .projection(buffer.view.tab_size.unwrap_or(4), &buffer.view.folds);
-        let mut display = projection.text.clone();
+        let mut display = std::borrow::Cow::Borrowed(projection.text.as_str());
         let original_selection = hedit::advanced::Selection {
             anchor: buffer.view.anchor,
             head: buffer.view.head,
@@ -2473,13 +2553,17 @@ impl HeditApp {
         } else {
             column_width * f32::from(self.settings.wrap_width)
         };
-        // Each group keeps its own layout and highlighting.
+        // Reuse a matching primary layout while keeping each group's view local.
+        let document = (buffer.view.id, buffer.page.start);
         let layout_cache = if pane_id == 0 {
+            self.editor_layout.activate(document);
             &mut self.editor_layout
         } else {
-            &mut self.extra_layouts[pane_id - 1]
+            let cache = &mut self.extra_layouts[pane_id - 1];
+            cache.activate(document);
+            cache.offer_shared(&self.editor_layout);
+            cache
         };
-        layout_cache.activate((buffer.view.id, buffer.page.start));
         layout_cache.custom = extensions::syntax_for(
             &self.extensions,
             self.extension_syntax.get(&buffer.page.info.id),
@@ -2608,6 +2692,7 @@ impl HeditApp {
         // 2 MiB; it goes back, possibly edited, right after the editor is drawn.
         let old = std::mem::take(&mut buffer.page.text);
         let mut edited_text: Option<String> = None;
+        let mut known_splice = None;
         let scroll_output = ui
             .scope_builder(egui::UiBuilder::new().max_rect(editor_area), |ui| {
                 ui.set_clip_rect(ui.clip_rect().intersect(editor_area));
@@ -2628,6 +2713,7 @@ impl HeditApp {
                         )));
                         let mut editor_text = clipboard_lines::EditorText {
                             text: &mut display,
+                            change: None,
                             crlf: buffer.page.info.eol == "CRLF",
                             index: projection.is_identity().then(|| source_index.clone()),
                         };
@@ -2684,6 +2770,8 @@ impl HeditApp {
                             ui.visuals_mut().text_cursor.stroke.color = egui::Color32::TRANSPARENT;
                         }
                         let mut output = edit.show(ui);
+                        let edited_chars = editor_text.index.as_ref().map(|index| index.chars);
+                        known_splice = editor_text.change.filter(|_| edited_chars.is_some());
                         ui.visuals_mut().selection.bg_fill = selection_color;
                         let row_index = self.row_indexes[pane_id].get(&output.galley);
                         let visible_rows =
@@ -3176,7 +3264,20 @@ impl HeditApp {
                                 head: range.primary.index,
                             };
                             if output.response.changed() {
-                                let edited = projection.edited(&old, &display, selection);
+                                let changed_chars = edited_chars.filter(|_| {
+                                    known_splice.is_some() && buffer.view.folds.is_empty()
+                                });
+                                let edited = if let Some(count) = changed_chars {
+                                    hedit::advanced::Batch {
+                                        text: std::mem::take(&mut display).into_owned(),
+                                        selections: vec![hedit::advanced::Selection {
+                                            anchor: selection.anchor.min(count),
+                                            head: selection.head.min(count),
+                                        }],
+                                    }
+                                } else {
+                                    projection.edited(&old, &display, selection)
+                                };
                                 let touched = if buffer.view.folds.is_empty() {
                                     false
                                 } else {
@@ -3538,7 +3639,10 @@ impl HeditApp {
             let mut cursors = b.view.selections.clone();
             cursors.push(original_selection);
             b.pending_selection = Some(cursors);
-            match self.workspace.edit(index, &old) {
+            match self
+                .workspace
+                .edit_with_splice(index, &old, None, known_splice)
+            {
                 Ok(()) => self.changed(),
                 Err(error) => {
                     // If an external writer invalidates a paged source, keep
@@ -4182,9 +4286,10 @@ impl eframe::App for HeditApp {
             let _ = std::fs::remove_dir_all(&session);
         }
         if let Some(path) = &self.quality.project_path {
-            if let Err(error) = self.project_snapshot().and_then(|state| {
-                hedit::projects::atomic_json(&path.with_extension("hedit-workspace"), &state)
-            }) {
+            if let Err(error) = self
+                .project_snapshot()
+                .and_then(|state| hedit::projects::save_workspace(path, &state))
+            {
                 eprintln!("hedit: final project workspace checkpoint failed: {error}");
             }
         }

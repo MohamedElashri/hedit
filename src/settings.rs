@@ -541,6 +541,7 @@ pub fn strip_comments(text: &str) -> String {
                 }
             }
             ('/', Some('*')) => {
+                out.push(' ');
                 chars.next();
                 let mut previous = ' ';
                 for next in chars.by_ref() {

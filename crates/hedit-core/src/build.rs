@@ -203,15 +203,14 @@ pub fn locations(output: &str, file_regex: &str, dir: &Path, first_line: usize) 
         .enumerate()
         .filter_map(|(n, text)| {
             let c = regex.captures(text)?;
-            let file = PathBuf::from(c.get(1)?.as_str().trim());
+            let file = PathBuf::from(c.get(1)?.as_str());
             let line = c.get(2)?.as_str().parse().ok()?;
             // A third numeric capture is the column; otherwise it is the message.
-            let (column, message) = match c.get(3) {
-                Some(m) if m.as_str().parse::<usize>().is_ok() => {
-                    (m.as_str().parse().ok(), c.get(4).map(|m| m.as_str()))
-                }
-                other => (None, other.map(|m| m.as_str())),
-            };
+            let third = c.get(3).map(|m| m.as_str());
+            let column = third.and_then(|value| value.parse::<usize>().ok());
+            let message = third
+                .filter(|_| column.is_none())
+                .or_else(|| c.get(4).map(|m| m.as_str()));
             Some(Location {
                 output_line: first_line + n,
                 file: if file.is_absolute() {

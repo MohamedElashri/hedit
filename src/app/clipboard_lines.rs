@@ -59,13 +59,28 @@ pub(super) fn paste_selections(text: &str, mut selections: Vec<Selection>) -> Ve
 
 /// Keep ordinary edits in TextEdit's event order. Normalize inserted newlines
 /// at the buffer boundary rather than applying Paste ahead of earlier keys.
-pub(super) struct EditorText<'a> {
-    pub text: &'a mut String,
+pub(super) struct EditorText<'a, 'text> {
+    pub text: &'a mut std::borrow::Cow<'text, str>,
+    pub change: Option<(usize, usize, usize)>,
     pub crlf: bool,
     pub index: Option<Arc<super::editor_layout::TextIndex>>,
 }
 
-impl EditorText<'_> {
+impl EditorText<'_, '_> {
+    fn record(&mut self, start: usize, end: usize, inserted: usize) {
+        if start == end && inserted == 0 {
+            return;
+        }
+        self.change = Some(match self.change {
+            Some((prior_start, old_end, new_end)) => (
+                prior_start.min(start),
+                old_end + end.saturating_sub(new_end),
+                new_end.max(end) - (end - start) + inserted,
+            ),
+            None => (start, end, start + inserted),
+        });
+    }
+
     fn snap_cursor(&self, cursor: &mut egui::text::CCursor) {
         let at = self.byte_index_from_char_index(cursor.index);
         if at > 0
@@ -77,12 +92,12 @@ impl EditorText<'_> {
     }
 }
 
-impl egui::TextBuffer for EditorText<'_> {
+impl egui::TextBuffer for EditorText<'_, '_> {
     fn is_mutable(&self) -> bool {
         true
     }
     fn as_str(&self) -> &str {
-        self.text.as_str()
+        self.text.as_ref()
     }
     fn byte_index_from_char_index(&self, at: usize) -> usize {
         self.index.as_ref().map_or_else(
@@ -101,7 +116,10 @@ impl egui::TextBuffer for EditorText<'_> {
             let at = at.min(index.chars);
             Arc::make_mut(index).replace(self.text, byte..byte, at..at, &text);
         }
-        self.text.insert_str(byte, &text);
+        self.record(byte, byte, text.len());
+        if !text.is_empty() {
+            self.text.to_mut().insert_str(byte, &text);
+        }
         text.chars().count()
     }
     fn delete_char_range(&mut self, range: std::ops::Range<usize>) {
@@ -111,7 +129,10 @@ impl egui::TextBuffer for EditorText<'_> {
             let (a, b) = (range.start.min(index.chars), range.end.min(index.chars));
             Arc::make_mut(index).replace(self.text, start..end, a..b, "");
         }
-        self.text.replace_range(start..end, "");
+        self.record(start, end, 0);
+        if start != end {
+            self.text.to_mut().replace_range(start..end, "");
+        }
     }
     fn delete_selected_ccursor_range(
         &mut self,
@@ -362,10 +383,12 @@ mod indexed_buffer_tests {
     use super::*;
     #[test]
     fn indexed_buffer_keeps_coordinates_current_across_ordered_unicode_edits() {
-        let mut text = "a🦀\nשלום\nlast".to_owned();
+        let original = "a🦀\nשלום\nlast";
+        let mut text = std::borrow::Cow::Borrowed(original);
         let mut buffer = EditorText {
             index: Some(Arc::new(editor_layout::TextIndex::new(&text))),
             text: &mut text,
+            change: None,
             crlf: false,
         };
         let mut reference = buffer.as_str().to_owned();
@@ -384,6 +407,17 @@ mod indexed_buffer_tests {
                 reference.delete_char_range(a.min(b)..a.max(b));
             }
             assert_eq!(buffer.as_str(), reference);
+            if let Some((start, old_end, new_end)) = buffer.change {
+                assert_eq!(
+                    format!(
+                        "{}{}{}",
+                        &original[..start],
+                        &reference[start..new_end],
+                        &original[old_end..]
+                    ),
+                    reference
+                );
+            }
             for cursor in 0..=reference.chars().count() + 1 {
                 assert_eq!(
                     buffer.byte_index_from_char_index(cursor),

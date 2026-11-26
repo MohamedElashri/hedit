@@ -288,13 +288,12 @@ pub fn detect_indentation(text: &str) -> (bool, u8) {
             spaces += 1;
         }
         let delta = n.abs_diff(previous);
-        if [2, 4, 8].contains(&delta) {
+        if (1..=8).contains(&delta) {
             differences[delta] += 1;
         }
         previous = n;
     }
-    let width = [4, 2, 8]
-        .into_iter()
+    let width = (1..=8)
         .max_by_key(|n| (differences[*n], usize::from(*n == 4)))
         .unwrap();
     (tabs > spaces, width as u8)
@@ -354,6 +353,16 @@ pub fn pair(
     for range in &ranges {
         let next = chars.get(range.end()).copied();
         let previous = range.start().checked_sub(1).map(|i| chars[i]);
+        if quote && range.start() == range.end() {
+            let escapes = chars[..range.start()]
+                .iter()
+                .rev()
+                .take_while(|&&ch| ch == '\\')
+                .count();
+            if escapes % 2 != 0 {
+                return None;
+            }
+        }
         let action = if range.start() != range.end() {
             Action::Wrap(closer(typed).filter(|_| opening)?)
         } else if closing && next == Some(typed) {
@@ -848,6 +857,7 @@ pub fn transform(
     if global && ranges.iter().all(|s| s.start() == s.end()) {
         ranges.truncate(1);
     }
+    let mut duplicate_carets = std::collections::HashMap::new();
     if !matches!(
         operation,
         editing::Operation::Uppercase | editing::Operation::Lowercase
@@ -859,12 +869,18 @@ pub fn transform(
             if operation == editing::Operation::Duplicate && s.start() != s.end() {
                 continue;
             }
+            let original = *s;
             let (a, b) = editing::line_range(text, span.start, span.end);
             start_char += text[start_byte..a].chars().count();
             end_char += text[end_byte..b].chars().count();
             (start_byte, end_byte) = (a, b);
             s.anchor = start_char;
             s.head = end_char;
+            if operation == editing::Operation::Duplicate {
+                duplicate_carets
+                    .entry((s.start(), s.end()))
+                    .or_insert(original);
+            }
         }
         ranges = normalize(&ranges, text.chars().count());
     }
@@ -925,6 +941,10 @@ pub fn transform(
     let mut output = text.to_owned();
     let mut final_ranges: Vec<Selection> = vec![];
     for s in ranges.into_iter().rev() {
+        let s = duplicate_carets
+            .get(&(s.start(), s.end()))
+            .copied()
+            .unwrap_or(s);
         let edit = editing::apply(&output, s.anchor, s.head, operation, width, tabs, comment);
         let delta = edit.text.chars().count() as isize - output.chars().count() as isize;
         for r in &mut final_ranges {

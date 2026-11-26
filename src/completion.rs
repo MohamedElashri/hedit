@@ -49,10 +49,18 @@ pub fn index_cancellable<S: AsRef<str>>(
             end -= 1;
         }
         limited |= end < text.len();
+        let boundary = text[end..]
+            .chars()
+            .next()
+            .is_none_or(|ch| !is_word_char(ch));
         let text = &text[..end];
         let mut start = 0;
         let mut length = 0;
-        for (n, (at, ch)) in text.char_indices().chain([(text.len(), ' ')]).enumerate() {
+        for (n, (at, ch)) in text
+            .char_indices()
+            .chain(boundary.then_some((text.len(), ' ')))
+            .enumerate()
+        {
             if n % 2048 == 0 && cancelled() {
                 return None;
             }

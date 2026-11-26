@@ -255,6 +255,7 @@ impl Git {
             false,
         )?;
         let bytes = out.strip_suffix(b"\n").unwrap_or(&out);
+        #[cfg(windows)]
         let bytes = bytes.strip_suffix(b"\r").unwrap_or(bytes);
         PathBuf::from(os_path(bytes)?)
             .canonicalize()
@@ -487,10 +488,12 @@ impl Git {
                 let text = String::from_utf8(bytes).unwrap();
                 let mut patch = String::from("New file\n");
                 patch.push_str(&format!("@@ -0,0 +1,{} @@\n", text.lines().count()));
-                for line in text.lines() {
+                for line in text.split_inclusive('\n') {
                     patch.push('+');
                     patch.push_str(line);
-                    patch.push('\n');
+                }
+                if !text.is_empty() && !text.ends_with('\n') {
+                    patch.push_str("\n\\ No newline at end of file\n");
                 }
                 return Ok(Diff::parse(patch, false));
             }

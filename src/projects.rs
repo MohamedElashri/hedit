@@ -2,7 +2,7 @@
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
-    io::Write,
+    io::{BufReader, BufWriter, Read, Write},
     path::{Path, PathBuf},
 };
 
@@ -46,9 +46,11 @@ impl Formatting {
         {
             return Err("Line ending must be lf or crlf.".into());
         }
-        if self.charset.as_deref().is_some_and(|s| {
-            s != "utf-8-bom" && encoding_rs::Encoding::for_label(s.as_bytes()).is_none()
-        }) {
+        if self
+            .charset
+            .as_deref()
+            .is_some_and(|s| s != "utf-8-bom" && crate::text_encoding::canonical(s).is_err())
+        {
             return Err("Unknown character encoding.".into());
         }
         Ok(())
@@ -72,6 +74,8 @@ pub struct Tab {
     pub text: Option<String>,
     pub view: crate::session::TabView,
     pub encoding: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bom: Option<bool>,
 }
 #[derive(Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -85,17 +89,41 @@ pub struct State {
     pub pane_views: Option<serde_json::Value>,
 }
 
-pub fn atomic_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
+const PROJECT_LIMIT: u64 = 1024 * 1024;
+// A 32 MiB workspace can grow to 192 MiB when JSON escapes control
+// characters. Reserve additional space for tab and pane metadata.
+const WORKSPACE_LIMIT: u64 = 256 * 1024 * 1024;
+
+fn prepare_json(
+    path: &Path,
+    value: &impl Serialize,
+    limit: u64,
+) -> Result<tempfile::NamedTempFile, String> {
     let parent = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
     let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
-    serde_json::to_writer_pretty(&mut temp, value).map_err(|e| e.to_string())?;
-    temp.flush().map_err(|e| e.to_string())?;
+    {
+        let mut writer = BufWriter::new(&mut temp);
+        serde_json::to_writer_pretty(&mut writer, value).map_err(|e| e.to_string())?;
+        writer.flush().map_err(|e| e.to_string())?;
+    }
+    if temp.as_file().metadata().map_err(|e| e.to_string())?.len() > limit {
+        return Err(format!(
+            "{} exceeds its {limit}-byte limit.",
+            path.display()
+        ));
+    }
     temp.as_file().sync_all().map_err(|e| e.to_string())?;
-    temp.persist(path).map_err(|e| e.to_string())?;
-    Ok(())
+    Ok(temp)
+}
+
+pub fn atomic_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
+    prepare_json(path, value, u64::MAX)?
+        .persist(path)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 /// Read a UTF-8 text file of at most `limit` bytes.
 pub fn read_text(path: &Path, limit: u64) -> Result<String, String> {
@@ -108,8 +136,46 @@ fn read_bytes(path: &Path, limit: u64) -> Result<Vec<u8>, String> {
     let file = crate::file_io::open_regular(path).map_err(|e| e.to_string())?;
     crate::file_io::read_bounded(file, limit).map_err(|e| e.to_string())
 }
+pub fn workspace_path(project: &Path) -> PathBuf {
+    let reserved_extension = project
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("hedit-workspace"));
+    if !reserved_extension {
+        return project.with_extension("hedit-workspace");
+    }
+    let mut distinct = project.as_os_str().to_owned();
+    distinct.push(".hedit-workspace");
+    distinct.into()
+}
+
+pub fn save_workspace(project: &Path, state: &State) -> Result<(), String> {
+    let path = workspace_path(project);
+    prepare_json(&path, state, WORKSPACE_LIMIT)?
+        .persist(path)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+pub fn save(path: &Path, project: &Project, state: &State) -> Result<(), String> {
+    let state_path = workspace_path(path);
+    let definition = prepare_json(path, project, PROJECT_LIMIT)?;
+    let workspace = prepare_json(&state_path, state, WORKSPACE_LIMIT)?;
+    // The companion is independently recoverable. Keep the previous one
+    // until publishing the definition has succeeded.
+    definition.persist(path).map_err(|e| e.to_string())?;
+    workspace
+        .persist(&state_path)
+        .map_err(|e| format!("Project saved. Could not save its workspace snapshot: {e}"))?;
+    Ok(())
+}
+
 pub fn load(path: &Path) -> Result<(Project, State), String> {
-    let mut project: Project = read_json(path, 1024 * 1024)?;
+    let (project, state) = load_with_workspace(path)?;
+    Ok((project, state.unwrap_or_default()))
+}
+
+pub fn load_with_workspace(path: &Path) -> Result<(Project, Option<State>), String> {
+    let mut project: Project = read_json(path, PROJECT_LIMIT)?;
     let parent = path.parent().unwrap_or(Path::new("."));
     for folder in &mut project.folders {
         if folder.is_relative() {
@@ -121,16 +187,26 @@ pub fn load(path: &Path) -> Result<(Project, State), String> {
             return Err("Project roots must be folders.".into());
         }
     }
+    let mut seen = std::collections::HashSet::new();
+    project.folders.retain(|folder| seen.insert(folder.clone()));
     project.settings.formatting.validate()?;
     for f in project.settings.languages.values() {
         f.validate()?;
     }
-    let state_path = path.with_extension("hedit-workspace");
-    let state: State = if state_path.exists() {
-        read_json(&state_path, 64 * 1024 * 1024)?
-    } else {
-        State::default()
+    let state_path = workspace_path(path);
+    let file = match crate::file_io::open_regular(&state_path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((project, None)),
+        Err(error) => return Err(error.to_string()),
     };
+    if file.metadata().map_err(|e| e.to_string())?.len() > WORKSPACE_LIMIT {
+        return Err("Project workspace exceeds its file size limit.".into());
+    }
+    let mut reader = BufReader::new(file.take(WORKSPACE_LIMIT + 1));
+    let state: State = serde_json::from_reader(&mut reader).map_err(|e| e.to_string())?;
+    if reader.get_ref().limit() == 0 {
+        return Err("Project workspace exceeds its file size limit.".into());
+    }
     if state.tabs.len() > 200
         || state
             .tabs
@@ -139,7 +215,7 @@ pub fn load(path: &Path) -> Result<(Project, State), String> {
     {
         return Err("Project workspace exceeds supported tab/text limits.".into());
     }
-    Ok((project, state))
+    Ok((project, Some(state)))
 }
 
 /// The saved scope responsible for one resolved formatting property.
@@ -244,6 +320,7 @@ fn resolve_formatting(
             break;
         }
     }
+    let width = |value: &str| value.parse::<u8>().ok().filter(|n| (1..=8).contains(n));
     let mut values = BTreeMap::new();
     let mut origins = sources.is_some().then(BTreeMap::<String, PathBuf>::new);
     for (parent, text) in configs.into_iter().rev() {
@@ -271,10 +348,29 @@ fn resolve_formatting(
             if applies {
                 if let Some((k, v)) = line.split_once('=') {
                     let key = k.trim().to_lowercase();
+                    let value = v.trim().to_lowercase();
+                    let supported = value == "unset"
+                        || match key.as_str() {
+                            "indent_size" => value == "tab" || width(&value).is_some(),
+                            "tab_width" => width(&value).is_some(),
+                            "indent_style" => matches!(value.as_str(), "tab" | "space"),
+                            "end_of_line" => matches!(value.as_str(), "lf" | "crlf"),
+                            "insert_final_newline" | "trim_trailing_whitespace" => {
+                                matches!(value.as_str(), "true" | "false")
+                            }
+                            "charset" => matches!(
+                                value.as_str(),
+                                "latin1" | "utf-8" | "utf-8-bom" | "utf-16be" | "utf-16le"
+                            ),
+                            _ => false,
+                        };
+                    if !supported {
+                        continue;
+                    }
                     if let Some(origins) = &mut origins {
                         origins.insert(key.clone(), parent.join(".editorconfig"));
                     }
-                    values.insert(key, v.trim().to_lowercase());
+                    values.insert(key, value);
                 }
             }
         }
@@ -297,20 +393,19 @@ fn resolve_formatting(
     }
     // Resolve dependent indentation values after the complete cascade. A child
     // tab_width must also affect an inherited indent_size = tab.
-    let width = |value: &String| value.parse::<u8>().ok().filter(|n| (1..=8).contains(n));
     match values.get("indent_size").map(String::as_str) {
         Some("unset") => {
             format.indent_size = None;
             origin!("indent_size", "indent_size", true);
         }
         Some("tab") | None => {
-            if let Some(value) = values.get("tab_width").and_then(width) {
+            if let Some(value) = values.get("tab_width").and_then(|value| width(value)) {
                 format.indent_size = Some(value);
                 origin!("indent_size", "tab_width", false);
             }
         }
         Some(_) => {
-            if let Some(value) = values.get("indent_size").and_then(width) {
+            if let Some(value) = values.get("indent_size").and_then(|value| width(value)) {
                 format.indent_size = Some(value);
                 origin!("indent_size", "indent_size", false);
             }
@@ -379,20 +474,67 @@ fn resolve_formatting(
     Ok(format)
 }
 fn editor_glob(pattern: &str, text: &str) -> bool {
-    if let Some(a) = pattern.find('{') {
-        if let Some(b) = pattern[a..].find('}') {
-            return pattern[a + 1..a + b].split(',').any(|choice| {
-                editor_glob(
-                    &format!("{}{}{}", &pattern[..a], choice, &pattern[a + b + 1..]),
-                    text,
-                )
-            });
+    // Expand ranges to the numeric spellings present in this path. A large
+    // range costs the same as a small one and never enumerates the interval.
+    static RANGE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"\\.|\[(?:\\.|[^\\\]])*\]|\{(-?[0-9]+)\.\.(-?[0-9]+)\}").unwrap()
+    });
+    let mut rewritten = String::new();
+    let mut end = 0;
+    for range in RANGE.captures_iter(pattern) {
+        let whole = range.get(0).unwrap();
+        let (Some(first), Some(last)) = (range.get(1), range.get(2)) else {
+            continue;
+        };
+        let (Ok(first), Ok(last)) = (first.as_str().parse::<i64>(), last.as_str().parse::<i64>())
+        else {
+            return false;
+        };
+        if first >= last {
+            return false;
         }
+        let mut choices = std::collections::BTreeSet::new();
+        for (start, ch) in text.char_indices() {
+            if !ch.is_ascii_digit() && ch != '-' {
+                continue;
+            }
+            let digits = start + usize::from(ch == '-');
+            for (index, digit) in text[digits..].bytes().take(19).enumerate() {
+                if !digit.is_ascii_digit() {
+                    break;
+                }
+                let candidate = &text[start..digits + index + 1];
+                if candidate
+                    .parse::<i64>()
+                    .is_ok_and(|n| (first..=last).contains(&n))
+                {
+                    choices.insert(candidate);
+                }
+            }
+        }
+        if choices.is_empty() {
+            return false;
+        }
+        rewritten.push_str(&pattern[end..whole.start()]);
+        if choices.len() == 1 {
+            rewritten.push_str(choices.first().unwrap());
+        } else {
+            rewritten.push('{');
+            rewritten.push_str(&choices.into_iter().collect::<Vec<_>>().join(","));
+            rewritten.push('}');
+        }
+        end = whole.end();
     }
-    crate::search::glob(pattern, text)
+    let pattern = if end == 0 {
+        pattern
+    } else {
+        rewritten.push_str(&pattern[end..]);
+        &rewritten
+    };
+    crate::search::glob_escaped(pattern, text)
         || pattern
             .strip_prefix("**/")
-            .is_some_and(|p| crate::search::glob(p, text))
+            .is_some_and(|p| crate::search::glob_escaped(p, text))
 }
 pub fn clean(text: &str, format: &Formatting, eol: &str) -> String {
     let mut text = if format.trim_trailing_whitespace == Some(true) {

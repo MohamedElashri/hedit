@@ -1262,9 +1262,7 @@ impl HeditApp {
             Command::CloseFolder | Command::RefreshFolder => !self.workspace.folders.is_empty(),
             Command::Rename => self.active().page.info.path.is_none(),
             Command::CopyPath | Command::RevealInSidebar => self.active().page.info.path.is_some(),
-            Command::CopyFileLocation => {
-                self.active().page.info.path.is_some() && self.active().page.start == 0
-            }
+            Command::CopyFileLocation => self.active().page.info.path.is_some(),
             Command::SwitchCounterpart => self
                 .active()
                 .page
@@ -1275,7 +1273,12 @@ impl HeditApp {
             Command::ConnectSsh => true,
             Command::OpenRecent => !self.recent_files.is_empty(),
             Command::SelectBookmarks => {
-                !self.active().view.bookmarks.is_empty() && !self.active().page.info.paged
+                let buffer = self.active();
+                buffer
+                    .view
+                    .bookmarks
+                    .iter()
+                    .any(|mark| buffer.bookmark_on_page(mark.offset).is_some())
             }
             Command::ClearBookmarks => !self.active().view.bookmarks.is_empty(),
             Command::PlayMacro | Command::SaveMacro => {
@@ -1641,8 +1644,8 @@ impl HeditApp {
             Command::NextTerminal => self.cycle_terminal(true),
             Command::PreviousTerminal => self.cycle_terminal(false),
             Command::RestartTerminal => self.restart_terminal(ctx),
-            Command::NextResult => self.next_result(true),
-            Command::PreviousResult => self.next_result(false),
+            Command::NextResult => self.next_result(ctx, true),
+            Command::PreviousResult => self.next_result(ctx, false),
             Command::SkipOccurrence => {
                 let ranges =
                     hedit::advanced::skip_occurrence(&self.active().page.text, &self.selections());
