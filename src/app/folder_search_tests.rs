@@ -356,3 +356,31 @@ fn changed_open_buffers_and_roots_invalidate_replacement_snapshots() {
     app.workspace.folders.clear();
     assert!(!app.folder_preview_valid());
 }
+
+#[test]
+fn regression_folder_undo_can_retry_a_temporarily_missing_file() {
+    let (_directory, ctx, mut app) = fixture(0);
+    let file = PathBuf::from(&app.workspace.folders[0].path).join("z-last.txt");
+    app.folder_search(&ctx, true);
+    finish_app_job(&mut app, &ctx);
+    app.apply_folder_replacements(&ctx);
+    finish_app_job(&mut app, &ctx);
+    let moved = file.with_extension("moved");
+    std::fs::rename(&file, &moved).unwrap();
+    app.undo_folder_replacements(&ctx);
+    let started = Instant::now();
+    while app.busy {
+        assert!(started.elapsed() < Duration::from_secs(5));
+        app.receive(&ctx);
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(app.error.take().is_some());
+    assert_eq!(app.quality.replace_undo.len(), 1);
+    std::fs::rename(moved, &file).unwrap();
+    app.undo_folder_replacements(&ctx);
+    finish_app_job(&mut app, &ctx);
+    assert_eq!(
+        std::fs::read_to_string(file).unwrap(),
+        "needle in configuration\n"
+    );
+}
