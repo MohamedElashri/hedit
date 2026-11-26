@@ -4,7 +4,7 @@ use crate::app::{
         manifest,
         tests::{app_with, prepare_native},
     },
-    tests::{click_at, click_label, frame, text_rect},
+    tests::{click_label, frame},
 };
 use hedit_broker::{
     state::{Approval, SelectedScope, State as BrokerState},
@@ -247,33 +247,7 @@ fn native_workspace_provider_never_receives_document_text_and_interactions_prese
     click_label(&ctx, &mut app, "Stop");
     assert!(app.plugin_services.entries[0].state.stopped);
     assert!(status(&app).is_none());
-    // The permission watcher can briefly remove entries while refreshing the
-    // catalog. Click Resume once the stopped provider is visible again.
-    let started = Instant::now();
-    loop {
-        let output = frame(&ctx, &mut app, vec![]);
-        if let Some(rect) = output
-            .shapes
-            .iter()
-            .find_map(|shape| text_rect(&shape.shape, "Resume"))
-        {
-            click_at(&ctx, &mut app, rect.center(), egui::vec2(1280.0, 820.0));
-            break;
-        }
-        assert!(
-            started.elapsed() < Duration::from_secs(15),
-            "Stopped provider did not reappear: open={}, suspended={}, error={:?}, entries={:?}, text={:?}",
-            app.plugin_services.open,
-            app.plugin_services.suspended,
-            app.plugin_services.error,
-            app.plugin_services.entries.iter().map(|entry| (&entry.contribution.id, entry.state.stopped, &entry.error)).collect::<Vec<_>>(),
-            output.shapes.iter().filter_map(|shape| match &shape.shape {
-                egui::Shape::Text(text) => Some(text.galley.text()),
-                _ => None,
-            }).collect::<Vec<_>>()
-        );
-        std::thread::sleep(Duration::from_millis(3));
-    }
+    click_label(&ctx, &mut app, "Resume");
     assert!(app.run_extension_by_id(&ctx, "scoped-provider.run"));
     pump(&mut app, &ctx, |app| status(app) == Some("Calls 1"));
     catalog::revoke_resources(config.path(), "scoped-provider.run").unwrap();
