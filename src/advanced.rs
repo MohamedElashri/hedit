@@ -3,6 +3,7 @@ use crate::{editing, workspace::splice};
 use serde::{Deserialize, Serialize};
 
 pub const MAX_SELECTIONS: usize = 1000;
+
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Selection {
     pub anchor: usize,
@@ -111,37 +112,42 @@ pub fn replace(text: &str, selections: &[Selection], replacement: &str) -> Batch
         selections: cursors,
     }
 }
+fn word_character(ch: char) -> bool {
+    ch.is_alphanumeric() || ch == '_'
+}
+
 pub fn word(text: &str, cursor: usize) -> Selection {
     let chars: Vec<_> = text.chars().collect();
     let mut a = cursor.min(chars.len());
     let mut b = a;
-    let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
-    if a == chars.len() || !is_word(chars[a]) {
-        if a == 0 || !is_word(chars[a - 1]) {
+    if a == chars.len() || !word_character(chars[a]) {
+        if a == 0 || !word_character(chars[a - 1]) {
             return Selection::caret(a);
         }
         a -= 1;
         b = a;
     }
-    while a > 0 && is_word(chars[a - 1]) {
+    while a > 0 && word_character(chars[a - 1]) {
         a -= 1;
     }
-    while b < chars.len() && is_word(chars[b]) {
+    while b < chars.len() && word_character(chars[b]) {
         b += 1;
     }
     Selection { anchor: a, head: b }
 }
 pub fn occurrences(text: &str, selections: &[Selection], all: bool) -> Vec<Selection> {
-    let mut ranges = normalize(selections, text.chars().count());
+    let length = text.chars().count();
+    let mut ranges = normalize(selections, length);
     if ranges.is_empty() {
         ranges.push(Selection::caret(0));
     }
-    if ranges[0].start() == ranges[0].end() {
+    let from_caret = ranges[0].start() == ranges[0].end();
+    if from_caret {
         let at = word(text, ranges[0].head);
-        if !all || at.start() == at.end() {
-            return vec![at];
-        }
         ranges[0] = at;
+        if !all || at.start() == at.end() {
+            return normalize(&ranges, length);
+        }
     }
     let needle = &text[byte(text, ranges[0].start())..byte(text, ranges[0].end())];
     if needle.is_empty() {
@@ -151,6 +157,17 @@ pub fn occurrences(text: &str, selections: &[Selection], all: bool) -> Vec<Selec
     let mut previous_char = 0;
     let matches: Vec<_> = text
         .match_indices(needle)
+        .filter(|(start, value)| {
+            !from_caret
+                || (!text[..*start]
+                    .chars()
+                    .next_back()
+                    .is_some_and(word_character)
+                    && !text[start + value.len()..]
+                        .chars()
+                        .next()
+                        .is_some_and(word_character))
+        })
         .map(|(i, s)| {
             let a = previous_char + text[previous_byte..i].chars().count();
             previous_byte = i;
@@ -179,7 +196,7 @@ pub fn occurrences(text: &str, selections: &[Selection], all: bool) -> Vec<Selec
             break;
         }
     }
-    normalize(&ranges, text.chars().count())
+    normalize(&ranges, length)
 }
 pub fn word_boundary(text: &str, position: usize, forward: bool) -> usize {
     let chars: Vec<_> = text.chars().collect();
@@ -217,12 +234,17 @@ pub fn at_column(text: &str, line: usize, column: usize, width: usize) -> usize 
     let mut row = 0;
     let mut col = 0;
     let mut offset = 0;
-    for ch in text.chars() {
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
         if row == line {
-            if ch == '\n' || ch == '\r' || col >= column {
+            if ch == '\n' || (ch == '\r' && chars.peek() == Some(&'\n')) || col >= column {
                 return offset;
             }
-            col += if ch == '\t' { width - col % width } else { 1 };
+            col += match ch {
+                '\r' => 0,
+                '\t' => width - col % width,
+                _ => 1,
+            };
         }
         if ch == '\n' {
             row += 1;
@@ -890,6 +912,7 @@ fn enclosing_brackets(
 ) -> Option<(usize, usize)> {
     let mut depth = [0usize; 3];
     let mut at = selection.start();
+    let mut forward_budget = limit;
     for _ in 0..limit {
         at = at.checked_sub(1)?;
         let c = chars[at];
@@ -902,18 +925,24 @@ fn enclosing_brackets(
             }
             // The matching closer must lie at or after the selection's end.
             let mut nested = 0usize;
-            for (offset, &d) in chars[at + 1..].iter().enumerate().take(limit) {
+            for (offset, &d) in chars[at + 1..].iter().enumerate().take(forward_budget) {
+                forward_budget -= 1;
                 if d == OPENERS[i] {
                     nested += 1;
                 } else if d == CLOSERS[i] {
                     if nested == 0 {
                         let close = at + 1 + offset;
-                        return (close >= selection.end()).then_some((at, close));
+                        if close >= selection.end() {
+                            return Some((at, close));
+                        }
+                        break;
                     }
                     nested -= 1;
                 }
             }
-            return None;
+            if forward_budget == 0 {
+                return None;
+            }
         }
     }
     None
@@ -922,23 +951,21 @@ fn enclosing_brackets(
 /// The text inside the nearest same-line quotes around `selection`.
 fn enclosing_quotes(chars: &[char], selection: Selection) -> Option<(usize, usize)> {
     let (line_start, line_end) = line_bounds(chars, selection);
-    for quote in ['"', '\'', '`'] {
-        let open = (line_start..selection.start())
-            .rev()
-            .find(|&i| chars[i] == quote);
-        let close = (selection.end()..line_end).find(|&i| chars[i] == quote);
-        if let (Some(open), Some(close)) = (open, close) {
+    ['"', '\'', '`']
+        .into_iter()
+        .filter_map(|quote| {
+            let open = (line_start..selection.start())
+                .rev()
+                .find(|&i| chars[i] == quote)?;
+            let close = (selection.end()..line_end).find(|&i| chars[i] == quote)?;
             // Only quotes that pair up on the line, counting from its start.
             let before = chars[line_start..open]
                 .iter()
                 .filter(|&&c| c == quote)
                 .count();
-            if before % 2 == 0 {
-                return Some((open, close));
-            }
-        }
-    }
-    None
+            (before % 2 == 0).then_some((open, close))
+        })
+        .min_by_key(|(open, close)| close - open)
 }
 
 /// Like Sublime's Expand Selection to Brackets: select inside the nearest
@@ -983,7 +1010,10 @@ pub fn expand_to_indentation(text: &str, selection: Selection) -> Selection {
     }
     let line_of = |index: usize| starts.partition_point(|&s| s <= index) - 1;
     let indent = |line: &str| line.chars().take_while(|c| matches!(c, ' ' | '\t')).count();
-    let (first, last) = (line_of(selection.start()), line_of(selection.end()));
+    let (first, last) = (
+        line_of(selection.start()),
+        line_of(selection.end().saturating_sub(1).max(selection.start())),
+    );
     let level = (first..=last)
         .filter(|&l| !lines[l].trim().is_empty())
         .map(|l| indent(lines[l]))
@@ -1000,7 +1030,7 @@ pub fn expand_to_indentation(text: &str, selection: Selection) -> Selection {
     }
     Selection {
         anchor: starts[top],
-        head: starts[bottom] + lines[bottom].chars().count(),
+        head: (starts[bottom] + lines[bottom].chars().count()).max(selection.end()),
     }
 }
 
@@ -1142,11 +1172,14 @@ pub fn add_line_selections(
     let at_column = |line: usize, target: usize| {
         let mut col = 0;
         let mut at = starts[line];
-        while at < chars.len() && chars[at] != '\n' && chars[at] != '\r' && col < target {
-            col += if chars[at] == '\t' {
-                width - col % width
-            } else {
-                1
+        while let Some(&ch) = chars.get(at) {
+            if ch == '\n' || (ch == '\r' && chars.get(at + 1) == Some(&'\n')) || col >= target {
+                break;
+            }
+            col += match ch {
+                '\r' => 0,
+                '\t' => width - col % width,
+                _ => 1,
             };
             at += 1;
         }
@@ -1174,4 +1207,64 @@ pub fn add_line_selections(
         out.push(added);
     }
     normalize(&out, chars.len())
+}
+
+#[cfg(test)]
+mod selection_tests {
+    use super::*;
+
+    fn range(anchor: usize, head: usize) -> Selection {
+        Selection { anchor, head }
+    }
+
+    #[test]
+    fn regression_select_next_occurrence_keeps_other_carets() {
+        let selected = occurrences(
+            "first second",
+            &[Selection::caret(1), Selection::caret(7)],
+            false,
+        );
+        assert_eq!(selected, [range(0, 5), Selection::caret(7)]);
+    }
+
+    #[test]
+    fn regression_select_all_from_a_caret_matches_the_whole_word() {
+        let text = "cat bobcat catapult cat";
+        assert_eq!(
+            occurrences(text, &[Selection::caret(1)], true),
+            [range(0, 3), range(20, 23)]
+        );
+        assert_eq!(
+            occurrences(text, &[range(0, 3)], true),
+            [range(0, 3), range(7, 10), range(11, 14), range(20, 23)]
+        );
+    }
+
+    #[test]
+    fn regression_column_navigation_continues_past_a_literal_carriage_return() {
+        assert_eq!(at_column("a\rb\nz", 0, 2, 4), 3);
+        assert_eq!(at_column("a\r\nz", 0, 2, 4), 1);
+        let added = add_line_selections("xx\na\rb", &[Selection::caret(2)], true, 4, None);
+        assert_eq!(added, [Selection::caret(2), Selection::caret(6)]);
+    }
+
+    #[test]
+    fn regression_expand_to_indentation_uses_a_half_open_selection() {
+        let text = "root\n  first\n  second\nnext";
+        assert_eq!(expand_to_indentation(text, range(7, 22)), range(5, 22));
+    }
+
+    #[test]
+    fn regression_expand_to_brackets_finds_the_parent_of_two_siblings() {
+        assert_eq!(
+            expand_to_brackets("((one) (two))", range(2, 11)),
+            range(1, 12)
+        );
+    }
+
+    #[test]
+    fn regression_expand_selection_picks_the_nearest_quotes() {
+        let text = "\"prefix 'x y' suffix\"";
+        assert_eq!(expand_selection(text, range(9, 12)), range(8, 13));
+    }
 }
