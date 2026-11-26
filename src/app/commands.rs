@@ -67,6 +67,7 @@ pub(super) enum Command {
     ScrollLineUp,
     ScrollLineDown,
     CopyPath,
+    CopyFileLocation,
     RevealInSidebar,
     NextTab,
     PreviousTab,
@@ -335,6 +336,7 @@ impl Command {
         Self::ScrollLineUp,
         Self::ScrollLineDown,
         Self::CopyPath,
+        Self::CopyFileLocation,
         Self::RevealInSidebar,
         Self::NextTab,
         Self::PreviousTab,
@@ -620,6 +622,7 @@ impl Command {
             Self::ScrollLineUp => "Scroll up one line",
             Self::ScrollLineDown => "Scroll down one line",
             Self::CopyPath => "Copy file path",
+            Self::CopyFileLocation => "Copy File Location",
             Self::RevealInSidebar => "Reveal in sidebar",
             Self::NextTab => "Next tab",
             Self::PreviousTab => "Previous tab",
@@ -1259,6 +1262,9 @@ impl HeditApp {
             Command::CloseFolder | Command::RefreshFolder => !self.workspace.folders.is_empty(),
             Command::Rename => self.active().page.info.path.is_none(),
             Command::CopyPath | Command::RevealInSidebar => self.active().page.info.path.is_some(),
+            Command::CopyFileLocation => {
+                self.active().page.info.path.is_some() && self.active().page.start == 0
+            }
             Command::SwitchCounterpart => self
                 .active()
                 .page
@@ -1600,6 +1606,7 @@ impl HeditApp {
                     self.notice = "File path copied.".into();
                 }
             }
+            Command::CopyFileLocation => self.copy_file_location(ctx),
             Command::RevealInSidebar => self.reveal_in_sidebar(),
             Command::NextTab => self.step_tab(true),
             Command::PreviousTab => self.step_tab(false),

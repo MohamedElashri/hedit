@@ -347,6 +347,7 @@ missing. **Esc** returns to one cursor after dismissing open panels/dialogs.
 | Find in folders | **Ctrl+Shift+F** searches open folders and unsaved buffers, honoring Git ignores. Filter with `*.rs, *.cu`; Context shows surrounding lines; **F4/Shift+F4** navigates |
 | Replace in folders | Enable Replace, enter text, then **Preview**. Review/select files and **Apply**. Open files remain unsaved/undoable; unopened files are written only if unchanged since preview, with **Undo replacements** available |
 | Go to anything | **Ctrl+P** finds by letters in order (`srcprj` → `src/project.rs`). Append `@symbol`, `:42:7`, or `#text`; alone these search the current file. Esc cancels previews |
+| Share a file location | **Copy File Location** in the Command Palette or tab menu copies `path:line:column` at the cursor. Paste it into Go to Anything to jump back |
 | Commands/symbols/lines | **Ctrl+Shift+P / Ctrl+R / Ctrl+G**; **Alt+Left/Right** navigates history |
 | Definitions/references | **F12 / Shift+F12** uses the configured language server. Local files fall back to source indexing when a server cannot answer; pointer hover also shows indexed definitions |
 | Header/implementation | **Alt+O** switches matching C/C++/CUDA/Objective-C stems, checking siblings then the nearest project; multiple matches open a picker |

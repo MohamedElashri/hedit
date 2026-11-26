@@ -113,13 +113,18 @@ impl HeditApp {
                                     Command::Close,
                                     Command::CloseOthers,
                                     Command::CloseRight,
+                                    Command::CopyFileLocation,
                                     Command::MovePane,
                                 ]
                                 .into_iter()
                                 .map(|command| {
                                     (
                                         command,
-                                        self.command_enabled(command),
+                                        if command == Command::CopyFileLocation {
+                                            path.is_some() && buffer.page.start == 0
+                                        } else {
+                                            self.command_enabled(command)
+                                        },
                                         self.shortcut_text(command),
                                     )
                                 })

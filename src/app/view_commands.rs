@@ -6,6 +6,32 @@ use super::*;
 const RECENT: usize = 20;
 
 impl HeditApp {
+    pub(super) fn copy_file_location(&mut self, ctx: &egui::Context) {
+        let buffer = &self.workspace.open[self.workspace.active];
+        let Some(path) = buffer.page.info.path.as_deref() else {
+            return;
+        };
+        if buffer.page.start != 0 {
+            return;
+        }
+        let roots: Vec<_> = self
+            .workspace
+            .folders
+            .iter()
+            .map(|f| PathBuf::from(&f.path))
+            .collect();
+        let path = hedit::folder::display_path(&roots, std::path::Path::new(path));
+        let (line, column) = self.projections[self.panes.focused]
+            .source_index(&buffer.page.text)
+            .navigation_position(&buffer.page.text, buffer.view.head);
+        let location = if path.contains(['@', ':', '#', '"']) || path.trim() != path {
+            format!("\"{path}\":{line}:{column}")
+        } else {
+            format!("{path}:{line}:{column}")
+        };
+        ctx.copy_text(location);
+        self.notice = "File location copied.".into();
+    }
     /// Note the active file as the most recently used.
     pub(super) fn track_recent_file(&mut self) {
         if self.workspace.remote.is_some() {
