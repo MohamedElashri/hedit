@@ -439,7 +439,7 @@ fn markdown_async_navigation_reveals_source_and_cancelled_goto_restores_preview(
     assert_eq!(app.active().view.markdown_view, MarkdownView::Split);
     assert_eq!(app.active().view.head, "# A note\n\n".chars().count());
     app.execute(&ctx, Command::MarkdownPreview);
-    app.preview_line(&ctx, 1, None);
+    app.preview_line(&ctx, super::goto_anything::PickerLine::File(1, None));
     frame(&ctx, &mut app, vec![]);
     assert_eq!(app.active().view.markdown_view, MarkdownView::Split);
     app.cancel_goto_preview();

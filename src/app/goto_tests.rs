@@ -1,5 +1,5 @@
 //! Go to Anything: @symbol, :line, and #text in Go to file.
-use super::goto_anything::{parse, Target};
+use super::goto_anything::{parse, PickerLine, Target};
 use super::tests::{click_label, finish_app_job, frame, key};
 use super::*;
 
@@ -86,10 +86,10 @@ fn cancelling_a_goto_preview_restores_extra_selections_and_horizontal_scroll() {
     app.workspace.open[0].view.scroll_top = 20.0;
     app.workspace.open[0].view.scroll_left = 150.0;
     let selections = app.selections();
-    app.preview_line(&ctx, 2, Some(4));
+    app.preview_line(&ctx, PickerLine::File(2, Some(4)));
     assert!(app.active().view.selections.is_empty());
     // A second preview must still restore the original view, not the first preview.
-    app.preview_line(&ctx, 3, None);
+    app.preview_line(&ctx, PickerLine::File(3, None));
     app.workspace.open[0].view.scroll_top = 40.0;
     app.workspace.open[0].view.scroll_left = 0.0;
     app.cancel_goto_preview();
@@ -127,6 +127,41 @@ fn goto_in_a_paged_file_honors_the_requested_column() {
         59_999 * line.len() as u64 + "αβγδε".len() as u64
     );
     assert_eq!(buffer.page.text[byte..].chars().next(), Some('ζ'));
+}
+
+#[test]
+fn go_to_text_previews_and_selects_matches_on_a_later_page() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("large.txt");
+    let line = "filler abcdefghijklmnopqrstuvwxyz\n";
+    let before = line.repeat(80_000);
+    let expected = before.len() as u64;
+    std::fs::write(&path, before + "unique_marker\n" + &line.repeat(50_000)).unwrap();
+    let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    app.open(&ctx, Some(path));
+    finish_app_job(&mut app, &ctx);
+    app.jump_to_line(&ctx, 79_999, None);
+    finish_app_job(&mut app, &ctx);
+    let page_start = app.active().page.start;
+    assert!(page_start > 0 && app.active().page.info.paged);
+
+    palette(&ctx, &mut app, "#unique_marker");
+    let started = Instant::now();
+    while app.goto_origin.is_none() {
+        assert!(started.elapsed() < Duration::from_secs(5));
+        thread::sleep(Duration::from_millis(5));
+        frame(&ctx, &mut app, vec![]);
+    }
+    let offset = |app: &HeditApp| {
+        let buffer = app.active();
+        buffer.page.start + hedit::advanced::byte(&buffer.page.text, buffer.view.head) as u64
+    };
+    assert_eq!(offset(&app), expected);
+    frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)]);
+    assert_eq!(offset(&app), expected);
+    assert_eq!(app.active().page.start, page_start);
 }
 
 #[test]

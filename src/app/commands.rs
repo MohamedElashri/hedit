@@ -2089,8 +2089,7 @@ impl HeditApp {
             Syntax(syntax::Language),
             /// Remember a build system (or "automatic") and build with it.
             BuildWith(String),
-            /// A 1-based line and column in the current file.
-            Line(usize, Option<usize>),
+            Line(goto_anything::PickerLine),
             /// An entry from a pick list.
             Pick(Pick),
         }
@@ -2226,7 +2225,14 @@ impl HeditApp {
                         let buffer = &self.workspace.open[self.workspace.active];
                         if let Some((matches, ready)) = self.goto_matches.get(ctx, buffer, &target) {
                             targets_ready = ready;
-                            for (name, line) in matches.iter() { items.push((name.clone(), format!("line {line}"), Item::Line(*line, None))); }
+                            for (name, line) in matches.iter() {
+                                let detail = if buffer.page.info.paged {
+                                    format!("page line {line}")
+                                } else {
+                                    format!("line {line}")
+                                };
+                                items.push((name.clone(), detail, Item::Line(goto_anything::PickerLine::Page(*line))));
+                            }
                         } else { targets_pending = true; ui.horizontal(|ui| { ui.spinner(); ui.weak("Finding matches…"); }); }
                     }
                     goto_anything::Target::Line(line, column) => {
@@ -2235,7 +2241,7 @@ impl HeditApp {
                                 Some(c) => format!("Go to line {line}, column {c}"),
                                 None => format!("Go to line {line}"),
                             };
-                            items.push((label, String::new(), Item::Line(line, column)));
+                            items.push((label, String::new(), Item::Line(goto_anything::PickerLine::File(line, column))));
                         }
                     }
                 }
@@ -2306,8 +2312,8 @@ impl HeditApp {
             }
             let navigate = down || up;
             if navigate || changed || targets_ready {
-                if let Some((_, _, Item::Line(line, column))) = items.get(self.palette_index) {
-                    preview = Some((*line, *column));
+                if let Some((_, _, Item::Line(line))) = items.get(self.palette_index) {
+                    preview = Some(*line);
                 }
             }
             ui.separator();
@@ -2369,18 +2375,18 @@ impl HeditApp {
             self.focus_editor = true;
             return;
         }
-        if let Some((line, column)) = preview {
-            self.preview_line(ctx, line, column);
+        if let Some(line) = preview {
+            self.preview_line(ctx, line);
         }
         if let Some(item) = chosen {
             self.palette = false;
             self.focus_editor = true;
             match item {
-                Item::Line(line, column) => {
+                Item::Line(line) => {
                     // Mark where the search started, so Back returns there.
                     self.cancel_goto_preview();
                     self.navigation_mark();
-                    self.jump_to_line(ctx, line, column);
+                    self.jump_to_picker_line(ctx, line);
                 }
                 Item::Buffer(index) => {
                     self.select_tab(index);
