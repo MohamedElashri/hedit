@@ -270,6 +270,39 @@ fn layout_section(
     section: &LayoutSection,
     out_paragraphs: &mut Vec<Paragraph>,
     capacities: &[usize],
+    last_glyph_id: Option<ab_glyph::GlyphId>,
+) {
+    let text = &job.text[section.byte_range.clone()];
+    if text.len() >= LONG_PARAGRAPH_BYTES && text.is_ascii() {
+        layout_section_glyphs::<true>(
+            fonts,
+            job,
+            section_index,
+            section,
+            out_paragraphs,
+            capacities,
+            last_glyph_id,
+        );
+    } else {
+        layout_section_glyphs::<false>(
+            fonts,
+            job,
+            section_index,
+            section,
+            out_paragraphs,
+            capacities,
+            last_glyph_id,
+        );
+    }
+}
+
+fn layout_section_glyphs<const CACHE_KERNING: bool>(
+    fonts: &mut FontsImpl,
+    job: &LayoutJob,
+    section_index: u32,
+    section: &LayoutSection,
+    out_paragraphs: &mut Vec<Paragraph>,
+    capacities: &[usize],
     mut last_glyph_id: Option<ab_glyph::GlyphId>,
 ) {
     let LayoutSection {
@@ -294,8 +327,11 @@ fn layout_section(
     let text = &job.text[byte_range.clone()];
     // Long ASCII lines tend to repeat glyph pairs thousands of times. Keep
     // kerning local to this font and layout section.
-    let mut kerning = (text.len() >= LONG_PARAGRAPH_BYTES && text.is_ascii())
-        .then(|| vec![f32::NAN; 128 * 128]);
+    let mut kerning = if CACHE_KERNING {
+        vec![f32::NAN; 128 * 128]
+    } else {
+        Vec::new()
+    };
     let mut previous_ascii: Option<usize> = None;
     for chr in text.chars() {
         if job.break_on_newline && chr == '\n' {
@@ -307,12 +343,16 @@ fn layout_section(
             let (font_impl, glyph_info) = font.font_impl_and_glyph_info(chr);
             if let Some(font_impl) = font_impl {
                 if let Some(last_glyph_id) = last_glyph_id {
-                    let kern = if let (Some(entries), Some(previous)) = (&mut kerning, previous_ascii) {
-                        let cached = &mut entries[previous * 128 + chr as usize];
-                        if cached.is_nan() {
-                            *cached = font_impl.pair_kerning(last_glyph_id, glyph_info.id);
+                    let kern = if CACHE_KERNING {
+                        if let Some(previous) = previous_ascii {
+                            let cached = &mut kerning[previous * 128 + chr as usize];
+                            if cached.is_nan() {
+                                *cached = font_impl.pair_kerning(last_glyph_id, glyph_info.id);
+                            }
+                            *cached
+                        } else {
+                            font_impl.pair_kerning(last_glyph_id, glyph_info.id)
                         }
-                        *cached
                     } else {
                         font_impl.pair_kerning(last_glyph_id, glyph_info.id)
                     };
@@ -337,7 +377,9 @@ fn layout_section(
             paragraph.cursor_x += glyph_info.advance_width;
             paragraph.cursor_x = font.round_to_pixel(paragraph.cursor_x);
             last_glyph_id = Some(glyph_info.id);
-            previous_ascii = Some(chr as usize);
+            if CACHE_KERNING {
+                previous_ascii = Some(chr as usize);
+            }
         }
     }
 }
