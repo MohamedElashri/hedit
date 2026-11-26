@@ -205,7 +205,7 @@ pub(super) enum Event {
     Found(u64, Page, usize, usize, usize, String, search::Options),
     Results(search::Results),
     Applied(Vec<(u64, Page)>, usize, Vec<String>, Vec<search::Restore>),
-    Restored(usize, Vec<String>),
+    Restored(usize, Vec<String>, Vec<search::Restore>),
     Symbols(Vec<intelligence::Symbol>),
     /// Definitions (false) or references (true) of a name.
     Locations(bool, String, Vec<definitions::Location>),
@@ -344,7 +344,8 @@ impl HeditApp {
                     self.error = Some(errors.join("\n"));
                 }
             }
-            Event::Restored(count, errors) => {
+            Event::Restored(count, errors, pending) => {
+                self.quality.replace_undo = pending;
                 self.notice = format!("Restored {count} files.");
                 self.quality.folder_state = folder_search::State::Applied(self.notice.clone());
                 if !errors.is_empty() {
@@ -1032,6 +1033,9 @@ impl HeditApp {
     }
     /// Put back the files the last replacement wrote, where unchanged since.
     pub(super) fn undo_folder_replacements(&mut self, ctx: &egui::Context) {
+        if self.busy || self.closing || self.quality.replace_undo.is_empty() {
+            return;
+        }
         let records = std::mem::take(&mut self.quality.replace_undo);
         // A file opened and edited since keeps its edits; it is not reverted
         // underneath them.
@@ -1040,25 +1044,32 @@ impl HeditApp {
             .open
             .iter()
             .filter(|b| b.page.info.dirty)
-            .filter_map(|b| std::fs::canonicalize(b.page.info.path.as_ref()?).ok())
+            .filter_map(|b| b.page.info.path.as_deref().map(search_path))
             .collect();
         self.job(ctx, move || {
             let mut count = 0;
             let mut errors = vec![];
-            for record in &records {
+            let mut pending = Vec::new();
+            for record in records {
                 if edited.contains(&record.path) {
                     errors.push(format!(
                         "{} has unsaved changes in hedit; it was left as it is.",
                         record.path.display()
                     ));
+                    pending.push(record);
                     continue;
                 }
-                match search::restore(record) {
+                match search::restore(&record) {
                     Ok(()) => count += 1,
-                    Err(e) => errors.push(e),
+                    Err(e) => {
+                        errors.push(e);
+                        pending.push(record);
+                    }
                 }
             }
-            Ok(Action::Quality(Box::new(Event::Restored(count, errors))))
+            Ok(Action::Quality(Box::new(Event::Restored(
+                count, errors, pending,
+            ))))
         });
     }
     pub(super) fn compare_disk(&mut self, ctx: &egui::Context, git: bool) {

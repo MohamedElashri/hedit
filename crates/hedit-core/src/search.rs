@@ -41,6 +41,7 @@ impl Options {
         RegexBuilder::new(&pattern)
             .case_insensitive(!self.case_sensitive)
             .multi_line(true)
+            .crlf(true)
             .size_limit(2 * 1024 * 1024)
             .dfa_size_limit(4 * 1024 * 1024)
             .build()
@@ -173,6 +174,13 @@ pub fn walk(roots: &[PathBuf], filter: &str, cancel: &AtomicBool) -> Result<Vec<
     let Some(first) = roots.first() else {
         return Err("Open a folder first.".into());
     };
+    for root in roots {
+        let metadata = std::fs::metadata(root)
+            .map_err(|error| format!("Cannot search {}: {error}", root.display()))?;
+        if !metadata.is_dir() {
+            return Err(format!("{} is not a folder.", root.display()));
+        }
+    }
     let mut builder = ignore::WalkBuilder::new(first);
     for root in &roots[1..] {
         builder.add(root);
@@ -291,26 +299,49 @@ pub fn glob(pattern: &str, text: &str) -> bool {
 }
 /// The lines to show for matches on `matched` lines (1-based, with the
 /// column of the first match): each with the line before and after it.
-fn context(text: &str, matched: &[(usize, usize)]) -> Vec<ContextLine> {
+fn context(text: &str, matched: &[(usize, usize, String)]) -> Vec<ContextLine> {
     let lines: Vec<&str> = text.split('\n').collect();
     let mut wanted: Vec<usize> = matched
         .iter()
-        .flat_map(|&(line, _)| line.saturating_sub(1).max(1)..=(line + 1).min(lines.len()))
+        .flat_map(|(line, _, _)| line.saturating_sub(1).max(1)..=(line + 1).min(lines.len()))
         .collect();
     wanted.sort_unstable();
     wanted.dedup();
     wanted
         .into_iter()
-        .map(|line| ContextLine {
-            line,
-            text: lines[line - 1]
-                .trim_end_matches('\r')
-                .chars()
-                .take(240)
-                .collect(),
-            column: matched.iter().find(|(l, _)| *l == line).map(|(_, c)| *c),
+        .map(|line| {
+            let hit = matched
+                .binary_search_by_key(&line, |(number, _, _)| *number)
+                .ok();
+            ContextLine {
+                line,
+                text: hit.map_or_else(
+                    || {
+                        lines[line - 1]
+                            .trim_end_matches('\r')
+                            .chars()
+                            .take(240)
+                            .collect()
+                    },
+                    |index| matched[index].2.clone(),
+                ),
+                column: hit.map(|index| matched[index].1),
+            }
         })
         .collect()
+}
+
+fn excerpt(line: &str, match_byte: usize) -> String {
+    const LIMIT: usize = 240;
+    let line = line.trim_end_matches('\r');
+    if line.len() <= LIMIT || line.chars().nth(LIMIT).is_none() {
+        return line.into();
+    }
+    let before = line[..match_byte.min(line.len())].chars().count();
+    let skip = before.saturating_sub(LIMIT / 2);
+    let mut text: String = (skip > 0).then_some('…').into_iter().collect();
+    text.extend(line.chars().skip(skip).take(LIMIT - usize::from(skip > 0)));
+    text
 }
 /// Search the files under `roots`, reading files open in the editor from
 /// `open` (their current, possibly unsaved, text) instead of from disk, and
@@ -341,7 +372,7 @@ pub fn folders(
         }
     }
 
-    options.compile(query)?;
+    let regex = options.compile(query)?;
     let mut result = Results::default();
     let mut retained = 0;
     let mut paths = walk(roots, filter, cancel)?;
@@ -404,41 +435,62 @@ pub fn folders(
             };
             (text, bytes, encoding, bom)
         };
-        let found = matches(&text, query, options, 0..text.len())?;
-        if found.is_empty() {
-            continue;
-        }
         let first_hit = result.hits.len();
-        for m in &found {
-            let before = &text[..m.start];
-            let start = before.rfind('\n').map_or(0, |i| i + 1);
-            let end = text[m.start..]
-                .find('\n')
-                .map_or(text.len(), |i| m.start + i);
-            result.hits.push(Hit {
-                path: path.clone(),
-                line: before.bytes().filter(|b| *b == b'\n').count() + 1,
-                column: text[start..m.start].encode_utf16().count() + 1,
-                text: text[start..end].chars().take(240).collect(),
-            });
-            if result.hits.len() >= MATCH_LIMIT {
+        let mut matched = Vec::new();
+        let mut line = 1;
+        let mut column = 1;
+        let mut previous = 0;
+        let mut line_start = 0;
+        for hit in regex.find_iter(&text) {
+            if result.hits.len() == MATCH_LIMIT {
                 result.truncated = true;
                 break;
             }
-        }
-        let mut matched: Vec<(usize, usize)> = vec![];
-        for hit in &result.hits[first_hit..] {
-            if matched.last().is_none_or(|(line, _)| *line != hit.line) {
-                matched.push((hit.line, hit.column));
+            for newline in memchr::memchr_iter(b'\n', &text.as_bytes()[previous..hit.start()]) {
+                line += 1;
+                line_start = previous + newline + 1;
+                column = 1;
             }
+            column += text[line_start.max(previous)..hit.start()]
+                .encode_utf16()
+                .count();
+            previous = hit.start();
+            if matched.last().is_none_or(|(number, _, _)| *number != line) {
+                let end = text[hit.start()..]
+                    .find('\n')
+                    .map_or(text.len(), |i| hit.start() + i);
+                matched.push((
+                    line,
+                    column,
+                    excerpt(&text[line_start..end], hit.start() - line_start),
+                ));
+            }
+            result.hits.push(Hit {
+                path: path.clone(),
+                line,
+                column,
+                text: matched.last().unwrap().2.clone(),
+            });
+        }
+        if result.hits.len() == first_hit {
+            if result.truncated {
+                break;
+            }
+            continue;
         }
         result.files.push(FileHits {
             path: path.clone(),
             count: result.hits.len() - first_hit,
             lines: context(&text, &matched),
         });
+        if result.truncated {
+            break;
+        }
         if let Some(replacement) = replacement {
             let (after, _) = replace(&text, query, replacement, options, 0..text.len())?;
+            if after == text {
+                continue;
+            }
             retained += text.len() + after.len();
             if retained > 128 * 1024 * 1024 {
                 return Err("Replacement preview exceeds 128 MiB; narrow the search.".into());
@@ -453,9 +505,6 @@ pub fn folders(
                 bom,
                 selected: true,
             });
-        }
-        if result.truncated {
-            break;
         }
     }
     Ok(result)
@@ -549,4 +598,79 @@ pub fn diff(before: &str, after: &str, name: &Path) -> String {
             &format!("{} (after)", name.display()),
         )
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn search_folder(root: &Path, replacement: Option<&str>) -> Result<Results, String> {
+        folders(
+            &[root.to_owned()],
+            "",
+            "needle",
+            replacement,
+            &Options::default(),
+            &Default::default(),
+            &AtomicBool::new(false),
+        )
+    }
+
+    #[test]
+    fn regression_folder_search_limits_dense_files_without_losing_results() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("dense.txt");
+        std::fs::write(&file, "needle ".repeat(MATCH_LIMIT + 1)).unwrap();
+        let excess = search_folder(dir.path(), None).unwrap();
+        assert_eq!(excess.hits.len(), MATCH_LIMIT);
+        assert!(excess.truncated);
+        std::fs::write(file, "needle ".repeat(MATCH_LIMIT)).unwrap();
+        let exact = search_folder(dir.path(), None).unwrap();
+        assert_eq!(exact.hits.len(), MATCH_LIMIT);
+        assert!(!exact.truncated);
+    }
+
+    #[test]
+    fn regression_folder_search_omits_unchanged_replacement_plans() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("file.txt"), "needle\n").unwrap();
+        let results = search_folder(dir.path(), Some("needle")).unwrap();
+        assert_eq!(results.hits.len(), 1);
+        assert!(results.plans.is_empty());
+    }
+
+    #[test]
+    fn regression_regex_line_anchors_preserve_crlf_on_replacement() {
+        let source = "needle\r\nnext\n";
+        let options = Options {
+            regex: true,
+            ..Options::default()
+        };
+        let (result, count) =
+            replace(source, "^needle$", "new", &options, 0..source.len()).unwrap();
+        assert_eq!((result.as_str(), count), ("new\r\nnext\n", 1));
+    }
+
+    #[test]
+    fn regression_folder_search_reports_a_missing_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing");
+        let error = search_folder(&missing, None)
+            .err()
+            .expect("missing folder looked empty");
+        assert!(error.contains("missing"));
+    }
+
+    #[test]
+    fn regression_folder_search_snippet_shows_the_match_after_a_long_prefix() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("file.txt"),
+            format!("{}needle tail\n", "🙂".repeat(280)),
+        )
+        .unwrap();
+        let results = search_folder(dir.path(), None).unwrap();
+        assert_eq!(results.hits[0].column, 561);
+        assert!(results.files[0].lines[0].text.contains("needle tail"));
+    }
 }
