@@ -649,6 +649,26 @@ impl HeditApp {
                                 buffer.view.name,
                                 format_bytes(buffer.page.info.size)
                             ));
+                            if let Some((characters, lines)) = source_index.selection_counts(
+                                hedit::advanced::Selection {
+                                    anchor: buffer.view.anchor,
+                                    head: buffer.view.head,
+                                },
+                                &buffer.view.selections,
+                            ) {
+                                let character_label = if characters == 1 {
+                                    "character"
+                                } else {
+                                    "characters"
+                                };
+                                let line_label = if lines == 1 { "line" } else { "lines" };
+                                ui.label(
+                                    RichText::new(format!(
+                                        "{characters} {character_label} · {lines} {line_label}"
+                                    ))
+                                    .size(font),
+                                );
+                            }
                             if !buffer.view.selections.is_empty() {
                                 ui.label(
                                     RichText::new(format!(

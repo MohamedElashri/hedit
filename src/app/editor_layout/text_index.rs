@@ -134,12 +134,41 @@ impl TextIndex {
     pub fn lines(&self) -> usize {
         self.lines.len()
     }
+    fn line_at(&self, cursor: usize) -> usize {
+        self.lines
+            .partition_point(|line| line.1 <= cursor)
+            .saturating_sub(1)
+    }
+
+    pub fn selection_counts(
+        &self,
+        primary: hedit::advanced::Selection,
+        additional: &[hedit::advanced::Selection],
+    ) -> Option<(usize, usize)> {
+        let ranges: Vec<_> = std::iter::once(&primary)
+            .chain(additional)
+            .copied()
+            .filter(|range| range.start() != range.end())
+            .collect();
+        let mut characters = 0;
+        let mut lines = 0;
+        let mut counted_through = 0;
+        for range in hedit::advanced::normalize(&ranges, self.chars) {
+            if range.start() == range.end() {
+                continue;
+            }
+            characters += range.end() - range.start();
+            let first = self.line_at(range.start());
+            let past_last = self.line_at(range.end() - 1) + 1;
+            lines += past_last.saturating_sub(first.max(counted_through));
+            counted_through = past_last;
+        }
+        (characters > 0).then_some((characters, lines))
+    }
+
     pub fn line_column(&self, text: &str, cursor: usize, width: usize) -> (usize, usize) {
         let cursor = cursor.min(self.chars);
-        let line = self
-            .lines
-            .partition_point(|line| line.1 <= cursor)
-            .saturating_sub(1);
+        let line = self.line_at(cursor);
         let (mut byte, mut chars) = self.lines[line];
         let mut col = 0;
         if (1..=8).contains(&width) {
@@ -258,6 +287,21 @@ fn chunks(text: &str, byte: usize, chars: usize) -> Vec<Chunk> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selection_counts_distinct_lines_and_unicode_characters() {
+        use hedit::advanced::Selection;
+
+        let index = TextIndex::new("é🙂xy\nλ\nlast");
+        let primary = Selection { anchor: 2, head: 0 };
+        let additional = [
+            Selection { anchor: 3, head: 5 },
+            Selection { anchor: 5, head: 7 },
+            Selection::caret(8),
+        ];
+        assert_eq!(index.selection_counts(primary, &additional), Some((6, 2)));
+        assert_eq!(index.selection_counts(Selection::caret(8), &[]), None);
+    }
     #[test]
     fn incremental_edits_match_unicode_reference() {
         let mut text = "a🦀\tב\r\n\nlast\n".to_owned();

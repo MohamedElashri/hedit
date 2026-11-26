@@ -701,8 +701,9 @@ Click the active Files or Source Control icon to hide its sidebar. Turn off
 `show_activity_bar` in Settings to use the text workspace switcher and a compact
 Remote Explorer icon.
 
-The status bar shows position, indentation, line endings, encoding, syntax, and
-recovery; hover for details. Click its recovery dot for settings.
+The status bar shows position, selected characters and lines, indentation, line
+endings, encoding, syntax, and recovery. Hover for details or click the recovery
+dot for settings.
 
 ### Tabs in editor groups
 
