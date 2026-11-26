@@ -13,13 +13,12 @@ fn closing_the_last_empty_untitled_tab_keeps_its_identity_and_shelf() {
     let directory = tempfile::tempdir().unwrap();
     let (mut ws, _) = Workspace::restore(directory.path().into()).unwrap();
     let id = ws.open[0].view.id;
-    let name = ws.open[0].view.name.clone();
     for _ in 0..5 {
         assert!(!ws.can_close(0));
         ws.close(0).unwrap();
         assert_eq!(ws.open.len(), 1);
         assert_eq!(ws.open[0].view.id, id);
-        assert_eq!(ws.open[0].view.name, name);
+        assert_eq!(ws.open[0].view.name, "Untitled");
         assert!(ws.closed.is_empty());
     }
     edit(&mut ws, "note");
@@ -37,6 +36,43 @@ fn closing_the_last_empty_untitled_tab_keeps_its_identity_and_shelf() {
         .history(false, 0, ws.open[0].page.info.revision)
         .unwrap();
     assert_eq!(page.text, "note");
+}
+
+#[test]
+fn untitled_numbers_only_distinguish_open_tabs_without_a_name() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut ws, _) = Workspace::restore(directory.path().into()).unwrap();
+    for _ in 0..3 {
+        edit(&mut ws, "A note to recover");
+        ws.close(ws.active).unwrap();
+        assert_eq!(ws.open[0].view.name, "Untitled");
+    }
+    assert_eq!(ws.closed.len(), 3);
+    let first = ws.open[0].view.id;
+    ws.new_buffer().unwrap();
+    assert_eq!(ws.open[0].view.name, "Untitled 1");
+    assert_eq!(ws.open[1].view.name, "Untitled 2");
+
+    edit(&mut ws, "\n  Draft heading  \nmore text");
+    assert_eq!(ws.open[0].view.name, "Untitled");
+    assert_eq!(ws.open[1].view.name, "Draft heading");
+    edit(&mut ws, " \n\t");
+    assert_eq!(ws.open[0].view.name, "Untitled 1");
+    assert_eq!(ws.open[1].view.name, "Untitled 2");
+
+    ws.name_scratchpad(1, "Untitled 7").unwrap();
+    assert_eq!(ws.open[0].view.name, "Untitled");
+    assert_eq!(ws.open[1].view.name, "Untitled 7");
+    ws.name_scratchpad(1, "").unwrap();
+    ws.close(1).unwrap();
+    assert_eq!(ws.open[0].view.name, "Untitled");
+    assert_eq!(ws.open[0].view.id, first);
+    assert_eq!(ws.closed.len(), 4);
+
+    ws.reopen().unwrap();
+    assert_eq!(ws.open[0].view.name, "Untitled 1");
+    assert_eq!(ws.open[1].view.name, "Untitled 2");
+    assert_eq!(ws.open[1].page.text, " \n\t");
 }
 
 #[test]

@@ -81,6 +81,34 @@ fn untitled_and_closed_buffers_survive_restarts_and_keep_selection() {
 }
 
 #[test]
+fn restoring_legacy_untitled_labels_uses_the_current_open_tabs() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut ws, _) = Workspace::restore(directory.path().into()).unwrap();
+    ws.new_buffer().unwrap();
+    ws.new_buffer().unwrap();
+    ws.name_scratchpad(2, "Untitled 99").unwrap();
+    edit(&mut ws, "Recovered draft");
+    let mut session = ws.view();
+    session.open[0].name = "Untitled 527".into();
+    session.open[1].name = "Untitled 612".into();
+    let first = session.open[0].id;
+    let second = session.open[1].id;
+    ws.store.save(&ws.editor, session).unwrap();
+    drop(ws);
+
+    let (mut ws, errors) = Workspace::restore(directory.path().into()).unwrap();
+    assert!(errors.is_empty(), "{errors:?}");
+    assert_eq!(ws.open[0].view.name, "Untitled 1");
+    assert_eq!(ws.open[1].view.name, "Untitled 2");
+    assert_eq!(ws.open[2].view.name, "Untitled 99");
+    assert_eq!(ws.open[2].page.text, "Recovered draft");
+    assert_eq!(ws.open[1].view.id, second);
+    ws.close(1).unwrap();
+    assert_eq!(ws.open[0].view.name, "Untitled");
+    assert_eq!(ws.open[0].view.id, first);
+}
+
+#[test]
 fn discarding_restored_edits_does_not_reuse_old_checkpoint_history() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("notes.txt");

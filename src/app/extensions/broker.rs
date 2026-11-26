@@ -508,6 +508,7 @@ impl HeditApp {
                 }
                 buffer.view.page_start = page.start;
                 buffer.page = page;
+                buffer.refresh_name();
                 buffer.restore_cursor = true;
                 buffer.external = false;
                 updated = true;

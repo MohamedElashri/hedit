@@ -134,6 +134,36 @@ fn control() -> Modifiers {
 }
 
 #[test]
+fn tab_titles_follow_untitled_numbering_through_undo_and_close() {
+    let (_directory, ctx, mut app) = app_with_tabs(1);
+    assert_eq!(app.tab_strip.label(0), "Untitled");
+    app.execute(&ctx, Command::New);
+    frame(&ctx, &mut app, vec![]);
+    assert_eq!(app.tab_strip.label(0), "Untitled 1");
+    assert_eq!(app.tab_strip.label(1), "Untitled 2");
+
+    frame(
+        &ctx,
+        &mut app,
+        vec![egui::Event::Text("Draft heading".into())],
+    );
+    frame(&ctx, &mut app, vec![]);
+    assert_eq!(app.tab_strip.label(0), "Untitled");
+    assert_eq!(app.tab_strip.label(1), "Draft heading");
+
+    app.execute(&ctx, Command::Undo);
+    super::tests::finish_app_job(&mut app, &ctx);
+    frame(&ctx, &mut app, vec![]);
+    assert_eq!(app.tab_strip.label(0), "Untitled 1");
+    assert_eq!(app.tab_strip.label(1), "Untitled 2");
+
+    app.request_close(vec![app.active().view.id]);
+    frame(&ctx, &mut app, vec![]);
+    assert_eq!(app.workspace.open.len(), 1);
+    assert_eq!(app.tab_strip.label(0), "Untitled");
+}
+
+#[test]
 fn page_keys_step_through_tabs_in_order_and_wrap() {
     let (_directory, ctx, mut app) = app_with_tabs(3);
     frame(&ctx, &mut app, vec![key(Key::PageDown, control())]);
