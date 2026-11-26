@@ -173,7 +173,13 @@ pub fn toggle_block_comment(
         } else if empty {
             enclosing_comment(&chars, s.head, &open, &close)
         } else {
-            None
+            enclosing_comment(&chars, a, &open, &close).filter(|&(start, end)| {
+                let (inner_start, inner_end) = (start + open.len(), end - close.len());
+                a >= inner_start
+                    && b <= inner_end
+                    && chars[inner_start..a].iter().all(|ch| ch.is_whitespace())
+                    && chars[b..inner_end].iter().all(|ch| ch.is_whitespace())
+            })
         };
         if let Some((a, b)) = around {
             let mut inner = (a + open.len(), b - close.len());
