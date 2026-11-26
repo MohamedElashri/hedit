@@ -481,7 +481,15 @@ fn rasterize(svg: &str) -> Result<Raster, String> {
         FONTS
             .get_or_init(|| {
                 let mut fonts = usvg::fontdb::Database::new();
+                #[cfg(not(test))]
                 fonts.load_system_fonts();
+                // Keep rendering tests independent of the runner's fonts and font scan time.
+                #[cfg(test)]
+                {
+                    let bundled = egui::FontDefinitions::default();
+                    fonts.load_font_data(bundled.font_data["Ubuntu-Light"].font.to_vec());
+                    fonts.set_sans_serif_family("Ubuntu");
+                }
                 Arc::new(fonts)
             })
             .clone()
