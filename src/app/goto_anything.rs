@@ -1,7 +1,7 @@
 //! Go to Anything, as in Sublime Text: in Go to file, `@` jumps to a symbol,
 //! `:` to a line, and `#` to text, in the current file or after a file name.
 use super::*;
-use std::path::Path;
+use std::{borrow::Cow, path::Path};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Target {
@@ -20,11 +20,20 @@ pub(super) enum PickerLine {
 /// Split `app.rs@save` into the file query and what to go to inside it.
 pub(super) fn parse(query: &str) -> (&str, Option<Target>) {
     let (file, suffix) = if let Some((quoted, suffix)) = query.strip_prefix('"').and_then(|text| {
-        // A quoted target can itself contain quotes. Locate a closing
-        // quote followed by a target operator or the end of the query.
-        text.match_indices('"')
-            .map(|(at, _)| (&text[..at], &text[at + 1..]))
-            .find(|(_, suffix)| suffix.is_empty() || suffix.starts_with(['@', ':', '#']))
+        // A doubled quote represents a literal quote in the path. Stop at
+        // the closing delimiter before inspecting the target text.
+        let mut quotes = text.match_indices('"').peekable();
+        while let Some((at, _)) = quotes.next() {
+            if quotes.peek().is_some_and(|(next, _)| *next == at + 1) {
+                quotes.next();
+                continue;
+            }
+            let suffix = &text[at + 1..];
+            if suffix.is_empty() || suffix.starts_with(['@', ':', '#']) {
+                return Some((&text[..at], suffix));
+            }
+        }
+        None
     }) {
         (quoted, suffix)
     } else if let Some(at) = query.find(['@', ':', '#']) {
@@ -63,16 +72,22 @@ pub(super) fn resolve(text: &str, path: &Path, target: &Target) -> Option<(usize
     }
 }
 
-pub(super) fn parse_file_query(query: &str) -> (&str, Option<Target>) {
+pub(super) fn parse_file_query(query: &str) -> (Cow<'_, str>, Option<Target>) {
     let drive_start = if query.starts_with(r"\\?\") { 4 } else { 0 };
-    match &query.as_bytes()[drive_start..] {
+    let (path, target) = match &query.as_bytes()[drive_start..] {
         [drive, b':', b'/' | b'\\', ..] if drive.is_ascii_alphabetic() => {
             let prefix = drive_start + 2;
             let (path, target) = parse(&query[prefix..]);
             (&query[..prefix + path.len()], target)
         }
         _ => parse(query),
-    }
+    };
+    let path = if query.starts_with('"') && path.len() < query.len() && path.contains("\"\"") {
+        Cow::Owned(path.replace("\"\"", "\""))
+    } else {
+        Cow::Borrowed(path)
+    };
+    (path, target)
 }
 
 /// Symbols matching `query`, best first, as (name, 1-based line).

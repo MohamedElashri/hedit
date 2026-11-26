@@ -10,8 +10,9 @@ pub struct Symbol {
     pub name: String,
     pub line: usize,
 }
-pub fn symbols(text: &str, path: &Path) -> Vec<Symbol> {
-    let definitions=regex::Regex::new(r#"(?x)^\s*(?:(?:pub(?:\([^)]*\))?|async|export|default|static|inline|virtual|const|unsafe|extern(?:\s+"[^"\n]*")?)\s+)*(?:(?:fn|def|class|struct|enum|trait|interface|function|type|mod|namespace)\s+([\pL_][\pL\pN_]*)|([\pL_][\pL\pN_:<>*&\s]*)\s+([\pL_][\pL\pN_]*)\s*\([^;]*\)\s*(?:const\s*)?\{)"#).unwrap();
+fn symbol_locations(text: &str) -> impl Iterator<Item = (usize, &str, regex::Match<'_>)> {
+    static DEFINITIONS: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let definitions = DEFINITIONS.get_or_init(|| regex::Regex::new(r#"(?x)^\s*(?:(?:pub(?:\([^)]*\))?|async|export|default|static|inline|virtual|const|unsafe|extern(?:\s+"[^"\n]*")?)\s+)*(?:(?:fn|def|class|struct|enum|trait|interface|function|type|mod|namespace)\s+([\pL_][\pL\pN_]*)|([\pL_][\pL\pN_:<>*&\s]*)\s+([\pL_][\pL\pN_]*)\s*\([^;]*\)\s*(?:const\s*)?\{)"#).unwrap());
     text.lines()
         .enumerate()
         .filter_map(|(line, text)| {
@@ -21,15 +22,19 @@ pub fn symbols(text: &str, path: &Path) -> Vec<Symbol> {
             {
                 return None;
             }
-            let c = definitions.captures(text)?;
-            let name = c.get(1).or_else(|| c.get(3))?.as_str().to_owned();
-            Some(Symbol {
-                path: path.to_owned(),
-                name,
-                line: line + 1,
-            })
+            let captures = definitions.captures(text)?;
+            Some((line, text, captures.get(1).or_else(|| captures.get(3))?))
         })
         .take(10_000)
+}
+
+pub fn symbols(text: &str, path: &Path) -> Vec<Symbol> {
+    symbol_locations(text)
+        .map(|(line, _, name)| Symbol {
+            path: path.to_owned(),
+            name: name.as_str().to_owned(),
+            line: line + 1,
+        })
         .collect()
 }
 /// A place in a file: 1-based line and column, and the line's text.
@@ -50,32 +55,22 @@ fn place(line: usize, text: &str, byte: usize) -> Place {
 
 /// Where `name` is defined: functions, types, and other symbols, plus
 /// `#define`, `typedef`, and variable or constant declarations.
-pub fn definitions(text: &str, name: &str, path: &Path) -> Vec<Place> {
+pub fn definitions(text: &str, name: &str, _path: &Path) -> Vec<Place> {
     let word = regex::escape(name);
     let Ok(other) = regex::Regex::new(&format!(
         r"^\s*(?:#\s*define\s+({word})\b|typedef\b.*\b({word})\s*;|(?:(?:pub(?:\([^)]*\))?|export|static|final|private|public|protected)\s+)*(?:const|let|var|val|static|macro_rules!|using|alias)\s+(?:mut\s+)?({word})\b|({word})\s*=[^=]|((?:[\pL_][\pL\pN_:<>]*[\s*&]+)+)({word})\s*(?:=[^=]|;|\[|,))"
     )) else {
         return vec![];
     };
-    let symbol_lines: std::collections::HashSet<usize> = symbols(text, path)
-        .into_iter()
-        .filter(|s| s.name == name)
-        .map(|s| s.line)
-        .collect();
-    let at_word = |line: &str| {
-        line.match_indices(name)
-            .find(|(i, _)| {
-                let before = line[..*i].chars().last();
-                let after = line[i + name.len()..].chars().next();
-                !before.is_some_and(is_word) && !after.is_some_and(is_word)
-            })
-            .map(|(i, _)| i)
-    };
+    let mut symbols = symbol_locations(text)
+        .filter(|(_, _, matched)| matched.as_str() == name)
+        .peekable();
     text.lines()
         .enumerate()
         .filter_map(|(n, line)| {
-            if symbol_lines.contains(&(n + 1)) {
-                return at_word(line).map(|i| place(n, line, i));
+            if symbols.peek().is_some_and(|(line, _, _)| *line == n) {
+                let (_, _, matched) = symbols.next().unwrap();
+                return Some(place(n, line, matched.start()));
             }
             let found = other.captures(line)?;
             // `type name = …;` declarations, but not `return name;`.
@@ -180,6 +175,7 @@ pub fn expand_fields_bounded(
         filename,
         max_bytes,
         defaults: Default::default(),
+        defined: Default::default(),
         text: String::new(),
         count: 0,
         fields: Default::default(),
@@ -188,6 +184,7 @@ pub fn expand_fields_bounded(
     // A bare `$1` before `${1:text}` still shows `text`.
     let mut parser = FieldParser {
         defaults: first.defaults,
+        defined: Default::default(),
         text: String::new(),
         count: 0,
         fields: Default::default(),
@@ -216,6 +213,7 @@ struct FieldParser<'a> {
     filename: Option<&'a str>,
     max_bytes: usize,
     defaults: std::collections::HashMap<u32, String>,
+    defined: BTreeSet<u32>,
     text: String,
     /// Characters in `text`.
     count: usize,
@@ -246,6 +244,48 @@ impl FieldParser<'_> {
     }
     fn field(&mut self, number: u32, start: usize) {
         self.fields.push((number, (start, self.count)));
+    }
+    /// Skip a repeated default and any placeholders inside its unused text.
+    fn skip_default(&self, at: &mut usize) {
+        let mut depth = 1;
+        while let Some(&ch) = self.chars.get(*at) {
+            *at += 1;
+            match ch {
+                '\\' if matches!(self.chars.get(*at), Some('$' | '}' | '\\')) => *at += 1,
+                '$' if self.chars.get(*at) == Some(&'{') => {
+                    let mut inner = *at + 1;
+                    if self.number(&mut inner).is_some() {
+                        match self.chars.get(inner) {
+                            Some(':') => {
+                                depth += 1;
+                                *at = inner + 1;
+                            }
+                            Some('}') => *at = inner + 1,
+                            _ => {}
+                        }
+                    } else if let Some(end) = ["{SELECTION}", "{FILE_BASENAME}"]
+                        .into_iter()
+                        .take(if self.filename.is_some() { 2 } else { 1 })
+                        .find(|variable| {
+                            self.chars[*at..]
+                                .iter()
+                                .copied()
+                                .take(variable.len())
+                                .eq(variable.chars())
+                        })
+                    {
+                        *at += end.len();
+                    }
+                }
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return;
+                    }
+                }
+                _ => {}
+            }
+        }
     }
     /// Parse until the end, or until an unescaped `}` when `nested`.
     fn parse(&mut self, at: &mut usize, nested: bool) -> Option<()> {
@@ -303,19 +343,18 @@ impl FieldParser<'_> {
                                 }
                                 Some(':') => {
                                     let start = self.count;
-                                    let byte = self.text.len();
-                                    let previous_fields = self.fields.len();
                                     *at = inner + 1;
-                                    self.parse(at, true)?;
-                                    let default = self.text[byte..].to_owned();
-                                    // A number used again mirrors its first text.
-                                    let first =
-                                        self.defaults.entry(number).or_insert(default).clone();
-                                    if self.text[byte..] != first {
-                                        self.text.truncate(byte);
-                                        self.count = start;
-                                        self.fields.truncate(previous_fields);
-                                        self.push(&first)?;
+                                    if self.defined.insert(number) {
+                                        let byte = self.text.len();
+                                        self.parse(at, true)?;
+                                        self.defaults
+                                            .entry(number)
+                                            .or_insert_with(|| self.text[byte..].to_owned());
+                                    } else {
+                                        self.skip_default(at);
+                                        if let Some(default) = self.defaults.get(&number).cloned() {
+                                            self.push(&default)?;
+                                        }
                                     }
                                     self.field(number, start);
                                     continue;
@@ -499,7 +538,7 @@ pub fn hunk_at(diff: &str, line: usize) -> String {
             let count = c
                 .get(2)
                 .map_or(1, |m| m.as_str().parse::<usize>().unwrap_or(1));
-            selected = start <= line && line <= start.saturating_add(count);
+            selected = start <= line && line < start.saturating_add(count.max(1));
         }
         if selected {
             out.push_str(text);

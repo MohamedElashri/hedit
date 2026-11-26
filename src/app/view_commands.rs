@@ -7,7 +7,7 @@ const RECENT: usize = 20;
 
 fn location_text(path: &str, line: u64, column: u64) -> String {
     if path.contains(['@', ':', '#', '"']) || path.trim() != path {
-        format!("\"{path}\":{line}:{column}")
+        format!("\"{}\":{line}:{column}", path.replace('"', "\"\""))
     } else {
         format!("{path}:{line}:{column}")
     }

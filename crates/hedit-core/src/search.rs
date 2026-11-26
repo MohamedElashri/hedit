@@ -36,7 +36,7 @@ impl Options {
             regex::escape(query)
         };
         if self.whole_word {
-            pattern = format!(r"\b(?:{pattern})\b");
+            pattern = format!(r"\b{{start-half}}(?:{pattern})\b{{end-half}}");
         }
         RegexBuilder::new(&pattern)
             .case_insensitive(!self.case_sensitive)
@@ -313,7 +313,7 @@ fn filename_matches(path: &Path, roots: &[PathBuf], patterns: &[globset::GlobMat
         })
 }
 
-fn draft_is_ignored(path: &Path, root: &Path) -> bool {
+pub fn path_is_ignored(path: &Path, root: &Path) -> bool {
     let relative = path.strip_prefix(root).unwrap_or(path);
     if relative.ancestors().any(|part| {
         part.file_name().is_some_and(|name| {
@@ -471,7 +471,7 @@ pub fn folders(
                             .iter()
                             .filter(|root| path.starts_with(root))
                             .max_by_key(|root| root.components().count())
-                            .is_some_and(|root| !draft_is_ignored(path, root))
+                            .is_some_and(|root| !path_is_ignored(path, root))
                 })
                 .cloned(),
         );
@@ -657,7 +657,7 @@ pub fn apply(plan: &FilePlan) -> Result<(), String> {
         ));
     }
     let mut doc = crate::document::Document::open(1, &plan.path)?;
-    if doc.text(FILE_LIMIT)? != plan.before
+    if doc.text(crate::text_encoding::DECODE_LIMIT)? != plan.before
         || doc.info().encoding != plan.encoding
         || doc.info().bom != plan.bom
     {

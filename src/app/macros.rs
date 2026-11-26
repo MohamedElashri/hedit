@@ -185,6 +185,8 @@ impl HeditApp {
                 ctx.request_repaint();
                 return;
             }
+            self.paste_indent = false;
+            self.quality.paste_requested = false;
         }
         let Some(step) = self.macros.playing.pop_front() else {
             return;

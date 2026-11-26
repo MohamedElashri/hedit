@@ -22,6 +22,19 @@ impl Selection {
     pub fn end(self) -> usize {
         self.anchor.max(self.head)
     }
+    fn with_bounds(self, start: usize, end: usize) -> Self {
+        if self.anchor <= self.head {
+            Self {
+                anchor: start,
+                head: end,
+            }
+        } else {
+            Self {
+                anchor: end,
+                head: start,
+            }
+        }
+    }
 }
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Fold {
@@ -113,7 +126,7 @@ pub fn replace(text: &str, selections: &[Selection], replacement: &str) -> Batch
     }
 }
 fn word_character(ch: char) -> bool {
-    ch.is_alphanumeric() || ch == '_'
+    crate::completion::is_word_char(ch)
 }
 
 pub fn word(text: &str, cursor: usize) -> Selection {
@@ -153,50 +166,74 @@ pub fn occurrences(text: &str, selections: &[Selection], all: bool) -> Vec<Selec
     if needle.is_empty() {
         return ranges;
     }
-    let mut previous_byte = 0;
-    let mut previous_char = 0;
-    let matches: Vec<_> = text
-        .match_indices(needle)
-        .filter(|(start, value)| {
-            !from_caret
-                || (!text[..*start]
-                    .chars()
-                    .next_back()
-                    .is_some_and(word_character)
-                    && !text[start + value.len()..]
-                        .chars()
-                        .next()
-                        .is_some_and(word_character))
-        })
-        .map(|(i, s)| {
-            let a = previous_char + text[previous_byte..i].chars().count();
-            previous_byte = i;
-            previous_char = a;
-            Selection {
-                anchor: a,
-                head: a + s.chars().count(),
-            }
-        })
-        .collect();
     if all {
-        return matches.into_iter().take(MAX_SELECTIONS).collect();
+        let mut previous_byte = 0;
+        let mut previous_char = 0;
+        let needle_len = needle.chars().count();
+        return text
+            .match_indices(needle)
+            .filter(|&(start, value)| {
+                !from_caret
+                    || (!text[..start]
+                        .chars()
+                        .next_back()
+                        .is_some_and(word_character)
+                        && !text[start + value.len()..]
+                            .chars()
+                            .next()
+                            .is_some_and(word_character))
+            })
+            .take(MAX_SELECTIONS)
+            .map(|(at, _)| {
+                let start = previous_char + text[previous_byte..at].chars().count();
+                previous_byte = at;
+                previous_char = start;
+                Selection {
+                    anchor: start,
+                    head: start + needle_len,
+                }
+            })
+            .collect();
     }
-    let end = ranges.last().unwrap().end();
-    for m in matches
-        .iter()
-        .filter(|m| m.start() >= end)
-        .chain(matches.iter().filter(|m| m.start() < end))
-    {
-        if !ranges
-            .iter()
-            .any(|s| s.start() < m.end() && m.start() < s.end())
-            && ranges.len() < MAX_SELECTIONS
-        {
-            ranges.push(*m);
-            break;
+    if ranges.len() < MAX_SELECTIONS {
+        if let Some(next) = next_unselected(text, needle, &ranges) {
+            ranges.push(next);
         }
     }
     normalize(&ranges, length)
+}
+
+/// Search the free text between non-overlapping selections. Start after the
+/// last selection so a match can begin even when a global scan would skip it.
+fn next_unselected(text: &str, needle: &str, ranges: &[Selection]) -> Option<Selection> {
+    let mut from_byte = 0;
+    let mut from_char = 0;
+    let needle_chars = needle.chars().count();
+    let mut wrapped = None;
+    for selected in ranges {
+        let start = from_byte + byte(&text[from_byte..], selected.start() - from_char);
+        if wrapped.is_none() {
+            if let Some(hit) = text[from_byte..start].find(needle) {
+                let anchor = from_char + text[from_byte..from_byte + hit].chars().count();
+                wrapped = Some(Selection {
+                    anchor,
+                    head: anchor + needle_chars,
+                });
+            }
+        }
+        from_byte = start + byte(&text[start..], selected.end() - selected.start());
+        from_char = selected.end();
+    }
+    text[from_byte..]
+        .find(needle)
+        .map(|hit| {
+            let anchor = from_char + text[from_byte..from_byte + hit].chars().count();
+            Selection {
+                anchor,
+                head: anchor + needle_chars,
+            }
+        })
+        .or(wrapped)
 }
 pub fn word_boundary(text: &str, position: usize, forward: bool) -> usize {
     let chars: Vec<_> = text.chars().collect();
@@ -392,10 +429,7 @@ pub fn pair(
                 output.push(typed);
                 output.push_str(&selected);
                 output.push(close);
-                cursors.push(Selection {
-                    anchor: length + 1,
-                    head: length + 1 + selected.chars().count(),
-                });
+                cursors.push(range.with_bounds(length + 1, length + 1 + selected.chars().count()));
                 length += selected.chars().count() + 2;
                 previous = range.end();
             }
@@ -854,9 +888,32 @@ pub fn transform(
             | editing::Operation::ToSpaces
             | editing::Operation::ToTabs
     );
-    if global && ranges.iter().all(|s| s.start() == s.end()) {
-        ranges.truncate(1);
+    let only_carets = ranges.iter().all(|s| s.start() == s.end());
+    if global && only_carets {
+        let caret = ranges[0];
+        let edit = editing::apply(
+            text,
+            caret.anchor,
+            caret.head,
+            operation,
+            width,
+            tabs,
+            comment,
+        );
+        return Batch {
+            text: edit.text,
+            selections: vec![Selection {
+                anchor: edit.anchor,
+                head: edit.head,
+            }],
+        };
     }
+    let indent_carets = (only_carets
+        && matches!(
+            operation,
+            editing::Operation::Indent | editing::Operation::Unindent
+        ))
+    .then(|| ranges.clone());
     let mut duplicate_carets = std::collections::HashMap::new();
     if !matches!(
         operation,
@@ -876,13 +933,37 @@ pub fn transform(
             (start_byte, end_byte) = (a, b);
             s.anchor = start_char;
             s.head = end_char;
+            if operation == editing::Operation::JoinLines && span.is_empty() && b < text.len() {
+                let (_, next_end) = editing::line_range(text, b, b);
+                s.head += text[b..next_end].chars().count();
+            }
             if operation == editing::Operation::Duplicate {
                 duplicate_carets
                     .entry((s.start(), s.end()))
                     .or_insert(original);
             }
         }
-        ranges = normalize(&ranges, text.chars().count());
+        let length = text.chars().count();
+        let indent_eof =
+            indent_carets.is_some() && ranges.last() == Some(&Selection::caret(length));
+        ranges = normalize(&ranges, length);
+        if indent_eof && ranges.last() != Some(&Selection::caret(length)) {
+            ranges.push(Selection::caret(length));
+        }
+        if matches!(
+            operation,
+            editing::Operation::MoveUp | editing::Operation::MoveDown
+        ) {
+            let mut blocks: Vec<Selection> = Vec::new();
+            for range in ranges {
+                if let Some(previous) = blocks.last_mut().filter(|s| s.end() == range.start()) {
+                    previous.head = range.end();
+                } else {
+                    blocks.push(range);
+                }
+            }
+            ranges = blocks;
+        }
     }
     // An empty range can make a global command operate on the entire buffer.
     // Other block-local edits can be assembled against the original text.
@@ -923,11 +1004,19 @@ pub fn transform(
                 comment,
             );
             let base = start.saturating_add_signed(shift);
-            selections.push(Selection {
-                anchor: base + edit.anchor,
-                head: base + edit.head,
-            });
-            shift += edit.text.chars().count() as isize - (s.end() - start) as isize;
+            let delta = edit.text.chars().count() as isize - (s.end() - start) as isize;
+            if let Some(carets) = &indent_carets {
+                selections.extend(
+                    indent_positions(carets, *s, delta)
+                        .map(|caret| Selection::caret(caret.head.saturating_add_signed(shift))),
+                );
+            } else {
+                selections.push(Selection {
+                    anchor: base + edit.anchor,
+                    head: base + edit.head,
+                });
+            }
+            shift += delta;
             output.push_str(&edit.text);
             previous = bytes.end;
         }
@@ -951,10 +1040,14 @@ pub fn transform(
             r.anchor = r.anchor.saturating_add_signed(delta);
             r.head = r.head.saturating_add_signed(delta);
         }
-        final_ranges.push(Selection {
-            anchor: edit.anchor,
-            head: edit.head,
-        });
+        if let Some(carets) = &indent_carets {
+            final_ranges.extend(indent_positions(carets, s, delta));
+        } else {
+            final_ranges.push(Selection {
+                anchor: edit.anchor,
+                head: edit.head,
+            });
+        }
         output = edit.text;
     }
     let selections = normalize(&final_ranges, output.chars().count());
@@ -962,6 +1055,20 @@ pub fn transform(
         text: output,
         selections,
     }
+}
+
+fn indent_positions(
+    carets: &[Selection],
+    range: Selection,
+    delta: isize,
+) -> impl Iterator<Item = Selection> + '_ {
+    let start = carets.partition_point(|caret| caret.head < range.start());
+    let end = carets
+        .partition_point(|caret| caret.head < range.end())
+        .max(start + usize::from(range.start() == range.end()));
+    carets[start..end].iter().map(move |caret| {
+        Selection::caret(caret.head.saturating_add_signed(delta).max(range.start()))
+    })
 }
 
 /// Character indices of line starts around `selection`: the start of its first
@@ -1028,16 +1135,23 @@ fn enclosing_quotes(chars: &[char], selection: Selection) -> Option<(usize, usiz
     ['"', '\'', '`']
         .into_iter()
         .filter_map(|quote| {
-            let open = (line_start..selection.start())
-                .rev()
-                .find(|&i| chars[i] == quote)?;
-            let close = (selection.end()..line_end).find(|&i| chars[i] == quote)?;
-            // Only quotes that pair up on the line, counting from its start.
-            let before = chars[line_start..open]
-                .iter()
-                .filter(|&&c| c == quote)
-                .count();
-            (before % 2 == 0).then_some((open, close))
+            let positions = (line_start..line_end).filter(|&i| {
+                chars[i] == quote
+                    && chars[line_start..i]
+                        .iter()
+                        .rev()
+                        .take_while(|&&c| c == '\\')
+                        .count()
+                        % 2
+                        == 0
+            });
+            let mut positions = positions;
+            while let (Some(open), Some(close)) = (positions.next(), positions.next()) {
+                if open < selection.start() && close >= selection.end() {
+                    return Some((open, close));
+                }
+            }
+            None
         })
         .min_by_key(|(open, close)| close - open)
 }
@@ -1159,22 +1273,17 @@ pub fn split_into_lines(text: &str, selections: &[Selection]) -> Vec<Selection> 
         let mut start = s.start();
         for (i, &c) in chars.iter().enumerate().take(s.end()).skip(s.start()) {
             if c == '\n' {
-                out.push(Selection {
-                    anchor: start,
-                    head: if i > start && chars[i - 1] == '\r' {
-                        i - 1
-                    } else {
-                        i
-                    },
-                });
+                let end = if i > start && chars[i - 1] == '\r' {
+                    i - 1
+                } else {
+                    i
+                };
+                out.push(s.with_bounds(start, end));
                 start = i + 1;
             }
         }
         if start < s.end() {
-            out.push(Selection {
-                anchor: start,
-                head: s.end(),
-            });
+            out.push(s.with_bounds(start, s.end()));
         }
     }
     normalize(&out, chars.len())
@@ -1183,37 +1292,20 @@ pub fn split_into_lines(text: &str, selections: &[Selection]) -> Vec<Selection> 
 /// Like Sublime's Quick Skip Next: drop the last selection and select the
 /// next occurrence of its text after it instead.
 pub fn skip_occurrence(text: &str, selections: &[Selection]) -> Vec<Selection> {
-    let mut ranges = normalize(selections, text.chars().count());
-    let Some(last) = ranges.pop() else {
+    let length = text.chars().count();
+    let mut ranges = normalize(selections, length);
+    let Some(last) = ranges.last().copied() else {
         return ranges;
     };
     if last.start() == last.end() {
-        ranges.push(last);
         return ranges;
     }
-    let needle: String = text
-        .chars()
-        .skip(last.start())
-        .take(last.end() - last.start())
-        .collect();
-    let starts: Vec<usize> = text
-        .match_indices(needle.as_str())
-        .map(|(i, _)| text[..i].chars().count())
-        .collect();
-    let len = last.end() - last.start();
-    let free =
-        |a: usize| a != last.start() && !ranges.iter().any(|s| s.start() < a + len && a < s.end());
-    let next = starts
-        .iter()
-        .copied()
-        .filter(|&a| a >= last.end())
-        .chain(starts.iter().copied().filter(|&a| a < last.start()))
-        .find(|&a| free(a));
-    ranges.push(next.map_or(last, |a| Selection {
-        anchor: a,
-        head: a + len,
-    }));
-    normalize(&ranges, text.chars().count())
+    let start = byte(text, last.start());
+    let end = start + byte(&text[start..], last.end() - last.start());
+    if let Some(next) = next_unselected(text, &text[start..end], &ranges) {
+        *ranges.last_mut().unwrap() = next;
+    }
+    normalize(&ranges, length)
 }
 
 /// Add a selection on the line above or below each one, at the same columns.

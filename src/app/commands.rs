@@ -2155,11 +2155,11 @@ impl HeditApp {
             let literal_open_file = filter.contains(['@', ':', '#'])
                 && self.workspace.open.iter().any(|buffer| buffer.view.name.to_lowercase() == filter);
             let (file_filter, goto) = if commands || paste || literal_open_file {
-                (filter.as_str(), None)
+                (std::borrow::Cow::Borrowed(filter.as_str()), None)
             } else {
                 goto_anything::parse_file_query(&filter)
             };
-            let filter = file_filter.to_owned();
+            let filter = file_filter.into_owned();
             let here = goto.is_some() && filter.is_empty();
             target = goto.clone();
             if !commands && !paste && !here && !self.workspace.folders.is_empty() {

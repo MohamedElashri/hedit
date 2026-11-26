@@ -290,6 +290,10 @@ pub fn decode_stream(value: &str) -> Option<String> {
         }
         let escaped = bytes.next()?;
         match escaped {
+            b'a' => result.push(0x07),
+            b'b' => result.push(0x08),
+            b'f' => result.push(0x0c),
+            b'v' => result.push(0x0b),
             b'n' => result.push(b'\n'),
             b'r' => result.push(b'\r'),
             b't' => result.push(b'\t'),
