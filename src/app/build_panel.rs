@@ -62,7 +62,6 @@ impl HeditApp {
     /// Build the active file with the chosen (or automatic) build system,
     /// saving it first.
     pub(super) fn build(&mut self, ctx: &egui::Context) {
-        self.quality.results_newer = false;
         let b = self.active();
         let Some(path) = b.page.info.path.clone() else {
             self.error = Some("Save the file before building it.".into());
@@ -124,6 +123,7 @@ impl HeditApp {
         };
         match Running::start_with_variables(&system.shell_cmd, &dir, &variables, wake) {
             Ok(running) => {
+                self.quality.results_newer = false;
                 self.build = BuildState {
                     problems_revision: self.build.problems_revision.wrapping_add(1),
                     open: true,

@@ -211,10 +211,10 @@ impl HeditApp {
                 || (location.path.is_some()
                     && b.page.info.path.as_ref().map(PathBuf::from) == location.path)
         });
-        let Place { line, column, .. } = location.place;
+        let line = location.place.line;
         if let Some(index) = open {
             self.select_tab(index);
-            self.jump_to_line(ctx, line, Some(column));
+            self.jump_to_line(ctx, line, Some(location.column16));
             self.focus_editor = true;
         } else if let Some(path) = location.path {
             let column = location.column16;

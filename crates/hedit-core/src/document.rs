@@ -76,8 +76,26 @@ impl Source {
     }
 }
 
+/// How to remap byte positions when replaying one text edit.
+#[derive(Clone, Copy, Serialize, Deserialize)]
+pub struct HistorySplice {
+    pub start: u64,
+    pub removed: u64,
+    pub inserted: u64,
+}
+impl HistorySplice {
+    fn reverse(self) -> Self {
+        Self {
+            start: self.start,
+            removed: self.inserted,
+            inserted: self.removed,
+        }
+    }
+}
+
 #[derive(Clone)]
 struct EditState {
+    splice: Option<HistorySplice>,
     pieces: Vec<Piece>,
     size: u64,
     version: u64,
@@ -92,6 +110,8 @@ fn utf8_encoding() -> String {
 }
 #[derive(Clone, Serialize, Deserialize)]
 struct SavedHistoryState {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    splice: Option<HistorySplice>,
     pieces: Vec<SavedPiece>,
     size: u64,
     version: u64,
@@ -910,6 +930,7 @@ impl Document {
                     }]
                 };
                 out.push(SavedHistoryState {
+                    splice: state.splice,
                     pieces,
                     size: state.size,
                     version: state.version,
@@ -990,6 +1011,7 @@ impl Document {
                         return Err("Invalid recovery history size.".into());
                     }
                     out.push(EditState {
+                        splice: state.splice,
                         pieces,
                         size: state.size,
                         version: state.version,
@@ -1281,6 +1303,7 @@ impl Document {
     }
     fn edit_state(&self, offset: u64) -> EditState {
         EditState {
+            splice: None,
             pieces: self.pieces.clone(),
             size: self.size,
             version: self.version,
@@ -1307,6 +1330,11 @@ impl Document {
         self.version = self.revision;
         self.dirty = true;
     }
+    pub fn history_splice(&self, redo: bool) -> Option<HistorySplice> {
+        let states = if redo { &self.redo } else { &self.undo };
+        states.last().and_then(|state| state.splice)
+    }
+
     pub fn history(&mut self, redo: bool, offset: u64, revision: u64) -> Result<Page, String> {
         self.ensure_workspace_writable()?;
         if self.ephemeral {
@@ -1351,7 +1379,8 @@ impl Document {
             candidate.revision += 1;
             candidate.dirty = candidate.saved_version != Some(candidate.version);
             let page = candidate.page(saved.offset)?;
-            let current = self.edit_state(offset);
+            let mut current = self.edit_state(offset);
+            current.splice = saved.splice.map(HistorySplice::reverse);
             if redo {
                 candidate.redo.pop();
                 candidate.undo.push(current);
@@ -1483,6 +1512,35 @@ impl Document {
     /// Resolve a whole-document, one-based location with bounded memory. Columns
     /// use UTF-16 units, matching CodeMirror; never stop inside a UTF-8 scalar.
     /// Line breaks match CodeMirror's explicit LF/CRLF separator, even in mixed text.
+    /// Find the one-based line and UTF-16 column of an absolute byte offset.
+    pub fn navigation_position(&self, offset: u64) -> Result<(u64, u64), String> {
+        self.check_source()?;
+        let offset = offset.min(self.size);
+        let (mut at, mut line, mut column, mut trailing_crs) = (0, 1, 1, 0);
+        while at < offset {
+            let bytes = self.read_range(at, (offset - at).min(IO_SIZE))?;
+            let text = match std::str::from_utf8(&bytes) {
+                Ok(text) => text,
+                Err(error) if error.error_len().is_none() && at + (bytes.len() as u64) < offset => {
+                    std::str::from_utf8(&bytes[..error.valid_up_to()]).map_err(err)?
+                }
+                Err(error) => return Err(err(error)),
+            };
+            for ch in text.chars() {
+                if ch == '\n' {
+                    line += 1;
+                    column = 1;
+                } else {
+                    column += ch.len_utf16() as u64;
+                }
+                trailing_crs = if ch == '\r' { trailing_crs + 1 } else { 0 };
+            }
+            at += text.len() as u64;
+        }
+        self.check_source()?;
+        Ok((line, column - trailing_crs))
+    }
+
     pub fn location_offset(&mut self, line: u64, col: u64) -> Result<u64, String> {
         if line == 0 || col == 0 {
             return Err("Line and column must be positive.".into());
@@ -1606,6 +1664,13 @@ impl Document {
         self.paged |= self.size - (end - start) + replacement_len > SMALL_LIMIT
             || text.split('\n').any(|line| line.len() > IO_SIZE as usize);
         self.remember_edit(start);
+        if let Some(state) = self.undo.last_mut() {
+            state.splice = Some(HistorySplice {
+                start,
+                removed: replacement_len,
+                inserted: end - start,
+            });
+        }
         let mut next = Vec::new();
         let mut logical = 0;
         let added = Piece {

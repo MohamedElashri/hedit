@@ -148,6 +148,29 @@ impl Buffer {
             };
         }
     }
+    pub fn remap_bookmarks(&mut self, edit: crate::document::HistorySplice) {
+        let end = edit.start.saturating_add(edit.removed);
+        for bookmark in &mut self.view.bookmarks {
+            if bookmark.offset >= end {
+                bookmark.offset = bookmark
+                    .offset
+                    .saturating_sub(edit.removed)
+                    .saturating_add(edit.inserted);
+            } else if bookmark.offset > edit.start {
+                bookmark.offset = edit.start;
+            }
+        }
+        self.view.bookmarks.sort_by_key(|b| b.offset);
+        self.view.bookmarks.dedup_by_key(|b| b.offset);
+    }
+
+    pub fn bookmark_on_page(&self, offset: u64) -> Option<usize> {
+        let end = self.page.start + self.page.text.len() as u64;
+        let visible = offset < end || (offset == end && end == self.page.info.size);
+        visible.then_some(())?;
+        usize::try_from(offset.checked_sub(self.page.start)?).ok()
+    }
+
     pub fn cursor_offset(&self) -> u64 {
         self.page.start
             + self
@@ -667,21 +690,11 @@ impl Workspace {
         }
         buffer.page.end = buffer.page.start + buffer.page.text.len() as u64;
         buffer.page.info = info;
-        let absolute_start = buffer.page.start + start as u64;
-        let absolute_end = buffer.page.start + end as u64;
-        let added = replacement.len() as u64;
-        for bookmark in &mut buffer.view.bookmarks {
-            if bookmark.offset >= absolute_end {
-                bookmark.offset = bookmark
-                    .offset
-                    .saturating_sub(absolute_end - absolute_start)
-                    .saturating_add(added);
-            } else if bookmark.offset > absolute_start {
-                bookmark.offset = absolute_start;
-            }
-        }
-        buffer.view.bookmarks.sort_by_key(|b| b.offset);
-        buffer.view.bookmarks.dedup_by_key(|b| b.offset);
+        buffer.remap_bookmarks(crate::document::HistorySplice {
+            start: buffer.page.start + start as u64,
+            removed: (end - start) as u64,
+            inserted: replacement.len() as u64,
+        });
         let was_untitled = buffer.untitled_number.is_some();
         buffer.refresh_name();
         if buffer.untitled_number.is_some() != was_untitled {

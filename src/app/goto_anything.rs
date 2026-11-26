@@ -19,11 +19,13 @@ pub(super) enum PickerLine {
 
 /// Split `app.rs@save` into the file query and what to go to inside it.
 pub(super) fn parse(query: &str) -> (&str, Option<Target>) {
-    let (file, suffix) = if let Some((quoted, suffix)) = query
-        .strip_prefix('"')
-        .and_then(|text| text.rsplit_once('"'))
-        .filter(|(_, suffix)| suffix.is_empty() || suffix.starts_with(['@', ':', '#']))
-    {
+    let (file, suffix) = if let Some((quoted, suffix)) = query.strip_prefix('"').and_then(|text| {
+        // A quoted target can itself contain quotes. Locate a closing
+        // quote followed by a target operator or the end of the query.
+        text.match_indices('"')
+            .map(|(at, _)| (&text[..at], &text[at + 1..]))
+            .find(|(_, suffix)| suffix.is_empty() || suffix.starts_with(['@', ':', '#']))
+    }) {
         (quoted, suffix)
     } else if let Some(at) = query.find(['@', ':', '#']) {
         (query[..at].trim(), &query[at..])
@@ -62,10 +64,12 @@ pub(super) fn resolve(text: &str, path: &Path, target: &Target) -> Option<(usize
 }
 
 pub(super) fn parse_file_query(query: &str) -> (&str, Option<Target>) {
-    match query.as_bytes() {
+    let drive_start = if query.starts_with(r"\\?\") { 4 } else { 0 };
+    match &query.as_bytes()[drive_start..] {
         [drive, b':', b'/' | b'\\', ..] if drive.is_ascii_alphabetic() => {
-            let (path, target) = parse(&query[2..]);
-            (&query[..2 + path.len()], target)
+            let prefix = drive_start + 2;
+            let (path, target) = parse(&query[prefix..]);
+            (&query[..prefix + path.len()], target)
         }
         _ => parse(query),
     }
