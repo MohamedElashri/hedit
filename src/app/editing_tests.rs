@@ -2126,3 +2126,144 @@ fn profile_typing_positions() {
         );
     }
 }
+
+#[test]
+fn split_into_lines_keeps_crlf() {
+    use hedit::advanced::{self, Selection};
+    let text = "one\r\ntwo\r\n";
+    let selections = advanced::split_into_lines(
+        text,
+        &[Selection {
+            anchor: 0,
+            head: text.chars().count(),
+        }],
+    );
+    assert_eq!(advanced::replace(text, &selections, "X").text, "X\r\nX\r\n");
+}
+
+#[test]
+fn select_all_occurrences_uses_the_word_at_the_caret() {
+    use hedit::advanced::{self, Selection};
+    let result = advanced::occurrences("cat cat cat", &[Selection::caret(1)], true);
+    assert_eq!(result.len(), 3);
+}
+
+#[test]
+fn paste_whole_line_inside_indent_keeps_existing_indent() {
+    use hedit::advanced::Selection;
+    let (_directory, ctx, mut app) = app_with("    line\n");
+    app.set_selections(vec![Selection::caret(2)]);
+    frame(&ctx, &mut app, vec![]);
+    app.execute(&ctx, Command::PasteIndent);
+    frame(&ctx, &mut app, vec![egui::Event::Paste("item\n".into())]);
+    assert_eq!(app.active().page.text, "    item\n    line\n");
+}
+
+#[test]
+fn copying_multiple_lines_includes_empty_final_line() {
+    use hedit::advanced::Selection;
+    let (_directory, ctx, mut app) = app_with("one\n");
+    app.settings.copy_with_empty_selection = true;
+    app.set_selections(vec![Selection::caret(1), Selection::caret(4)]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![egui::Event::Copy]);
+    assert_eq!(app.line_clip.as_deref(), Some("one\n\n"));
+}
+
+#[test]
+fn selection_undo_stays_in_the_focused_group() {
+    use hedit::advanced::Selection;
+    let (_directory, _ctx, mut app) = app_with("abcdefghijk");
+    app.set_selections(vec![Selection::caret(1)]);
+    app.track_selection();
+    app.split(1);
+    app.focus_group(1, false);
+    app.track_selection();
+    app.set_selections(vec![Selection::caret(4)]);
+    app.track_selection();
+    app.focus_group(0, false);
+    app.track_selection();
+    app.set_selections(vec![Selection::caret(2)]);
+    app.track_selection();
+    app.focus_group(1, false);
+    app.track_selection();
+    assert_eq!(app.active().view.head, 4);
+    app.soft_undo(false);
+    assert_eq!(app.active().view.head, 1);
+    app.focus_group(0, false);
+    assert_eq!(app.active().view.head, 2);
+}
+
+#[test]
+fn ordinary_copy_replaces_whole_line_clipboard_mode() {
+    use hedit::advanced::Selection;
+    let (_directory, ctx, mut app) = app_with("one\nabc\n");
+    app.settings.copy_with_empty_selection = true;
+    app.set_selections(vec![Selection::caret(1)]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![egui::Event::Copy]);
+    assert_eq!(app.line_clip.as_deref(), Some("one\n"));
+    app.set_selections(vec![Selection { anchor: 0, head: 4 }]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![egui::Event::Copy]);
+    app.set_selections(vec![Selection::caret(5)]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![egui::Event::Paste("one\n".into())]);
+    assert_eq!(app.active().page.text, "one\naone\nbc\n");
+}
+
+#[test]
+fn clipboard_history_keeps_indentation_copies() {
+    use hedit::advanced::Selection;
+    let (_directory, ctx, mut app) = app_with("    text");
+    app.set_selections(vec![Selection { anchor: 0, head: 4 }]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![egui::Event::Copy]);
+    assert_eq!(app.paste_history.first().map(String::as_str), Some("    "));
+    assert_eq!(super::paste_history::label("    ").0, "Whitespace");
+}
+
+#[test]
+fn smart_indent_advances_after_a_python_colon() {
+    use hedit::advanced::Selection;
+    let (_directory, ctx, mut app) = app_with("if ready:");
+    app.set_syntax(Some(syntax::Language::Python));
+    app.settings.auto_indent = true;
+    app.settings.smart_indent = true;
+    app.set_selections(vec![Selection::caret(9)]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)]);
+    assert_eq!(app.active().page.text, "if ready:\n    ");
+}
+
+#[test]
+fn multiple_carets_cross_crlf_as_one_step() {
+    use hedit::advanced::Selection;
+    let (_directory, ctx, mut app) = app_with("a\r\nb\r\n");
+    app.set_selections(vec![Selection::caret(1), Selection::caret(4)]);
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![key(Key::ArrowRight, Modifiers::NONE)]);
+    assert_eq!(app.selections(), [Selection::caret(3), Selection::caret(6)]);
+    frame(&ctx, &mut app, vec![key(Key::ArrowLeft, Modifiers::NONE)]);
+    assert_eq!(app.selections(), [Selection::caret(1), Selection::caret(4)]);
+}
+
+#[test]
+fn delete_line_removes_an_unterminated_last_line() {
+    use hedit::editing::{apply, Operation};
+    for text in ["one\ntwo", "one\r\ntwo"] {
+        let caret = text.chars().count() - 1;
+        let edited = apply(text, caret, caret, Operation::DeleteLine, 4, false, None);
+        assert_eq!(edited.text, "one");
+        assert_eq!(edited.head, 3);
+    }
+}
+
+#[test]
+fn smart_newline_splits_a_pair_only_on_the_same_line() {
+    use hedit::advanced::{newline, Selection};
+    let edited = newline("{\n}", Selection::caret(1), 4, false, true, false);
+    assert_eq!(edited.text, "{\n    \n}");
+    let edited = newline("{ }", Selection::caret(1), 4, false, true, false);
+    assert_eq!(edited.text, "{\n    \n }");
+}

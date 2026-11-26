@@ -8,7 +8,9 @@ const LIMIT: usize = 15;
 pub(super) fn label(text: &str) -> (String, String) {
     let first = text.trim().lines().next().unwrap_or("");
     let mut shown: String = first.chars().take(80).collect();
-    if first.chars().count() > 80 {
+    if shown.is_empty() && !text.is_empty() {
+        shown.push_str("Whitespace");
+    } else if first.chars().count() > 80 {
         shown.push('…');
     }
     let lines = text.lines().count();
@@ -27,9 +29,7 @@ impl HeditApp {
             o.commands
                 .iter()
                 .filter_map(|c| match c {
-                    egui::OutputCommand::CopyText(text) if !text.trim().is_empty() => {
-                        Some(text.clone())
-                    }
+                    egui::OutputCommand::CopyText(text) if !text.is_empty() => Some(text.clone()),
                     _ => None,
                 })
                 .collect()

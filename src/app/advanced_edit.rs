@@ -41,38 +41,38 @@ impl HeditApp {
     }
     /// Record each selection change, for Undo selection change (Sublime's soft undo).
     pub(super) fn track_selection(&mut self) {
-        let current = (self.active().view.id, self.selections());
+        let current = (
+            (self.panes.focused_id(), self.active().view.id),
+            self.selections(),
+        );
         let (undo, redo, last) = &mut self.soft_history;
         if last.as_ref() == Some(&current) {
             return;
         }
-        if let Some(previous) = last.replace(current) {
+        let key = current.0;
+        if let Some(previous) = last.replace(current).filter(|previous| previous.0 == key) {
             undo.push(previous);
             if undo.len() > 200 {
                 undo.remove(0);
             }
-            redo.clear();
+            redo.retain(|state| state.0 != key);
         }
     }
     /// Step back (or forward) through selection changes in the active file.
     pub(super) fn soft_undo(&mut self, redo: bool) {
-        let view = self.active().view.id;
+        let key = (self.panes.focused_id(), self.active().view.id);
+        let current = self.selections();
         let (back, forward, last) = &mut self.soft_history;
         let (from, to) = if redo {
             (forward, back)
         } else {
             (back, forward)
         };
-        while let Some((id, cursors)) = from.pop() {
-            if id != view {
-                continue;
-            }
-            if let Some(current) = last.take() {
-                to.push(current);
-            }
-            *last = Some((id, cursors.clone()));
+        if let Some(index) = from.iter().rposition(|state| state.0 == key) {
+            let (_, cursors) = from.remove(index);
+            to.push((key, current));
+            *last = Some((key, cursors.clone()));
             self.set_selections(cursors);
-            return;
         }
     }
     /// Add a cursor on the line above or below. Repeated presses keep the
@@ -391,7 +391,12 @@ impl HeditApp {
                                     } else if modifiers.command || modifiers.ctrl || modifiers.alt {
                                         advanced::word_boundary(text, s.head, false)
                                     } else {
-                                        s.head.saturating_sub(1)
+                                        let at = advanced::byte(text, s.head);
+                                        s.head.saturating_sub(if text[..at].ends_with("\r\n") {
+                                            2
+                                        } else {
+                                            1
+                                        })
                                     }
                                 }
                                 Key::ArrowRight => {
@@ -402,7 +407,10 @@ impl HeditApp {
                                     } else if modifiers.command || modifiers.ctrl || modifiers.alt {
                                         advanced::word_boundary(text, s.head, true)
                                     } else {
-                                        (s.head + 1).min(length)
+                                        let at = advanced::byte(text, s.head);
+                                        (s.head
+                                            + if text[at..].starts_with("\r\n") { 2 } else { 1 })
+                                        .min(length)
                                     }
                                 }
                                 Key::ArrowUp => {
@@ -465,12 +473,21 @@ impl HeditApp {
         let width = b.view.tab_size.unwrap_or(4) as usize;
         let tabs = b.view.indent.as_deref() == Some("tabs");
         let crlf = b.page.info.eol == "CRLF";
+        let indent_after_colon = b.language() == syntax::Language::Python;
         let old_line = (b.view.anchor == b.view.head && b.view.selections.is_empty())
             .then(|| self.cursor_line());
         let mut text = b.page.text.clone();
         let mut cursors: Vec<Selection> = vec![];
         for s in self.selections().into_iter().rev() {
-            let edit = advanced::newline(&text, s, width, tabs, self.settings.smart_indent, crlf);
+            let edit = advanced::newline_with_colon(
+                &text,
+                s,
+                width,
+                tabs,
+                self.settings.smart_indent,
+                crlf,
+                indent_after_colon,
+            );
             let delta = edit.text.chars().count() as isize - text.chars().count() as isize;
             for p in &mut cursors {
                 p.anchor = p.anchor.saturating_add_signed(delta);

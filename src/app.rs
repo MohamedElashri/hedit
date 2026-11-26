@@ -195,7 +195,7 @@ enum Action {
     Notice(String),
     Nothing,
 }
-type SoftState = (u64, Vec<hedit::advanced::Selection>);
+type SoftState = ((u64, u64), Vec<hedit::advanced::Selection>);
 const CHECKPOINT_FAILED: &str = "RECOVERY CHECKPOINT FAILED";
 const FILE_ERROR_TIME: Duration = Duration::from_secs(5);
 /// Job outcomes that are expected answers, shown as notices rather than errors.

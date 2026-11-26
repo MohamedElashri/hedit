@@ -212,6 +212,7 @@ impl HeditApp {
     }
     /// Copy (or cut) the cursors' whole lines. False when it does not apply.
     pub(super) fn copy_lines(&mut self, ctx: &egui::Context, cut: bool) -> bool {
+        self.line_clip = None;
         let b = self.active();
         if !self.settings.copy_with_empty_selection || b.page.info.paged || !self.all_empty() {
             return false;
@@ -222,8 +223,9 @@ impl HeditApp {
         for &(start, end) in &lines {
             let a = advanced::byte(text, start);
             let z = a + advanced::byte(&text[a..], end - start);
-            copied.push_str(&text[a..z]);
-            if !copied.ends_with('\n') {
+            let line = &text[a..z];
+            copied.push_str(line);
+            if !line.ends_with('\n') {
                 copied.push_str(if b.page.info.eol == "CRLF" {
                     "\r\n"
                 } else {
@@ -299,10 +301,14 @@ impl HeditApp {
         let pasted = reindent_paste(text, &target, whole, width);
         let pasted = line_endings(&pasted, b.page.info.eol == "CRLF");
         let ranges = if whole {
-            vec![Selection {
-                anchor: b.page.text[..line].chars().count(),
-                head: selections[0].end(),
-            }]
+            let anchor = b.page.text[..line].chars().count();
+            let selection = selections[0];
+            let head = if selection.start() == selection.end() && pasted.ends_with('\n') {
+                anchor
+            } else {
+                selection.end()
+            };
+            vec![Selection { anchor, head }]
         } else {
             selections
         };

@@ -235,11 +235,16 @@ pub enum Event {
 
 /// A running build. Dropping it does not stop the process; call [`Self::cancel`].
 pub struct Running {
+    #[cfg(not(windows))]
     child: Arc<Mutex<Option<Child>>>,
     /// The build's process group, shared by everything the shell starts.
+    #[cfg(not(windows))]
     group: u32,
     /// Set once both the output has ended and the process has exited.
+    #[cfg(not(windows))]
     done: Arc<std::sync::atomic::AtomicBool>,
+    #[cfg(windows)]
+    job: Option<std::os::windows::io::OwnedHandle>,
     pub events: mpsc::Receiver<Event>,
     remote_cancel: Option<Arc<dyn Fn() + Send + Sync>>,
 }
@@ -272,9 +277,14 @@ impl Running {
         if let Some(backend) = crate::backend::lookup(dir)? {
             let remote = backend.build(dir, command, variables, Box::new(wake))?;
             return Ok(Self {
+                #[cfg(not(windows))]
                 child: Arc::new(Mutex::new(None)),
+                #[cfg(not(windows))]
                 group: 0,
+                #[cfg(not(windows))]
                 done: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                #[cfg(windows)]
+                job: None,
                 events: remote.events,
                 remote_cancel: Some(remote.cancel),
             });
@@ -299,31 +309,40 @@ impl Running {
             // user's shell command verbatim, including quotes and operators.
             shell
                 .args(["/D", "/S", "/C"])
-                .raw_arg(format!("\"({command}) 2>&1\""))
+                // The first read gates user commands until the shell is in the job.
+                .raw_arg(format!(
+                    "\"set /p _HEDIT_BUILD_START=&& set _HEDIT_BUILD_START=&& ({command}) 2>&1\""
+                ))
                 .creation_flags(CREATE_NO_WINDOW);
             shell
         };
         if let Some(variables) = variables {
             shell.envs(variables.values());
         }
-        shell
-            .current_dir(dir)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped());
+        shell.current_dir(dir).stdout(Stdio::piped());
         // A group of its own lets Cancel stop the compilers the shell starts.
         #[cfg(unix)]
         std::os::unix::process::CommandExt::process_group(&mut shell, 0);
+        #[cfg(windows)]
+        let (mut child, job) =
+            spawn_in_build_job(shell).map_err(|e| format!("Could not start the build: {e}"))?;
+        #[cfg(not(windows))]
         let mut child = shell
+            .stdin(Stdio::null())
             .spawn()
             .map_err(|e| format!("Could not start the build: {e}"))?;
         let mut stdout = child.stdout.take().expect("stdout is piped");
+        #[cfg(not(windows))]
         let group = child.id();
+        #[cfg(not(windows))]
         let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        #[cfg(not(windows))]
         let finished = Arc::clone(&done);
-        let child = Arc::new(Mutex::new(Some(child)));
+        let waiter = Arc::new(Mutex::new(Some(child)));
+        #[cfg(not(windows))]
+        let child = Arc::clone(&waiter);
         let (tx, rx) = mpsc::sync_channel(OUTPUT_QUEUE_SIZE);
         let started = Instant::now();
-        let waiter = Arc::clone(&child);
         std::thread::spawn(move || {
             let mut buffer = [0u8; 8192];
             let mut pending = Vec::new();
@@ -358,6 +377,7 @@ impl Running {
             // Keep the child available to Cancel after stdout closes. Taking
             // it out of the mutex and blocking in wait() makes it unreachable.
             let status = wait_for_exit(&waiter);
+            #[cfg(not(windows))]
             finished.store(true, std::sync::atomic::Ordering::Relaxed);
             let _ = tx.send(Event::Finished(
                 status.and_then(|s| s.code()),
@@ -366,9 +386,14 @@ impl Running {
             wake();
         });
         Ok(Self {
+            #[cfg(not(windows))]
             child,
+            #[cfg(not(windows))]
             group,
+            #[cfg(not(windows))]
             done,
+            #[cfg(windows)]
+            job: Some(job),
             events: rx,
             remote_cancel: None,
         })
@@ -379,6 +404,20 @@ impl Running {
             cancel();
             return;
         }
+        #[cfg(windows)]
+        if let Some(job) = &self.job {
+            use std::os::windows::io::AsRawHandle;
+            // The kernel terminates the entire job, including new descendants.
+            unsafe {
+                windows_sys::Win32::System::JobObjects::TerminateJobObject(job.as_raw_handle(), 1);
+            }
+        }
+        #[cfg(not(windows))]
+        self.cancel_process_group();
+    }
+
+    #[cfg(not(windows))]
+    fn cancel_process_group(&self) {
         if let Ok(mut child) = self.child.lock() {
             if let Some(child) = child.as_mut() {
                 kill_group(self.group);
@@ -420,24 +459,47 @@ fn wait_for_exit(child: &Mutex<Option<Child>>) -> Option<ExitStatus> {
     }
 }
 
+#[cfg(windows)]
+fn spawn_in_build_job(
+    mut shell: Command,
+) -> std::io::Result<(Child, std::os::windows::io::OwnedHandle)> {
+    use std::io::{self, Write};
+    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+    use windows_sys::Win32::System::JobObjects::{AssignProcessToJobObject, CreateJobObjectW};
+
+    // Keep the default job limits so closing the handle does not cancel a build.
+    let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+    if job.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    let job = unsafe { OwnedHandle::from_raw_handle(job) };
+    let mut child = shell.stdin(Stdio::piped()).spawn()?;
+    let result =
+        if unsafe { AssignProcessToJobObject(job.as_raw_handle(), child.as_raw_handle()) } == 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            // Taking and dropping the pipe also gives the user command EOF on stdin.
+            child
+                .stdin
+                .take()
+                .expect("stdin is piped")
+                .write_all(b"1\r\n")
+        };
+    if let Err(error) = result {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(error);
+    }
+    Ok((child, job))
+}
+
 /// Stop the build and its child processes.
+#[cfg(not(windows))]
 fn kill_group(group: u32) {
     #[cfg(unix)]
     if let Some(group) = rustix::process::Pid::from_raw(group as i32) {
         let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
     }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
-        let _ = Command::new("taskkill.exe")
-            .args(["/PID", &group.to_string(), "/T", "/F"])
-            .creation_flags(CREATE_NO_WINDOW)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
-    #[cfg(not(any(unix, windows)))]
+    #[cfg(not(unix))]
     let _ = group;
 }
