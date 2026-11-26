@@ -11,7 +11,7 @@ pub struct Symbol {
     pub line: usize,
 }
 pub fn symbols(text: &str, path: &Path) -> Vec<Symbol> {
-    let definitions=regex::Regex::new(r"(?x)^\s*(?:(?:pub(?:\([^)]*\))?|async|export|default|static|inline|virtual|const|unsafe|extern)\s+)*(?:(?:fn|def|class|struct|enum|trait|interface|function|type|mod|namespace)\s+([\pL_][\pL\pN_]*)|([\pL_][\pL\pN_:<>*&\s]*)\s+([\pL_][\pL\pN_]*)\s*\([^;]*\)\s*(?:const\s*)?\{)").unwrap();
+    let definitions=regex::Regex::new(r#"(?x)^\s*(?:(?:pub(?:\([^)]*\))?|async|export|default|static|inline|virtual|const|unsafe|extern(?:\s+"[^"\n]*")?)\s+)*(?:(?:fn|def|class|struct|enum|trait|interface|function|type|mod|namespace)\s+([\pL_][\pL\pN_]*)|([\pL_][\pL\pN_:<>*&\s]*)\s+([\pL_][\pL\pN_]*)\s*\([^;]*\)\s*(?:const\s*)?\{)"#).unwrap();
     text.lines()
         .enumerate()
         .filter_map(|(line, text)| {
