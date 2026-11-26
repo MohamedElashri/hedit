@@ -113,6 +113,59 @@ impl Drop for Task {
 }
 
 impl HeditApp {
+    pub(super) fn folder_search_roots(&self) -> Vec<PathBuf> {
+        if let Some(scope) = &self.quality.folder_scope {
+            if self
+                .workspace
+                .folders
+                .iter()
+                .any(|root| scope.starts_with(&root.path))
+            {
+                return vec![scope.clone()];
+            }
+            return Vec::new();
+        }
+        self.workspace
+            .folders
+            .iter()
+            .map(|root| PathBuf::from(&root.path))
+            .collect()
+    }
+
+    pub(super) fn set_folder_search_scope(&mut self, scope: Option<PathBuf>) {
+        if self.quality.folder_scope != scope {
+            self.quality.folder_scope = scope;
+            self.reset_folder_search_results();
+        }
+        self.quality.folder_focus = true;
+    }
+
+    fn folder_search_scope(&mut self, ui: &mut egui::Ui) {
+        if let Some(scope) = &self.quality.folder_scope {
+            let path = scope.display().to_string();
+            let name = scope
+                .file_name()
+                .unwrap_or(scope.as_os_str())
+                .to_string_lossy();
+            let clear = ui
+                .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let clear = ui
+                        .add_enabled(
+                            !self.busy && !self.closing,
+                            egui::Button::new("Clear scope"),
+                        )
+                        .clicked();
+                    ui.add(egui::Label::new(format!("In {name}")).truncate())
+                        .on_hover_text(path);
+                    clear
+                })
+                .inner;
+            if clear {
+                self.set_folder_search_scope(None);
+            }
+        }
+    }
+
     pub(super) fn folder_search_sidebar(&mut self, ctx: &egui::Context) {
         let theme = self.theme.clone();
         egui::SidePanel::left("search-sidebar")
@@ -125,12 +178,7 @@ impl HeditApp {
 
     fn folder_sidebar_content(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let metrics = hedit::ui_style::Metrics::for_ui(ui);
-        let roots: Vec<_> = self
-            .workspace
-            .folders
-            .iter()
-            .map(|f| PathBuf::from(&f.path))
-            .collect();
+        let roots = self.folder_search_roots();
         let searching = self.quality.folder_task.is_some();
         let mut run = false;
         let mut apply = false;
@@ -171,6 +219,7 @@ impl HeditApp {
             .max_height((ui.available_height() * 0.65).max(40.0))
             .auto_shrink([false, true])
             .show(ui, |ui| {
+                self.folder_search_scope(ui);
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut self.quality.folder_query)
                         .id(egui::Id::new(FIELDS[0]))
@@ -351,13 +400,7 @@ impl HeditApp {
                     .iter()
                     .map(|b| (b.view.id, b.page.info.revision))
                     .collect::<Vec<_>>()
-            && self.quality.folder_roots
-                == self
-                    .workspace
-                    .folders
-                    .iter()
-                    .map(|f| PathBuf::from(&f.path))
-                    .collect::<Vec<_>>()
+            && self.quality.folder_roots == self.folder_search_roots()
             && self
                 .quality
                 .preview_query
@@ -378,12 +421,7 @@ impl HeditApp {
         let mut navigate = None;
         let mut choose_folder = false;
         let searching = matches!(self.quality.folder_state, State::Searching);
-        let roots: Vec<PathBuf> = self
-            .workspace
-            .folders
-            .iter()
-            .map(|f| PathBuf::from(&f.path))
-            .collect();
+        let roots = self.folder_search_roots();
         let size = egui::vec2(
             (ctx.screen_rect().width() - 64.0).min(900.0),
             (ctx.screen_rect().height() - 100.0).min(620.0),
@@ -396,6 +434,7 @@ impl HeditApp {
             .default_pos(ctx.screen_rect().center() - size * 0.5)
             .frame(egui::Frame::window(&ctx.style()).inner_margin(12.0).corner_radius(8))
             .show(ctx, |ui| {
+                self.folder_search_scope(ui);
                 ui.horizontal(|ui| {
                     ui.add_sized([48.0, 26.0], egui::Label::new("Find").halign(egui::Align::LEFT));
                     let response = ui.add_sized([(ui.available_width() - 106.0).max(120.0), 26.0],

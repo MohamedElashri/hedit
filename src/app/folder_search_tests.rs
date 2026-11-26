@@ -25,6 +25,37 @@ fn fixture(lines: usize) -> (tempfile::TempDir, egui::Context, HeditApp) {
 }
 
 #[test]
+fn folder_scope_searches_unsaved_text_and_resets_replacement_preview() {
+    let (_directory, ctx, mut app) = fixture(0);
+    let root = PathBuf::from(&app.workspace.folders[0].path);
+    let scope = root.join("src");
+    let file = scope.join("processor.rs");
+    app.open(&ctx, Some(file.clone()));
+    finish_app_job(&mut app, &ctx);
+    assert!(app.apply_edit(
+        hedit::editing::Edit {
+            text: "unsaved needle\n".into(),
+            anchor: 0,
+            head: 0,
+        },
+        None,
+    ));
+    app.set_folder_search_scope(Some(scope));
+    app.folder_search(&ctx, true);
+    finish_app_job(&mut app, &ctx);
+    assert_eq!(app.quality.results.hits.len(), 1);
+    assert_eq!(app.quality.results.hits[0].path, file);
+    assert!(app.folder_preview_valid());
+
+    app.set_folder_search_scope(None);
+    assert!(!app.folder_preview_valid());
+    assert!(app.quality.results.hits.is_empty());
+    app.folder_search(&ctx, false);
+    finish_app_job(&mut app, &ctx);
+    assert_eq!(app.quality.results.hits.len(), 2);
+}
+
+#[test]
 fn persistent_search_preserves_editor_find_state_and_reuses_grouped_rows() {
     let (_directory, ctx, mut app) = fixture(1500);
     app.query = "editor-only".into();

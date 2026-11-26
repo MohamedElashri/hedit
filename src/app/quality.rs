@@ -87,6 +87,7 @@ pub(super) struct Quality {
     pub folder_state: folder_search::State,
     pub folder_task: Option<folder_search::Task>,
     pub folder_revisions: Vec<(u64, u64)>,
+    pub folder_scope: Option<PathBuf>,
     pub folder_roots: Vec<PathBuf>,
     pub folder_snapshot: Option<(String, String, search::Options)>,
     pub folder_regex: Option<regex::Regex>,
@@ -825,26 +826,33 @@ impl HeditApp {
             Err(e) => self.error = Some(e),
         }
     }
-    pub(super) fn folder_search(&mut self, ctx: &egui::Context, preview: bool) {
-        if self.busy {
-            return;
-        }
+    pub(super) fn reset_folder_search_results(&mut self) {
+        self.quality.folder_task = None;
         self.quality.folder_generation = self.quality.folder_generation.wrapping_add(1);
         self.quality.results = Default::default();
-        self.quality.folder_state = folder_search::State::Searching;
+        self.quality.folder_state = folder_search::State::Idle;
         self.quality.folder_regex = None;
         self.quality.result_current = None;
         self.quality.result_shown = None;
         self.quality.results_newer = false;
         self.quality.folder_collapsed.clear();
+        self.quality.folder_snapshot = None;
+        self.quality.preview_query = None;
         self.quality.preview_diff = None;
         self.quality.preview_rendered = None;
-        let roots = self
-            .workspace
-            .folders
-            .iter()
-            .map(|f| PathBuf::from(&f.path))
-            .collect::<Vec<_>>();
+    }
+
+    pub(super) fn folder_search(&mut self, ctx: &egui::Context, preview: bool) {
+        if self.busy {
+            return;
+        }
+        let roots = self.folder_search_roots();
+        if self.quality.folder_scope.is_some() && roots.is_empty() {
+            self.notice = "Clear the search scope or reopen its workspace folder.".into();
+            return;
+        }
+        self.reset_folder_search_results();
+        self.quality.folder_state = folder_search::State::Searching;
         let (query, replacement, filter, options) = (
             self.quality.folder_query.clone(),
             self.quality.folder_replacement.clone(),
@@ -879,7 +887,6 @@ impl HeditApp {
             .map(|b| (b.view.id, b.page.info.revision))
             .collect();
         self.quality.folder_roots = roots.clone();
-        self.quality.folder_task = None; // Cancels a superseded search.
         let cancel = Arc::new(AtomicBool::new(false));
         let (tx, rx) = mpsc::channel();
         self.quality.folder_task = Some(folder_search::Task {
