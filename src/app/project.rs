@@ -204,6 +204,8 @@ impl HeditApp {
         let Some(path) = self.active().page.info.path.clone() else {
             return;
         };
+        self.sidebar = workbench_navigation::Sidebar::Files;
+        self.distraction_free = false;
         self.reveal_path_in_sidebar(path);
     }
     pub(super) fn reveal_path_in_sidebar(&mut self, path: String) {

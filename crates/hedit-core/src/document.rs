@@ -327,6 +327,28 @@ impl SnapshotSources {
         Ok(path)
     }
 }
+/// Resolve the file or its existing parent just as Save As does.
+pub fn save_destination(requested: &Path) -> Result<PathBuf, String> {
+    if crate::backend::is_remote(requested) {
+        return Ok(requested.to_owned());
+    }
+    if requested.exists() {
+        return fs::canonicalize(requested).map_err(err);
+    }
+    let parent = requested
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    Ok(fs::canonicalize(parent)
+        .map_err(err)?
+        .join(requested.file_name().ok_or("Invalid filename.")?))
+}
+
+pub struct RemovalState {
+    dirty: bool,
+    saved_version: Option<u64>,
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Info {
@@ -717,12 +739,22 @@ impl Document {
         String::from_utf8(self.read_range(0, self.size)?).map_err(err)
     }
     /// Preserve text before deliberately removing its disk source.
-    pub fn preserve_as_unsaved(&mut self) -> Result<(), String> {
+    pub fn preserve_as_unsaved(&mut self) -> Result<RemovalState, String> {
         self.ensure_workspace_writable()?;
+        let state = RemovalState {
+            dirty: self.dirty,
+            saved_version: self.saved_version,
+        };
         self.dirty = true;
         self.saved_version = None;
         self.revision += 1;
-        Ok(())
+        Ok(state)
+    }
+    pub fn rollback_removal(&mut self, state: RemovalState) {
+        self.dirty = state.dirty;
+        self.saved_version = state.saved_version;
+        // A checkpoint may already contain the temporary dirty revision.
+        self.revision += 1;
     }
     pub fn set_encoding(&mut self, label: &str) -> Result<(), String> {
         self.ensure_workspace_writable()?;
@@ -1890,17 +1922,7 @@ impl Document {
         if self.path.as_ref() == Some(&requested) {
             self.check_original()?;
         }
-        let target = if requested.exists() {
-            fs::canonicalize(&requested).map_err(err)?
-        } else {
-            let parent = requested
-                .parent()
-                .filter(|p| !p.as_os_str().is_empty())
-                .unwrap_or(Path::new("."));
-            fs::canonicalize(parent)
-                .map_err(err)?
-                .join(requested.file_name().ok_or("Invalid filename.")?)
-        };
+        let target = save_destination(&requested)?;
         if self.path.as_ref() == Some(&target) {
             self.check_original()?;
         }

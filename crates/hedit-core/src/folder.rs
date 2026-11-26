@@ -378,17 +378,16 @@ pub fn quick_open_roots(roots: &[PathBuf], query: &str) -> Result<QuickOpen, Str
 }
 
 fn leaf_name(name: &str) -> Result<&str, String> {
-    let trimmed = name.trim();
-    if trimmed.is_empty()
-        || trimmed == "."
-        || trimmed == ".."
-        || trimmed.contains('/')
-        || trimmed.contains('\\')
-        || trimmed.contains('\0')
+    if name.trim().is_empty()
+        || name == "."
+        || name == ".."
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains('\0')
     {
         return Err(format!("Invalid file name: {name}"));
     }
-    Ok(trimmed)
+    Ok(name)
 }
 
 fn path_string(path: &Path) -> Result<String, String> {
@@ -581,7 +580,13 @@ pub fn duplicate_path(from: &Path, target: &Path) -> Result<(), String> {
     let parent = fs::canonicalize(target.parent().ok_or("Choose a destination folder.")?)
         .map_err(|e| e.to_string())?;
     let target = parent.join(target.file_name().ok_or("Choose a destination name.")?);
-    fn copy(from: &Path, to: &Path, depth: usize, count: &mut usize) -> Result<(), String> {
+    fn copy(
+        from: &Path,
+        to: &Path,
+        depth: usize,
+        count: &mut usize,
+        directory_modes: &mut Vec<(PathBuf, fs::Permissions)>,
+    ) -> Result<(), String> {
         *count += 1;
         if depth > 32 || *count > 50_000 {
             return Err("Copy exceeds folder depth/file limits.".into());
@@ -596,8 +601,15 @@ pub fn duplicate_path(from: &Path, target: &Path) -> Result<(), String> {
             fs::create_dir(to).map_err(|e| e.to_string())?;
             for entry in fs::read_dir(from).map_err(|e| e.to_string())? {
                 let entry = entry.map_err(|e| e.to_string())?;
-                copy(&entry.path(), &to.join(entry.file_name()), depth + 1, count)?;
+                copy(
+                    &entry.path(),
+                    &to.join(entry.file_name()),
+                    depth + 1,
+                    count,
+                    directory_modes,
+                )?;
             }
+            directory_modes.push((to.to_owned(), meta.permissions()));
         } else if meta.is_file() {
             use std::io::Write;
             let mut input = fs::File::open(from).map_err(|e| e.to_string())?;
@@ -627,8 +639,26 @@ pub fn duplicate_path(from: &Path, target: &Path) -> Result<(), String> {
         .tempdir_in(&parent)
         .map_err(|e| e.to_string())?;
     let staged = staging.path().join("copy");
-    copy(&from, &staged, 0, &mut 0)?;
-    rename_no_replace(&staged, &target).map_err(|e| e.to_string())
+    let mut directory_modes = Vec::new();
+    copy(&from, &staged, 0, &mut 0, &mut directory_modes)?;
+    let mut prior_modes = Vec::new();
+    let published = (|| {
+        // Apply children first. The source mode can restrict traversal.
+        for (path, mode) in directory_modes {
+            let prior = fs::metadata(&path)?.permissions();
+            fs::set_permissions(&path, mode)?;
+            prior_modes.push((path, prior));
+        }
+        rename_no_replace(&staged, &target)
+    })();
+    if published.is_err() {
+        // Make the private staging tree removable even if the copied mode
+        // was read-only or inaccessible to its new owner.
+        for (path, mode) in prior_modes.into_iter().rev() {
+            let _ = fs::set_permissions(path, mode);
+        }
+    }
+    published.map_err(|e| e.to_string())
 }
 pub fn duplicate_sibling(from: &Path, name: &str) -> Result<PathBuf, String> {
     if let Some(result) = crate::backend::file(

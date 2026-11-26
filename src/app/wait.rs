@@ -7,8 +7,8 @@ pub(super) struct Wait {
     paths: Vec<PathBuf>,
     /// Created to release the terminal.
     file: PathBuf,
-    /// Whether any of the files has been open, so closing them counts.
-    seen: bool,
+    /// IDs of opened files, which stay stable through rename and Save As.
+    documents: std::collections::HashSet<u64>,
     since: Instant,
 }
 
@@ -44,7 +44,7 @@ impl HeditApp {
         self.waits.push(Wait {
             paths: paths.iter().map(|p| resolve(p)).collect(),
             file,
-            seen: false,
+            documents: Default::default(),
             since: Instant::now(),
         });
     }
@@ -53,26 +53,29 @@ impl HeditApp {
         if self.waits.is_empty() {
             return;
         }
-        let open: Vec<PathBuf> = self
+        let open: Vec<_> = self
             .workspace
             .open
             .iter()
-            .filter_map(|b| b.page.info.path.as_deref())
-            .map(PathBuf::from)
+            .map(|b| (b.view.id, b.page.info.path.as_deref().map(Path::new)))
             .collect();
         let loading = self.busy || self.opens.pending() || !self.pending_paths.is_empty();
         self.waits.retain_mut(|wait| {
             if wait.paths.is_empty() {
                 return true; // Released when the window closes.
             }
-            if wait.paths.iter().any(|p| open.contains(p)) {
-                wait.seen = true;
+            for (id, path) in &open {
+                if path.is_some_and(|path| wait.paths.iter().any(|p| p == path)) {
+                    wait.documents.insert(*id);
+                }
+            }
+            if open.iter().any(|(id, _)| wait.documents.contains(id)) {
                 return true;
             }
             // A file that never opened (for example, it was refused) must not
             // keep the terminal waiting forever.
             let gave_up = !loading && wait.since.elapsed() > Duration::from_secs(5);
-            if (!loading && wait.seen) || gave_up {
+            if !loading && (!wait.documents.is_empty() || gave_up) {
                 release(&wait.file);
                 return false;
             }
@@ -89,7 +92,7 @@ impl HeditApp {
     pub(super) fn wait_due(&self) -> Option<Duration> {
         self.waits
             .iter()
-            .any(|w| !w.seen && !w.paths.is_empty())
+            .any(|w| w.documents.is_empty() && !w.paths.is_empty())
             .then_some(Duration::from_millis(500))
     }
 }
