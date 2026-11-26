@@ -46,9 +46,11 @@ impl Formatting {
         {
             return Err("Line ending must be lf or crlf.".into());
         }
-        if self.charset.as_deref().is_some_and(|s| {
-            s != "utf-8-bom" && encoding_rs::Encoding::for_label(s.as_bytes()).is_none()
-        }) {
+        if self
+            .charset
+            .as_deref()
+            .is_some_and(|s| s != "utf-8-bom" && crate::text_encoding::canonical(s).is_err())
+        {
             return Err("Unknown character encoding.".into());
         }
         Ok(())

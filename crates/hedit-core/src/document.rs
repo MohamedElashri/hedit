@@ -867,7 +867,7 @@ impl Document {
     }
     fn write_encoded_content(&self, output: &mut File) -> Result<(), String> {
         if self.encoding == "UTF-8" {
-            return self.write_content(output);
+            return self.write_content(output, true);
         }
         let text = self.text(crate::text_encoding::DECODE_LIMIT)?;
         let bytes = crate::text_encoding::encode(&text, &self.encoding, self.bom)?;
@@ -1564,6 +1564,9 @@ impl Document {
         revision: u64,
     ) -> Result<Info, String> {
         self.ensure_workspace_writable()?;
+        if text.contains('\0') {
+            return Err("Text files cannot contain NUL characters.".into());
+        }
         if revision != self.revision {
             return Err("The document changed before this edit could be applied.".into());
         }
@@ -1666,25 +1669,29 @@ impl Document {
         self.eol = if crlf { "CRLF" } else { "LF" };
         Ok(self.info())
     }
-    fn write_content(&self, output: &mut File) -> Result<(), String> {
+    fn write_content(&self, output: &mut File, require_text: bool) -> Result<(), String> {
         self.check_source()?;
         if self.bom {
             output.write_all(&[0xef, 0xbb, 0xbf]).map_err(err)?;
         }
+        let mut write = |bytes: &[u8]| {
+            if require_text && memchr::memchr(0, bytes).is_some() {
+                return Err("Text files cannot contain NUL characters.".into());
+            }
+            output.write_all(bytes).map_err(err)
+        };
         let mut buffer = vec![0; IO_SIZE as usize];
         for piece in &self.pieces {
             match &piece.source {
                 Source::Edit(bytes) => {
-                    output
-                        .write_all(&bytes[piece.start as usize..(piece.start + piece.len) as usize])
-                        .map_err(err)?;
+                    write(&bytes[piece.start as usize..(piece.start + piece.len) as usize])?;
                 }
                 Source::Disk(file, _) => {
                     let mut local = 0;
                     while local < piece.len {
                         let count = (piece.len - local).min(IO_SIZE) as usize;
                         read_exact_at(file, &mut buffer[..count], piece.start + local)?;
-                        output.write_all(&buffer[..count]).map_err(err)?;
+                        write(&buffer[..count])?;
                         local += count as u64;
                     }
                 }
@@ -1729,7 +1736,7 @@ impl Document {
         {
             let name = format!("buffer-{}.txt", self.id);
             let mut file = File::create(directory.join(&name)).map_err(err)?;
-            self.write_content(&mut file)?;
+            self.write_content(&mut file, false)?;
             Some(relative_directory.join(name))
         } else {
             None
@@ -1996,6 +2003,9 @@ impl Document {
         progress: impl Fn(u64, u64),
     ) -> Result<(Page, u64), String> {
         self.ensure_workspace_writable()?;
+        if replacement.contains('\0') {
+            return Err("Text files cannot contain NUL characters.".into());
+        }
         if self.ephemeral {
             if revision != self.revision {
                 return Err("The document changed before replacement.".into());
@@ -2005,11 +2015,13 @@ impl Document {
             }
             let text = self.text(64 * 1024 * 1024)?;
             let count = text.matches(query).count() as u64;
-            let next = text.replace(query, replacement);
-            if next.len() > 64 * 1024 * 1024 {
-                return Err("Replacement is too large.".into());
+            if count > 0 && query != replacement {
+                let next = text.replace(query, replacement);
+                if next.len() > 64 * 1024 * 1024 {
+                    return Err("Replacement is too large.".into());
+                }
+                self.replace(0, self.size, next, self.revision)?;
             }
-            self.replace(0, self.size, next, self.revision)?;
             return Ok((self.page(0)?, count));
         }
 
@@ -2060,7 +2072,7 @@ impl Document {
         drop(writer);
         output.sync_all().map_err(err)?;
         self.check_source()?;
-        if count > 0 {
+        if count > 0 && query != replacement {
             self.paged |= size > SMALL_LIMIT;
             self.remember_edit(0);
             self.pieces = vec![Piece {
