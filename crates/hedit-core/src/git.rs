@@ -1575,11 +1575,27 @@ impl Diff {
         };
         let header = &self.patch[..header_end];
         // Creation/deletion and mode/rename changes must be staged as a whole.
+        let has_path = |marker: &str, prefix: &str| {
+            header
+                .lines()
+                .filter_map(|line| line.strip_prefix(marker))
+                .any(|path| path.strip_prefix('"').unwrap_or(path).starts_with(prefix))
+        };
         self.applicable
-            && header.contains("--- a/")
-            && header.contains("+++ b/")
-            && !header.contains("mode ")
-            && !header.contains("rename ")
+            && has_path("--- ", "a/")
+            && has_path("+++ ", "b/")
+            && !header.lines().any(|line| {
+                [
+                    "old mode ",
+                    "new mode ",
+                    "new file mode ",
+                    "deleted file mode ",
+                    "rename from ",
+                    "rename to ",
+                ]
+                .iter()
+                .any(|prefix| line.starts_with(prefix))
+            })
     }
 
     /// Build an index-only patch for selected changes. Reverse operates against

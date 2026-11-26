@@ -758,16 +758,22 @@ impl HeditApp {
         }
         let text = &self.active().page.text;
         let id = self.active().view.id;
+        let selection_scope = if self.quality.selection_only {
+            let Some((_, start, end)) = self.quality.scope.filter(|(view, start, end)| {
+                *view == id
+                    && start < end
+                    && text.is_char_boundary(*start)
+                    && text.is_char_boundary(*end)
+            }) else {
+                self.notice = "Select text in this tab before replacing in a selection.".into();
+                return;
+            };
+            Some(start..end)
+        } else {
+            None
+        };
         let scope = if all {
-            if self.quality.selection_only {
-                self.quality
-                    .scope
-                    .filter(|(i, _, _)| *i == id)
-                    .map(|(_, a, z)| a..z)
-                    .unwrap_or(0..text.len())
-            } else {
-                0..text.len()
-            }
+            selection_scope.clone().unwrap_or(0..text.len())
         } else {
             hedit::advanced::byte(text, self.active().view.anchor.min(self.active().view.head))
                 ..hedit::advanced::byte(
@@ -775,6 +781,12 @@ impl HeditApp {
                     self.active().view.anchor.max(self.active().view.head),
                 )
         };
+        if selection_scope
+            .is_some_and(|selection| scope.start < selection.start || scope.end > selection.end)
+        {
+            self.notice = "Find a match inside the selected text before replacing.".into();
+            return;
+        }
         let result = (|| {
             let found = search::matches(text, &self.query, &self.quality.options, scope.clone())?;
             if !all && (found.len() != 1 || found[0] != scope) {
@@ -849,8 +861,8 @@ impl HeditApp {
             .iter()
             .filter(|b| !b.page.info.paged && !b.follow)
             .filter_map(|b| {
-                let path = remote_canonical(b.page.info.path.as_ref()?)?;
-                Some((path, b.page.text.clone()))
+                let path = b.page.info.path.as_ref()?;
+                Some((search_path(path), b.page.text.clone()))
             })
             .collect();
         // Search holds immutable snapshots, never the UI's mutation lock.
@@ -899,8 +911,11 @@ impl HeditApp {
         let mut open_errors = vec![];
         for plan in open_plans {
             let index = self.workspace.open.iter().position(|b| {
-                b.page.info.path.as_ref().and_then(|p| remote_canonical(p))
-                    == Some(plan.path.clone())
+                b.page
+                    .info
+                    .path
+                    .as_deref()
+                    .is_some_and(|path| search_path(path) == plan.path)
             });
             let Some(index) = index else {
                 open_errors.push(format!(
@@ -1723,11 +1738,12 @@ pub(super) fn refocused(ctx: &egui::Context) -> bool {
     })
 }
 
-fn remote_canonical(path: &str) -> Option<PathBuf> {
+fn search_path(path: &str) -> PathBuf {
     let p = PathBuf::from(path);
     if hedit_core::backend::is_remote(&p) {
-        Some(p)
+        p
     } else {
-        std::fs::canonicalize(p).ok()
+        // Drafts already have a canonical parent even before the file exists.
+        p.canonicalize().unwrap_or(p)
     }
 }

@@ -87,8 +87,7 @@ fn scan(
     cancel: &AtomicBool,
 ) -> Option<Result<Found, String>> {
     let compute = || -> Result<Found, String> {
-        let scoped = text
-            .get(key.scope.clone())
+        text.get(key.scope.clone())
             .ok_or("Invalid search selection.")?;
         let regex = key.options.compile(&key.query)?;
         let mut ranges = Vec::new();
@@ -99,12 +98,12 @@ fn scan(
             byte = target;
             chars
         };
-        for matched in regex.find_iter(scoped) {
+        for matched in hedit::search::scoped_matches(&regex, text, key.scope.clone()) {
             if cancel.load(Ordering::Relaxed) {
                 return Err("Search cancelled.".into());
             }
-            let a = to_char(key.scope.start + matched.start());
-            let b = to_char(key.scope.start + matched.end());
+            let a = to_char(matched.start());
+            let b = to_char(matched.end());
             let hit = Hit {
                 range: (a, b),
                 ordinal: count,

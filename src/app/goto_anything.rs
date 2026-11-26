@@ -13,6 +13,12 @@ pub(super) enum Target {
 
 /// Split `app.rs@save` into the file query and what to go to inside it.
 pub(super) fn parse(query: &str) -> (&str, Option<Target>) {
+    if let Some(quoted) = query
+        .strip_prefix('"')
+        .and_then(|text| text.strip_suffix('"'))
+    {
+        return (quoted, None);
+    }
     let Some(at) = query.find(['@', ':', '#']) else {
         return (query, None);
     };
@@ -89,6 +95,7 @@ pub(super) struct Origin {
     scroll_top: f64,
     scroll_left: f64,
     markdown_view: hedit::session::MarkdownView,
+    page: Option<Page>,
 }
 
 impl HeditApp {
@@ -110,13 +117,26 @@ impl HeditApp {
                 .nth(line - 2)
                 .map_or(text.len(), |n| n + 1)
         };
-        let end = text[start..].find('\n').map_or(text.len(), |n| start + n);
-        let column = column.unwrap_or(1).saturating_sub(1);
-        let offset = text[start..end]
-            .char_indices()
-            .nth(column)
-            .map_or(end, |(i, _)| start + i);
-        let cursor = text[..offset].chars().count();
+        let line_end = text[start..].find('\n').map_or(text.len(), |n| start + n);
+        let line = &text[start..line_end];
+        let line = if line_end < text.len() {
+            line.strip_suffix('\r').unwrap_or(line)
+        } else {
+            line
+        };
+        let mut remaining = column.unwrap_or(1).saturating_sub(1);
+        let column = line
+            .chars()
+            .take_while(|ch| {
+                let width = ch.len_utf16();
+                if width > remaining {
+                    return false;
+                }
+                remaining -= width;
+                true
+            })
+            .count();
+        let cursor = text[..start].chars().count() + column;
         b.view.anchor = cursor;
         b.view.head = cursor;
         b.view.selections.clear();
@@ -127,6 +147,7 @@ impl HeditApp {
     /// Preview a line while choosing, remembering where the cursor was.
     pub(super) fn preview_line(&mut self, ctx: &egui::Context, line: usize, column: Option<usize>) {
         if self.goto_origin.is_none() {
+            self.goto_preview_epoch = self.goto_preview_epoch.wrapping_add(1);
             let b = self.active();
             self.goto_origin = Some(Origin {
                 group: self.panes.focused_id(),
@@ -137,10 +158,62 @@ impl HeditApp {
                 scroll_top: b.view.scroll_top,
                 scroll_left: b.view.scroll_left,
                 markdown_view: b.view.markdown_view,
+                page: b.page.info.paged.then(|| b.page.clone()),
             });
         }
-        self.jump_to_line(ctx, line, column);
-        ctx.request_repaint();
+        if !self.active().page.info.paged {
+            self.jump_to_line(ctx, line, column);
+            ctx.request_repaint();
+        } else if !self.goto_preview_running {
+            self.goto_preview_running = true;
+            let epoch = self.goto_preview_epoch;
+            let id = self.active().page.info.id;
+            let editor = self.workspace.editor.clone();
+            let tx = self.tx.clone();
+            let ctx = ctx.clone();
+            thread::spawn(move || {
+                let read = || {
+                    let shared = editor.get(id)?;
+                    let mut doc = shared.lock().map_err(|e| e.to_string())?;
+                    opening::page_at_location(&mut doc, line as u64, column.unwrap_or(1) as u64)
+                };
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(read))
+                    .unwrap_or_else(|_| Err("The line preview could not be loaded.".into()));
+                let _ = tx.send(Ok(Action::GotoPreview(epoch, result)));
+                ctx.request_repaint();
+            });
+        }
+    }
+
+    pub(super) fn finish_goto_preview(
+        &mut self,
+        epoch: u64,
+        result: Result<(Page, usize), String>,
+    ) {
+        self.goto_preview_running = false;
+        let Some(origin) = &self.goto_origin else {
+            return;
+        };
+        if epoch != self.goto_preview_epoch
+            || origin.group != self.panes.focused_id()
+            || origin.id != self.active().view.id
+        {
+            return;
+        }
+        let Ok((page, cursor)) = result else {
+            return;
+        };
+        let buffer = &mut self.workspace.open[self.workspace.active];
+        if page.info.revision != buffer.page.info.revision
+            || page.info.path != buffer.page.info.path
+        {
+            return;
+        }
+        buffer.set_page(page);
+        buffer.view.anchor = cursor;
+        buffer.view.head = cursor;
+        buffer.reveal_cursor = true;
+        self.changed();
     }
     /// Put the cursor back after a cancelled preview.
     pub(super) fn cancel_goto_preview(&mut self) {
@@ -159,6 +232,14 @@ impl HeditApp {
             return;
         };
         let b = &mut self.workspace.open[index];
+        if let Some(page) = origin.page {
+            if b.page.info.revision != page.info.revision || b.page.info.path != page.info.path {
+                return;
+            }
+            if b.page.start != page.start {
+                b.set_page(page);
+            }
+        }
         let canonical = (origin.group != self.panes.focused_id())
             .then(|| (panes::CursorView::get(b), b.restore_cursor, b.reveal_cursor));
         b.view.anchor = origin.anchor;

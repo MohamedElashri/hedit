@@ -172,6 +172,7 @@ enum Action {
     ExplorerEntry(u64, Result<explorer::EntryOutcome, String>),
     RefactorApplied(Box<language_servers::refactor::Applied>),
     Page(u64, Page, Option<(usize, usize)>),
+    GotoPreview(u64, Result<(Page, usize), String>),
     Reloaded(u64, Page, Option<(usize, usize)>),
     History(u64, Page, bool, Vec<hedit::advanced::Selection>),
     Saved(u64, Info),
@@ -326,6 +327,8 @@ pub struct HeditApp {
     markdown: markdown::Markdown,
     /// Where the cursor was before Go to Anything previewed a result.
     goto_origin: Option<goto_anything::Origin>,
+    goto_preview_epoch: u64,
+    goto_preview_running: bool,
     /// The `font_face` in use, or being loaded.
     font_applied: String,
     /// The `font_face` font file, kept to rebuild the fonts when fallbacks load.
@@ -553,6 +556,8 @@ impl HeditApp {
             minimaps: Default::default(),
             markdown: Default::default(),
             goto_origin: None,
+            goto_preview_epoch: 0,
+            goto_preview_running: false,
             font_applied: String::new(),
             editor_font: None,
             editor_font_loading: None,
@@ -1292,6 +1297,7 @@ impl HeditApp {
                         | Action::FontFailed(..)
                         | Action::TerminalFont(..)
                         | Action::UiFont(..)
+                        | Action::GotoPreview(..)
                         | Action::FallbackFonts
                         | Action::FontFamilies(_),
                     ) => true,
@@ -1314,6 +1320,7 @@ impl HeditApp {
                     self.finish_explorer_entry(ctx, token, outcome)
                 }
                 Ok(Action::Quality(event)) => self.quality_event(ctx, *event),
+                Ok(Action::GotoPreview(epoch, result)) => self.finish_goto_preview(epoch, result),
                 Ok(Action::Activate(id)) => {
                     if let Some(index) = self
                         .workspace
