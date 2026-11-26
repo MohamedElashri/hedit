@@ -11,6 +11,11 @@ on:
         type: boolean
         default: false
   workflow_call:
+    inputs:
+      package_only:
+        description: Build and verify packages when validation runs separately
+        type: boolean
+        default: false
   schedule:
     - cron: '23 4 * * 1,4'
 
@@ -49,6 +54,7 @@ jobs:
       - name: Install pinned Zig for Ghostty VT
         run: python scripts/setup-zig.py
       - name: Static checks
+        if: ${{ !inputs.package_only }}
         run: make static
       - uses: Swatinem/rust-cache@v2.9.3
         with:
@@ -56,8 +62,10 @@ jobs:
       # Clippy also type-checks; the Intel slice is compiled by the release
       # build below, so lint the runner's native Apple Silicon slice only.
       - name: Clippy
+        if: ${{ !inputs.package_only }}
         run: cargo clippy --locked --all-targets -- -D warnings
       - name: Tests
+        if: ${{ !inputs.package_only }}
         run: make test-macos
       - name: Build architecture slices and assemble universal app
         run: |

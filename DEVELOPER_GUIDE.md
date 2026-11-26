@@ -603,10 +603,10 @@ offline documentation and extension examples shared by all three packagers and
    `RELEASE_TAG=vX.Y.Z python3 scripts/check-release.py --notes-file /tmp/hedit-notes.md`.
 4. After review, commit/push changes, then create/push the version tag.
 
-Tags validate Linux/macOS/Windows before publishing Linux x86-64/ARM64
-tarballs, DEB/RPM/AppImage packages,
-a universal macOS ZIP, and a Windows x86-64 ZIP with checksums/changelog notes.
-Hyphenated tags are prereleases; manual workflows build without publishing tags.
+Release validation and packaging run in parallel. Once both succeed, the tag
+workflow publishes Linux x86-64/ARM64 tarballs, DEB/RPM/AppImage packages,
+a universal macOS ZIP, and a Windows x86-64 ZIP with checksums and changelog notes.
+Hyphenated tags are prereleases. Manual workflows build without publishing.
 
 Updaters verify checksum, archive paths, candidate version, and macOS signature;
 preserve rollback and checkpoint before restarting. macOS swaps the whole bundle.
