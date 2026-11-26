@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.6] - 2026-11-26
+
+- Upgrade egui and AccessKit together, preserving keyboard navigation, text selection, and recovery.
+- Speed up large-file navigation, rendering, terminal updates, and SSH workspace startup.
+- Fix folder searches, file operations, editor navigation, formatting, and Git review.
+
 ## [0.7.5] - 2026-11-26
 
 - Search an Explorer folder and open a terminal in a selected directory.
