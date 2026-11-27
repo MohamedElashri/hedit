@@ -114,16 +114,33 @@ impl HeditApp {
                                     Command::CloseOthers,
                                     Command::CloseRight,
                                     Command::CopyFileLocation,
+                                    Command::SelectForCompare,
+                                    Command::CompareWithSelected,
                                     Command::MovePane,
                                 ]
                                 .into_iter()
                                 .map(|command| {
                                     (
                                         command,
-                                        if command == Command::CopyFileLocation {
-                                            path.is_some() && buffer.page.start == 0
-                                        } else {
-                                            self.command_enabled(command)
+                                        match command {
+                                            Command::CopyFileLocation => {
+                                                path.is_some() && buffer.page.start == 0
+                                            }
+                                            Command::SelectForCompare => {
+                                                path.is_some() && self.workspace.remote.is_none()
+                                            }
+                                            Command::CompareWithSelected => {
+                                                self.workspace.remote.is_none()
+                                                    && path.as_deref().is_some_and(|path| {
+                                                        self.quality
+                                                            .compare_source
+                                                            .as_deref()
+                                                            .is_some_and(|first| {
+                                                                first != std::path::Path::new(path)
+                                                            })
+                                                    })
+                                            }
+                                            _ => self.command_enabled(command),
                                         },
                                         self.shortcut_text(command),
                                     )

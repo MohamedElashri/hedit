@@ -729,10 +729,18 @@ fn file_comparison_uses_unsaved_editor_text() {
     let active = app.workspace.active;
     app.workspace.open[active].page.text = "unsaved edit\n".into();
     app.workspace.edit(active, "old on disk\n").unwrap();
-    app.select_for_compare(left.clone());
+    #[cfg(unix)]
+    let selected = {
+        let link = directory.path().join("alias.txt");
+        std::os::unix::fs::symlink(&left, &link).unwrap();
+        link
+    };
+    #[cfg(not(unix))]
+    let selected = left.clone();
+    app.select_for_compare(selected.clone());
     app.compare_with_selected(&ctx, right.clone());
     finish_app_job(&mut app, &ctx);
-    assert_eq!(app.quality.comparison_paths, Some((left.clone(), right)));
+    assert_eq!(app.quality.comparison_paths, Some((selected, right)));
     assert!(app.quality.diff.contains("-unsaved edit"));
     assert!(app.quality.diff.contains("+other file"));
     assert_eq!(std::fs::read_to_string(left).unwrap(), "old on disk\n");

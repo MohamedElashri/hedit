@@ -1177,37 +1177,36 @@ impl HeditApp {
         if self.workspace.remote.is_some() || self.busy || self.closing || left == right {
             return;
         }
-        let open_id = |path: &Path| {
-            self.workspace
-                .open
-                .iter()
-                .find(|buffer| {
-                    buffer
-                        .page
-                        .info
-                        .path
-                        .as_deref()
-                        .is_some_and(|name| Path::new(name) == path)
-                })
-                .map(|buffer| buffer.view.id)
-        };
-        let left_id = open_id(&left);
-        let right_id = open_id(&right);
+        let open: Vec<_> = self
+            .workspace
+            .open
+            .iter()
+            .filter_map(|buffer| {
+                Some((
+                    PathBuf::from(buffer.page.info.path.as_ref()?),
+                    buffer.view.id,
+                ))
+            })
+            .collect();
         let editor = Arc::clone(&self.workspace.editor);
         self.job(ctx, move || {
-            let read = |path: &Path, id| -> Result<String, String> {
+            let read = |path: &Path| -> Result<String, String> {
                 const LIMIT: u64 = 16 * 1024 * 1024;
-                if let Some(id) = id {
+                let canonical = path.canonicalize().ok();
+                if let Some((_, id)) = open
+                    .iter()
+                    .find(|(name, _)| name == path || canonical.as_ref() == Some(name))
+                {
                     return editor
-                        .get(id)?
+                        .get(*id)?
                         .lock()
                         .map_err(|error| error.to_string())?
                         .text(LIMIT);
                 }
                 Document::open(0, path)?.text(LIMIT)
             };
-            let before = read(&left, left_id)?;
-            let after = read(&right, right_id)?;
+            let before = read(&left)?;
+            let after = read(&right)?;
             let label = |path: &Path| path.display().to_string().replace(['\r', '\n'], " ");
             let diff = search::diff_with_labels(&before, &after, &label(&left), &label(&right));
             Ok(Action::Quality(Box::new(Event::ComparedFiles(
