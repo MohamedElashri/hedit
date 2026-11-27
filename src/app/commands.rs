@@ -1160,11 +1160,7 @@ impl HeditApp {
             Command::ExplorerNewFile | Command::ExplorerNewFolder | Command::ExplorerRename => {
                 !self.workspace.folders.is_empty()
             }
-            Command::GitCommit => {
-                self.source_control.open
-                    && self.source_control.view == source_control::View::Changes
-                    && self.source_control.can_commit()
-            }
+            Command::GitCommit => self.git_commit_context() && self.source_control.can_commit(),
             Command::GitNextFile => {
                 self.source_control.open && self.source_control.can_move_review(true)
             }

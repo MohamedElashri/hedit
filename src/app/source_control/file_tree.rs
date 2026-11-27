@@ -141,7 +141,18 @@ impl HeditApp {
         ui.horizontal(|ui| {
             ui.selectable_value(&mut self.source_control.tree_view, true, "Tree");
             ui.selectable_value(&mut self.source_control.tree_view, false, "List");
-            if self.source_control.tree_view && ui.small_button("Expand all").clicked() {
+            let has_collapsed_folders = self.source_control.tree_view
+                && self
+                    .source_control
+                    .trees
+                    .values()
+                    .any(|tree| !tree.collapsed.is_empty());
+            let has_collapsed_groups = self.source_control.view == View::Changes
+                && !self.source_control.ux.collapsed_changes.is_empty();
+            if (has_collapsed_folders || has_collapsed_groups)
+                && ui.small_button("Expand all").clicked()
+            {
+                self.source_control.ux.collapsed_changes.clear();
                 for tree in self.source_control.trees.values_mut() {
                     tree.collapsed.clear();
                     tree.query = None;
@@ -176,89 +187,118 @@ impl HeditApp {
             );
             return;
         }
-        // Both layouts mount only visible rows, even in repositories with many
-        // changed files. Folder state is keyed by raw paths, never display text.
-        egui::ScrollArea::vertical()
-            .id_salt(("git-tree", id))
-            .max_height(350.0)
-            .auto_shrink([false, true])
-            .show_rows(ui, 23.0, rows.len(), |ui, range| {
-                for row in &rows[range] {
-                    if let Some(index) = row.file {
-                        let file = &files[index];
-                        let kind = if kind == DiffKind::Working && file.untracked() {
-                            DiffKind::Untracked
-                        } else {
-                            kind.clone()
-                        };
-                        self.git_file_row_at(
-                            ui,
-                            ctx,
-                            file,
-                            kind.clone(),
-                            if tree_view { row.depth } else { 0 },
-                            !tree_view,
-                        );
+        let row_height = hedit::ui_style::Metrics::for_ui(ui).row;
+        let mut draw_rows = |ui: &mut egui::Ui, range: std::ops::Range<usize>| {
+            for row in &rows[range] {
+                if let Some(index) = row.file {
+                    let file = &files[index];
+                    let kind = if kind == DiffKind::Working && file.untracked() {
+                        DiffKind::Untracked
                     } else {
-                        let expanded = !self.source_control.trees[id].collapsed.contains(&row.path)
-                            || filtered;
-                        let response = ui
-                            .push_id(&row.path, |ui| {
-                                tree_row::show(
-                                    ui,
-                                    &self.theme,
-                                    tree_row::Row {
-                                        name: &format!("{}  ({})", row.name, row.count),
-                                        path: &row.path.to_string_lossy(),
-                                        icon_name: row
-                                            .name
-                                            .split_once('/')
-                                            .map_or(&row.name, |(first, _)| first),
-                                        directory: true,
-                                        expanded,
-                                        selected: false,
-                                        depth: row.depth,
-                                        symlink: false,
-                                        badge: None,
-                                        badge_hint: None,
-                                        roving: false,
-                                    },
-                                )
-                            })
-                            .inner;
-                        if response.clicked() {
-                            let tree = self.source_control.trees.get_mut(id).unwrap();
-                            tree.query = None;
-                            if !tree.collapsed.remove(&row.path) {
-                                tree.collapsed.insert(row.path.clone());
-                            }
+                        kind.clone()
+                    };
+                    self.git_file_row_at(
+                        ui,
+                        ctx,
+                        file,
+                        kind.clone(),
+                        if tree_view { row.depth } else { 0 },
+                        !tree_view,
+                    );
+                } else {
+                    let expanded =
+                        !self.source_control.trees[id].collapsed.contains(&row.path) || filtered;
+                    let response = ui
+                        .push_id(&row.path, |ui| {
+                            tree_row::show(
+                                ui,
+                                &self.theme,
+                                tree_row::Row {
+                                    name: &format!("{}  ({})", row.name, row.count),
+                                    path: &row.path.to_string_lossy(),
+                                    icon_name: row
+                                        .name
+                                        .split_once('/')
+                                        .map_or(&row.name, |(first, _)| first),
+                                    directory: true,
+                                    expanded,
+                                    selected: false,
+                                    depth: row
+                                        .depth
+                                        .min(((ui.available_width() - 92.0) / 12.0).max(0.0)
+                                            as usize),
+                                    symlink: false,
+                                    badge: None,
+                                    badge_hint: None,
+                                    roving: false,
+                                },
+                            )
+                        })
+                        .inner;
+                    if response.clicked() {
+                        let tree = self.source_control.trees.get_mut(id).unwrap();
+                        tree.query = None;
+                        if !tree.collapsed.remove(&row.path) {
+                            tree.collapsed.insert(row.path.clone());
                         }
-                        if response.has_focus()
-                            && ui.input(|i| {
-                                i.key_pressed(Key::ArrowLeft) || i.key_pressed(Key::ArrowRight)
-                            })
-                        {
-                            self.source_control.trees.get_mut(id).unwrap().query = None;
-                            if ui.input(|i| i.key_pressed(Key::ArrowLeft)) {
-                                self.source_control
-                                    .trees
-                                    .get_mut(id)
-                                    .unwrap()
-                                    .collapsed
-                                    .insert(row.path.clone());
-                            }
-                            if ui.input(|i| i.key_pressed(Key::ArrowRight)) {
-                                self.source_control
-                                    .trees
-                                    .get_mut(id)
-                                    .unwrap()
-                                    .collapsed
-                                    .remove(&row.path);
-                            }
+                    }
+                    if response.has_focus()
+                        && ui.input(|i| {
+                            i.key_pressed(Key::ArrowLeft) || i.key_pressed(Key::ArrowRight)
+                        })
+                    {
+                        self.source_control.trees.get_mut(id).unwrap().query = None;
+                        if ui.input(|i| i.key_pressed(Key::ArrowLeft)) {
+                            self.source_control
+                                .trees
+                                .get_mut(id)
+                                .unwrap()
+                                .collapsed
+                                .insert(row.path.clone());
+                        }
+                        if ui.input(|i| i.key_pressed(Key::ArrowRight)) {
+                            self.source_control
+                                .trees
+                                .get_mut(id)
+                                .unwrap()
+                                .collapsed
+                                .remove(&row.path);
                         }
                     }
                 }
-            });
+            }
+        };
+        if id == "commit-files" {
+            egui::ScrollArea::vertical()
+                .id_salt(("git-tree", id))
+                .max_height(350.0)
+                .auto_shrink([false, true])
+                .show_rows(ui, row_height, rows.len(), draw_rows);
+        } else {
+            // Sidebar groups share one scroll area. Reserve the full list height
+            // and mount only the rows that intersect its viewport.
+            let spacing = ui.spacing().item_spacing.y;
+            let stride = row_height + spacing;
+            let height = (stride * rows.len() as f32 - spacing).max(0.0);
+            let (_, rect) = ui.allocate_space(egui::vec2(ui.available_width(), height));
+            let clip = ui.clip_rect().intersect(rect);
+            if clip.is_positive() {
+                let start = ((clip.top() - rect.top()) / stride).floor() as usize;
+                let end = (((clip.bottom() - rect.top()) / stride).ceil() as usize).min(rows.len());
+                let row_rect = egui::Rect::from_min_max(
+                    egui::pos2(rect.left(), rect.top() + start as f32 * stride),
+                    rect.max,
+                );
+                let mut visible = ui.new_child(
+                    egui::UiBuilder::new()
+                        .id_salt(("git-tree", id))
+                        .max_rect(row_rect),
+                );
+                visible.set_clip_rect(clip);
+                visible.skip_ahead_auto_ids(start);
+                draw_rows(&mut visible, start..end);
+            }
+        }
     }
 }
 

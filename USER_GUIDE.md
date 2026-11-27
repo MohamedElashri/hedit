@@ -561,7 +561,8 @@ Leave the keys out or use `null` to follow the app appearance.
 
 ## Source Control
 
-**Ctrl+Shift+G** opens the Git workspace; **Files** or **Ctrl+W** returns to editing.
+**Ctrl+Shift+G** opens Source Control beside the editor. Select a changed file
+to open a **Git review** tab.
 Install Git 2.30+. Select an open repository, **Open repository…**, **Clone
 repository…** into a new directory, or Initialize a folder. A failed clone may
 leave files for inspection. Credentials use your Git helpers/SSH agent; terminal
@@ -569,19 +570,19 @@ prompts are disabled. Signing and hooks follow Git configuration.
 
 | Task | Usage |
 | --- | --- |
-| Review | Changes groups conflicts, staged, and working files. Choose Unified/Side by side; narrow windows use Unified. Tree/List and filters organize paths; Previous/Next or Alt+Up/Down navigates. Right-click to copy source lines or patches |
-| Stage | **+ / −** for files, Stage/Unstage hunk for ordinary text, or select changed lines (Shift extends) and Stage/Unstage selected. Select both sides for a replacement. Section actions include filtered-out files |
+| Review | **Staged changes** shows what will be committed. **Unstaged changes** shows edits outside the index. Collapse either section to focus the list. For a file in both, switch between **Staged** and **Unstaged** in its diff. |
+| Stage | Use **+ / −** on a file, or stage and unstage hunks and selected lines from a diff. With a filter active, **Stage matches** and **Unstage matches** act on the matching files. |
 | Discard | **Discard…** confirms and backs up the working version; unsaved editor text is retained. Review before saving over the result |
-| Commit | Enter a message; Commit includes staged changes only. Amend confirms. Errors retain draft/staging. Refresh stale diffs before partial staging; unusual/binary changes may require whole-file staging |
+| Commit | Enter a message and click **Commit staged**, or press **Ctrl+Enter** in the message field (**Cmd+Enter** on macOS). Use **Commit merge** to supply a message after resolving a merge. Amend asks for confirmation. If Git rejects a commit, the sidebar keeps the draft and staging. |
 | History | Select commits to review files/diffs; History scope filters revision/path, All history clears. File history does not follow renames |
-| Branches | Picker switches/creates; **…** renames, merges, rebases, sets upstream, or deletes. Save/close unsaved repository files before worktree changes. Conflicted operations offer Continue/Abort |
+| Branches | Open the branch picker and type to filter. Press Enter when one branch matches. Use the branch menu to rename, merge, rebase, set upstream, or delete. |
 | Compare | **More → Compare** accepts branches, tags, IDs, or `HEAD~3`. Apply inputs with Compare, reverse with Swap; choose common-ancestor or direct comparison. Read-only reviews pin exact commits; refresh moving references |
 | Line history | **More → Line history** shows committed UTF-8 source with authors/IDs; excludes unsaved/worktree edits. Filter source, authors, IDs, summaries |
 | Stashes | **More → Stashes** includes tracked/untracked changes. Apply keeps the stash and restores index/worktree; Drop confirms. Resolve/stage conflicts before continuing |
 | Tags | **More → Tags** lists local tags; Tag HEAD or commit menu creates annotated tags. Inspect, compare, branch, copy, delete from menus; publish tags in a terminal |
 | Recovery | **More → Recovery** lists HEAD reflog. Recover branch names an older commit without switching or changing files; Git may expire reflog entries |
 | Undo/revert | Undo last commit confirms the reviewed HEAD, moves to its first parent, and leaves changes staged. Unavailable for initial commits/operations in progress. Revert shared commits; Branch here creates without switching |
-| Remotes | Fetch updates references; Pull fast-forwards only; Push uses the configured destination; Publish sets upstream. No force-push; merge/rebase divergence explicitly |
+| Remotes | **Fetch** updates remote references. The branch status offers **Pull**, **Push**, **Publish branch**, or **Compare** based on its upstream. Use **Sync…** for a manual pull or push when the status is up to date. |
 
 <!-- docs-screenshot docs/images/git.png | Source Control with a syntax-colored file diff -->
 
@@ -593,7 +594,7 @@ submodule, non-UTF-8, or large conflicts may need a terminal. Refresh externally
 changed sides before resolving.
 
 Git jobs run in the background. Cancel stops work; refresh to check its outcome.
-**Git output** keeps recent results. If a repository moves, reopen it. Offline
+**Git output** in the repository menu keeps recent results. If a repository moves, reopen it. Offline
 help and editing work without Git installed.
 
 ## Markdown preview

@@ -288,6 +288,7 @@ impl Git {
                 "--porcelain=v2",
                 "-z",
                 "--branch",
+                "--ahead-behind",
                 "--untracked-files=all",
             ]),
             None,
@@ -321,23 +322,32 @@ impl Git {
             snapshot.commits = self.history(root, limit)?;
             snapshot.graph = history_graph(&snapshot.commits);
         }
+        snapshot.operation = self.operation_in_progress(root)?.map(str::to_owned);
+        Ok(snapshot)
+    }
+    fn operation_in_progress(&self, root: &Path) -> Result<Option<&'static str>> {
         // These operation markers are private to the current worktree,
         // including when its .git file points at a linked worktree directory.
-        let directory = self.command(root, &["rev-parse", "--absolute-git-dir"])?;
-        let directory = Path::new(directory.strip_suffix('\n').unwrap_or(&directory));
-        for (file, label) in [
+        let out = self.checked(
+            root,
+            &args(&["rev-parse", "--absolute-git-dir"]),
+            None,
+            false,
+        )?;
+        let bytes = out.strip_suffix(b"\n").unwrap_or(&out);
+        #[cfg(windows)]
+        let bytes = bytes.strip_suffix(b"\r").unwrap_or(bytes);
+        let directory = PathBuf::from(os_path(bytes)?);
+        Ok([
+            ("rebase-apply/applying", "Apply patch in progress"),
+            ("rebase-merge", "Rebase in progress"),
+            ("rebase-apply", "Rebase in progress"),
             ("MERGE_HEAD", "Merge in progress"),
             ("CHERRY_PICK_HEAD", "Cherry-pick in progress"),
             ("REVERT_HEAD", "Revert in progress"),
-            ("rebase-merge", "Rebase in progress"),
-            ("rebase-apply", "Rebase in progress"),
-        ] {
-            if directory.join(file).exists() {
-                snapshot.operation = Some(label.into());
-                break;
-            }
-        }
-        Ok(snapshot)
+        ]
+        .into_iter()
+        .find_map(|(file, label)| directory.join(file).exists().then_some(label)))
     }
     pub fn history(&self, root: &Path, limit: usize) -> Result<Vec<Commit>> {
         if let Some(result) = self.remote(root, crate::backend::GitQuery::History(limit)) {
@@ -645,13 +655,21 @@ impl Git {
                 );
                 args(&["apply", "--cached", "--whitespace=nowarn"])
             }
-            Operation::Commit { message, amend } => {
+            Operation::Commit { message, .. } | Operation::CommitMerge { message, .. } => {
                 if message.trim().is_empty() {
                     return Err("Enter a commit message first.".into());
                 }
+                if let Operation::CommitMerge { expected_head, .. } = operation {
+                    check_oid(expected_head)?;
+                    if self.resolve_commit(root, "HEAD")? != *expected_head
+                        || self.operation_in_progress(root)? != Some("Merge in progress")
+                    {
+                        return Err("The merge changed. Refresh before committing it.".into());
+                    }
+                }
                 input = Some(message.as_bytes().to_vec());
                 let mut a = args(&["commit", "--file=-"]);
-                if *amend {
+                if matches!(operation, Operation::Commit { amend: true, .. }) {
                     a.push("--amend".into());
                 }
                 a
@@ -759,20 +777,27 @@ impl Git {
                 check_oid(oid)?;
                 args(&["revert", "--no-edit", oid])
             }
-            Operation::Continue(kind) => match kind.as_str() {
-                "Merge in progress" => args(&["commit", "--no-edit"]),
-                "Cherry-pick in progress" => args(&["cherry-pick", "--continue"]),
-                "Revert in progress" => args(&["revert", "--continue"]),
-                "Rebase in progress" => args(&["rebase", "--continue"]),
-                _ => return Err("Unknown Git operation.".into()),
-            },
-            Operation::Abort(kind) => match kind.as_str() {
-                "Merge in progress" => args(&["merge", "--abort"]),
-                "Cherry-pick in progress" => args(&["cherry-pick", "--abort"]),
-                "Revert in progress" => args(&["revert", "--abort"]),
-                "Rebase in progress" => args(&["rebase", "--abort"]),
-                _ => return Err("Unknown Git operation.".into()),
-            },
+            Operation::Continue(kind) | Operation::Abort(kind) => {
+                let command = match kind.as_str() {
+                    "Merge in progress" => "merge",
+                    "Cherry-pick in progress" => "cherry-pick",
+                    "Revert in progress" => "revert",
+                    "Rebase in progress" => "rebase",
+                    "Apply patch in progress" => "am",
+                    _ => return Err("Unknown Git operation.".into()),
+                };
+                if self.operation_in_progress(root)? != Some(kind.as_str()) {
+                    return Err(
+                        "The Git operation changed. Refresh and review the repository.".into(),
+                    );
+                }
+                let flag = if matches!(operation, Operation::Continue(_)) {
+                    "--continue"
+                } else {
+                    "--abort"
+                };
+                args(&[command, flag])
+            }
             Operation::Stash(message) => {
                 args(&["stash", "push", "--include-untracked", "--message", message])
             }
@@ -1077,6 +1102,8 @@ pub struct Snapshot {
     pub branch: String,
     pub oid: String,
     pub upstream: String,
+    #[serde(default)]
+    pub upstream_missing: bool,
     pub ahead: usize,
     pub behind: usize,
     pub unborn: bool,
@@ -1087,6 +1114,11 @@ pub struct Snapshot {
     pub stashes: Vec<Stash>,
     pub remotes: Vec<String>,
     pub operation: Option<String>,
+}
+impl Snapshot {
+    pub fn merging(&self) -> bool {
+        self.operation.as_deref() == Some("Merge in progress")
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FileStatus {
@@ -1229,6 +1261,10 @@ pub enum Operation {
         message: String,
         amend: bool,
     },
+    CommitMerge {
+        message: String,
+        expected_head: String,
+    },
     Switch(String),
     CreateBranch(String),
     TrackBranch {
@@ -1323,6 +1359,7 @@ impl Operation {
 
 fn parse_status(raw: &[u8]) -> Result<Snapshot> {
     let mut snapshot = Snapshot::default();
+    let mut upstream_resolved = false;
     let mut records = raw.split(|b| *b == 0);
     while let Some(record) = records.next() {
         if record.is_empty() {
@@ -1341,6 +1378,7 @@ fn parse_status(raw: &[u8]) -> Result<Snapshot> {
                 snapshot.upstream = v.into();
             }
             if let Some(v) = text.strip_prefix("# branch.ab ") {
+                upstream_resolved = true;
                 let mut parts = v.split_whitespace();
                 snapshot.ahead = parts
                     .next()
@@ -1388,6 +1426,8 @@ fn parse_status(raw: &[u8]) -> Result<Snapshot> {
             conflict: record[0] == b'u',
         });
     }
+    snapshot.upstream_missing =
+        !snapshot.unborn && !snapshot.upstream.is_empty() && !upstream_resolved;
     Ok(snapshot)
 }
 

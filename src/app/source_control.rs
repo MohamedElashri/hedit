@@ -13,7 +13,7 @@ mod inspect;
 mod tests;
 mod ux;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum View {
     #[default]
     Changes,
@@ -71,6 +71,8 @@ pub(super) struct SourceControl {
     pub reveal_review: bool,
     sidebar_visible: bool,
     sidebar_initialized: bool,
+    discovered_folders: Vec<String>,
+    discovered_active_parent: Option<PathBuf>,
     pub view: View,
     pub prompt: Option<Prompt>,
     pub pending: bool,
@@ -111,6 +113,7 @@ impl SourceControl {
     }
     pub(super) fn open_notification_output(&mut self) {
         self.output_open = true;
+        self.ux.reveal_output = true;
     }
 }
 impl Default for SourceControl {
@@ -124,6 +127,8 @@ impl Default for SourceControl {
             reveal_review: false,
             sidebar_visible: false,
             sidebar_initialized: false,
+            discovered_folders: vec![],
+            discovered_active_parent: None,
             view: View::default(),
             prompt: None,
             pending: false,
@@ -206,6 +211,7 @@ impl SourceControl {
             && !self.pending
             && self.root.is_some()
             && self.prompt.is_none()
+            && !(self.sidebar_visible && self.ux.branch_menu_open)
         {
             Some(if self.refresh {
                 Duration::ZERO
@@ -217,6 +223,14 @@ impl SourceControl {
         }
     }
     fn request(&mut self, ctx: &egui::Context, operation: Option<Operation>) {
+        self.request_with_discovery(ctx, operation, vec![]);
+    }
+    fn request_with_discovery(
+        &mut self,
+        ctx: &egui::Context,
+        operation: Option<Operation>,
+        directories: Vec<PathBuf>,
+    ) {
         if self.pending {
             self.refresh = true;
             return;
@@ -244,7 +258,9 @@ impl SourceControl {
         let query = self.inspection_query();
         thread::spawn(move || {
             let committed = match &operation {
-                Some(Operation::Commit { message, .. }) => Some(message.clone()),
+                Some(
+                    Operation::Commit { message, .. } | Operation::CommitMerge { message, .. },
+                ) => Some(message.clone()),
                 _ => None,
             };
             let outcome = operation.map(|op| git.execute(&directory, &op));
@@ -290,8 +306,9 @@ impl SourceControl {
                 None => (vec![], String::new(), None),
             };
             let diff = selection.as_ref().map(|s| git.diff(&directory, s));
+            let (repositories, _) = discover_git_roots(&git, &directories);
             let _ = tx.send(Some(Reply {
-                repositories: vec![],
+                repositories,
                 root,
                 snapshot,
                 selection,
@@ -312,7 +329,7 @@ impl SourceControl {
         });
     }
     fn change_root(&mut self, ctx: &egui::Context, root: PathBuf) {
-        if self.pending {
+        if self.pending || self.root.as_ref() == Some(&root) {
             return;
         }
         if let Some(old) = &self.root {
@@ -328,6 +345,7 @@ impl SourceControl {
         self.commit = None;
         self.files.clear();
         self.body.clear();
+        self.error = None;
         self.amend = false;
         self.trees.clear();
         self.clear_line_selection();
@@ -373,26 +391,44 @@ impl HeditApp {
         self.prepare_source_control(ctx);
     }
     pub(super) fn prepare_source_control(&mut self, ctx: &egui::Context) {
-        self.source_control.sidebar_initialized = true;
-        if self.source_control.root.is_none() && !self.source_control.pending {
-            let mut directories: Vec<_> = self
-                .workspace
-                .folders
-                .iter()
-                .map(|f| PathBuf::from(&f.path))
-                .collect();
-            if let Some(path) = &self.active().page.info.path {
-                if let Some(parent) = Path::new(path).parent() {
-                    directories.insert(0, parent.to_owned());
-                }
-            }
-            directories.sort();
-            directories.dedup();
-            if !directories.is_empty() {
-                self.discover_source_control(ctx, directories);
-            }
-        } else {
+        if self.source_control.pending {
             self.source_control.refresh = true;
+            return;
+        }
+        self.source_control.sidebar_initialized = true;
+        self.source_control.discovered_folders = self
+            .workspace
+            .folders
+            .iter()
+            .map(|folder| folder.path.clone())
+            .collect();
+        let mut directories: Vec<_> = self
+            .source_control
+            .discovered_folders
+            .iter()
+            .map(PathBuf::from)
+            .collect();
+        self.source_control.discovered_active_parent = self
+            .active()
+            .page
+            .info
+            .path
+            .as_ref()
+            .and_then(|path| Path::new(path).parent())
+            .map(Path::to_owned);
+        if let Some(parent) = &self.source_control.discovered_active_parent {
+            directories.insert(0, parent.clone());
+        }
+        if let Some(root) = &self.source_control.root {
+            directories.insert(0, root.clone());
+        }
+        let mut seen = BTreeSet::new();
+        directories.retain(|directory| seen.insert(directory.clone()));
+        if self.source_control.snapshot.is_some() {
+            self.source_control
+                .request_with_discovery(ctx, None, directories);
+        } else if !directories.is_empty() {
+            self.discover_source_control(ctx, directories);
         }
     }
     fn discover_source_control(&mut self, ctx: &egui::Context, directories: Vec<PathBuf>) {
@@ -409,18 +445,7 @@ impl HeditApp {
         // Use a separate result channel for the directory picker/discovery so
         // no filesystem probing or Git runs on the UI thread.
         thread::spawn(move || {
-            let mut roots = Vec::new();
-            let mut error = None;
-            for directory in &directories {
-                match git.discover(directory) {
-                    Ok(root) => {
-                        if !roots.contains(&root) {
-                            roots.push(root);
-                        }
-                    }
-                    Err(e) => error = Some(e),
-                }
-            }
+            let (roots, error) = discover_git_roots(&git, &directories);
             let root = roots
                 .first()
                 .cloned()
@@ -430,7 +455,13 @@ impl HeditApp {
                 .ok_or_else(|| "Choose a repository folder to begin.".into())
                 .and_then(|r| git.snapshot(r, 200));
             let body = String::new();
-            let snapshot = snapshot.map_err(|e| error.unwrap_or(e));
+            let snapshot = snapshot.map_err(|e| {
+                if roots.is_empty() {
+                    error.unwrap_or(e)
+                } else {
+                    e
+                }
+            });
             let _ = tx.send(Some(Reply {
                 repositories: roots,
                 root,
@@ -500,13 +531,7 @@ impl HeditApp {
         });
     }
     pub(super) fn poll_source_control(&mut self, ctx: &egui::Context) {
-        self.source_control.sidebar_visible = self.sidebar
-            == workbench_navigation::Sidebar::SourceControl
-            && self.settings.show_sidebar
-            && !self.distraction_free;
-        if self.source_control.sidebar_visible && !self.source_control.sidebar_initialized {
-            self.prepare_source_control(ctx);
-        }
+        self.source_control.sidebar_visible = self.git_sidebar_visible();
         while let Ok(reply) = self.source_control.rx.try_recv() {
             let state = &mut self.source_control;
             state.pending = false;
@@ -545,8 +570,10 @@ impl HeditApp {
                     Ok(message) => {
                         state.ux.notice = completion;
                         state.log(message);
-                        if reply.committed.as_ref() == Some(&state.draft) {
-                            state.draft.clear();
+                        if let Some(message) = reply.committed {
+                            if state.draft == message {
+                                state.draft.clear();
+                            }
                             state.amend = false;
                         }
                     }
@@ -561,6 +588,11 @@ impl HeditApp {
                     state.refresh = true;
                 }
                 continue;
+            }
+            for root in reply.repositories {
+                if !state.repos.contains(&root) {
+                    state.repos.push(root);
+                }
             }
             if let Some((query, result)) = reply.inspection {
                 if state.inspection_query().as_ref() == Some(&query) {
@@ -580,11 +612,6 @@ impl HeditApp {
             match reply.snapshot {
                 Ok(snapshot) => {
                     state.snapshot = Some(Arc::new(snapshot));
-                    for root in reply.repositories {
-                        if !state.repos.contains(&root) {
-                            state.repos.push(root);
-                        }
-                    }
                     if state.selection == reply.requested_selection {
                         let same_diff = state.selection == reply.selection
                             && state.diff.as_ref().map(|d| &d.patch)
@@ -629,6 +656,31 @@ impl HeditApp {
                     }
                 }
             }
+        }
+        if self.source_control.sidebar_visible
+            && !self.source_control.pending
+            && (!self.source_control.sidebar_initialized
+                || (self.source_control.snapshot.is_none()
+                    && self.source_control.discovered_active_parent.as_deref()
+                        != self
+                            .active()
+                            .page
+                            .info
+                            .path
+                            .as_ref()
+                            .and_then(|path| Path::new(path).parent()))
+                || self
+                    .source_control
+                    .discovered_folders
+                    .iter()
+                    .map(String::as_str)
+                    .ne(self
+                        .workspace
+                        .folders
+                        .iter()
+                        .map(|folder| folder.path.as_str())))
+        {
+            self.prepare_source_control(ctx);
         }
         if self.source_control.due() == Some(Duration::ZERO) {
             self.source_control.request(ctx, None);
@@ -719,10 +771,21 @@ impl HeditApp {
                 }
                 ui.add_space(8.0);
                 self.git_repository_header(ui, ctx);
+                if !self.source_control.open {
+                    self.git_activity(ui);
+                }
                 let pending = self.source_control.pending || self.busy || self.closing;
                 let Some(snapshot) = self.source_control.snapshot.clone() else {
+                    self.git_sidebar_feedback(ui, ctx);
                     ui.add_space(18.0);
-                    ui.label("Open a repository to review and commit changes.");
+                    ui.label(
+                        if self.source_control.pending && self.source_control.ux.activity.is_none()
+                        {
+                            "Looking for a Git repository…"
+                        } else {
+                            "Open a repository to review and commit changes."
+                        },
+                    );
                     if !pending && ui.button("Open repository…").clicked() {
                         self.browse_git_repository(ctx);
                     }
@@ -795,53 +858,90 @@ impl HeditApp {
                     self.source_control.visit(ctx, view, false);
                 }
                 ui.separator();
-                self.git_inspection_controls(ui, ctx, &snapshot);
-                if self.source_control.view == View::Changes {
-                    self.git_commit_box(ui, ctx, &snapshot);
+                let mut scroll = egui::ScrollArea::vertical()
+                    .id_salt((
+                        "git-sidebar-scroll",
+                        &snapshot.root,
+                        self.source_control.view,
+                    ))
+                    .auto_shrink([false, false]);
+                let reveal_output = std::mem::take(&mut self.source_control.ux.reveal_output);
+                if reveal_output && !self.source_control.open {
+                    scroll = scroll.vertical_scroll_offset(0.0);
                 }
-                self.git_filter(ui);
-                ui.add_space(6.0);
-                egui::ScrollArea::vertical()
-                    .id_salt("git-sidebar-scroll")
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        ui.set_min_width(ui.available_width());
-                        let reading = self.source_control.ux.activity.is_none()
-                            && matches!(self.source_control.view, View::Changes | View::History);
-                        ui.add_enabled_ui(
-                            (!pending || reading) && self.source_control.prompt.is_none(),
-                            |ui| match self.source_control.view {
-                                View::Changes => self.git_changes(ui, ctx, &snapshot),
-                                View::History => {
-                                    let mut history = (*snapshot).clone();
-                                    if let Some(data) = self.source_control.inspection_data() {
-                                        if let inspect::Data::History(commits) = &*data {
-                                            history.commits = commits.clone();
-                                            history.graph = git::history_graph(commits);
-                                        }
-                                    } else if self.source_control.inspection_query().is_some() {
-                                        history.commits.clear();
-                                        history.graph.clear();
+                scroll.show(ui, |ui| {
+                    ui.set_min_width(ui.available_width());
+                    self.git_inspection_controls(ui, ctx, &snapshot);
+                    if self.source_control.view == View::Changes {
+                        self.git_commit_box(ui, ctx, &snapshot);
+                    }
+                    self.git_sidebar_feedback(ui, ctx);
+                    self.git_filter(ui);
+                    ui.add_space(6.0);
+                    let reading = self.source_control.ux.activity.is_none()
+                        && matches!(self.source_control.view, View::Changes | View::History);
+                    ui.add_enabled_ui(
+                        (!pending || reading) && self.source_control.prompt.is_none(),
+                        |ui| match self.source_control.view {
+                            View::Changes => self.git_changes(ui, ctx, &snapshot),
+                            View::History => {
+                                let mut history = (*snapshot).clone();
+                                if let Some(data) = self.source_control.inspection_data() {
+                                    if let inspect::Data::History(commits) = &*data {
+                                        history.commits = commits.clone();
+                                        history.graph = git::history_graph(commits);
                                     }
-                                    self.git_history(ui, ctx, &history);
+                                } else if self.source_control.inspection_query().is_some() {
+                                    history.commits.clear();
+                                    history.graph.clear();
                                 }
-                                View::Branches => self.git_branches(ui, ctx, &snapshot),
-                                View::Stashes => self.git_stashes(ui, ctx, &snapshot),
-                                _ => self.git_inspection_sidebar(ui, ctx, &snapshot),
-                            },
-                        );
-                    });
+                                self.git_history(ui, ctx, &history);
+                            }
+                            View::Branches => self.git_branches(ui, ctx, &snapshot),
+                            View::Stashes => self.git_stashes(ui, ctx, &snapshot),
+                            _ => self.git_inspection_sidebar(ui, ctx, &snapshot),
+                        },
+                    );
+                });
             });
     }
     fn git_changes(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, snapshot: &Snapshot) {
+        use hedit::icons::Icon;
+
+        if snapshot.files.is_empty() {
+            ui.label("Working tree clean");
+            return;
+        }
         self.git_tree_controls(ui);
-        for (title, category) in [("Conflicts", 0), ("Staged Changes", 1), ("Changes", 2)] {
+        let filtered = !self.source_control.filter.is_empty();
+        for kind in [DiffKind::Conflict, DiffKind::Staged, DiffKind::Working] {
+            let (title, color, action) = match kind {
+                DiffKind::Conflict => ("Conflicts", self.theme.error.color(), None),
+                DiffKind::Staged => (
+                    "Staged changes",
+                    self.theme.success.color(),
+                    Some(if filtered {
+                        "Unstage matches"
+                    } else {
+                        "Unstage all"
+                    }),
+                ),
+                _ => (
+                    "Unstaged changes",
+                    self.theme.warning.color(),
+                    Some(if filtered {
+                        "Stage matches"
+                    } else {
+                        "Stage all"
+                    }),
+                ),
+            };
             let files: Vec<_> = snapshot
                 .files
                 .iter()
-                .filter(|f| match category {
-                    0 => f.conflict,
-                    1 => f.staged(),
+                .filter(|f| match kind {
+                    DiffKind::Conflict => f.conflict,
+                    DiffKind::Staged => f.staged(),
                     _ => f.working(),
                 })
                 .cloned()
@@ -849,52 +949,92 @@ impl HeditApp {
             if files.is_empty() {
                 continue;
             }
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(format!("{title}  {}", files.len()))
-                        .strong()
-                        .small(),
-                );
-                if category > 0
-                    && ui
-                        .add_enabled(
-                            !self.source_control.pending && !self.busy && !self.closing,
-                            egui::Button::new(if category == 1 {
-                                "Unstage all"
-                            } else {
-                                "Stage all"
-                            })
-                            .small(),
-                        )
-                        .clicked()
-                {
-                    let paths = files.iter().flat_map(|f| f.paths()).collect();
-                    self.git_action(
-                        ctx,
-                        if category == 1 {
-                            Operation::Unstage(paths)
-                        } else {
-                            Operation::Stage(paths)
-                        },
-                    );
-                }
-            });
-            let kind = match category {
-                0 => DiffKind::Conflict,
-                1 => DiffKind::Staged,
-                _ => DiffKind::Working,
+            let matches = |file: &FileStatus| {
+                matches_filter(&file.path.to_string_lossy(), &self.source_control.filter)
             };
-            self.git_file_tree(ui, ctx, title, &files, kind);
-            ui.add_space(12.0);
-        }
-        if snapshot.files.is_empty() {
-            ui.add_space(16.0);
-            ui.label("Working tree clean");
-            ui.label(
-                RichText::new("Your saved files match the latest commit.")
-                    .small()
-                    .color(self.theme.muted.color()),
-            );
+            let count = if filtered {
+                files.iter().filter(|file| matches(file)).count()
+            } else {
+                files.len()
+            };
+            let count_label = if filtered {
+                format!("{count} of {}", files.len())
+            } else {
+                count.to_string()
+            };
+            let mut bulk_action = false;
+            let collapsed = &mut self.source_control.ux.collapsed_changes;
+            let mut expanded = filtered || !collapsed.contains(title);
+            egui::Frame::new()
+                .fill(color.gamma_multiply(0.09))
+                .corner_radius(4)
+                .inner_margin(egui::Margin::symmetric(6, 3))
+                .show(ui, |ui| {
+                    ui.set_min_width(ui.available_width());
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        let heading = RichText::new(format!("{title} ({count_label})"))
+                            .strong()
+                            .color(color);
+                        if filtered {
+                            ui.label(heading);
+                        } else {
+                            let icon = if expanded {
+                                Icon::ChevronDown
+                            } else {
+                                Icon::ChevronRight
+                            };
+                            let size = egui::Vec2::splat(12.0);
+                            let texture = icon.texture(ui.ctx(), size.x);
+                            let image = egui::Image::new((texture.id(), size)).tint(color);
+                            let header =
+                                ui.add(egui::Button::image_and_text(image, heading).frame(false));
+                            if header
+                                .on_hover_text(if expanded {
+                                    "Collapse section"
+                                } else {
+                                    "Expand section"
+                                })
+                                .clicked()
+                            {
+                                expanded = !expanded;
+                                if expanded {
+                                    collapsed.remove(title);
+                                } else {
+                                    collapsed.insert(title);
+                                }
+                            }
+                        }
+                        if let Some(label) = action {
+                            bulk_action = ui
+                                .add_enabled(
+                                    count > 0
+                                        && !self.source_control.pending
+                                        && !self.busy
+                                        && !self.closing,
+                                    egui::Button::new(label).small(),
+                                )
+                                .clicked();
+                        }
+                    });
+                });
+            if bulk_action {
+                let paths = files
+                    .iter()
+                    .filter(|file| matches(file))
+                    .flat_map(|file| staging_paths(file, &kind))
+                    .collect();
+                let operation = if kind == DiffKind::Staged {
+                    Operation::Unstage(paths)
+                } else {
+                    Operation::Stage(paths)
+                };
+                self.git_action(ctx, operation);
+            }
+            if expanded {
+                self.git_file_tree(ui, ctx, title, &files, kind);
+            }
+            ui.add_space(8.0);
         }
     }
     fn git_file_row_at(
@@ -924,7 +1064,8 @@ impl HeditApp {
         let color = status_color(code, &self.theme);
         ui.push_id((&file.path, format!("{kind:?}")), |ui| {
             ui.horizontal(|ui| {
-                ui.add_space(depth.min(32) as f32 * 12.0);
+                let indent = (depth as f32 * 12.0).min((ui.available_width() - 122.0).max(0.0));
+                ui.add_space(indent);
                 ui.label(RichText::new(code.to_string()).monospace().color(color))
                     .on_hover_text(match code {
                         '!' | 'U' => "Conflict",
@@ -936,11 +1077,13 @@ impl HeditApp {
                         'T' => "File type changed",
                         _ => "Modified",
                     });
-                let width = (ui.available_width() - 38.0).max(60.0);
+                let action_width = if kind.read_only() { 0.0 } else { 38.0 };
+                let width = (ui.available_width() - action_width).max(0.0);
                 let name = file.path.file_name().unwrap_or(file.path.as_os_str());
                 let label = if list { file.path.as_os_str() } else { name }.to_string_lossy();
+                let height = hedit::ui_style::Metrics::for_ui(ui).row;
                 let (rect, row) =
-                    ui.allocate_exact_size(egui::vec2(width, 23.0), egui::Sense::click());
+                    ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click());
                 if selected || row.hovered() {
                     ui.painter().rect_filled(
                         rect,
@@ -1009,30 +1152,35 @@ impl HeditApp {
                         ui.close();
                     }
                 });
-                if !kind.read_only()
-                    && ui
-                        .add_enabled(
-                            !self.source_control.pending && !self.busy && !self.closing,
-                            egui::Button::new(if kind == DiffKind::Staged { "−" } else { "+" })
-                                .small(),
+                if !kind.read_only() {
+                    let staged = kind == DiffKind::Staged;
+                    let (symbol, action) = if conflict {
+                        ("+", "Stage resolved file")
+                    } else if staged {
+                        ("−", "Unstage file")
+                    } else {
+                        ("+", "Stage file")
+                    };
+                    let enabled = !self.source_control.pending && !self.busy && !self.closing;
+                    let button = ui.add_enabled(enabled, egui::Button::new(symbol).small());
+                    button.widget_info(|| {
+                        egui::WidgetInfo::labeled(
+                            egui::Role::Button,
+                            ui.is_enabled() && enabled,
+                            format!("{action}: {label}"),
                         )
-                        .on_hover_text(if conflict {
-                            "Mark resolved: stage saved file"
-                        } else if kind == DiffKind::Staged {
-                            "Unstage file"
-                        } else {
-                            "Stage file"
-                        })
-                        .clicked()
-                {
-                    self.git_action(
-                        ctx,
-                        if kind == DiffKind::Staged {
-                            Operation::Unstage(file.paths())
-                        } else {
-                            Operation::Stage(file.paths())
-                        },
-                    );
+                    });
+                    if button.on_hover_text(action).clicked() {
+                        let paths = staging_paths(file, &kind);
+                        self.git_action(
+                            ctx,
+                            if staged {
+                                Operation::Unstage(paths)
+                            } else {
+                                Operation::Stage(paths)
+                            },
+                        );
+                    }
                 }
             });
         });
@@ -1040,8 +1188,7 @@ impl HeditApp {
     fn git_open_file(&mut self, ctx: &egui::Context, path: &Path) {
         if let Some(root) = &self.source_control.root {
             let path = hedit::remote::join(root, path);
-            self.leave_review();
-            self.open(ctx, Some(path));
+            self.open_existing(ctx, path);
         }
     }
     fn git_history(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, snapshot: &Snapshot) {
@@ -1220,20 +1367,39 @@ impl HeditApp {
         }
     }
     fn git_stashes(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, snapshot: &Snapshot) {
+        let blocked = if snapshot.unborn {
+            Some("Create the first commit before stashing changes.")
+        } else if snapshot.operation.is_some() || snapshot.files.iter().any(|file| file.conflict) {
+            Some("Finish the current Git operation before stashing changes.")
+        } else if snapshot.files.is_empty() {
+            Some("There are no changes to stash.")
+        } else {
+            None
+        };
         if ui
-            .add_enabled(
-                !snapshot.files.is_empty(),
-                egui::Button::new("Stash changes…"),
-            )
+            .add_enabled(blocked.is_none(), egui::Button::new("Stash changes…"))
+            .on_disabled_hover_text(blocked.unwrap_or_default())
             .clicked()
         {
             self.source_control.prompt = Some(Prompt::Stash(String::new()));
         }
         ui.add_space(8.0);
-        for stash in &snapshot.stashes {
-            if !matches_filter(&stash.subject, &self.source_control.filter) {
-                continue;
-            }
+        let filter = self.source_control.filter.clone();
+        let mut stashes = snapshot
+            .stashes
+            .iter()
+            .filter(|stash| {
+                matches_filter(&stash.subject, &filter) || matches_filter(&stash.name, &filter)
+            })
+            .peekable();
+        if stashes.peek().is_none() {
+            ui.label(if snapshot.stashes.is_empty() {
+                "No stashed changes."
+            } else {
+                "No matching stashes."
+            });
+        }
+        for stash in stashes {
             ui.push_id(&stash.oid, |ui| {
                 ui.strong(&stash.name);
                 ui.add(egui::Label::new(&stash.subject).wrap());
@@ -1261,9 +1427,6 @@ impl HeditApp {
                 ui.separator();
             });
         }
-        if snapshot.stashes.is_empty() {
-            ui.label("No stashed changes.");
-        }
     }
     pub(super) fn source_control_editor(&mut self, root: &mut egui::Ui) {
         let context = root.ctx().clone();
@@ -1282,50 +1445,12 @@ impl HeditApp {
         let theme = self.theme.clone();
         ui.horizontal(|ui| {
             ui.heading(inspect::view_name(self.source_control.view));
-            if let Some(activity) = self.source_control.ux.activity {
-                ui.spinner();
-                ui.label(RichText::new(activity).color(theme.muted.color()));
-                if ui.small_button("Cancel").clicked() {
-                    self.source_control.cancel.store(true, Ordering::Relaxed);
-                }
-            }
+            self.git_activity(ui);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.toggle_value(&mut self.source_control.output_open, "Git output");
             });
         });
-        self.git_review_feedback(ui, ctx);
-        if let Some(error) = self.source_control.error.clone() {
-            egui::Frame::new()
-                .fill(theme.error.color().gamma_multiply(0.10))
-                .inner_margin(10.0)
-                .show(ui, |ui| {
-                    ui.horizontal_top(|ui| {
-                        ui.add(
-                            egui::Label::new(RichText::new(error).color(theme.error.color()))
-                                .wrap(),
-                        );
-                        if controls::close_button(ui, "Dismiss Git message").clicked() {
-                            self.source_control.error = None;
-                        }
-                    });
-                });
-        }
-        if self.source_control.output_open {
-            egui::ScrollArea::vertical()
-                .id_salt("git-output")
-                .max_height(150.0)
-                .stick_to_bottom(true)
-                .show(ui, |ui| {
-                    for text in &self.source_control.output {
-                        ui.add(
-                            egui::Label::new(RichText::new(text).monospace().size(11.0))
-                                .wrap()
-                                .selectable(true),
-                        );
-                        ui.separator();
-                    }
-                });
-        }
+        self.git_feedback(ui, ctx);
         ui.separator();
         self.git_review_navigation(ui, ctx);
         if self.source_control.view == View::History {
@@ -1417,6 +1542,68 @@ impl HeditApp {
             self.git_diff_canvas(ui, ctx);
         }
     }
+    fn git_activity(&mut self, ui: &mut egui::Ui) {
+        if let Some(activity) = self.source_control.ux.activity {
+            ui.horizontal_wrapped(|ui| {
+                ui.spinner();
+                ui.label(RichText::new(activity).color(self.theme.muted.color()));
+                if ui.small_button("Cancel").clicked() {
+                    self.source_control.cancel.store(true, Ordering::Relaxed);
+                }
+            });
+        }
+    }
+    fn git_sidebar_feedback(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        if !self.source_control.open {
+            self.git_feedback(ui, ctx);
+        }
+    }
+    fn git_feedback(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        self.git_review_feedback(ui, ctx);
+        if let Some(error) = self.source_control.error.clone() {
+            let color = self.theme.error.color();
+            egui::Frame::new()
+                .fill(color.gamma_multiply(0.10))
+                .inner_margin(8.0)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.strong("Git error");
+                        if !self.source_control.output.is_empty() {
+                            ui.toggle_value(&mut self.source_control.output_open, "Git output");
+                        }
+                        if controls::close_button(ui, "Dismiss Git message").clicked() {
+                            self.source_control.error = None;
+                        }
+                    });
+                    egui::ScrollArea::vertical()
+                        .id_salt("git-error")
+                        .max_height(92.0)
+                        .show(ui, |ui| {
+                            ui.add(
+                                egui::Label::new(RichText::new(error).color(color))
+                                    .wrap()
+                                    .selectable(true),
+                            );
+                        });
+                });
+        }
+        if self.source_control.output_open {
+            egui::ScrollArea::vertical()
+                .id_salt("git-output")
+                .max_height(150.0)
+                .stick_to_bottom(true)
+                .show(ui, |ui| {
+                    for text in &self.source_control.output {
+                        ui.add(
+                            egui::Label::new(RichText::new(text).monospace().size(11.0))
+                                .wrap()
+                                .selectable(true),
+                        );
+                        ui.separator();
+                    }
+                });
+        }
+    }
     fn git_commit_files(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, oid: &str) {
         self.git_tree_controls(ui);
         ui.add(
@@ -1440,36 +1627,86 @@ impl HeditApp {
             self.git_empty_review(ui, ctx);
             return;
         };
+        let pending = self.source_control.pending
+            || self.busy
+            || self.closing
+            || self.source_control.prompt.is_some();
+        let alternate = self
+            .source_control
+            .snapshot
+            .as_ref()
+            .and_then(|snapshot| match selection.kind {
+                DiffKind::Working | DiffKind::Untracked => snapshot
+                    .files
+                    .iter()
+                    .any(|file| file.path == selection.path && file.staged())
+                    .then_some(DiffKind::Staged),
+                DiffKind::Staged => snapshot
+                    .files
+                    .iter()
+                    .find(|file| file.path == selection.path && file.working())
+                    .map(|file| {
+                        if file.untracked() {
+                            DiffKind::Untracked
+                        } else {
+                            DiffKind::Working
+                        }
+                    }),
+                _ => None,
+            });
+        let mut next = None;
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(selection.path.display().to_string()).strong());
-            ui.label(
-                RichText::new(match selection.kind {
-                    DiffKind::Staged => "Index ↔ HEAD",
-                    DiffKind::Commit(_) => "Commit ↔ parent",
-                    DiffKind::Compare { .. } => "Base ↔ head",
-                    DiffKind::Untracked => "Untracked",
-                    DiffKind::Working => "Working tree ↔ index",
-                    DiffKind::Conflict => "Merge conflict",
-                })
-                .size(10.0)
-                .color(theme.muted.color()),
-            );
+            if let Some(alternate) = alternate {
+                ui.add_enabled_ui(!pending, |ui| {
+                    let staged = selection.kind == DiffKind::Staged;
+                    if ui.selectable_label(staged, "Staged").clicked() && !staged {
+                        next = Some(alternate.clone());
+                    }
+                    if ui.selectable_label(!staged, "Unstaged").clicked() && staged {
+                        next = Some(alternate);
+                    }
+                });
+            } else {
+                ui.label(
+                    RichText::new(match selection.kind {
+                        DiffKind::Staged => "Staged changes",
+                        DiffKind::Commit(_) => "Commit ↔ parent",
+                        DiffKind::Compare { .. } => "Base ↔ head",
+                        DiffKind::Untracked => "Untracked file",
+                        DiffKind::Working => "Unstaged changes",
+                        DiffKind::Conflict => "Merge conflict",
+                    })
+                    .size(10.0)
+                    .color(theme.muted.color()),
+                );
+            }
             if ui.small_button("Open file").clicked() {
                 self.git_open_file(ctx, &selection.path);
             }
         });
+        if let Some(kind) = next {
+            self.source_control.select(
+                ctx,
+                Selection {
+                    path: selection.path,
+                    kind,
+                },
+            );
+            return;
+        }
         let Some(diff) = self.source_control.diff.clone() else {
-            ui.label("Loading diff…");
+            ui.label(if self.source_control.pending {
+                "Loading diff…"
+            } else {
+                "Diff unavailable. Refresh or choose another file."
+            });
             return;
         };
         if let Some(conflict) = &diff.conflict {
             self.git_conflict_canvas(ui, ctx, &selection, conflict);
             return;
         }
-        let pending = self.source_control.pending
-            || self.busy
-            || self.closing
-            || self.source_control.prompt.is_some();
         let can_split = ui.available_width() >= 660.0;
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(format!("+{}", diff.additions)).color(status_color('A', &theme)));
@@ -1479,7 +1716,7 @@ impl HeditApp {
                 if !selection.kind.read_only() {
                     let staged = selection.kind == DiffKind::Staged;
                     if ui.small_button(if staged { "Unstage file" } else { "Stage file" }).clicked() {
-                        let paths = self.source_control.snapshot.as_ref().and_then(|s| s.files.iter().find(|f| f.path == selection.path)).map_or_else(|| vec![selection.path.clone()], FileStatus::paths);
+                        let paths = self.source_control.snapshot.as_ref().and_then(|s| s.files.iter().find(|f| f.path == selection.path)).map_or_else(|| vec![selection.path.clone()], |file| staging_paths(file, &selection.kind));
                         self.git_action(ctx, if staged { Operation::Unstage(paths) } else { Operation::Stage(paths) });
                     }
                     if selection.kind == DiffKind::Working && !diff.patch.is_empty() && ui.small_button("Discard working changes…").clicked() {
@@ -1641,7 +1878,28 @@ impl HeditApp {
             ui.set_width(410.0_f32.min(ctx.viewport_rect().width() - 48.0));
             ui.strong(title);
             ui.add_space(10.0);
-            let submit = ui.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Enter));
+            let submit = ui.input_mut(|input| {
+                if !matches!(prompt, Prompt::Confirm { .. }) {
+                    return input.consume_key(Modifiers::COMMAND, Key::Enter);
+                }
+                // A held commit shortcut can deliver repeats after the dialog
+                // opens. Only a fresh press in a mounted dialog can confirm.
+                let mut submit = false;
+                input.events.retain(|event| match event {
+                    egui::Event::Key {
+                        key: Key::Enter,
+                        pressed: true,
+                        repeat,
+                        modifiers,
+                        ..
+                    } if modifiers.matches_exact(Modifiers::COMMAND) => {
+                        submit |= !first && !repeat;
+                        false
+                    }
+                    _ => true,
+                });
+                submit
+            });
             match &mut prompt {
                 Prompt::Confirm {
                     detail,
@@ -1658,7 +1916,7 @@ impl HeditApp {
                         if cancel.clicked() {
                             keep = false;
                         }
-                        if ui.button(ux::action_text(op).confirm).clicked() {
+                        if ui.button(ux::action_text(op).confirm).clicked() || submit {
                             keep = false;
                             operation = Some(op.clone());
                         }
@@ -2097,11 +2355,59 @@ fn repo_name(path: &Path) -> String {
 }
 /// Follow a file between groups after Git changes the index. Commit comparisons
 /// are immutable; files with no remaining changes leave the review pane.
+fn discover_git_roots(git: &Git, directories: &[PathBuf]) -> (Vec<PathBuf>, Option<String>) {
+    let mut roots = Vec::new();
+    let mut error = None;
+    for directory in directories {
+        match git.discover(directory) {
+            Ok(root) => {
+                if !roots.contains(&root) {
+                    roots.push(root);
+                }
+            }
+            Err(message) => {
+                error.get_or_insert(message);
+            }
+        }
+    }
+    (roots, error)
+}
+
+fn staging_paths(file: &FileStatus, kind: &DiffKind) -> Vec<PathBuf> {
+    // A staged rename's old path is no longer in the index. Stage worktree
+    // edits to the destination alone, but unstage an index rename as a pair.
+    let code = if *kind == DiffKind::Staged {
+        file.index
+    } else {
+        file.worktree
+    };
+    if code == 'R' {
+        file.paths()
+    } else {
+        vec![file.path.clone()]
+    }
+}
+
 fn current_selection(snapshot: &Snapshot, selected: &Selection) -> Option<Selection> {
     if selected.kind.read_only() {
         return Some(selected.clone());
     }
-    let file = snapshot.files.iter().find(|f| f.path == selected.path)?;
+    let mut files = snapshot
+        .files
+        .iter()
+        .filter(|file| file.path == selected.path);
+    let first = files.next()?;
+    // A staged deletion and a new, untracked file can share the same path.
+    let file = std::iter::once(first)
+        .chain(files)
+        .find(|file| match selected.kind {
+            DiffKind::Conflict => file.conflict,
+            DiffKind::Staged => file.staged(),
+            DiffKind::Untracked => file.untracked(),
+            DiffKind::Working => file.working() && !file.untracked(),
+            _ => false,
+        })
+        .unwrap_or(first);
     let kind = if file.conflict {
         DiffKind::Conflict
     } else if selected.kind == DiffKind::Staged && file.staged() {
