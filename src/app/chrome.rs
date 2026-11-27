@@ -346,8 +346,9 @@ impl HeditApp {
                             ui.add_space(self.tab_strip.offset(visible.start));
                             for index in visible.clone() {
                                 let buffer = &self.workspace.open[index];
-                                let active =
-                                    index == self.workspace.active && !self.source_control.open;
+                                let active = index == self.workspace.active
+                                    && !self.source_control.open
+                                    && !self.showing_pinned_search();
                                 let can_close = self.workspace.can_close(index);
                                 let button = self.tab_strip.button(
                                     ui,
@@ -546,6 +547,7 @@ impl HeditApp {
                                 }
                             }
                             ui.add_space(total - self.tab_strip.offset(visible.end));
+                            self.pinned_search_tab_strip(ui);
                             if self.source_control.review_tab {
                                 ui.horizontal(|ui| {
                                     let review =

@@ -20,6 +20,7 @@ pub(super) enum Command {
     MarkdownPreview,
     MarkdownRefresh,
     FindFiles,
+    PinSearchResults,
     FindPrevious,
     SelectAllMatches,
     UseSelectionForFind,
@@ -289,6 +290,7 @@ impl Command {
         Self::MarkdownPreview,
         Self::MarkdownRefresh,
         Self::FindFiles,
+        Self::PinSearchResults,
         Self::FindPrevious,
         Self::SelectAllMatches,
         Self::UseSelectionForFind,
@@ -564,6 +566,7 @@ impl Command {
             Self::MarkdownSplit => "Markdown: split source and preview",
             Self::MarkdownPreview => "Markdown: render preview",
             Self::MarkdownRefresh => "Markdown: refresh preview",
+            Self::PinSearchResults => "Pin Search Results",
             Self::FindFiles => "Find in folders…",
             Self::FindPrevious => "Find previous",
             Self::SelectAllMatches => "Select all matches",
@@ -1157,6 +1160,8 @@ impl HeditApp {
             return false;
         }
         match command {
+            Command::PinSearchResults => self.can_pin_search(),
+            Command::Close if self.showing_pinned_search() => true,
             Command::ExplorerNewFile | Command::ExplorerNewFolder | Command::ExplorerRename => {
                 !self.workspace.folders.is_empty()
             }
@@ -1415,6 +1420,9 @@ impl HeditApp {
         if !self.command_enabled(command) {
             return;
         }
+        if command == Command::Close && self.close_pinned_search() {
+            return;
+        }
         if self.source_control.open {
             if command == Command::Close {
                 self.source_control.review_tab = false;
@@ -1453,6 +1461,7 @@ impl HeditApp {
                     | Command::NextTerminal
                     | Command::PreviousTerminal
                     | Command::FindFiles
+                    | Command::PinSearchResults
                     | Command::GitCommit
                     | Command::GitNextFile
                     | Command::GitPreviousFile
@@ -1510,6 +1519,7 @@ impl HeditApp {
                 self.set_markdown_view(ctx, hedit::session::MarkdownView::Preview)
             }
             Command::MarkdownRefresh => self.refresh_markdown(ctx),
+            Command::PinSearchResults => self.pin_search(ctx),
             Command::FindFiles => {
                 self.show_search_sidebar();
             }

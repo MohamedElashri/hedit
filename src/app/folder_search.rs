@@ -207,6 +207,16 @@ impl HeditApp {
                 {
                     self.quality.result_shown = None;
                 }
+                if ui
+                    .add_enabled(
+                        self.command_enabled(Command::PinSearchResults),
+                        egui::Button::new("Pin search results"),
+                    )
+                    .clicked()
+                {
+                    self.pin_search(ctx);
+                    ui.close();
+                }
                 if ui.button("Open search window").clicked() {
                     self.sidebar = workbench_navigation::Sidebar::Files;
                     self.quality.folders_open = true;
@@ -416,6 +426,7 @@ impl HeditApp {
     }
 
     pub(super) fn folder_search_window(&mut self, ctx: &egui::Context) {
+        let mut pinned = false;
         let mut open = true;
         let mut run = false;
         let mut apply = false;
@@ -486,6 +497,10 @@ impl HeditApp {
                         ui.strong("Results");
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.add_enabled(self.command_enabled(Command::PinSearchResults), egui::Button::new("Pin results")).clicked() {
+                            self.pin_search(ctx);
+                            pinned = true;
+                        }
                         let has_hits = !self.quality.results.hits.is_empty() && !self.busy;
                         if ui.add_enabled(has_hits, egui::Button::new("Next")).on_hover_text("F4").clicked() {
                             navigate = Some(true);
@@ -558,7 +573,7 @@ impl HeditApp {
                     });
                 });
             });
-        self.quality.folders_open = open;
+        self.quality.folders_open = open && !pinned;
         if !open {
             self.focus_editor = true;
         }

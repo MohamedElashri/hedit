@@ -330,6 +330,11 @@ or refresh to update paths outside coverage. Use explicit refresh over SSH.
 External changes reload a clean active file. A conflict banner protects
 unsaved text and guards the next save.
 
+After a folder search, choose **More… → Pin search results**. Each tab keeps
+the matches from that run for the current session. Select a match to open its
+source. To see two result sets side by side, split the editor and select a
+different search tab in each group.
+
 ### Breadcrumbs and Outline
 
 | **View → Editor** | What it does |

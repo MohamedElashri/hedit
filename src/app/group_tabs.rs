@@ -92,6 +92,7 @@ impl HeditApp {
                                 let buffer = &self.workspace.open[index];
                                 let id = buffer.view.id;
                                 let selected = index == self.workspace.active
+                                    && !self.showing_pinned_search()
                                     && !(review_here && self.source_control.review_selected);
                                 let label = self.tab_strip.label(index).to_owned();
                                 let button = self.tab_strip.button(
@@ -214,6 +215,7 @@ impl HeditApp {
                                 }
                             }
                             ui.add_space(total - offsets[end]);
+                            focus |= self.pinned_search_tab_strip(ui);
                             if review_here {
                                 ui.horizontal(|ui| {
                                     let tab = ui.selectable_label(

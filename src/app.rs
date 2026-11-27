@@ -84,6 +84,7 @@ mod overlay_tests;
 mod overlays;
 mod panes;
 mod paste_history;
+mod pinned_search;
 mod preferences;
 mod project;
 #[cfg(test)]
@@ -369,6 +370,7 @@ pub struct HeditApp {
     ime_composing: bool,
     key_filter: String,
     panes: panes::Panes,
+    pinned_search: pinned_search::Tabs,
     document_navigation: document_navigation::State,
     rectangle_start: Option<(usize, usize)>,
     extra_layouts: [editor_layout::LayoutCache; panes::MAX_GROUPS - 1],
@@ -592,6 +594,7 @@ impl HeditApp {
             ime_composing: false,
             key_filter: String::new(),
             rectangle_start: None,
+            pinned_search: Default::default(),
             panes,
             document_navigation: Default::default(),
             extra_layouts: Default::default(),
