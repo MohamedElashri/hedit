@@ -93,7 +93,7 @@ impl HeditApp {
             return false;
         }
         let mut run = false;
-        ui.menu_button("Saved Searches", |ui| {
+        let contents = |ui: &mut egui::Ui| {
             let path = self.search_presets_path();
             let saved = &mut self.quality.saved_searches;
             if saved.path.as_ref() != Some(&path) {
@@ -202,7 +202,19 @@ impl HeditApp {
                 run = true;
                 ui.close();
             }
-        });
+        };
+        use egui::menu::{is_in_menu, MenuButton, MenuConfig, SubMenuButton};
+        let config =
+            MenuConfig::new().close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
+        if is_in_menu(ui) {
+            SubMenuButton::new("Saved Searches")
+                .config(config)
+                .ui(ui, contents);
+        } else {
+            MenuButton::new("Saved Searches")
+                .config(config)
+                .ui(ui, contents);
+        }
         run
     }
 }
@@ -239,5 +251,32 @@ mod tests {
         assert_eq!(saved.scope, preset.scope);
         assert_eq!(saved.options, preset.options);
         assert!(saved.context);
+    }
+
+    #[test]
+    fn saved_search_submenu_keeps_focus_while_naming_a_preset() {
+        use crate::app::tests::{click_label, frame};
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("project");
+        std::fs::create_dir(&root).unwrap();
+        let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        app.set_folder(hedit::folder::read_directory(root).unwrap());
+        app.show_search_sidebar();
+        app.quality.folder_query = "TODO".into();
+        click_label(&ctx, &mut app, "More…");
+        click_label(&ctx, &mut app, "Saved Searches");
+        click_label(&ctx, &mut app, "Search name");
+        frame(
+            &ctx,
+            &mut app,
+            vec![egui::Event::Text("Review notes".into())],
+        );
+        click_label(&ctx, &mut app, "Save current search");
+        let entries = read(&app.search_presets_path()).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "Review notes");
+        assert_eq!(entries[0].query, "TODO");
     }
 }
