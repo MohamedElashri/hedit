@@ -168,6 +168,13 @@ fn catalog() -> &'static [Setting] {
         setting!(
             Editor,
             Bool,
+            "show_sticky_scope",
+            "Show sticky scope",
+            "Keep the enclosing declaration visible while scrolling."
+        );
+        setting!(
+            Editor,
+            Bool,
             "word_wrap",
             "Wrap long lines",
             "Wrap text visually without inserting line breaks."
