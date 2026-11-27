@@ -40,7 +40,9 @@ enum Intent {
     Detect(String),
     Sync,
     Feature(Guard),
+    Inlay(inlay::Key),
 }
+mod inlay;
 mod problems;
 pub(super) mod refactor;
 use problems::ProblemRow;
@@ -77,6 +79,7 @@ pub(super) struct LanguageServers {
     blocked: bool,
     pub(super) directory: Option<PathBuf>,
     last_completion: Option<(u64, u64, usize)>,
+    pub(super) inlay: inlay::State,
 }
 struct Configuration {
     id: String,
@@ -188,10 +191,11 @@ impl LanguageServers {
         self.next += 1;
         service.submit(self.next, operation)?;
         if changes_servers {
+            self.inlay.clear();
             // Replies already in flight belong to the previous configuration.
             // Invalidate them when the change is queued, before the next poll.
             self.pending
-                .retain(|_, intent| !matches!(intent, Intent::Feature(_)));
+                .retain(|_, intent| !matches!(intent, Intent::Feature(_) | Intent::Inlay(_)));
             self.last_completion = None;
         }
         self.pending.insert(self.next, intent);
@@ -428,6 +432,7 @@ impl HeditApp {
             self.languages.explorer_badges = None;
         }
         let _ = self.sync_language_documents(false);
+        self.request_inlays();
         if !self.languages.installed.is_empty()
             && self.languages.snapshots != self.language_snapshots()
         {
@@ -437,6 +442,7 @@ impl HeditApp {
     fn language_event(&mut self, ctx: &egui::Context, event: Event) {
         match event {
             Event::Disconnected(e) => {
+                self.languages.inlay.clear();
                 self.languages.service = None;
                 self.languages.blocked = true;
                 self.languages.pending.clear();
@@ -453,6 +459,10 @@ impl HeditApp {
                     self.languages.snapshots.clear();
                 }
                 if status.state != "Running" {
+                    self.languages.inlay.clear();
+                    self.languages
+                        .pending
+                        .retain(|_, intent| !matches!(intent, Intent::Inlay(_)));
                     self.languages.problem_rows = None;
                     self.languages.explorer_badges = None;
                     self.languages.diagnostics.retain(|_, sources| {
@@ -564,8 +574,13 @@ impl HeditApp {
                 }
             }
             Event::Response { ticket, result } => {
-                let Some(Intent::Feature(guard)) = self.languages.pending.remove(&ticket) else {
-                    return;
+                let guard = match self.languages.pending.remove(&ticket) {
+                    Some(Intent::Feature(guard)) => guard,
+                    Some(Intent::Inlay(key)) => {
+                        self.receive_inlays(key, result);
+                        return;
+                    }
+                    _ => return,
                 };
                 let b = self.active();
                 if b.view.id != guard.view
@@ -711,6 +726,7 @@ impl HeditApp {
             return Ok(());
         }
         match reply.feature {
+            Feature::InlayHints => {}
             Feature::Completion => self.publish_language_completions(reply.value, reply.encoding),
             Feature::Hover => {
                 fn collect(value: &Value, out: &mut String) {
@@ -1259,6 +1275,7 @@ impl HeditApp {
         self.languages.last_completion = None;
     }
     pub(super) fn cancel_language_work(&mut self) {
+        self.languages.inlay.clear();
         self.languages.service = None;
         self.languages.pending.clear();
         self.languages.progress.clear();

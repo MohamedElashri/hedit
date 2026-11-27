@@ -453,6 +453,10 @@ paths outside the root, file operations, and server commands. Local batches
 apply only after every file passes preflight. SSH also preflights all files.
 If a later host edit fails, completed files and their Undo remain visible.
 
+**View → Editor → Show inlay hints** shows inferred types and parameter labels
+from supported local language servers. Hints follow the active file's edits in
+fully loaded documents up to 512 KiB.
+
 ### Syntax highlighting
 
 Click the status-bar language to choose a syntax or return to **Automatic**.

@@ -287,6 +287,7 @@ impl Features {
             super::Feature::Formatting => self.formatting,
             super::Feature::Rename => self.rename,
             super::Feature::QuickFixes => self.quick_fixes,
+            super::Feature::InlayHints => true,
         }
     }
 }

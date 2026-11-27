@@ -155,3 +155,113 @@ pub fn apply(text: &str, edits: &[TextEdit], encoding: Encoding) -> Result<Strin
     out.push_str(&text[end..]);
     Ok(out)
 }
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InlayHint {
+    pub scalar: usize,
+    pub label: String,
+}
+
+pub(crate) const INLAY_DOCUMENT_LIMIT: usize = 512 * 1024;
+
+pub(crate) fn inlay_hints(
+    source: &str,
+    encoding: Encoding,
+    value: &serde_json::Value,
+) -> Vec<InlayHint> {
+    let mut start = 0;
+    let lines: Vec<_> = source
+        .split_inclusive('\n')
+        .map(|line| {
+            let entry = (line, start);
+            start += line.chars().count();
+            entry
+        })
+        .collect();
+    let mut hints = Vec::new();
+    for item in value.as_array().into_iter().flatten().take(2000) {
+        let Ok(position) = serde_json::from_value::<Position>(item["position"].clone()) else {
+            continue;
+        };
+        if position.character > 16_384 {
+            continue;
+        }
+        let (line, start) = lines
+            .get(position.line as usize)
+            .copied()
+            .unwrap_or_else(|| {
+                if position.line as usize == lines.len()
+                    && (source.is_empty() || source.ends_with('\n'))
+                {
+                    ("", start)
+                } else {
+                    ("", usize::MAX)
+                }
+            });
+        if start == usize::MAX {
+            continue;
+        }
+        let Ok(byte) = encoding.byte(
+            line,
+            Position {
+                line: 0,
+                character: position.character,
+            },
+        ) else {
+            continue;
+        };
+        let label = &item["label"];
+        let mut parts = Vec::new();
+        if let Some(label) = label.as_str() {
+            parts.push(label);
+        } else if let Some(label) = label.as_array() {
+            parts.extend(
+                label
+                    .iter()
+                    .take(16)
+                    .filter_map(|part| part["value"].as_str()),
+            );
+        }
+        let label: String = parts
+            .into_iter()
+            .flat_map(str::chars)
+            .filter(|ch| {
+                !ch.is_control() && !matches!(ch, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+            })
+            .take(120)
+            .collect();
+        if !label.trim().is_empty() {
+            hints.push(InlayHint {
+                scalar: start + line[..byte].chars().count(),
+                label,
+            });
+        }
+    }
+    hints.sort_by_key(|hint| hint.scalar);
+    hints.dedup();
+    hints
+}
+
+#[cfg(test)]
+#[test]
+fn inlay_hints_convert_utf16_and_read_label_parts() {
+    let value = serde_json::json!([
+        {"position":{"line":0,"character":1},"label":"ignored"},
+        {"position":{"line":0,"character":3},"label":[{"value":"x"},{"value":":"}]},
+        {"position":{"line":1,"character":0},"label":"i32"},
+        {"position":{"line":2,"character":0},"label":"outside"}
+    ]);
+    assert_eq!(
+        inlay_hints("🦀 x\r\nword", Encoding::Utf16, &value),
+        [
+            InlayHint {
+                scalar: 2,
+                label: "x:".into()
+            },
+            InlayHint {
+                scalar: 5,
+                label: "i32".into()
+            }
+        ]
+    );
+}

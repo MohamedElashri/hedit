@@ -34,6 +34,7 @@ pub enum Feature {
     Formatting,
     Rename,
     QuickFixes,
+    InlayHints,
 }
 impl Feature {
     fn method(self) -> &'static str {
@@ -45,6 +46,7 @@ impl Feature {
             Self::Formatting => "textDocument/formatting",
             Self::Rename => "textDocument/rename",
             Self::QuickFixes => "textDocument/codeAction",
+            Self::InlayHints => "textDocument/inlayHint",
         }
     }
     fn capability(self) -> &'static str {
@@ -56,6 +58,7 @@ impl Feature {
             Self::Formatting => "documentFormattingProvider",
             Self::Rename => "renameProvider",
             Self::QuickFixes => "codeActionProvider",
+            Self::InlayHints => "inlayHintProvider",
         }
     }
 }
@@ -462,12 +465,32 @@ impl Worker {
         if feature == Feature::QuickFixes {
             params = json!({"textDocument":{"uri":text::uri(&path)?},"range":{"start":position,"end":position},"context":{"diagnostics":session.diagnostics.get(&path).filter(|(r,_)|*r==revision).map(|(_,v)|v.iter().filter(|d|serde_json::from_value::<text::Range>(d["range"].clone()).is_ok_and(|r|(r.start.line,r.start.character)<=(position.line,position.character)&&(position.line,position.character)<=(r.end.line,r.end.character))).cloned().collect::<Vec<_>>()).unwrap_or_default(),"only":["quickfix"],"triggerKind":1}});
         }
-        let root = document.root.clone();
-        let result =
-            session
+        let passive = feature == Feature::InlayHints;
+        let timeout = if passive {
+            if document.text.len() > text::INLAY_DOCUMENT_LIMIT {
+                return Err("Inlay hints are unavailable for this large document.".into());
+            }
+            let end = session
                 .client
-                .request(feature.method(), params, cancel, Duration::from_secs(15));
-        let mut value = result?;
+                .encoding
+                .position(&document.text, document.text.chars().count())?;
+            params = json!({"textDocument":{"uri":text::uri(&path)?},"range":{"start":position,"end":end}});
+            Duration::from_millis(750)
+        } else {
+            Duration::from_secs(15)
+        };
+        let root = document.root.clone();
+        let mut value = session
+            .client
+            .request(feature.method(), params, cancel, timeout)?;
+        if passive {
+            value = serde_json::to_value(text::inlay_hints(
+                &document.text,
+                session.client.encoding,
+                &value,
+            ))
+            .map_err(super::error)?;
+        }
         if matches!(feature, Feature::Definition | Feature::References) {
             normalize_locations(&mut value, session.client.encoding, &session.documents)?;
         }

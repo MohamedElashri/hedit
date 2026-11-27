@@ -49,6 +49,7 @@ mod goto_matches;
 #[cfg(test)]
 mod goto_tests;
 mod group_tabs;
+mod inlay_hints;
 #[cfg(test)]
 mod interaction_tests;
 mod jobs;
@@ -2566,6 +2567,12 @@ impl HeditApp {
             cache.offer_shared(&self.editor_layout);
             cache
         };
+        let hints = self
+            .settings
+            .show_inlay_hints
+            .then(|| self.languages.inlay.get(buffer))
+            .flatten();
+        let display_inlays = layout_cache.set_inlays(hints, &projection, &buffer.view.folds);
         layout_cache.custom = extensions::syntax_for(
             &self.extensions,
             self.extension_syntax.get(&buffer.page.info.id),
@@ -2787,6 +2794,16 @@ impl HeditApp {
                         }
 
                         let bidi_rows: Arc<bidi_view::BidiRows> = latest_bidi.take();
+                        if let Some(inlays) = &display_inlays {
+                            inlays.paint(
+                                ui,
+                                &output,
+                                &bidi_rows,
+                                visible_rows.clone(),
+                                font_size,
+                                &theme,
+                            );
+                        }
                         let completed_drag = editor_interaction::complete_drag(
                             ui,
                             &mut output,
