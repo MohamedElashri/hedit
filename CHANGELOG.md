@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.7] - 2026-11-27
+
+- Fix committing from Source Control and keep the draft and index when Git rejects a commit.
+- Add collapsible change groups, staged and unstaged diff switching, and keyboard branch selection.
+- Fix rename staging, upstream status, repository discovery, and custom merge commits. Require a fresh confirmation to amend a commit.
+
 ## [0.7.6] - 2026-11-26
 
 - Upgrade egui and AccessKit together, preserving keyboard navigation, text selection, and recovery.
