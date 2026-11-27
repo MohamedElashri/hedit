@@ -483,6 +483,7 @@ impl Manager {
                 let registration: Registration = serde_json::from_slice(&data)
                     .map_err(|e| format!("{}: {e}", path.display()))?;
                 validate(&registration)?;
+                validate_registration_id(id, &registration)?;
                 Ok(Some(registration))
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -491,6 +492,7 @@ impl Manager {
     }
     pub fn configure(&self, id: &str, registration: Registration) -> Result<(), String> {
         validate(&registration)?;
+        validate_registration_id(id, &registration)?;
         let _lock = self.lock(id, false)?;
         let mut registration = registration;
         // Receipts can only be created by a verified managed installation.
@@ -732,6 +734,13 @@ fn qualified_language_id(value: &str) -> bool {
                     .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
         })
     })
+}
+
+fn validate_registration_id(id: &str, registration: &Registration) -> Result<(), String> {
+    if qualified_language_id(id) && !registration.languages.iter().any(|language| language == id) {
+        return Err("A qualified server ID must match one of its extension languages.".into());
+    }
+    Ok(())
 }
 
 fn valid_language_id(id: &str) -> bool {
