@@ -78,9 +78,13 @@ impl Index {
 
 fn collect(
     roots: &[PathBuf],
-    mut unsaved: BTreeMap<PathBuf, String>,
+    unsaved: BTreeMap<PathBuf, String>,
     cancel: &AtomicBool,
 ) -> Result<Results, String> {
+    let mut unsaved: BTreeMap<_, _> = unsaved
+        .into_iter()
+        .map(|(path, text)| (path.canonicalize().unwrap_or(path), text))
+        .collect();
     let files: BTreeSet<_> = search::walk(roots, "", cancel)?
         .into_iter()
         .chain(unsaved.keys().cloned())
@@ -170,9 +174,21 @@ mod tests {
         let file = directory.path().join("main.rs");
         std::fs::write(&file, "fn saved() {}\n").unwrap();
         std::fs::write(directory.path().join("lib.rs"), "fn from_disk() {}\n").unwrap();
+        #[cfg(unix)]
+        let alias = {
+            let alias_dir = tempfile::tempdir().unwrap();
+            let alias = alias_dir.path().join("project");
+            std::os::unix::fs::symlink(directory.path(), &alias).unwrap();
+            (alias.join("main.rs"), alias_dir)
+        };
+        #[cfg(unix)]
+        let source = alias.0.clone();
+        #[cfg(not(unix))]
+        let source = file.clone();
+        let canonical = file.canonicalize().unwrap();
         let results = collect(
             &[directory.path().to_owned()],
-            BTreeMap::from([(file.clone(), "\nfn unsaved() {}\n".into())]),
+            BTreeMap::from([(source, "\nfn unsaved() {}\n".into())]),
             &AtomicBool::new(false),
         )
         .unwrap();
@@ -180,7 +196,7 @@ mod tests {
         let unsaved = results
             .symbols
             .iter()
-            .find(|symbol| symbol.path == file)
+            .find(|symbol| symbol.path == canonical)
             .unwrap();
         assert_eq!(unsaved.name, "unsaved");
         assert_eq!(unsaved.line, 2);
@@ -188,5 +204,61 @@ mod tests {
             .symbols
             .iter()
             .any(|symbol| symbol.name == "from_disk"));
+    }
+
+    #[test]
+    fn workspace_symbol_mode_excludes_cached_file_matches() {
+        use crate::app::tests::{finish_app_job, frame, key, text_rect};
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("project");
+        std::fs::create_dir(&root).unwrap();
+        let symbol = root.join("lib.rs");
+        std::fs::write(&symbol, "fn needle_symbol() {}\n").unwrap();
+        std::fs::write(root.join("distractor.txt"), "plain text").unwrap();
+        let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        app.set_folder(hedit::folder::read_directory(root).unwrap());
+        app.settings.show_sidebar = false;
+        app.execute(&ctx, Command::Switcher);
+        app.palette_query = "distractor".into();
+        let start = Instant::now();
+        loop {
+            let output = frame(&ctx, &mut app, vec![]);
+            if output
+                .shapes
+                .iter()
+                .any(|shape| text_rect(&shape.shape, "distractor.txt").is_some())
+            {
+                break;
+            }
+            assert!(start.elapsed() < Duration::from_secs(5));
+            thread::sleep(Duration::from_millis(4));
+        }
+        app.palette_query = "@@needle_symbol".into();
+        let start = Instant::now();
+        loop {
+            let output = frame(&ctx, &mut app, vec![]);
+            if output
+                .shapes
+                .iter()
+                .any(|shape| text_rect(&shape.shape, "needle_symbol").is_some())
+            {
+                assert!(!output.shapes.iter().any(|shape| text_rect(
+                    &shape.shape,
+                    "distractor.txt"
+                )
+                .is_some()));
+                break;
+            }
+            assert!(start.elapsed() < Duration::from_secs(5));
+            thread::sleep(Duration::from_millis(4));
+        }
+        frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)]);
+        finish_app_job(&mut app, &ctx);
+        assert_eq!(
+            app.active().page.info.path.as_ref().map(PathBuf::from),
+            Some(symbol.canonicalize().unwrap())
+        );
     }
 }

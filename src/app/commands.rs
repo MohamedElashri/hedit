@@ -2324,7 +2324,7 @@ impl HeditApp {
                 scored.sort_by_key(|(found, _)| std::cmp::Reverse(*found));
             }
             items.extend(scored.into_iter().map(|(_, item)| item));
-            if !commands && !paste && !here && !self.workspace.folders.is_empty() {
+            if !commands && !paste && !here && workspace_query.is_none() && !self.workspace.folders.is_empty() {
                 ui.horizontal(|ui| {
                     if self.project.indexing() {
                         targets_pending = true;
