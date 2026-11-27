@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.8] - 2026-11-27
+
+- Rework Source Control and resolve Git conflicts block by block.
+- Compare files with unsaved edits and restore saved versions from local history.
+- Find workspace symbols and save or pin folder searches.
+- Add language packs, semantic highlighting, inlay hints, and sticky scope headers.
+- Run project tasks and Rust tests from the editor. Preview CSV and TSV files as tables.
+
 ## [0.7.7] - 2026-11-27
 
 - Fix committing from Source Control and keep the draft and index when Git rejects a commit.

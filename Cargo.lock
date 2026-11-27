@@ -1992,7 +1992,7 @@ dependencies = [
 
 [[package]]
 name = "hedit"
-version = "0.7.7"
+version = "0.7.8"
 dependencies = [
  "ab_glyph",
  "accesskit_consumer",
@@ -2051,7 +2051,7 @@ dependencies = [
 
 [[package]]
 name = "hedit-broker"
-version = "0.7.7"
+version = "0.7.8"
 dependencies = [
  "cap-fs-ext",
  "cap-std",
@@ -2074,7 +2074,7 @@ dependencies = [
 
 [[package]]
 name = "hedit-core"
-version = "0.7.7"
+version = "0.7.8"
 dependencies = [
  "encoding_rs",
  "flate2",
@@ -2099,7 +2099,7 @@ dependencies = [
 
 [[package]]
 name = "hedit-json-tools"
-version = "0.7.7"
+version = "0.7.8"
 dependencies = [
  "hedit-broker",
  "hedit-plugin",
@@ -2110,7 +2110,7 @@ dependencies = [
 
 [[package]]
 name = "hedit-plugin"
-version = "0.7.7"
+version = "0.7.8"
 dependencies = [
  "getrandom 0.4.3",
  "hex",
@@ -2124,7 +2124,7 @@ dependencies = [
 
 [[package]]
 name = "hedit-protocol"
-version = "0.7.7"
+version = "0.7.8"
 dependencies = [
  "serde",
  "serde_json",
@@ -2132,7 +2132,7 @@ dependencies = [
 
 [[package]]
 name = "hedit-remote"
-version = "0.7.7"
+version = "0.7.8"
 dependencies = [
  "base64 0.22.1",
  "cap-std",
