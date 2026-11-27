@@ -6,6 +6,7 @@ use hedit::{
 };
 use std::sync::{mpsc, Arc, Weak};
 mod blocks;
+mod semantic;
 pub(super) mod text_index;
 pub(super) use text_index::TextIndex;
 
@@ -75,6 +76,7 @@ pub(super) fn code_job(
 #[derive(Default)]
 pub(super) struct LayoutCache {
     pub(super) custom: Option<Arc<syntax::declarative::Definition>>,
+    semantic: Option<Arc<semantic::Colors>>,
     entry: Option<Arc<Entry>>,
     shared: Option<Arc<Entry>>,
     document: Option<(u64, u64)>,
@@ -91,6 +93,7 @@ struct HighlightJob {
 
 struct Entry {
     custom: Option<Arc<syntax::declarative::Definition>>,
+    semantic: Option<Arc<semantic::Colors>>,
     language: Language,
     font: Font,
     wrap_width: f32,
@@ -192,6 +195,29 @@ impl LayoutCache {
             .filter(|_| self.document == other.document);
     }
 
+    pub(super) fn set_semantic(
+        &mut self,
+        source: Option<Arc<Vec<hedit::language_server::text::SemanticToken>>>,
+        projection: &Arc<hedit::advanced::Projection>,
+        folds: &[hedit::advanced::Fold],
+    ) {
+        let Some(source) = source.filter(|source| !source.is_empty()) else {
+            self.semantic = None;
+            return;
+        };
+        if !self
+            .semantic
+            .as_ref()
+            .is_some_and(|colors| colors.current(projection, &source))
+        {
+            self.semantic = Some(Arc::new(semantic::Colors::new(
+                projection.clone(),
+                source,
+                folds,
+            )));
+        }
+    }
+
     pub(super) fn layout(
         &mut self,
         ui: &egui::Ui,
@@ -206,6 +232,16 @@ impl LayoutCache {
             (None, None) => true,
             _ => false,
         };
+        let semantic = self
+            .semantic
+            .as_ref()
+            .filter(|colors| colors.matches_text(text))
+            .cloned();
+        let semantic_matches = |entry: &Entry| match (&entry.semantic, &semantic) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        };
         if let Some(entry) = self.shared.take().filter(|entry| {
             let atlas = ui.fonts(|fonts| Arc::downgrade(fonts.atlas_identity()));
             entry.language == language
@@ -215,6 +251,7 @@ impl LayoutCache {
                 && entry.atlas.ptr_eq(&atlas)
                 && entry.theme == *theme
                 && custom_matches(entry)
+                && semantic_matches(entry)
                 && entry.galley.job.text == text
         }) {
             let galley = Arc::clone(&entry.galley);
@@ -243,6 +280,7 @@ impl LayoutCache {
                 && entry.pixels_per_point == pixels_per_point
                 && entry.atlas.ptr_eq(&atlas)
                 && entry.theme == *theme
+                && semantic_matches(entry)
                 && match (&entry.runs, &runs) {
                     (Some(a), Some(b)) => Arc::ptr_eq(a, b),
                     (None, None) => true,
@@ -253,7 +291,7 @@ impl LayoutCache {
                 return Arc::clone(&entry.galley);
             }
         }
-        let job = code_job(
+        let mut job = code_job(
             text,
             language,
             font,
@@ -261,6 +299,9 @@ impl LayoutCache {
             theme,
             runs.as_deref().map(Vec::as_slice),
         );
+        if let Some(colors) = &semantic {
+            colors.apply(&mut job, theme);
+        }
         let compatible = self.entry.as_ref().filter(|entry| {
             entry.language == language
                 && entry.font == font
@@ -288,6 +329,7 @@ impl LayoutCache {
         });
         self.entry = Some(Arc::new(Entry {
             custom: self.custom.clone(),
+            semantic,
             language,
             font,
             wrap_width,

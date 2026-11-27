@@ -252,6 +252,8 @@ pub struct Features {
     pub rename: bool,
     pub quick_fixes: bool,
     pub diagnostics: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub semantic_highlighting: Option<bool>,
 }
 impl Default for Features {
     fn default() -> Self {
@@ -264,6 +266,7 @@ impl Default for Features {
             rename: true,
             quick_fixes: true,
             diagnostics: true,
+            semantic_highlighting: None,
         }
     }
 }
@@ -277,6 +280,12 @@ impl Features {
             || self.quick_fixes
             || self.formatting
             || self.diagnostics
+            || self.semantic_highlighting == Some(true)
+    }
+    pub fn semantic_highlighting(&self) -> bool {
+        // A saved configuration with every feature disabled keeps its server stopped.
+        self.semantic_highlighting
+            .unwrap_or_else(|| self.any_enabled())
     }
     pub fn enabled(&self, feature: super::Feature) -> bool {
         match feature {
@@ -287,6 +296,7 @@ impl Features {
             super::Feature::Formatting => self.formatting,
             super::Feature::Rename => self.rename,
             super::Feature::QuickFixes => self.quick_fixes,
+            super::Feature::SemanticTokens => self.semantic_highlighting(),
         }
     }
 }

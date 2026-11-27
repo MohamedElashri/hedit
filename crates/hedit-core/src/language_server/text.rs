@@ -86,6 +86,149 @@ impl Encoding {
     }
 }
 
+pub(crate) const SEMANTIC_TYPES: &[&str] = &[
+    "namespace",
+    "type",
+    "class",
+    "enum",
+    "interface",
+    "struct",
+    "typeParameter",
+    "parameter",
+    "variable",
+    "property",
+    "enumMember",
+    "event",
+    "function",
+    "method",
+    "macro",
+    "keyword",
+    "modifier",
+    "comment",
+    "string",
+    "number",
+    "regexp",
+    "operator",
+    "decorator",
+];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SemanticKind {
+    Type,
+    Parameter,
+    Property,
+    Function,
+    Keyword,
+    Comment,
+    String,
+    Number,
+    Operator,
+}
+
+impl SemanticKind {
+    fn classify(name: &str) -> Option<Self> {
+        Some(match name {
+            "namespace" | "type" | "class" | "enum" | "interface" | "struct" | "typeParameter" => {
+                Self::Type
+            }
+            "parameter" | "enumMember" => Self::Parameter,
+            "property" | "event" => Self::Property,
+            "function" | "method" | "macro" | "decorator" => Self::Function,
+            "keyword" | "modifier" => Self::Keyword,
+            "comment" => Self::Comment,
+            "string" | "regexp" => Self::String,
+            "number" => Self::Number,
+            "operator" => Self::Operator,
+            _ => return None,
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SemanticToken {
+    pub start: usize,
+    pub end: usize,
+    pub kind: SemanticKind,
+}
+
+pub(crate) fn semantic_tokens(
+    source: &str,
+    encoding: Encoding,
+    capability: &serde_json::Value,
+    result: &serde_json::Value,
+) -> Result<Vec<SemanticToken>, String> {
+    if result.is_null() {
+        return Ok(vec![]);
+    }
+    let invalid = || "Invalid language-server semantic tokens.".to_owned();
+    let legend = capability["legend"]["tokenTypes"]
+        .as_array()
+        .ok_or_else(invalid)?;
+    let data = result["data"].as_array().ok_or_else(invalid)?;
+    if legend.len() > 256 || data.len() > 100_000 || !data.len().is_multiple_of(5) {
+        return Err(invalid());
+    }
+    fn content(line: &str) -> &str {
+        line.strip_suffix("\r\n")
+            .or_else(|| line.strip_suffix('\n'))
+            .unwrap_or(line)
+    }
+    let mut lines = source.split_inclusive('\n');
+    let mut line = lines.next().unwrap_or("");
+    let mut chars = content(line).chars();
+    let mut previous_column = 0u32;
+    let mut units = 0u32;
+    let mut scalar = 0;
+    let mut line_start = 0;
+    let mut tokens = Vec::new();
+    for chunk in data.as_chunks::<5>().0 {
+        let number = |i: usize| {
+            chunk[i]
+                .as_u64()
+                .and_then(|v| u32::try_from(v).ok())
+                .ok_or_else(invalid)
+        };
+        let delta_line = number(0)?;
+        if delta_line != 0 {
+            for _ in 0..delta_line {
+                line_start += line.chars().count();
+                line = lines.next().ok_or_else(invalid)?;
+            }
+            chars = content(line).chars();
+            previous_column = 0;
+            units = 0;
+            scalar = line_start;
+        }
+        let column = previous_column
+            .checked_add(number(1)?)
+            .ok_or_else(invalid)?;
+        let length = number(2)?;
+        if length == 0 || column < units {
+            return Err(invalid());
+        }
+        let end_column = column.checked_add(length).ok_or_else(invalid)?;
+        let mut advance = |target| {
+            while units < target {
+                units += encoding.width(chars.next().ok_or_else(invalid)?) as u32;
+                scalar += 1;
+            }
+            (units == target).then_some(scalar).ok_or_else(invalid)
+        };
+        let start = advance(column)?;
+        let end = advance(end_column)?;
+        let name = legend
+            .get(number(3)? as usize)
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(invalid)?;
+        let _ = number(4)?;
+        if let Some(kind) = SemanticKind::classify(name) {
+            tokens.push(SemanticToken { start, end, kind });
+        }
+        previous_column = column;
+    }
+    Ok(tokens)
+}
+
 pub fn uri(path: &Path) -> Result<String, String> {
     url::Url::from_file_path(path)
         .map(String::from)
@@ -154,4 +297,34 @@ pub fn apply(text: &str, edits: &[TextEdit], encoding: Encoding) -> Result<Strin
     }
     out.push_str(&text[end..]);
     Ok(out)
+}
+
+#[cfg(test)]
+mod semantic_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn semantic_tokens_convert_utf16_positions_across_crlf() {
+        let capability = json!({"legend": {"tokenTypes": ["parameter", "property"]}});
+        let source = "🦀 foo\r\n\tbar";
+        let response = json!({"data": [0, 3, 3, 0, 0, 1, 1, 3, 1, 0]});
+        assert_eq!(
+            semantic_tokens(source, Encoding::Utf16, &capability, &response).unwrap(),
+            [
+                SemanticToken {
+                    start: 2,
+                    end: 5,
+                    kind: SemanticKind::Parameter
+                },
+                SemanticToken {
+                    start: 8,
+                    end: 11,
+                    kind: SemanticKind::Property
+                },
+            ]
+        );
+        let split_surrogate = json!({"data": [0, 1, 1, 0, 0]});
+        assert!(semantic_tokens(source, Encoding::Utf16, &capability, &split_surrogate).is_err());
+    }
 }

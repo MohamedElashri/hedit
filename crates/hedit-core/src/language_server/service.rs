@@ -34,6 +34,7 @@ pub enum Feature {
     Formatting,
     Rename,
     QuickFixes,
+    SemanticTokens,
 }
 impl Feature {
     fn method(self) -> &'static str {
@@ -45,6 +46,7 @@ impl Feature {
             Self::Formatting => "textDocument/formatting",
             Self::Rename => "textDocument/rename",
             Self::QuickFixes => "textDocument/codeAction",
+            Self::SemanticTokens => "textDocument/semanticTokens/full",
         }
     }
     fn capability(self) -> &'static str {
@@ -56,6 +58,7 @@ impl Feature {
             Self::Formatting => "documentFormattingProvider",
             Self::Rename => "renameProvider",
             Self::QuickFixes => "codeActionProvider",
+            Self::SemanticTokens => "semanticTokensProvider",
         }
     }
 }
@@ -435,6 +438,10 @@ impl Worker {
                 s.documents.contains_key(&path)
                     && s.features.enabled(feature)
                     && s.client.supported(feature.capability())
+                    && (feature != Feature::SemanticTokens || {
+                        let full = &s.client.capabilities["semanticTokensProvider"]["full"];
+                        full == true || full.is_object()
+                    })
             })
             .min_by(|(ka, a), (kb, b)| b.priority.cmp(&a.priority).then_with(|| ka.cmp(kb)))
             .map(|(key, _)| key.clone());
@@ -447,6 +454,9 @@ impl Worker {
         }
         let position = session.client.encoding.position(&document.text, scalar)?;
         let mut params = json!({"textDocument":{"uri":text::uri(&path)?},"position":position});
+        if feature == Feature::SemanticTokens {
+            params = json!({"textDocument":{"uri":text::uri(&path)?}});
+        }
         if feature == Feature::References {
             params["context"] = json!({"includeDeclaration":true});
         }
@@ -463,11 +473,23 @@ impl Worker {
             params = json!({"textDocument":{"uri":text::uri(&path)?},"range":{"start":position,"end":position},"context":{"diagnostics":session.diagnostics.get(&path).filter(|(r,_)|*r==revision).map(|(_,v)|v.iter().filter(|d|serde_json::from_value::<text::Range>(d["range"].clone()).is_ok_and(|r|(r.start.line,r.start.character)<=(position.line,position.character)&&(position.line,position.character)<=(r.end.line,r.end.character))).cloned().collect::<Vec<_>>()).unwrap_or_default(),"only":["quickfix"],"triggerKind":1}});
         }
         let root = document.root.clone();
-        let result =
-            session
-                .client
-                .request(feature.method(), params, cancel, Duration::from_secs(15));
-        let mut value = result?;
+        let timeout = if feature == Feature::SemanticTokens {
+            Duration::from_millis(800)
+        } else {
+            Duration::from_secs(15)
+        };
+        let mut value = session
+            .client
+            .request(feature.method(), params, cancel, timeout)?;
+        if feature == Feature::SemanticTokens {
+            value = serde_json::to_value(text::semantic_tokens(
+                &document.text,
+                session.client.encoding,
+                &session.client.capabilities["semanticTokensProvider"],
+                &value,
+            )?)
+            .map_err(super::error)?;
+        }
         if matches!(feature, Feature::Definition | Feature::References) {
             normalize_locations(&mut value, session.client.encoding, &session.documents)?;
         }

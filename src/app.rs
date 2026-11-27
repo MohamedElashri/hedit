@@ -2572,6 +2572,11 @@ impl HeditApp {
             &buffer.page.info.name,
             language,
         );
+        layout_cache.set_semantic(
+            self.languages.semantic_for(buffer),
+            &projection,
+            &buffer.view.folds,
+        );
         let row_height = ui.fonts_mut(|f| f.row_height(&typography.id()));
         let line_height = typography.line_height;
         // Like Sublime, the last line can scroll up to the top: the editor is a

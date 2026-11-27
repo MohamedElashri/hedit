@@ -412,8 +412,10 @@ up to 32 documents totaling up to 32 MiB and runs up to eight server sessions. S
 servers. Active files have priority. For each action, the highest-priority
 eligible server wins. Server ID breaks ties. Diagnostics are combined and
 labeled. Python defaults use ty for intelligence and Ruff for linting/formatting.
-Semantic highlighting, server snippets or commands, and unsolicited workspace
-edits are unsupported.
+Local servers that support semantic tokens can color parameters, fields, types,
+and functions with the active theme. Turn this off for a server under **Configure
+→ Features → Semantic highlighting**. Server snippets, server commands, and
+unsolicited workspace edits are unsupported.
 
 In SSH workspaces, install the matching helper. The manager targets the host
 and requires execution trust. Revocation or disconnect stops its workers.

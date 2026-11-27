@@ -33,6 +33,14 @@ struct Guard {
     root: PathBuf,
     feature: Feature,
 }
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SemanticKey {
+    view: u64,
+    revision: u64,
+    language: syntax::Language,
+    path: String,
+}
+
 enum Intent {
     List,
     Manage,
@@ -40,6 +48,7 @@ enum Intent {
     Detect(String),
     Sync,
     Feature(Guard),
+    Semantics(SemanticKey),
 }
 mod problems;
 pub(super) mod refactor;
@@ -77,6 +86,8 @@ pub(super) struct LanguageServers {
     blocked: bool,
     pub(super) directory: Option<PathBuf>,
     last_completion: Option<(u64, u64, usize)>,
+    semantic_request: Option<SemanticKey>,
+    semantic: Option<(SemanticKey, Arc<Vec<text::SemanticToken>>)>,
 }
 struct Configuration {
     id: String,
@@ -172,6 +183,27 @@ impl Configuration {
     }
 }
 impl LanguageServers {
+    pub(super) fn semantic_for(
+        &self,
+        buffer: &hedit::workspace::Buffer,
+    ) -> Option<Arc<Vec<text::SemanticToken>>> {
+        let (key, tokens) = self.semantic.as_ref()?;
+        (key.view == buffer.view.id
+            && key.revision == buffer.page.info.revision
+            && key.language == buffer.language()
+            && !buffer.follow
+            && !buffer.page.info.paged
+            && buffer.page.info.path.as_deref() == Some(key.path.as_str()))
+        .then(|| tokens.clone())
+    }
+
+    fn clear_semantics(&mut self) {
+        self.semantic_request = None;
+        self.semantic = None;
+        self.pending
+            .retain(|_, intent| !matches!(intent, Intent::Semantics(_)));
+    }
+
     fn send(&mut self, operation: Operation, intent: Intent) -> Result<(), String> {
         let service = self
             .service
@@ -188,6 +220,7 @@ impl LanguageServers {
         self.next += 1;
         service.submit(self.next, operation)?;
         if changes_servers {
+            self.clear_semantics();
             // Replies already in flight belong to the previous configuration.
             // Invalidate them when the change is queued, before the next poll.
             self.pending
@@ -428,15 +461,89 @@ impl HeditApp {
             self.languages.explorer_badges = None;
         }
         let _ = self.sync_language_documents(false);
+        self.schedule_semantics();
         if !self.languages.installed.is_empty()
             && self.languages.snapshots != self.language_snapshots()
         {
             ctx.request_repaint_after(Duration::from_millis(160));
         }
     }
+    fn schedule_semantics(&mut self) {
+        if self.workspace.remote.is_some()
+            || self.busy
+            || self.closing
+            || self.languages.pending.values().any(|intent| {
+                matches!(
+                    intent,
+                    Intent::Feature(_) | Intent::Semantics(_) | Intent::Sync
+                )
+            })
+        {
+            return;
+        }
+        let buffer = self.active();
+        let Some(path) = buffer.page.info.path.as_ref() else {
+            return;
+        };
+        if buffer.follow
+            || buffer.page.info.paged
+            || buffer.page.text.len() > lsp::MAX_DOCUMENT
+            || !self.languages.snapshots.iter().any(|snapshot| {
+                snapshot.id == buffer.view.id
+                    && snapshot.revision == buffer.page.info.revision
+                    && snapshot.language == buffer.language().id()
+                    && snapshot.path == Path::new(path)
+            })
+        {
+            return;
+        }
+        let root = self.language_root(Path::new(path));
+        if !self.languages.installed.iter().any(|entry| {
+            entry.registration.features.semantic_highlighting()
+                && entry.registration.enabled_at(&root)
+                && entry
+                    .registration
+                    .languages
+                    .iter()
+                    .any(|language| language == buffer.language().id())
+                && self.languages.statuses.values().any(|status| {
+                    status.id == entry.id
+                        && status.state == "Running"
+                        && Path::new(path).starts_with(&status.root)
+                })
+        }) {
+            return;
+        }
+        let key = SemanticKey {
+            view: buffer.view.id,
+            revision: buffer.page.info.revision,
+            language: buffer.language(),
+            path: path.clone(),
+        };
+        if self.languages.semantic_request.as_ref() == Some(&key) {
+            return;
+        }
+        let operation = Operation::Request {
+            path: PathBuf::from(&key.path),
+            revision: key.revision,
+            scalar: 0,
+            feature: Feature::SemanticTokens,
+            tab_size: 4,
+            spaces: true,
+        };
+        if self
+            .languages
+            .send(operation, Intent::Semantics(key.clone()))
+            .is_ok()
+        {
+            self.languages.semantic_request = Some(key);
+        }
+    }
+
     fn language_event(&mut self, ctx: &egui::Context, event: Event) {
         match event {
             Event::Disconnected(e) => {
+                self.languages.clear_semantics();
                 self.languages.service = None;
                 self.languages.blocked = true;
                 self.languages.pending.clear();
@@ -453,6 +560,7 @@ impl HeditApp {
                     self.languages.snapshots.clear();
                 }
                 if status.state != "Running" {
+                    self.languages.clear_semantics();
                     self.languages.problem_rows = None;
                     self.languages.explorer_badges = None;
                     self.languages.diagnostics.retain(|_, sources| {
@@ -564,8 +672,25 @@ impl HeditApp {
                 }
             }
             Event::Response { ticket, result } => {
-                let Some(Intent::Feature(guard)) = self.languages.pending.remove(&ticket) else {
-                    return;
+                let guard = match self.languages.pending.remove(&ticket) {
+                    Some(Intent::Feature(guard)) => guard,
+                    Some(Intent::Semantics(key)) => {
+                        let tokens = result
+                            .ok()
+                            .filter(|reply| {
+                                reply.feature == Feature::SemanticTokens
+                                    && reply.path == Path::new(&key.path)
+                                    && reply.revision == key.revision
+                            })
+                            .and_then(|reply| {
+                                serde_json::from_value::<Vec<text::SemanticToken>>(reply.value).ok()
+                            });
+                        if let Some(tokens) = tokens {
+                            self.languages.semantic = Some((key, Arc::new(tokens)));
+                        }
+                        return;
+                    }
+                    _ => return,
                 };
                 let b = self.active();
                 if b.view.id != guard.view
@@ -711,6 +836,7 @@ impl HeditApp {
             return Ok(());
         }
         match reply.feature {
+            Feature::SemanticTokens => {}
             Feature::Completion => self.publish_language_completions(reply.value, reply.encoding),
             Feature::Hover => {
                 fn collect(value: &Value, out: &mut String) {
@@ -1157,6 +1283,10 @@ impl HeditApp {
                     ui.checkbox(&mut features.definition, "Definition"); ui.checkbox(&mut features.references, "References");
                     ui.checkbox(&mut features.rename, "Rename"); ui.checkbox(&mut features.quick_fixes, "Quick fixes");
                     ui.checkbox(&mut features.formatting, "Formatting"); ui.checkbox(&mut features.diagnostics, "Diagnostics");
+                    let mut semantic_highlighting = features.semantic_highlighting();
+                    if ui.checkbox(&mut semantic_highlighting, "Semantic highlighting").changed() {
+                        features.semantic_highlighting = Some(semantic_highlighting);
+                    }
                 });
                 if editor.executable.trim().is_empty() { ui.checkbox(&mut editor.override_arguments, "Override default launch arguments"); }
                 if ui.small_button("Use preset arguments").clicked() {
@@ -1259,6 +1389,7 @@ impl HeditApp {
         self.languages.last_completion = None;
     }
     pub(super) fn cancel_language_work(&mut self) {
+        self.languages.clear_semantics();
         self.languages.service = None;
         self.languages.pending.clear();
         self.languages.progress.clear();
