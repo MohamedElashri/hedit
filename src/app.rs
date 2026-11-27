@@ -12,6 +12,7 @@ mod close;
 #[cfg(test)]
 mod close_tests;
 mod commands;
+mod conflict_blocks;
 mod controls;
 mod counterpart;
 #[cfg(test)]

@@ -260,6 +260,7 @@ impl HeditApp {
         if self.quality.diff_open {
             self.diff_window(ctx);
         }
+        self.conflict_blocks_window(ctx);
         if self.quality.file_action.is_some() {
             self.file_action_window(ctx);
         }

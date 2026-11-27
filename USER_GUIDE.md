@@ -587,6 +587,10 @@ prompts are disabled. Signing and hooks follow Git configuration.
 <!-- docs-screenshot docs/images/git.png | Source Control with a syntax-colored file diff -->
 
 Conflicts show **Current · ours**, **Incoming · theirs**, and the ancestor.
+**Resolve conflict blocks…** opens a local text conflict and lets you take either
+side or both for each block. Edit the result, then choose **Apply to Editor**.
+Save and stage when ready. Undo restores the original markers.
+
 **Use Current/Incoming…** confirms and backs up; **Open to resolve** combines in
 the editor. Review and stage afterwards, including deletions. During rebase,
 Current is the destination and Incoming the replayed commit. Binary, symlink,

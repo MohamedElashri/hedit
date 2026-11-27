@@ -69,6 +69,8 @@ impl Default for Config {
 }
 #[derive(Default)]
 pub(super) struct Quality {
+    pub conflict_path: Option<PathBuf>,
+    pub conflict_draft: Option<super::conflict_blocks::Draft>,
     pub options: search::Options,
     pub selection_only: bool,
     pub scope: Option<(u64, usize, usize)>,

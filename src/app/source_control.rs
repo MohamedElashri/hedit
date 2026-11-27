@@ -2212,6 +2212,11 @@ impl HeditApp {
         let enabled = !self.source_control.pending && self.source_control.prompt.is_none();
         ui.add_enabled_ui(enabled, |ui| { ui.horizontal_wrapped(|ui| {
             if ui.button("Open to resolve").clicked() { self.git_open_file(ctx, &selection.path); }
+            if let Some(root) = self.source_control.root.as_ref().filter(|_| self.workspace.remote.is_none()) {
+                if ui.button("Resolve conflict blocks…").clicked() {
+                    self.resolve_conflict_blocks(ctx, root.join(&selection.path));
+                }
+            }
             for (ours, label, content) in [(true,"Use Current…",&conflict.ours),(false,"Use Incoming…",&conflict.theirs)] {
                 if ui.add_enabled(content.is_some(), egui::Button::new(label)).clicked() {
                     self.git_confirm("Replace conflict file", format!("Replace {} with the complete {} version? The working file is backed up first. Review and stage it afterward to mark it resolved.", selection.path.display(),if ours { "Current" } else { "Incoming" }), Operation::Resolve { selection: selection.clone(), ours, expected: conflict.expected.clone(), backup: self.workspace.store.directory().join("git-backups") });
