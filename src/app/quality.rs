@@ -76,6 +76,7 @@ pub(super) struct Quality {
     pub last_find: Option<LastFind>,
     pub folders_open: bool,
     pub folder_query: String,
+    pub saved_searches: folder_search::Saved,
     pub folder_initialized: bool,
     pub folder_generation: u64,
     pub folder_rows: folder_search::Rows,
