@@ -176,6 +176,7 @@ pub struct Settings {
     pub draw_white_space: bool,
     pub draw_indent_guides: bool,
     pub show_minimap: bool,
+    pub show_sticky_scope: bool,
     pub auto_indent: bool,
     pub smart_indent: bool,
     /// Backspace in leading whitespace removes one indentation level.
@@ -290,6 +291,7 @@ impl Default for Settings {
             draw_white_space: false,
             draw_indent_guides: true,
             show_minimap: false,
+            show_sticky_scope: false,
             auto_indent: true,
             smart_indent: true,
             smart_backspace: true,

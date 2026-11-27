@@ -137,6 +137,7 @@ pub(super) enum Command {
     UnfoldAll,
     IndentGuides,
     Minimap,
+    StickyScope,
     New,
     NewFileFromTemplate,
     NewWindow,
@@ -405,6 +406,7 @@ impl Command {
         Self::UnfoldAll,
         Self::IndentGuides,
         Self::Minimap,
+        Self::StickyScope,
         Self::New,
         Self::NewFileFromTemplate,
         Self::NewWindow,
@@ -692,6 +694,7 @@ impl Command {
             Self::UnfoldAll => "Unfold all",
             Self::IndentGuides => "Show indentation guides",
             Self::Minimap => "Show minimap",
+            Self::StickyScope => "Show sticky scope",
             Self::New => "New file",
             Self::NewFileFromTemplate => "New File from Template…",
             Self::NewWindow => "New window",
@@ -1332,6 +1335,7 @@ impl HeditApp {
             Command::SoftTabs => self.settings.smart_backspace,
             Command::IndentGuides => self.settings.draw_indent_guides,
             Command::Minimap => self.settings.show_minimap,
+            Command::StickyScope => self.settings.show_sticky_scope,
             Command::SinglePane => self.panes.mode == 0,
             Command::SplitColumns => self.panes.mode == 1,
             Command::SplitRows => self.panes.mode == 2,
@@ -1727,6 +1731,9 @@ impl HeditApp {
                 self.settings.draw_indent_guides = !self.settings.draw_indent_guides
             }
             Command::Minimap => self.settings.show_minimap = !self.settings.show_minimap,
+            Command::StickyScope => {
+                self.settings.show_sticky_scope = !self.settings.show_sticky_scope
+            }
             Command::DetectIndent => self.detect_indent(),
             Command::Fold => self.fold(false),
             Command::FoldAll => self.fold(true),

@@ -1445,6 +1445,7 @@ impl HeditApp {
                 Command::Whitespace,
                 Command::IndentGuides,
                 Command::Minimap,
+                Command::StickyScope,
                 Command::Wrap,
                 Command::ToggleSpellCheck,
                 Command::NextMisspelling,

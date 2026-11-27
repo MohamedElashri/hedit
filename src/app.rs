@@ -124,6 +124,7 @@ mod shortcut_preset;
 mod snippet_fields;
 mod source_control;
 mod spell_check;
+mod sticky_scope;
 mod tab_strip;
 mod tab_switch;
 #[cfg(test)]
@@ -344,6 +345,7 @@ pub struct HeditApp {
     live_find: find_live::LiveFind,
     row_indexes: [row_index::Cache; panes::MAX_GROUPS],
     minimaps: [minimap::Cache; panes::MAX_GROUPS],
+    sticky_scopes: [sticky_scope::Cache; panes::MAX_GROUPS],
     markdown: markdown::Markdown,
     /// Where the cursor was before Go to Anything previewed a result.
     goto_origin: Option<goto_anything::Origin>,
@@ -573,6 +575,7 @@ impl HeditApp {
             line_cursor_goal: None,
             live_find: Default::default(),
             row_indexes: Default::default(),
+            sticky_scopes: Default::default(),
             minimaps: Default::default(),
             markdown: Default::default(),
             goto_origin: None,
@@ -2689,6 +2692,10 @@ impl HeditApp {
         } else {
             Arc::default()
         };
+        let sticky = self.settings.show_sticky_scope
+            && !self.distraction_free
+            && self.sticky_scopes[pane_id].refresh(buffer);
+        let mut sticky_top = None;
         let mut fold_click: Option<(hedit::advanced::Fold, bool)> = None;
         // Move the text out for this frame instead of copying a page of up to
         // 2 MiB; it goes back, possibly edited, right after the editor is drawn.
@@ -2778,6 +2785,26 @@ impl HeditApp {
                         let row_index = self.row_indexes[pane_id].get(&output.galley);
                         let visible_rows =
                             row_index.visible(&output.galley, output.galley_pos, ui.clip_rect());
+                        if sticky {
+                            let first = output
+                                .galley
+                                .cursor_from_pos(egui::vec2(
+                                    0.0,
+                                    ui.clip_rect().top() - output.galley_pos.y,
+                                ))
+                                .index
+                                .0;
+                            sticky_top = Some(
+                                source_index
+                                    .line_column(
+                                        &old,
+                                        projection.source(first),
+                                        usize::from(buffer.view.tab_size.unwrap_or(4)),
+                                    )
+                                    .0
+                                    + 1,
+                            );
+                        }
                         if markdown_split {
                             markdown_layout = Some((
                                 Arc::clone(&output.galley),
@@ -3663,6 +3690,16 @@ impl HeditApp {
                     ));
                 }
             }
+        }
+        if let Some(line) = sticky_top.and_then(|top| {
+            self.sticky_scopes[pane_id].show(
+                ui,
+                editor_area.intersect(scroll_output.inner_rect),
+                top,
+                &theme,
+            )
+        }) {
+            self.jump_to_line(ctx, line, None);
         }
         if let Some((galley, projection, inset)) = markdown_layout {
             self.markdown.scroll.source(

@@ -652,6 +652,10 @@ The status bar shows position, selected characters and lines, indentation, line
 endings, encoding, syntax, and recovery. Hover for details or click the recovery
 dot for settings.
 
+**View → Editor → Show sticky scope** keeps the enclosing declaration or
+Markdown heading above the visible source while you scroll. Click it to jump
+to its line. Code scopes use the file's indentation.
+
 ### Tabs in editor groups
 
 Each group has its own tab strip. Open a file in the focused group. The same
