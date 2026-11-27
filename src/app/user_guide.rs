@@ -29,7 +29,7 @@ documents! {
     "assets/licenses/lua-MIT.txt",
     "assets/licenses/Noto-Sans-Arabic-OFL.txt",
     "docs/extensions.md", "docs/extension-security.md", "docs/plugin-sdk.md", "docs/plugin-services.md", "docs/plugin-broker.md", "examples/extensions/document-assist.json", "examples/extensions/document-assist.fixtures.json", "examples/extensions/demo-visuals.json", "examples/extensions/markdown-task.json",
-    "examples/extensions/markdown-quote.json",
+    "examples/extensions/markdown-quote.json", "examples/extensions/json-language-pack.json",
     "schemas/plugin-manifest.schema.json", "schemas/hedit-sdk.lua",
     "examples/extensions/scoped-json.json", "examples/extensions/scoped-json.lua", "examples/extensions/scoped-json.fixtures.json",
     "examples/extensions/scoped-rename.json", "examples/extensions/scoped-rename.lua", "examples/extensions/scoped-rename.fixtures.json",

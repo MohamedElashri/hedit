@@ -109,7 +109,7 @@ fn oversized_provider_snapshot_is_rejected_before_copying_document_text() {
         config: config.path(),
         monitor: &monitor,
         target: None,
-        language: hedit::syntax::Language::PlainText,
+        language: "plain-text",
         selection: false,
         manual: None,
         saved: None,

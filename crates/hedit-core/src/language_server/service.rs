@@ -380,6 +380,7 @@ struct FeatureRequest {
 
 struct Session {
     client: Client,
+    protocol_language_id: Option<String>,
     features: manager::Features,
     priority: i16,
     documents: BTreeMap<PathBuf, Document>,
@@ -723,6 +724,7 @@ impl Worker {
                             key.clone(),
                             Session {
                                 client,
+                                protocol_language_id: registration.protocol_language_id.clone(),
                                 features: registration.features.clone(),
                                 priority: registration.priority,
                                 documents: BTreeMap::new(),
@@ -947,7 +949,7 @@ fn sync_session(
             }
         }
         match session.documents.get(&document.path) {
-            None=>session.client.notify("textDocument/didOpen",json!({"textDocument":{"uri":uri,"languageId":language_id(&document),"version":document.revision,"text":document.text}}))?,
+            None=>session.client.notify("textDocument/didOpen",json!({"textDocument":{"uri":uri,"languageId":session.protocol_language_id.as_deref().unwrap_or_else(|| language_id(&document)),"version":document.revision,"text":document.text}}))?,
             Some(old)=>{
                 if old.revision!=document.revision {
                     let sync=&session.client.capabilities["textDocumentSync"];

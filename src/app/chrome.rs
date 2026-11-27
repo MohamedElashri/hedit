@@ -862,24 +862,38 @@ impl HeditApp {
         let buffer = self.active();
         let language = buffer.language();
         let detected = syntax::Language::detect(&buffer.page.info.name);
-        let selected = buffer.language_override();
+        let selected = buffer.view.language_override.clone();
+        let name = extensions::language_pack_for(&self.extensions, buffer)
+            .and_then(extensions::Contribution::language_definition)
+            .map_or_else(|| language.label(), |pack| pack.name.as_str());
+        let label = if name.chars().count() > 24 {
+            format!("{}…", name.chars().take(23).collect::<String>())
+        } else {
+            name.to_owned()
+        };
+        enum Choice {
+            Builtin(Option<syntax::Language>),
+            Pack(String),
+        }
         let popup_id = egui::Id::unique("syntax-popup");
         if ui.input(|input| input.key_pressed(Key::Escape)) {
             egui::Popup::close_id(ui.ctx(), popup_id);
         }
+        let color = if selected.is_some() {
+            self.theme.accent
+        } else {
+            self.theme.muted
+        }
+        .color();
+        let icon = hedit::icons::Icon::ChevronDown.texture(ui.ctx(), 12.0);
+        let chevron = egui::Image::new((icon.id(), egui::Vec2::splat(12.0))).tint(color);
         let response = ui.add(
             egui::Button::new(
-                RichText::new(format!("{} ⏷", language.label()))
+                RichText::new(label)
                     .size((self.settings.ui_font_size - 1.0).max(10.0))
-                    .color(
-                        if selected.is_some() {
-                            self.theme.accent
-                        } else {
-                            self.theme.muted
-                        }
-                        .color(),
-                    ),
+                    .color(color),
             )
+            .right_text(chevron)
             .frame(false)
             .min_size(egui::vec2(90.0, 22.0))
             .selected(egui::Popup::is_id_open(ui.ctx(), popup_id)),
@@ -927,22 +941,36 @@ impl HeditApp {
                     self.syntax_last_query.clone_from(&self.syntax_query);
                 }
                 let matches = &self.syntax_matches;
+                let pack_query = self.syntax_query.trim().to_ascii_lowercase();
+                let pack_matches: Vec<_> = self
+                    .extensions
+                    .iter()
+                    .filter_map(|pack| {
+                        let definition = pack.language_definition()?;
+                        (definition.matches_query(&pack_query) || pack.id.contains(&pack_query))
+                            .then_some((pack, definition))
+                    })
+                    .collect();
+                let count = matches.len() + pack_matches.len();
                 if search.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter)) {
                     ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Enter));
-                    if matches.len() == 1 {
-                        choice = Some(Some(matches[0]));
-                    } else {
-                        search.request_focus();
+                    match (matches.as_slice(), pack_matches.as_slice()) {
+                        ([syntax], []) => choice = Some(Choice::Builtin(Some(*syntax))),
+                        ([], [(pack, _)]) => choice = Some(Choice::Pack(pack.id.clone())),
+                        _ => search.request_focus(),
                     }
                 }
+                let automatic = extensions::automatic_language_pack(
+                    &self.extensions,
+                    &self.active().page.info.name,
+                )
+                .and_then(extensions::Contribution::language_definition)
+                .map_or_else(|| detected.label(), |pack| pack.name.as_str());
                 if ui
-                    .selectable_label(
-                        selected.is_none(),
-                        format!("Automatic ({})", detected.label()),
-                    )
+                    .selectable_label(selected.is_none(), format!("Automatic ({automatic})"))
                     .clicked()
                 {
-                    choice = Some(None);
+                    choice = Some(Choice::Builtin(None));
                 }
                 ui.separator();
                 let row_height = hedit::ui_style::Metrics::for_ui(ui).row;
@@ -952,9 +980,16 @@ impl HeditApp {
                     .auto_shrink([false, false]);
                 if first_frame || query_changed {
                     let offset = if first_frame && self.syntax_query.is_empty() {
+                        let id = selected.as_deref().unwrap_or(detected.id());
                         let index = matches
                             .iter()
-                            .position(|&language| language == selected.unwrap_or(detected))
+                            .position(|language| language.id() == id)
+                            .or_else(|| {
+                                pack_matches
+                                    .iter()
+                                    .position(|(pack, _)| pack.id == id)
+                                    .map(|index| matches.len() + index)
+                            })
                             .unwrap_or(0);
                         (index as f32 * (row_height + ui.spacing().item_spacing.y) - height / 2.0)
                             .max(0.0)
@@ -963,31 +998,50 @@ impl HeditApp {
                     };
                     scroll = scroll.vertical_scroll_offset(offset);
                 }
-                if matches.is_empty() {
+                if count == 0 {
                     scroll.show(ui, |ui| {
                         ui.label("No matching syntax");
                     });
                 } else {
-                    scroll.show_rows(ui, row_height, matches.len(), |ui, visible| {
-                        for &language in &matches[visible] {
-                            let row = ui
-                                .push_id(language.id(), |ui| {
-                                    ui.selectable_label(
-                                        selected == Some(language),
-                                        language.label(),
-                                    )
-                                })
-                                .inner;
-                            if row.clicked() {
-                                choice = Some(Some(language));
+                    scroll.show_rows(ui, row_height, count, |ui, visible| {
+                        for index in visible {
+                            if let Some(&language) = matches.get(index) {
+                                let row = ui
+                                    .push_id(language.id(), |ui| {
+                                        ui.selectable_label(
+                                            selected.as_deref() == Some(language.id()),
+                                            language.label(),
+                                        )
+                                    })
+                                    .inner;
+                                if row.clicked() {
+                                    choice = Some(Choice::Builtin(Some(language)));
+                                }
+                            } else {
+                                let (pack, definition) = pack_matches[index - matches.len()];
+                                let row = ui
+                                    .push_id(&pack.id, |ui| {
+                                        ui.selectable_label(
+                                            selected.as_deref() == Some(pack.id.as_str()),
+                                            &definition.name,
+                                        )
+                                        .on_hover_text(&pack.id)
+                                    })
+                                    .inner;
+                                if row.clicked() {
+                                    choice = Some(Choice::Pack(pack.id.clone()));
+                                }
                             }
                         }
                     });
                 }
             });
-        if let Some(language) = choice {
+        if let Some(choice) = choice {
             egui::Popup::close_id(ui.ctx(), popup_id);
-            self.set_syntax(language);
+            match choice {
+                Choice::Builtin(language) => self.set_syntax(language),
+                Choice::Pack(id) => self.set_extension_syntax(&id),
+            }
             self.focus_editor = true;
         }
         if !egui::Popup::is_id_open(ui.ctx(), popup_id) {

@@ -310,6 +310,8 @@ pub struct Receipt {
 #[serde(default)]
 pub struct Registration {
     pub languages: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub protocol_language_id: Option<String>,
     pub enabled: bool,
     pub external: Option<Launch>,
     pub managed: Option<Receipt>,
@@ -327,6 +329,7 @@ impl Default for Registration {
     fn default() -> Self {
         Self {
             languages: vec![],
+            protocol_language_id: None,
             enabled: true,
             external: None,
             managed: None,
@@ -366,14 +369,14 @@ impl Manager {
         &self.root
     }
     pub fn validate_id(id: &str) -> Result<(), String> {
-        if id.is_empty()
-            || id.len() > 80
-            || !id
+        let conventional = !id.is_empty()
+            && id.len() <= 80
+            && id
                 .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-        {
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+        if !conventional && !qualified_language_id(id) {
             return Err(
-                "Server ID must contain 1–80 letters, digits, underscores or hyphens.".into(),
+                "Use a server ID of 1–80 letters, digits, underscores or hyphens, or an extension language ID.".into(),
             );
         }
         Ok(())
@@ -719,6 +722,27 @@ impl Manager {
         Ok(())
     }
 }
+fn qualified_language_id(value: &str) -> bool {
+    value.split_once('.').is_some_and(|(extension, language)| {
+        [extension, language].into_iter().all(|part| {
+            part.len() <= 48
+                && part.as_bytes().first().is_some_and(u8::is_ascii_lowercase)
+                && part
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        })
+    })
+}
+
+fn valid_language_id(id: &str) -> bool {
+    (!id.is_empty()
+        && id.len() <= 80
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'+')))
+        || qualified_language_id(id)
+}
+
 pub fn validate(registration: &Registration) -> Result<(), String> {
     if serde_json::to_vec_pretty(registration)
         .map_err(error)?
@@ -730,13 +754,14 @@ pub fn validate(registration: &Registration) -> Result<(), String> {
 
     if registration.languages.is_empty()
         || registration.languages.len() > 32
-        || registration.languages.iter().any(|s| {
-            s.is_empty()
-                || s.len() > 80
-                || !s
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'+'))
-        })
+        || registration
+            .languages
+            .iter()
+            .any(|id| !valid_language_id(id))
+        || registration
+            .protocol_language_id
+            .as_deref()
+            .is_some_and(|id| !valid_language_id(id))
     {
         return Err("Specify 1–32 language IDs, such as rust, python, or cpp.".into());
     }

@@ -1,6 +1,6 @@
 use crate::plugin_runtime::MAX_SOURCE_BYTES;
 pub(super) use hedit::plugin_options::valid_id;
-use hedit::plugin_options::{Value as SettingValue, MAX_SETTINGS};
+use hedit::plugin_options::{valid_command_id, Value as SettingValue, MAX_SETTINGS};
 use hedit::syntax::Language;
 use regex::Regex;
 use serde::{de, Deserialize, Serialize};
@@ -36,22 +36,37 @@ pub(in crate::app) struct Contribution {
     pub when: Context,
 }
 
+impl Contribution {
+    pub(in crate::app) fn language_definition(
+        &self,
+    ) -> Option<&Arc<hedit::syntax::declarative::Definition>> {
+        match &self.action {
+            ExtensionAction::Language { definition, .. } => Some(definition),
+            _ => None,
+        }
+    }
+
+    pub(in crate::app) fn language_server(
+        &self,
+    ) -> Option<&Arc<hedit::language_server::manager::Registration>> {
+        match &self.action {
+            ExtensionAction::Language { server, .. } => server.as_ref(),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Default, Deserialize)]
 #[serde(try_from = "ContextDefinition")]
 pub(in crate::app) struct Context {
-    languages: Vec<Language>,
+    languages: Vec<String>,
     filename: Option<Regex>,
     selection: Option<bool>,
 }
 
 impl Context {
-    pub(super) fn matches(
-        &self,
-        language: Language,
-        filename: Option<&str>,
-        selection: bool,
-    ) -> bool {
-        (self.languages.is_empty() || self.languages.contains(&language))
+    pub(super) fn matches(&self, language: &str, filename: Option<&str>, selection: bool) -> bool {
+        (self.languages.is_empty() || self.languages.iter().any(|id| id == language))
             && self
                 .filename
                 .as_ref()
@@ -77,20 +92,20 @@ impl TryFrom<ContextDefinition> for Context {
                 "Use at most {MAX_LANGUAGES} languages in an extension context."
             ));
         }
-        let languages = definition
+        if let Some(id) = definition
             .languages
             .iter()
-            .map(|id| {
-                Language::from_id(id).ok_or_else(|| format!("Unknown editor language ID {id:?}."))
-            })
-            .collect::<Result<_, _>>()?;
+            .find(|id| Language::from_id(id).is_none() && !valid_command_id(id))
+        {
+            return Err(format!("Unknown editor language ID {id:?}."));
+        }
         let filename = definition
             .filename
             .as_deref()
             .map(filename_pattern)
             .transpose()?;
         Ok(Self {
-            languages,
+            languages: definition.languages,
             filename,
             selection: definition.selection,
         })
@@ -473,8 +488,12 @@ impl Manifest {
                 ActionDefinition::NewFile { body, language } => {
                     ExtensionAction::NewFile { body, language }
                 }
-                ActionDefinition::Language { definition } => {
-                    ExtensionAction::Language(Arc::new(definition))
+                ActionDefinition::Language { definition, server } => {
+                    let server = server.map(|server| Arc::new(server.registration(&id)));
+                    ExtensionAction::Language {
+                        definition: Arc::new(definition),
+                        server,
+                    }
                 }
                 ActionDefinition::Theme { definition } => {
                     ExtensionAction::Theme(Arc::new(definition))
@@ -532,6 +551,7 @@ struct Command {
 enum ActionDefinition {
     Language {
         definition: hedit::syntax::declarative::Definition,
+        server: Option<LanguageServer>,
     },
     Theme {
         definition: hedit::theme::Theme,
@@ -549,9 +569,40 @@ enum ActionDefinition {
     },
 }
 
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LanguageServer {
+    language_id: Option<String>,
+    #[serde(default)]
+    arguments: Vec<String>,
+    #[serde(default)]
+    root_markers: Vec<String>,
+    #[serde(default)]
+    settings: serde_json::Map<String, serde_json::Value>,
+    #[serde(default)]
+    initialization_options: serde_json::Map<String, serde_json::Value>,
+}
+
+impl LanguageServer {
+    fn registration(self, id: &str) -> hedit::language_server::manager::Registration {
+        hedit::language_server::manager::Registration {
+            languages: vec![id.to_owned()],
+            protocol_language_id: self.language_id,
+            arguments: Some(self.arguments),
+            root_markers: self.root_markers,
+            configuration: self.settings.into(),
+            initialization_options: Some(self.initialization_options.into()),
+            ..Default::default()
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(in crate::app) enum ExtensionAction {
-    Language(Arc<hedit::syntax::declarative::Definition>),
+    Language {
+        definition: Arc<hedit::syntax::declarative::Definition>,
+        server: Option<Arc<hedit::language_server::manager::Registration>>,
+    },
     Theme(Arc<hedit::theme::Theme>),
     InsertSnippet {
         body: String,
@@ -1029,11 +1080,15 @@ pub(super) fn parse_manifest(text: &str) -> Result<Manifest, String> {
             return Err("Only Lua commands can support save hooks.".into());
         }
         match &command.action {
-            ActionDefinition::Language { definition } => {
+            ActionDefinition::Language { definition, server } => {
                 if version.api_version != DECLARATIVE_API_VERSION {
                     return Err("Language packs use declarative API 1.".into());
                 }
                 definition.validate()?;
+                if let Some(server) = server {
+                    let id = format!("{id}.{}", command.id);
+                    hedit::language_server::manager::validate(&server.clone().registration(&id))?;
+                }
             }
             ActionDefinition::Theme { definition } => {
                 if version.api_version != DECLARATIVE_API_VERSION {
@@ -1341,11 +1396,11 @@ mod tests {
             "languages": ["markdown"], "filename": "note-?.md", "selection": true
         }))
         .unwrap();
-        assert!(context.matches(Language::Markdown, Some("note-λ.md"), true));
-        assert!(!context.matches(Language::Python, Some("note-λ.md"), true));
-        assert!(!context.matches(Language::Markdown, Some("note-long.md"), true));
-        assert!(!context.matches(Language::Markdown, Some("note-λ.md"), false));
-        assert!(!context.matches(Language::Markdown, None, true));
+        assert!(context.matches("markdown", Some("note-λ.md"), true));
+        assert!(!context.matches("python", Some("note-λ.md"), true));
+        assert!(!context.matches("markdown", Some("note-long.md"), true));
+        assert!(!context.matches("markdown", Some("note-λ.md"), false));
+        assert!(!context.matches("markdown", None, true));
         for invalid in [
             json!({"languages": ["unknown"]}),
             json!({"filename": "folder/*.md"}),

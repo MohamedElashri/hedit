@@ -316,7 +316,6 @@ pub struct HeditApp {
     broker_deferred: VecDeque<extensions::DeferredEvent>,
     broker_deferred_running: bool,
     plugin_services: extensions::Services,
-    extension_syntax: std::collections::BTreeMap<u64, String>,
     /// Tab moves through the fields of the snippet inserted last.
     snippet: Option<snippet_fields::SnippetSession>,
     auto: auto_complete::AutoComplete,
@@ -553,7 +552,6 @@ impl HeditApp {
             broker_deferred: VecDeque::new(),
             broker_deferred_running: false,
             plugin_services: extensions::Services::default(),
-            extension_syntax: Default::default(),
             snippet: None,
             auto: Default::default(),
             languages: Default::default(),
@@ -2566,12 +2564,9 @@ impl HeditApp {
             cache.offer_shared(&self.editor_layout);
             cache
         };
-        layout_cache.custom = extensions::syntax_for(
-            &self.extensions,
-            self.extension_syntax.get(&buffer.page.info.id),
-            &buffer.page.info.name,
-            language,
-        );
+        layout_cache.custom = extensions::language_pack_for(&self.extensions, buffer)
+            .and_then(extensions::Contribution::language_definition)
+            .cloned();
         let row_height = ui.fonts_mut(|f| f.row_height(&typography.id()));
         let line_height = typography.line_height;
         // Like Sublime, the last line can scroll up to the top: the editor is a
@@ -5682,7 +5677,7 @@ mod tests {
                 size,
             );
             let generation = app.generation;
-            click_label_sized(&ctx, &mut app, "Plain text ⏷", size);
+            click_label_sized(&ctx, &mut app, "Plain text", size);
             let dismissed = frame_size(
                 &ctx,
                 &mut app,
@@ -5696,7 +5691,7 @@ mod tests {
             .is_some()));
             assert_eq!(app.generation, generation);
             assert!(app.active().view.language_override.is_none());
-            click_label_sized(&ctx, &mut app, "Plain text ⏷", size);
+            click_label_sized(&ctx, &mut app, "Plain text", size);
             let output = frame_size(
                 &ctx,
                 &mut app,
@@ -5747,12 +5742,12 @@ mod tests {
                 size,
             );
             assert_eq!(app.active().page.text, "print('keep λ') # more");
-            click_label_sized(&ctx, &mut app, "Python ⏷", size);
+            click_label_sized(&ctx, &mut app, "Python", size);
             click_label_sized(&ctx, &mut app, "Automatic (Plain text)", size);
             assert_eq!(app.active().language(), syntax::Language::PlainText);
             assert!(app.active().view.language_override.is_none());
             assert_eq!(app.active().page.text, "print('keep λ') # more");
-            click_label_sized(&ctx, &mut app, "Plain text ⏷", size);
+            click_label_sized(&ctx, &mut app, "Plain text", size);
             let output = frame_size(
                 &ctx,
                 &mut app,
@@ -5773,7 +5768,7 @@ mod tests {
                 vec![key(Key::Escape, Modifiers::NONE)],
                 size,
             );
-            click_label_sized(&ctx, &mut app, "Plain text ⏷", size);
+            click_label_sized(&ctx, &mut app, "Plain text", size);
             frame_size(&ctx, &mut app, vec![egui::Event::Text(".hpp".into())], size);
             frame_size(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)], size);
             assert_eq!(app.active().language(), syntax::Language::Cpp);
@@ -5809,7 +5804,7 @@ mod tests {
             .iter()
             .find_map(|shape| editor_galley(&shape.shape, &source))
             .unwrap();
-        click_label_sized(&ctx, &mut app, "CUDA ⏷", size);
+        click_label_sized(&ctx, &mut app, "CUDA", size);
         for _ in 0..3 {
             frame_size(&ctx, &mut app, vec![], size);
         }
@@ -6348,7 +6343,7 @@ mod tests {
         for _ in 0..3 {
             frame(&ctx, &mut app, vec![]);
         }
-        click_label(&ctx, &mut app, "CUDA ⏷");
+        click_label(&ctx, &mut app, "CUDA");
         let start = Instant::now();
         for _ in 0..20 {
             frame(
@@ -6489,7 +6484,7 @@ mod tests {
                     app.open_theme_palette();
                 }
                 if name.ends_with("syntax") {
-                    click_label_sized(&ctx, &mut app, "CUDA ⏷", egui::vec2(size[0], size[1]));
+                    click_label_sized(&ctx, &mut app, "CUDA", egui::vec2(size[0], size[1]));
                 }
                 // Multiple frames let egui settle sizing/scrollbar geometry.
                 let mut last = None;

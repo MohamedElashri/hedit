@@ -458,7 +458,9 @@ If a later host edit fails, completed files and their Undo remain visible.
 Click the status-bar language to choose a syntax or return to **Automatic**.
 The 58 formats include common languages, CUDA, configuration files, Markdown,
 LaTeX, CSV, and logs. Definitions support embedded languages and multiline
-strings. Large files show quick colors before full highlighting.
+strings. Large files show quick colors before full highlighting. Installed language
+packs appear in the same picker. If a pack declares a server, its preset appears
+in **Settings → Language Servers**. Choose its executable and save to enable it.
 
 ## Bottom panel
 

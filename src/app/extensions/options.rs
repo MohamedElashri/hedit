@@ -186,8 +186,8 @@ impl HeditApp {
                 }
             }
             for (command, approval) in hooks {
-                if !command.when.matches(language, None, true)
-                    && !command.when.matches(language, Some(&filename), true)
+                if !command.when.matches(language.id(), None, true)
+                    && !command.when.matches(language.id(), Some(&filename), true)
                 {
                     continue;
                 }
@@ -257,7 +257,7 @@ impl HeditApp {
         };
         if !plugin.on_save
             || plugin.approval_id().as_deref() != Some(binding.approval.as_str())
-            || !command.when.matches(language, Some(&info.name), true)
+            || !command.when.matches(language.id(), Some(&info.name), true)
         {
             return false;
         }

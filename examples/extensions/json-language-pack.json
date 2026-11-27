@@ -1,0 +1,27 @@
+{
+  "api_version": 1,
+  "id": "demo-json",
+  "commands": [
+    {
+      "id": "language",
+      "title": "Use Demo JSON syntax",
+      "action": {
+        "kind": "language",
+        "definition": {
+          "name": "Demo JSON",
+          "extensions": ["demojson"],
+          "keywords": ["true", "false", "null"],
+          "regions": [
+            { "kind": "string", "start": "\"", "end": "\"", "escape": true }
+          ]
+        },
+        "server": {
+          "language_id": "json",
+          "arguments": ["--stdio"],
+          "root_markers": [".git"],
+          "initialization_options": {}
+        }
+      }
+    }
+  ]
+}

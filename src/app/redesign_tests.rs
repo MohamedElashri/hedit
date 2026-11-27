@@ -168,7 +168,7 @@ fn redesign_status_actions_fit_with_follow_multicursor_and_a_long_notice() {
             .unwrap()
             .outer_rect;
             for label in [
-                format!("{} ⏷", language.label()),
+                language.label().to_owned(),
                 "UTF-8".into(),
                 "LF".into(),
                 "Spaces: 4".into(),

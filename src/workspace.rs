@@ -46,11 +46,14 @@ impl Buffer {
     }
     /// Syntax is view metadata: it never edits text or creates an undo step.
     pub fn set_language(&mut self, language: Option<Language>) -> bool {
-        let id = language.map(|language| language.id().to_owned());
-        if self.view.language_override == id {
+        self.set_language_id(language.map(Language::id))
+    }
+
+    pub fn set_language_id(&mut self, id: Option<&str>) -> bool {
+        if self.view.language_override.as_deref() == id {
             return false;
         }
-        self.view.language_override = id;
+        self.view.language_override = id.map(str::to_owned);
         true
     }
     pub fn new(page: Page, view: Option<TabView>) -> Self {

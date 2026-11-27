@@ -34,10 +34,10 @@ Choose the contract for the capability you need:
 
 | Manifest API / SDK | Contract |
 | --- | --- |
-| API 1 | Declarative snippets and file templates |
+| API 1 | Declarative snippets, file templates, and [language and theme packs](plugin-services.md#language-and-theme-packs) |
 | API 2 | Selection-only Lua transforms, described below |
 | API 3 / SDK 1 | [Document edits](plugin-sdk.md), selections, declared inputs and reviewed package resources |
-| API 4 / SDK 2 | [Providers](plugin-services.md), native result UI and declarative visual packs |
+| API 4 / SDK 2 | [Providers](plugin-services.md), native result UI |
 | API 5 / SDK 3 | [Scoped services](plugin-broker.md), workspace operations, reviewed native tools/LSP and fixed public HTTPS endpoints |
 
 All versions remain supported. Each capability requires its own reviewed grant;
