@@ -385,7 +385,7 @@ Add a `tasks` array to a local `.hedit-project` and reopen it.
 ```
 
 Choose **Tools → Run Project Task…**. Output and diagnostics use the existing
-Output and Problems panels. **Ctrl+Alt+B** (**Cmd+Option+B** on macOS) reruns the
+Output and Problems panels. **Ctrl+Alt+Shift+B** (**Cmd+Option+Shift+B** on macOS) reruns the
 last task. The default working directory is the directory containing the project
 file. A `working_dir` must stay inside it. Tasks use the files saved on disk and
 accept the same variables and optional `file_regex` as custom build systems.

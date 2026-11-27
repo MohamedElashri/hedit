@@ -2042,6 +2042,11 @@ impl HeditApp {
             (shift, Key::P, Command::Palette),
             (cmd, Key::P, Command::Switcher),
             (
+                Modifiers { alt: true, ..shift },
+                Key::B,
+                Command::RerunProjectTask,
+            ),
+            (
                 Modifiers { alt: true, ..cmd },
                 Key::B,
                 Command::FolderSidebar,
@@ -2055,11 +2060,6 @@ impl HeditApp {
                 Modifiers { alt: true, ..cmd },
                 Key::ArrowRight,
                 Command::FocusPane,
-            ),
-            (
-                Modifiers { alt: true, ..cmd },
-                Key::B,
-                Command::RerunProjectTask,
             ),
             (shift, Key::B, Command::BuildWith),
             (cmd, Key::B, Command::Build),

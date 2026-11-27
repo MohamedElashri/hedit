@@ -899,7 +899,7 @@ impl Command {
             Self::NextOccurrence => "Ctrl+D",
             Self::Build => "Ctrl+B",
             Self::BuildWith => "Ctrl+Shift+B",
-            Self::RerunProjectTask => "Ctrl+Alt+B",
+            Self::RerunProjectTask => "Ctrl+Alt+Shift+B",
             Self::NextResult => "F4",
             Self::PreviousResult => "Shift+F4",
             Self::SkipOccurrence => "Ctrl+K, Ctrl+D",

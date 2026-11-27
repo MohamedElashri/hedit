@@ -519,7 +519,15 @@ mod project_task_tests {
                 "task\n".repeat(invocation)
             );
             if invocation == 1 {
-                app.execute(&ctx, commands::Command::RerunProjectTask);
+                use crate::app::tests::{frame, key};
+                frame(
+                    &ctx,
+                    &mut app,
+                    vec![key(
+                        Key::B,
+                        Modifiers::COMMAND | Modifiers::ALT | Modifiers::SHIFT,
+                    )],
+                );
             }
         }
     }
