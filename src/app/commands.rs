@@ -85,6 +85,8 @@ pub(super) enum Command {
 
     NextOccurrence,
     Build,
+    TestAtCursor,
+    TestFile,
     BuildWith,
     CancelBuild,
     BuildResults,
@@ -353,6 +355,8 @@ impl Command {
         Self::Tab9,
         Self::NextOccurrence,
         Self::Build,
+        Self::TestAtCursor,
+        Self::TestFile,
         Self::BuildWith,
         Self::CancelBuild,
         Self::BuildResults,
@@ -640,6 +644,8 @@ impl Command {
 
             Self::NextOccurrence => "Select next occurrence",
             Self::Build => "Build",
+            Self::TestAtCursor => "Run Test at Cursor",
+            Self::TestFile => "Run Tests in File",
             Self::BuildWith => "Build with…",
             Self::CancelBuild => "Cancel build",
             Self::BuildResults => "Toggle Output",
@@ -1157,6 +1163,7 @@ impl HeditApp {
             return false;
         }
         match command {
+            Command::TestAtCursor | Command::TestFile => self.rust_tests_available(),
             Command::ExplorerNewFile | Command::ExplorerNewFolder | Command::ExplorerRename => {
                 !self.workspace.folders.is_empty()
             }
@@ -1622,6 +1629,9 @@ impl HeditApp {
             Command::Tab9 => self.select_tab_position(8),
             Command::NextOccurrence => self.occurrence(false),
             Command::Build => self.build(ctx),
+            Command::TestAtCursor | Command::TestFile => {
+                self.run_rust_tests(ctx, command == Command::TestFile)
+            }
             Command::BuildWith => {
                 // Choose from "Build with: …" entries in the command palette.
                 self.palette = true;

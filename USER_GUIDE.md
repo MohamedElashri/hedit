@@ -372,6 +372,10 @@ A custom `build_systems` entry accepts `name`, `shell_cmd`, `selector`, and
 Commands expand `$file`, `$file_path`, `$file_name`, `$file_base_name`,
 `$file_extension`, and `$folder`. A matching name overrides a built-in.
 
+In a saved local Rust file, choose **Tools → Run Test at Cursor** or
+**Run Tests in File**. Hedit runs matching tests from conventional Cargo
+library, binary, or integration-test targets and streams the result to Output.
+
 ### Language servers
 
 Open **Settings → Language Servers**, **Preferences → Language servers: manage…**,

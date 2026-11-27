@@ -200,6 +200,7 @@ pub(super) struct FileAction {
     pub skip_trash_confirmation: bool,
 }
 pub(super) enum Event {
+    RunRustTests(super::rust_tests::Run),
     /// Change markers: view, revision, mode, diff, and the text compared against.
     GitMarkers(u64, u64, String, String, Option<String>),
     Found(u64, Page, usize, usize, usize, String, search::Options),
@@ -268,6 +269,7 @@ impl HeditApp {
     }
     pub(super) fn quality_event(&mut self, ctx: &egui::Context, event: Event) {
         match event {
+            Event::RunRustTests(run) => self.start_rust_tests(ctx, run),
             Event::Counterparts(view, source, found) => {
                 self.show_counterparts(ctx, view, source, found);
             }

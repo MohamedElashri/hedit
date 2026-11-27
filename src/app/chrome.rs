@@ -178,6 +178,8 @@ impl HeditApp {
                                 ],
                                 vec![
                                     Command::Build,
+                                    Command::TestAtCursor,
+                                    Command::TestFile,
                                     Command::BuildWith,
                                     Command::CancelBuild,
                                     Command::BuildResults,

@@ -114,6 +114,30 @@ impl HeditApp {
         } else {
             dir
         };
+        self.start_build(ctx, &system, dir, &variables);
+    }
+
+    pub(super) fn start_rust_tests(&mut self, ctx: &egui::Context, run: super::rust_tests::Run) {
+        let system = build::BuildSystem {
+            name: run.name,
+            shell_cmd: run.command,
+            file_regex: r"^\s*--> (.+?):(\d+):(\d+)$".into(),
+            ..Default::default()
+        };
+        let variables = build::Variables {
+            file: run.file,
+            folder: run.directory.clone(),
+        };
+        self.start_build(ctx, &system, run.directory, &variables);
+    }
+
+    fn start_build(
+        &mut self,
+        ctx: &egui::Context,
+        system: &build::BuildSystem,
+        dir: PathBuf,
+        variables: &build::Variables,
+    ) {
         if let Some(previous) = self.build.running.take() {
             previous.cancel();
         }
@@ -121,7 +145,7 @@ impl HeditApp {
             let ctx = ctx.clone();
             move || ctx.request_repaint()
         };
-        match Running::start_with_variables(&system.shell_cmd, &dir, &variables, wake) {
+        match Running::start_with_variables(&system.shell_cmd, &dir, variables, wake) {
             Ok(running) => {
                 self.quality.results_newer = false;
                 self.build = BuildState {

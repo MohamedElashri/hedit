@@ -109,6 +109,7 @@ mod render_tests;
 mod row_index;
 #[cfg(test)]
 mod rtl_tests;
+mod rust_tests;
 #[cfg(test)]
 mod save_format_tests;
 #[cfg(test)]
