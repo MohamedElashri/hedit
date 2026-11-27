@@ -128,6 +128,7 @@ mod tab_strip;
 mod tab_switch;
 #[cfg(test)]
 mod tab_tests;
+mod table_preview;
 mod terminal_panel;
 #[cfg(test)]
 mod terminal_tests;
@@ -345,6 +346,7 @@ pub struct HeditApp {
     row_indexes: [row_index::Cache; panes::MAX_GROUPS],
     minimaps: [minimap::Cache; panes::MAX_GROUPS],
     markdown: markdown::Markdown,
+    tables: table_preview::Previews,
     /// Where the cursor was before Go to Anything previewed a result.
     goto_origin: Option<goto_anything::Origin>,
     goto_preview_epoch: u64,
@@ -575,6 +577,7 @@ impl HeditApp {
             row_indexes: Default::default(),
             minimaps: Default::default(),
             markdown: Default::default(),
+            tables: Default::default(),
             goto_origin: None,
             goto_preview_epoch: 0,
             goto_preview_running: false,
@@ -2259,6 +2262,7 @@ impl HeditApp {
             return;
         }
         self.markdown.retain_documents(ctx, &self.workspace.open);
+        self.retain_table_previews();
         let theme = self.theme.clone();
         egui::CentralPanel::default()
             .frame(
@@ -2310,7 +2314,9 @@ impl HeditApp {
         ui.add_space(6.0);
     }
     fn editor_pane(&mut self, ui: &mut egui::Ui, pane_id: usize) {
-        self.markdown_pane(ui, pane_id);
+        if !self.table_pane(ui, pane_id) {
+            self.markdown_pane(ui, pane_id);
+        }
     }
     fn editor_source_pane(&mut self, ui: &mut egui::Ui, pane_id: usize) {
         if self.distraction_free {

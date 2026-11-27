@@ -629,6 +629,12 @@ Go to line, and search results show source.
 Equations and diagrams render locally. Unsupported input stays as source with
 a hover error and **Copy source**.
 
+## CSV and TSV preview
+
+Open a CSV or TSV file up to 2 MiB, then choose **Table Preview** above the
+editor. Click a column header to sort its text. Click a row's line number to
+jump to the source. Edits in the source update the table.
+
 ## Views and layout
 
 | Feature | Usage |

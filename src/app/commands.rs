@@ -15,6 +15,7 @@ pub(super) enum Command {
     ExplorerRename,
     ConnectSsh,
     SshOutput,
+    TablePreview,
     MarkdownSource,
     MarkdownSplit,
     MarkdownPreview,
@@ -284,6 +285,7 @@ impl Command {
         Self::Palette,
         Self::ConnectSsh,
         Self::SshOutput,
+        Self::TablePreview,
         Self::MarkdownSource,
         Self::MarkdownSplit,
         Self::MarkdownPreview,
@@ -560,6 +562,7 @@ impl Command {
         match self {
             Self::ConnectSsh => "Connect via SSH…",
             Self::SshOutput => "Show SSH Output",
+            Self::TablePreview => "Toggle Table Preview",
             Self::MarkdownSource => "Markdown: show source",
             Self::MarkdownSplit => "Markdown: split source and preview",
             Self::MarkdownPreview => "Markdown: render preview",
@@ -1157,6 +1160,7 @@ impl HeditApp {
             return false;
         }
         match command {
+            Command::TablePreview => self.table_delimiter().is_some(),
             Command::ExplorerNewFile | Command::ExplorerNewFolder | Command::ExplorerRename => {
                 !self.workspace.folders.is_empty()
             }
@@ -1500,6 +1504,7 @@ impl HeditApp {
             self.close_transient(ctx);
         }
         match command {
+            Command::TablePreview => self.toggle_table_preview(),
             Command::MarkdownSource => {
                 self.set_markdown_view(ctx, hedit::session::MarkdownView::Source)
             }
