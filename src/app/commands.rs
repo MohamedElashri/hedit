@@ -1152,6 +1152,32 @@ impl HeditApp {
         {
             return false;
         }
+        if self.showing_pinned_search()
+            && (command.operation().is_some()
+                || matches!(
+                    command,
+                    Command::Undo
+                        | Command::Redo
+                        | Command::Save
+                        | Command::SaveAs
+                        | Command::Cut
+                        | Command::Paste
+                        | Command::PasteHistory
+                        | Command::PasteIndent
+                        | Command::Replace
+                        | Command::ReplaceAll
+                        | Command::RevertChange
+                        | Command::Reindent
+                        | Command::Transpose
+                        | Command::PlayMacro
+                        | Command::RunMacro
+                        | Command::LanguageFormat
+                        | Command::LanguageRename
+                        | Command::LanguageQuickFix
+                ))
+        {
+            return false;
+        }
         if command
             .operation()
             .is_some_and(|op| op != hedit::editing::Operation::SelectLine)

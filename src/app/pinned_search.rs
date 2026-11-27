@@ -262,3 +262,29 @@ fn pinned_searches_stay_selected_across_editor_group_switches() {
     );
     assert_eq!(app.workspace.open.len(), 1);
 }
+
+#[cfg(test)]
+#[test]
+fn pinned_result_view_blocks_edits_to_the_hidden_document() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+    workspace.open[0].page.text = "keep this line\nsecond line\n".into();
+    workspace.edit(0, "").unwrap();
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    app.quality.folder_state = folder_search::State::Ready;
+    app.quality.folder_snapshot = Some(("keep".into(), String::new(), search::Options::default()));
+    app.quality.results.hits.push(search::Hit {
+        path: directory.path().join("one.txt"),
+        line: 1,
+        column: 1,
+        text: "keep this line".into(),
+    });
+    app.pin_search(&ctx);
+    assert!(app.showing_pinned_search());
+    app.execute(&ctx, Command::DeleteLine);
+    assert_eq!(app.active().page.text, "keep this line\nsecond line\n");
+    assert!(app.showing_pinned_search());
+    assert!(!app.command_enabled(Command::Undo));
+    assert!(!app.command_enabled(Command::ReplaceAll));
+}
