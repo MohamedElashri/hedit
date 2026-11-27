@@ -2056,6 +2056,11 @@ impl HeditApp {
                 Key::ArrowRight,
                 Command::FocusPane,
             ),
+            (
+                Modifiers { alt: true, ..cmd },
+                Key::B,
+                Command::RerunProjectTask,
+            ),
             (shift, Key::B, Command::BuildWith),
             (cmd, Key::B, Command::Build),
             (Modifiers::SHIFT, Key::F4, Command::PreviousResult),

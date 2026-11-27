@@ -67,6 +67,51 @@ pub struct Defaults {
 pub struct Project {
     pub folders: Vec<PathBuf>,
     pub settings: Defaults,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tasks: Vec<Task>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Task {
+    pub name: String,
+    pub shell_cmd: String,
+    #[serde(default, skip_serializing_if = "empty_working_directory")]
+    pub working_dir: PathBuf,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub file_regex: String,
+}
+
+fn empty_working_directory(path: &Path) -> bool {
+    path.as_os_str().is_empty()
+}
+
+fn validate_tasks(tasks: &[Task]) -> Result<(), String> {
+    let mut names = std::collections::HashSet::new();
+    if tasks.len() > 64 {
+        return Err("Declare at most 64 project tasks.".into());
+    }
+    for task in tasks {
+        if task.name.is_empty()
+            || task.name.len() > 80
+            || task.name.trim() != task.name
+            || task.name.chars().any(char::is_control)
+            || !names.insert(&task.name)
+            || task.shell_cmd.trim().is_empty()
+            || task.shell_cmd.len() > 8192
+            || task.shell_cmd.contains('\0')
+            || task.working_dir.components().any(|part| {
+                !matches!(
+                    part,
+                    std::path::Component::Normal(_) | std::path::Component::CurDir
+                )
+            })
+            || task.file_regex.len() > 4096
+            || (!task.file_regex.is_empty() && regex::Regex::new(&task.file_regex).is_err())
+        {
+            return Err(format!("Invalid project task {:?}. Use a unique name, shell command, project-relative folder and optional diagnostic regex.", task.name));
+        }
+    }
+    Ok(())
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Tab {
@@ -157,6 +202,7 @@ pub fn save_workspace(project: &Path, state: &State) -> Result<(), String> {
 }
 
 pub fn save(path: &Path, project: &Project, state: &State) -> Result<(), String> {
+    validate_tasks(&project.tasks)?;
     let state_path = workspace_path(path);
     let definition = prepare_json(path, project, PROJECT_LIMIT)?;
     let workspace = prepare_json(&state_path, state, WORKSPACE_LIMIT)?;
@@ -176,6 +222,7 @@ pub fn load(path: &Path) -> Result<(Project, State), String> {
 
 pub fn load_with_workspace(path: &Path) -> Result<(Project, Option<State>), String> {
     let mut project: Project = read_json(path, PROJECT_LIMIT)?;
+    validate_tasks(&project.tasks)?;
     let parent = path.parent().unwrap_or(Path::new("."));
     for folder in &mut project.folders {
         if folder.is_relative() {

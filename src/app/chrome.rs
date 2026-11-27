@@ -179,6 +179,8 @@ impl HeditApp {
                                 vec![
                                     Command::Build,
                                     Command::BuildWith,
+                                    Command::RunProjectTask,
+                                    Command::RerunProjectTask,
                                     Command::CancelBuild,
                                     Command::BuildResults,
                                     Command::NextResult,

@@ -110,6 +110,8 @@ pub(super) struct Quality {
     pub settings_project: bool,
     pub project_path: Option<PathBuf>,
     pub project_settings: projects::Defaults,
+    pub project_tasks: Vec<projects::Task>,
+    pub last_project_task: Option<String>,
     pub project_editor: project_settings::Editor,
     pub recent: Vec<PathBuf>,
     pub symbols_open: bool,
@@ -262,6 +264,8 @@ impl HeditApp {
             .unwrap_or_default();
         if let Some(path) = &self.quality.project_path {
             if let Ok((project, _)) = projects::load(path) {
+                self.quality.project_tasks = project.tasks;
+                self.quality.last_project_task = None;
                 self.quality.project_settings = project.settings;
             }
         }
@@ -477,6 +481,9 @@ impl HeditApp {
                 self.changed();
             }
             Event::ProjectSaved(path) => {
+                if self.quality.project_path.as_ref() != Some(&path) {
+                    self.quality.last_project_task = None;
+                }
                 self.quality.project_path = Some(path.clone());
                 self.recent_project(path);
                 self.notice = "Project and workspace saved.".into();
@@ -542,6 +549,8 @@ impl HeditApp {
                 self.project = project::ProjectBrowser::new(&self.workspace.folders);
                 self.settings.show_folders = true;
                 self.settings.show_sidebar = true;
+                self.quality.project_tasks = project.tasks;
+                self.quality.last_project_task = None;
                 self.quality.project_settings = project.settings;
                 self.quality.project_path = Some(path.clone());
                 self.recent_project(path);
@@ -1242,6 +1251,7 @@ impl HeditApp {
                 .map(|f| PathBuf::from(&f.path))
                 .collect(),
             settings: self.quality.project_settings.clone(),
+            tasks: self.quality.project_tasks.clone(),
         };
         let path = if choose {
             None

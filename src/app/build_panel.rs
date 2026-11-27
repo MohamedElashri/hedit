@@ -114,6 +114,95 @@ impl HeditApp {
         } else {
             dir
         };
+        self.launch_build(
+            ctx,
+            format!("Building with {}…", system.name),
+            (&system.name, &system.shell_cmd, &system.file_regex),
+            dir,
+            &variables,
+        );
+    }
+
+    pub(super) fn pick_project_task(&mut self, ctx: &egui::Context) {
+        let items = self
+            .quality
+            .project_tasks
+            .iter()
+            .map(|task| {
+                (
+                    task.name.clone(),
+                    task.shell_cmd.clone(),
+                    commands::Pick::ProjectTask(task.name.clone()),
+                )
+            })
+            .collect();
+        self.open_pick_list(ctx, "Project Tasks", "Search project tasks…", items);
+    }
+
+    pub(super) fn run_project_task(&mut self, ctx: &egui::Context, name: &str) {
+        if self.workspace.remote.is_some() || self.busy || self.closing {
+            return;
+        }
+        let Some(project) = self.quality.project_path.as_ref() else {
+            return;
+        };
+        let Some(task) = self
+            .quality
+            .project_tasks
+            .iter()
+            .find(|task| task.name == name)
+            .cloned()
+        else {
+            return;
+        };
+        let Some(root) = project.parent() else { return };
+        let resolved = (|| {
+            let root = root.canonicalize()?;
+            let directory = root.join(&task.working_dir).canonicalize()?;
+            if !directory.starts_with(&root) || !directory.is_dir() {
+                return Err(std::io::Error::other(
+                    "Task working directory must be inside the project directory.",
+                ));
+            }
+            Ok::<_, std::io::Error>((root, directory))
+        })();
+        let (folder, dir) = match resolved {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                self.error = Some(format!("{}: {error}", task.name));
+                return;
+            }
+        };
+        let variables = build::Variables {
+            file: self
+                .active()
+                .page
+                .info
+                .path
+                .as_ref()
+                .map(PathBuf::from)
+                .unwrap_or_default(),
+            folder,
+        };
+        if self.launch_build(
+            ctx,
+            format!("Running {}…", task.name),
+            (&task.name, &task.shell_cmd, &task.file_regex),
+            dir,
+            &variables,
+        ) {
+            self.quality.last_project_task = Some(task.name);
+        }
+    }
+
+    fn launch_build(
+        &mut self,
+        ctx: &egui::Context,
+        status: String,
+        (name, command, regex): (&str, &str, &str),
+        dir: PathBuf,
+        variables: &build::Variables,
+    ) -> bool {
         if let Some(previous) = self.build.running.take() {
             previous.cancel();
         }
@@ -121,22 +210,26 @@ impl HeditApp {
             let ctx = ctx.clone();
             move || ctx.request_repaint()
         };
-        match Running::start_with_variables(&system.shell_cmd, &dir, &variables, wake) {
+        match Running::start_with_variables(command, &dir, variables, wake) {
             Ok(running) => {
                 self.quality.results_newer = false;
                 self.build = BuildState {
                     problems_revision: self.build.problems_revision.wrapping_add(1),
                     open: true,
                     running: Some(running),
-                    name: system.name.clone(),
-                    regex: system.file_regex.clone(),
+                    name: name.to_owned(),
+                    regex: regex.to_owned(),
                     dir,
-                    status: format!("Building with {}…", system.name),
+                    status,
                     ..Default::default()
                 };
                 self.show_build_output();
+                true
             }
-            Err(error) => self.error = Some(error),
+            Err(error) => {
+                self.error = Some(error);
+                false
+            }
         }
     }
     /// After a save finishes, run a build that was waiting for it.
@@ -387,6 +480,47 @@ mod nested_root_tests {
                 inner.canonicalize().unwrap()
             );
             app.workspace.folders.reverse();
+        }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod project_task_tests {
+    use super::*;
+
+    #[test]
+    fn project_task_runs_and_repeats_from_its_working_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let working = directory.path().join("scripts");
+        std::fs::create_dir(&working).unwrap();
+        let path = directory.path().join("sample.hedit-project");
+        let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        app.quality.project_path = Some(path);
+        app.quality.project_tasks.push(hedit::projects::Task {
+            name: "Record run".into(),
+            shell_cmd: "printf 'task\\n' >> runs.txt".into(),
+            working_dir: "scripts".into(),
+            file_regex: String::new(),
+        });
+
+        app.run_project_task(&ctx, "Record run");
+        for invocation in 1..=2 {
+            let started = Instant::now();
+            while app.build.running.is_some() {
+                app.poll_build();
+                assert!(started.elapsed() < Duration::from_secs(5));
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            assert!(app.error.is_none(), "{:?}", app.error);
+            assert_eq!(
+                std::fs::read_to_string(working.join("runs.txt")).unwrap(),
+                "task\n".repeat(invocation)
+            );
+            if invocation == 1 {
+                app.execute(&ctx, commands::Command::RerunProjectTask);
+            }
         }
     }
 }

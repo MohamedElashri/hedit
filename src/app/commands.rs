@@ -86,6 +86,8 @@ pub(super) enum Command {
     NextOccurrence,
     Build,
     BuildWith,
+    RunProjectTask,
+    RerunProjectTask,
     CancelBuild,
     BuildResults,
     Terminal,
@@ -354,6 +356,8 @@ impl Command {
         Self::NextOccurrence,
         Self::Build,
         Self::BuildWith,
+        Self::RunProjectTask,
+        Self::RerunProjectTask,
         Self::CancelBuild,
         Self::BuildResults,
         Self::Terminal,
@@ -641,6 +645,8 @@ impl Command {
             Self::NextOccurrence => "Select next occurrence",
             Self::Build => "Build",
             Self::BuildWith => "Build with…",
+            Self::RunProjectTask => "Run Project Task…",
+            Self::RerunProjectTask => "Rerun Last Project Task",
             Self::CancelBuild => "Cancel build",
             Self::BuildResults => "Toggle Output",
             Self::Terminal => "Toggle terminal",
@@ -893,6 +899,7 @@ impl Command {
             Self::NextOccurrence => "Ctrl+D",
             Self::Build => "Ctrl+B",
             Self::BuildWith => "Ctrl+Shift+B",
+            Self::RerunProjectTask => "Ctrl+Alt+B",
             Self::NextResult => "F4",
             Self::PreviousResult => "Shift+F4",
             Self::SkipOccurrence => "Ctrl+K, Ctrl+D",
@@ -1098,6 +1105,7 @@ pub(super) enum Pick {
     Font(String),
     /// A saved macro, by name.
     Macro(String),
+    ProjectTask(String),
     /// An extension command's stable ID.
     Extension(String),
     Location(definitions::Location),
@@ -1157,6 +1165,14 @@ impl HeditApp {
             return false;
         }
         match command {
+            Command::RunProjectTask => {
+                self.workspace.remote.is_none()
+                    && self.quality.project_path.is_some()
+                    && !self.quality.project_tasks.is_empty()
+            }
+            Command::RerunProjectTask => {
+                self.workspace.remote.is_none() && self.quality.last_project_task.is_some()
+            }
             Command::ExplorerNewFile | Command::ExplorerNewFolder | Command::ExplorerRename => {
                 !self.workspace.folders.is_empty()
             }
@@ -1622,6 +1638,12 @@ impl HeditApp {
             Command::Tab9 => self.select_tab_position(8),
             Command::NextOccurrence => self.occurrence(false),
             Command::Build => self.build(ctx),
+            Command::RunProjectTask => self.pick_project_task(ctx),
+            Command::RerunProjectTask => {
+                if let Some(task) = self.quality.last_project_task.clone() {
+                    self.run_project_task(ctx, &task);
+                }
+            }
             Command::BuildWith => {
                 // Choose from "Build with: …" entries in the command palette.
                 self.palette = true;
@@ -2451,6 +2473,7 @@ impl HeditApp {
                     self.run_extension_by_id(ctx, &id);
                 }
                 Item::Pick(Pick::Location(location)) => self.open_location(ctx, location),
+                Item::Pick(Pick::ProjectTask(name)) => self.run_project_task(ctx, &name),
                 Item::Syntax(language) => self.set_syntax(Some(language)),
                 Item::BuildWith(name) => {
                     self.settings.build_system = if name == "Automatic" {
