@@ -249,6 +249,7 @@ impl HeditApp {
                     ui.label("The editor changed. Reopen File History to compare the latest text.");
                 }
                 egui::ScrollArea::vertical()
+                    .id_salt("file-history-versions")
                     .max_height(130.0)
                     .show(ui, |ui| {
                         for (index, version) in review.versions.iter().enumerate() {
@@ -278,14 +279,17 @@ impl HeditApp {
                     if diff.is_empty() {
                         ui.label("This version matches the current editor.");
                     } else {
-                        egui::ScrollArea::both().max_height(250.0).show(ui, |ui| {
-                            let mut text = diff.as_str();
-                            ui.add(
-                                egui::TextEdit::multiline(&mut text)
-                                    .code_editor()
-                                    .desired_width(f32::INFINITY),
-                            );
-                        });
+                        egui::ScrollArea::both()
+                            .id_salt("file-history-diff")
+                            .max_height(250.0)
+                            .show(ui, |ui| {
+                                let mut text = diff.as_str();
+                                ui.add(
+                                    egui::TextEdit::multiline(&mut text)
+                                        .code_editor()
+                                        .desired_width(f32::INFINITY),
+                                );
+                            });
                     }
                     restore = ui
                         .add_enabled(
