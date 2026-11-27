@@ -14,8 +14,8 @@ mod templates;
 
 use super::{snippet_fields, HeditApp};
 use eframe::egui;
-use hedit::intelligence;
 pub(super) use hedit::plugin_options::valid_command_id;
+use hedit::{intelligence, syntax::Language, workspace::Buffer};
 use std::path::Path;
 
 pub(super) use broker::{BrokerCommand, Deferred as DeferredEvent, Refresh as WorkspaceRefresh};
@@ -31,48 +31,52 @@ pub(super) use templates::Template;
 const MAX_INDENT_BYTES: usize = 4096;
 const MAX_EXPANSION_BYTES: usize = 128 * 1024;
 
-pub(super) fn syntax_for(
-    contributions: &[Contribution],
-    selected: Option<&String>,
+pub(super) fn automatic_language_pack<'a>(
+    contributions: &'a [Contribution],
     filename: &str,
-    language: hedit::syntax::Language,
-) -> Option<std::sync::Arc<hedit::syntax::declarative::Definition>> {
-    if let Some(selected) = selected {
-        return contributions.iter().find_map(|item| {
-            if item.id == *selected {
-                if let ExtensionAction::Language(definition) = &item.action {
-                    Some(definition.clone())
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
+) -> Option<&'a Contribution> {
+    if contributions.is_empty() || Language::detect(filename) != Language::PlainText {
+        return None;
+    }
+    contributions
+        .iter()
+        .filter(|item| {
+            matches!(&item.action, ExtensionAction::Language { definition, .. }
+            if definition.matches(filename))
+        })
+        .min_by_key(|item| item.id.as_str())
+}
+
+pub(super) fn language_pack_for<'a>(
+    contributions: &'a [Contribution],
+    buffer: &Buffer,
+) -> Option<&'a Contribution> {
+    if let Some(selected) = &buffer.view.language_override {
+        return contributions.iter().find(|item| {
+            item.id == *selected && matches!(item.action, ExtensionAction::Language { .. })
         });
     }
-    (language == hedit::syntax::Language::PlainText)
-        .then(|| {
-            contributions
-                .iter()
-                .filter_map(|item| {
-                    if let ExtensionAction::Language(definition) = &item.action {
-                        definition
-                            .matches(filename)
-                            .then_some((item.id.as_str(), definition))
-                    } else {
-                        None
-                    }
-                })
-                .min_by_key(|item| item.0)
-                .map(|(_, definition)| definition.clone())
-        })
-        .flatten()
+    automatic_language_pack(contributions, &buffer.page.info.name)
 }
+
 impl HeditApp {
+    pub(super) fn language_id<'a>(&'a self, buffer: &Buffer) -> &'a str {
+        language_pack_for(&self.extensions, buffer)
+            .map_or_else(|| buffer.language().id(), |pack| pack.id.as_str())
+    }
+
+    pub(super) fn set_extension_syntax(&mut self, id: &str) {
+        if self.workspace.open[self.workspace.active].set_language_id(Some(id)) {
+            self.cancel_language_requests();
+            self.changed();
+            self.apply_format_preferences();
+        }
+    }
+
     pub(super) fn extension_commands(&self) -> impl Iterator<Item = &Contribution> {
         let editor = self.active();
         let info = &editor.page.info;
-        let language = editor.language();
+        let language = self.language_id(editor);
         let filename = info.path.as_ref().map(|_| info.name.as_str());
         let selection = editor.view.anchor != editor.view.head
             || editor
@@ -101,7 +105,7 @@ impl HeditApp {
                         editable && editor.view.selections.is_empty()
                     }
                     ExtensionAction::NewFile { .. } | ExtensionAction::Theme(_) => available,
-                    ExtensionAction::Language(_) => editable,
+                    ExtensionAction::Language { .. } => editable,
                     ExtensionAction::Lua(ref plugin) => {
                         (if plugin.broker.as_ref().is_some_and(|broker| {
                             !broker.has(hedit_broker::declaration::Capability::DocumentRead)
@@ -150,23 +154,8 @@ impl HeditApp {
             return false;
         };
         match action {
-            ExtensionAction::Language(_) => {
-                self.extension_syntax.retain(|document, _| {
-                    self.workspace
-                        .open
-                        .iter()
-                        .any(|buffer| buffer.page.info.id == *document)
-                });
-                if self.extension_syntax.len() >= 128
-                    && !self
-                        .extension_syntax
-                        .contains_key(&self.active().page.info.id)
-                {
-                    self.error=Some("Close a document with a custom syntax before selecting another (128 active selections).".into());
-                    return true;
-                }
-                self.extension_syntax
-                    .insert(self.active().page.info.id, id.to_owned());
+            ExtensionAction::Language { .. } => {
+                self.set_extension_syntax(id);
                 ctx.request_repaint();
             }
             ExtensionAction::Theme(theme) => {

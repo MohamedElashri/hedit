@@ -69,6 +69,8 @@ impl Default for Config {
 }
 #[derive(Default)]
 pub(super) struct Quality {
+    pub conflict_path: Option<PathBuf>,
+    pub conflict_draft: Option<super::conflict_blocks::Draft>,
     pub options: search::Options,
     pub selection_only: bool,
     pub scope: Option<(u64, usize, usize)>,
@@ -76,6 +78,7 @@ pub(super) struct Quality {
     pub last_find: Option<LastFind>,
     pub folders_open: bool,
     pub folder_query: String,
+    pub saved_searches: folder_search::Saved,
     pub folder_initialized: bool,
     pub folder_generation: u64,
     pub folder_rows: folder_search::Rows,
@@ -110,6 +113,8 @@ pub(super) struct Quality {
     pub settings_project: bool,
     pub project_path: Option<PathBuf>,
     pub project_settings: projects::Defaults,
+    pub project_tasks: Vec<projects::Task>,
+    pub last_project_task: Option<String>,
     pub project_editor: project_settings::Editor,
     pub recent: Vec<PathBuf>,
     pub symbols_open: bool,
@@ -117,6 +122,9 @@ pub(super) struct Quality {
     pub symbol_query: String,
     pub symbols_project: bool,
     pub diff_open: bool,
+    pub compare_source: Option<PathBuf>,
+    pub comparison_paths: Option<(PathBuf, PathBuf)>,
+    pub file_history: Option<file_history::Review>,
     pub diff: String,
     pub diff_target: Option<(u64, u64, String)>,
     pub git_diff: bool,
@@ -200,6 +208,7 @@ pub(super) struct FileAction {
     pub skip_trash_confirmation: bool,
 }
 pub(super) enum Event {
+    RunRustTests(super::rust_tests::Run),
     /// Change markers: view, revision, mode, diff, and the text compared against.
     GitMarkers(u64, u64, String, String, Option<String>),
     Found(u64, Page, usize, usize, usize, String, search::Options),
@@ -218,6 +227,9 @@ pub(super) enum Event {
         Vec<hedit::advanced::Selection>,
     ),
     Diff(u64, u64, String, String, bool),
+    ComparedFiles(PathBuf, PathBuf, String),
+    FileHistory(file_history::Review),
+    FileHistoryDiff(u64, u64, String, String),
     FileChanged(PathBuf, Option<PathBuf>),
     FileRemovalFailed(String, Vec<(u64, hedit::document::RemovalState)>),
     ProjectLoaded(
@@ -262,12 +274,15 @@ impl HeditApp {
             .unwrap_or_default();
         if let Some(path) = &self.quality.project_path {
             if let Ok((project, _)) = projects::load(path) {
+                self.quality.project_tasks = project.tasks;
+                self.quality.last_project_task = None;
                 self.quality.project_settings = project.settings;
             }
         }
     }
     pub(super) fn quality_event(&mut self, ctx: &egui::Context, event: Event) {
         match event {
+            Event::RunRustTests(run) => self.start_rust_tests(ctx, run),
             Event::Counterparts(view, source, found) => {
                 self.show_counterparts(ctx, view, source, found);
             }
@@ -387,7 +402,19 @@ impl HeditApp {
             Event::Locations(references, name, found) => {
                 self.show_locations(ctx, references, name, found)
             }
+            Event::ComparedFiles(left, right, diff) => {
+                self.quality.diff = diff;
+                self.quality.diff_target = None;
+                self.quality.git_diff = false;
+                self.quality.comparison_paths = Some((left, right));
+                self.quality.diff_open = true;
+            }
+            Event::FileHistory(review) => self.quality.file_history = Some(review),
+            Event::FileHistoryDiff(id, revision, text, diff) => {
+                self.finish_file_history_diff(id, revision, text, diff)
+            }
             Event::Diff(id, revision, disk, diff, git) => {
+                self.quality.comparison_paths = None;
                 self.quality.diff = diff;
                 self.quality.diff_target = Some((id, revision, disk));
                 self.quality.diff_open = true;
@@ -399,6 +426,14 @@ impl HeditApp {
                 }
             }
             Event::FileChanged(from, to) => {
+                if let Some(relative) = self
+                    .quality
+                    .compare_source
+                    .as_ref()
+                    .and_then(|path| path.strip_prefix(&from).ok())
+                {
+                    self.quality.compare_source = to.as_ref().map(|path| path.join(relative));
+                }
                 if let Some(relative) = self
                     .quality
                     .folder_scope
@@ -477,6 +512,9 @@ impl HeditApp {
                 self.changed();
             }
             Event::ProjectSaved(path) => {
+                if self.quality.project_path.as_ref() != Some(&path) {
+                    self.quality.last_project_task = None;
+                }
                 self.quality.project_path = Some(path.clone());
                 self.recent_project(path);
                 self.notice = "Project and workspace saved.".into();
@@ -542,6 +580,8 @@ impl HeditApp {
                 self.project = project::ProjectBrowser::new(&self.workspace.folders);
                 self.settings.show_folders = true;
                 self.settings.show_sidebar = true;
+                self.quality.project_tasks = project.tasks;
+                self.quality.last_project_task = None;
                 self.quality.project_settings = project.settings;
                 self.quality.project_path = Some(path.clone());
                 self.recent_project(path);
@@ -1146,6 +1186,56 @@ impl HeditApp {
             ))))
         });
     }
+    pub(super) fn select_for_compare(&mut self, path: PathBuf) {
+        self.notice = format!("Selected {} for comparison.", path.display());
+        self.quality.compare_source = Some(path);
+    }
+
+    pub(super) fn compare_with_selected(&mut self, ctx: &egui::Context, right: PathBuf) {
+        let Some(left) = self.quality.compare_source.clone() else {
+            return;
+        };
+        if self.workspace.remote.is_some() || self.busy || self.closing || left == right {
+            return;
+        }
+        let open: Vec<_> = self
+            .workspace
+            .open
+            .iter()
+            .filter_map(|buffer| {
+                Some((
+                    PathBuf::from(buffer.page.info.path.as_ref()?),
+                    buffer.view.id,
+                ))
+            })
+            .collect();
+        let editor = Arc::clone(&self.workspace.editor);
+        self.job(ctx, move || {
+            let read = |path: &Path| -> Result<String, String> {
+                const LIMIT: u64 = 16 * 1024 * 1024;
+                let canonical = path.canonicalize().ok();
+                if let Some((_, id)) = open
+                    .iter()
+                    .find(|(name, _)| name == path || canonical.as_ref() == Some(name))
+                {
+                    return editor
+                        .get(*id)?
+                        .lock()
+                        .map_err(|error| error.to_string())?
+                        .text(LIMIT);
+                }
+                Document::open(0, path)?.text(LIMIT)
+            };
+            let before = read(&left)?;
+            let after = read(&right)?;
+            let label = |path: &Path| path.display().to_string().replace(['\r', '\n'], " ");
+            let diff = search::diff_with_labels(&before, &after, &label(&left), &label(&right));
+            Ok(Action::Quality(Box::new(Event::ComparedFiles(
+                left, right, diff,
+            ))))
+        });
+    }
+
     pub(super) fn compare_disk(&mut self, ctx: &egui::Context, git: bool) {
         let b = self.active();
         let Some(path) = b.page.info.path.clone() else {
@@ -1242,6 +1332,7 @@ impl HeditApp {
                 .map(|f| PathBuf::from(&f.path))
                 .collect(),
             settings: self.quality.project_settings.clone(),
+            tasks: self.quality.project_tasks.clone(),
         };
         let path = if choose {
             None

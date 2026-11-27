@@ -252,6 +252,8 @@ pub struct Features {
     pub rename: bool,
     pub quick_fixes: bool,
     pub diagnostics: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub semantic_highlighting: Option<bool>,
 }
 impl Default for Features {
     fn default() -> Self {
@@ -264,6 +266,7 @@ impl Default for Features {
             rename: true,
             quick_fixes: true,
             diagnostics: true,
+            semantic_highlighting: None,
         }
     }
 }
@@ -277,6 +280,12 @@ impl Features {
             || self.quick_fixes
             || self.formatting
             || self.diagnostics
+            || self.semantic_highlighting == Some(true)
+    }
+    pub fn semantic_highlighting(&self) -> bool {
+        // A saved configuration with every feature disabled keeps its server stopped.
+        self.semantic_highlighting
+            .unwrap_or_else(|| self.any_enabled())
     }
     pub fn enabled(&self, feature: super::Feature) -> bool {
         match feature {
@@ -287,6 +296,8 @@ impl Features {
             super::Feature::Formatting => self.formatting,
             super::Feature::Rename => self.rename,
             super::Feature::QuickFixes => self.quick_fixes,
+            super::Feature::SemanticTokens => self.semantic_highlighting(),
+            super::Feature::InlayHints => true,
         }
     }
 }
@@ -310,6 +321,8 @@ pub struct Receipt {
 #[serde(default)]
 pub struct Registration {
     pub languages: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub protocol_language_id: Option<String>,
     pub enabled: bool,
     pub external: Option<Launch>,
     pub managed: Option<Receipt>,
@@ -327,6 +340,7 @@ impl Default for Registration {
     fn default() -> Self {
         Self {
             languages: vec![],
+            protocol_language_id: None,
             enabled: true,
             external: None,
             managed: None,
@@ -366,14 +380,14 @@ impl Manager {
         &self.root
     }
     pub fn validate_id(id: &str) -> Result<(), String> {
-        if id.is_empty()
-            || id.len() > 80
-            || !id
+        let conventional = !id.is_empty()
+            && id.len() <= 80
+            && id
                 .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-        {
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+        if !conventional && !qualified_language_id(id) {
             return Err(
-                "Server ID must contain 1–80 letters, digits, underscores or hyphens.".into(),
+                "Use a server ID of 1–80 letters, digits, underscores or hyphens, or an extension language ID.".into(),
             );
         }
         Ok(())
@@ -480,6 +494,7 @@ impl Manager {
                 let registration: Registration = serde_json::from_slice(&data)
                     .map_err(|e| format!("{}: {e}", path.display()))?;
                 validate(&registration)?;
+                validate_registration_id(id, &registration)?;
                 Ok(Some(registration))
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -488,6 +503,7 @@ impl Manager {
     }
     pub fn configure(&self, id: &str, registration: Registration) -> Result<(), String> {
         validate(&registration)?;
+        validate_registration_id(id, &registration)?;
         let _lock = self.lock(id, false)?;
         let mut registration = registration;
         // Receipts can only be created by a verified managed installation.
@@ -719,6 +735,34 @@ impl Manager {
         Ok(())
     }
 }
+fn qualified_language_id(value: &str) -> bool {
+    value.split_once('.').is_some_and(|(extension, language)| {
+        [extension, language].into_iter().all(|part| {
+            part.len() <= 48
+                && part.as_bytes().first().is_some_and(u8::is_ascii_lowercase)
+                && part
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        })
+    })
+}
+
+fn validate_registration_id(id: &str, registration: &Registration) -> Result<(), String> {
+    if qualified_language_id(id) && !registration.languages.iter().any(|language| language == id) {
+        return Err("A qualified server ID must match one of its extension languages.".into());
+    }
+    Ok(())
+}
+
+fn valid_language_id(id: &str) -> bool {
+    (!id.is_empty()
+        && id.len() <= 80
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'+')))
+        || qualified_language_id(id)
+}
+
 pub fn validate(registration: &Registration) -> Result<(), String> {
     if serde_json::to_vec_pretty(registration)
         .map_err(error)?
@@ -730,13 +774,14 @@ pub fn validate(registration: &Registration) -> Result<(), String> {
 
     if registration.languages.is_empty()
         || registration.languages.len() > 32
-        || registration.languages.iter().any(|s| {
-            s.is_empty()
-                || s.len() > 80
-                || !s
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'+'))
-        })
+        || registration
+            .languages
+            .iter()
+            .any(|id| !valid_language_id(id))
+        || registration
+            .protocol_language_id
+            .as_deref()
+            .is_some_and(|id| !valid_language_id(id))
     {
         return Err("Specify 1–32 language IDs, such as rust, python, or cpp.".into());
     }

@@ -114,29 +114,45 @@ impl FileTree {
                 matches.extend(file.path.ancestors().map(Path::to_path_buf));
             }
         }
-        self.visible = Arc::new(
-            self.entries
-                .iter()
-                .filter(|entry| {
-                    (filter.is_empty() || matches.contains(&entry.path))
-                        && (tree || entry.file.is_some())
-                        && (!tree
-                            || !filter.is_empty()
-                            || !entry
-                                .path
-                                .ancestors()
-                                .skip(1)
-                                .any(|p| self.collapsed.contains(p)))
-                })
-                .cloned()
-                .collect(),
-        );
+        let mut visible: Vec<_> = self
+            .entries
+            .iter()
+            .filter(|entry| {
+                (filter.is_empty() || matches.contains(&entry.path))
+                    && (tree || entry.file.is_some())
+                    && (!tree
+                        || !filter.is_empty()
+                        || !entry
+                            .path
+                            .ancestors()
+                            .skip(1)
+                            .any(|p| self.collapsed.contains(p)))
+            })
+            .cloned()
+            .collect();
+        if !tree {
+            visible.sort_by(|a, b| {
+                a.path
+                    .file_name()
+                    .cmp(&b.path.file_name())
+                    .then_with(|| a.path.cmp(&b.path))
+            });
+        }
+        self.visible = Arc::new(visible);
         self.query = Some((filter.into(), tree));
         self.visible.clone()
     }
 }
 
 impl HeditApp {
+    pub(super) fn expand_git_trees(&mut self) {
+        self.source_control.ux.collapsed_changes.clear();
+        for tree in self.source_control.trees.values_mut() {
+            tree.collapsed.clear();
+            tree.query = None;
+        }
+    }
+
     pub(super) fn git_tree_controls(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.selectable_value(&mut self.source_control.tree_view, true, "Tree");
@@ -152,11 +168,7 @@ impl HeditApp {
             if (has_collapsed_folders || has_collapsed_groups)
                 && ui.small_button("Expand all").clicked()
             {
-                self.source_control.ux.collapsed_changes.clear();
-                for tree in self.source_control.trees.values_mut() {
-                    tree.collapsed.clear();
-                    tree.query = None;
-                }
+                self.expand_git_trees();
             }
         });
     }

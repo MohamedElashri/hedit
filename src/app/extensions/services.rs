@@ -402,7 +402,7 @@ impl Services {
                 .iter()
                 .any(|s| s.anchor != s.head);
         let info = &app.workspace.open[app.workspace.active].page.info;
-        let language = app.active().language();
+        let language = app.language_id(app.active()).to_owned();
         let filename = info.path.as_ref().map(|_| info.name.as_str());
         let manual = self.manual.take();
         for entry in self
@@ -413,7 +413,7 @@ impl Services {
             let eligible = entry
                 .contribution
                 .when
-                .matches(language, filename, selection)
+                .matches(&language, filename, selection)
                 && target.is_some();
             let current = target.as_ref().filter(|_| eligible);
             let scope_changed = match (&entry.scope, current) {
@@ -555,7 +555,7 @@ impl Services {
                     config: &config,
                     monitor: &controller.monitor,
                     target: target.as_ref(),
-                    language,
+                    language: &language,
                     selection,
                     manual: manual.as_deref(),
                     saved,

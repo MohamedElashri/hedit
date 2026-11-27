@@ -22,7 +22,9 @@ pub(super) enum Overlay {
     Recent,
     Shelf,
     Bookmarks,
+    ConflictBlocks,
     Diff,
+    FileHistory,
     Folders,
     Settings,
     About,
@@ -34,7 +36,7 @@ pub(super) enum Overlay {
     Build,
 }
 impl Overlay {
-    const ALL: [Self; 27] = [
+    const ALL: [Self; 29] = [
         Self::PluginResults,
         Self::Remote,
         Self::GitPrompt,
@@ -52,7 +54,9 @@ impl Overlay {
         Self::Recent,
         Self::Shelf,
         Self::Bookmarks,
+        Self::ConflictBlocks,
         Self::Diff,
+        Self::FileHistory,
         Self::Folders,
         Self::Settings,
         Self::About,
@@ -97,7 +101,9 @@ impl HeditApp {
             Overlay::Recent => self.quality.recent_open,
             Overlay::Shelf => self.shelf_open,
             Overlay::Bookmarks => self.bookmarks_open,
+            Overlay::ConflictBlocks => self.quality.conflict_draft.is_some(),
             Overlay::Diff => self.quality.diff_open,
+            Overlay::FileHistory => self.quality.file_history.is_some(),
             Overlay::Folders => self.quality.folders_open,
             Overlay::Settings => self.quality.settings_open,
             Overlay::About => self.about_open,
@@ -134,7 +140,9 @@ impl HeditApp {
             Overlay::Recent => self.quality.recent_open = false,
             Overlay::Shelf => self.shelf_open = false,
             Overlay::Bookmarks => self.bookmarks_open = false,
+            Overlay::ConflictBlocks => self.quality.conflict_draft = None,
             Overlay::Diff => self.quality.diff_open = false,
+            Overlay::FileHistory => self.quality.file_history = None,
             Overlay::Folders => self.quality.folders_open = false,
             Overlay::Settings => self.quality.settings_open = false,
             Overlay::About => self.about_open = false,

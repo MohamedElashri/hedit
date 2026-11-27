@@ -805,7 +805,12 @@ fn local_remote_publish_fetch_and_fast_forward_pull_work_without_force() {
     stage(&git, root, "file.txt");
     commit(&git, root, "Next");
     assert_eq!(git.snapshot(root, 200).unwrap().ahead, 1);
-    git.execute(root, &Operation::Push).unwrap();
+    git.execute(root, &Operation::Sync).unwrap();
+    assert_eq!(
+        git.resolve_commit(remote.path(), "refs/heads/main")
+            .unwrap(),
+        git.resolve_commit(root, "HEAD").unwrap()
+    );
     assert_eq!(git.snapshot(root, 200).unwrap().ahead, 0);
 }
 
@@ -1938,6 +1943,7 @@ fn divergent_local_remotes_reject_pull_and_push_without_rewriting_either_side() 
         .unwrap();
     assert!(git.execute(root, &Operation::Pull).is_err());
     assert!(git.execute(root, &Operation::Push).is_err());
+    assert!(git.execute(root, &Operation::Sync).is_err());
     assert_eq!(git.resolve_commit(root, "HEAD").unwrap(), local);
     assert_eq!(
         git.command(remote.path(), &["rev-parse", "refs/heads/main"])

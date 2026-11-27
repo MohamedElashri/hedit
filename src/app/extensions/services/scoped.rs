@@ -58,7 +58,7 @@ pub(super) struct Tick<'a> {
     pub config: &'a std::path::Path,
     pub monitor: &'a policy::Monitor,
     pub target: Option<&'a lua::Target>,
-    pub language: hedit::syntax::Language,
+    pub language: &'a str,
     pub selection: bool,
     pub manual: Option<&'a str>,
     pub saved: Option<(u64, u64)>,

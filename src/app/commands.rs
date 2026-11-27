@@ -15,11 +15,13 @@ pub(super) enum Command {
     ExplorerRename,
     ConnectSsh,
     SshOutput,
+    TablePreview,
     MarkdownSource,
     MarkdownSplit,
     MarkdownPreview,
     MarkdownRefresh,
     FindFiles,
+    PinSearchResults,
     FindPrevious,
     SelectAllMatches,
     UseSelectionForFind,
@@ -33,6 +35,7 @@ pub(super) enum Command {
     RecentProjects,
     ProjectSettings,
     Symbols,
+    WorkspaceSymbols,
     GotoDefinition,
     GotoReferences,
     SwitchCounterpart,
@@ -40,6 +43,9 @@ pub(super) enum Command {
     NavBack,
     NavForward,
     CompareDisk,
+    SelectForCompare,
+    CompareWithSelected,
+    FileHistory,
     GitDiff,
     SourceControl,
     GitCommit,
@@ -85,7 +91,11 @@ pub(super) enum Command {
 
     NextOccurrence,
     Build,
+    TestAtCursor,
+    TestFile,
     BuildWith,
+    RunProjectTask,
+    RerunProjectTask,
     CancelBuild,
     BuildResults,
     Terminal,
@@ -137,6 +147,8 @@ pub(super) enum Command {
     UnfoldAll,
     IndentGuides,
     Minimap,
+    StickyScope,
+    InlayHints,
     New,
     NewFileFromTemplate,
     NewWindow,
@@ -284,11 +296,13 @@ impl Command {
         Self::Palette,
         Self::ConnectSsh,
         Self::SshOutput,
+        Self::TablePreview,
         Self::MarkdownSource,
         Self::MarkdownSplit,
         Self::MarkdownPreview,
         Self::MarkdownRefresh,
         Self::FindFiles,
+        Self::PinSearchResults,
         Self::FindPrevious,
         Self::SelectAllMatches,
         Self::UseSelectionForFind,
@@ -302,6 +316,7 @@ impl Command {
         Self::RecentProjects,
         Self::ProjectSettings,
         Self::Symbols,
+        Self::WorkspaceSymbols,
         Self::GotoDefinition,
         Self::GotoReferences,
         Self::SwitchCounterpart,
@@ -309,6 +324,9 @@ impl Command {
         Self::NavBack,
         Self::NavForward,
         Self::CompareDisk,
+        Self::SelectForCompare,
+        Self::CompareWithSelected,
+        Self::FileHistory,
         Self::GitDiff,
         Self::SourceControl,
         Self::GitCommit,
@@ -353,7 +371,11 @@ impl Command {
         Self::Tab9,
         Self::NextOccurrence,
         Self::Build,
+        Self::TestAtCursor,
+        Self::TestFile,
         Self::BuildWith,
+        Self::RunProjectTask,
+        Self::RerunProjectTask,
         Self::CancelBuild,
         Self::BuildResults,
         Self::Terminal,
@@ -405,6 +427,8 @@ impl Command {
         Self::UnfoldAll,
         Self::IndentGuides,
         Self::Minimap,
+        Self::StickyScope,
+        Self::InlayHints,
         Self::New,
         Self::NewFileFromTemplate,
         Self::NewWindow,
@@ -560,10 +584,12 @@ impl Command {
         match self {
             Self::ConnectSsh => "Connect via SSH…",
             Self::SshOutput => "Show SSH Output",
+            Self::TablePreview => "Toggle Table Preview",
             Self::MarkdownSource => "Markdown: show source",
             Self::MarkdownSplit => "Markdown: split source and preview",
             Self::MarkdownPreview => "Markdown: render preview",
             Self::MarkdownRefresh => "Markdown: refresh preview",
+            Self::PinSearchResults => "Pin Search Results",
             Self::FindFiles => "Find in folders…",
             Self::FindPrevious => "Find previous",
             Self::SelectAllMatches => "Select all matches",
@@ -578,6 +604,7 @@ impl Command {
             Self::RecentProjects => "Recent projects…",
             Self::ProjectSettings => "Project settings…",
             Self::Symbols => "Go to symbol…",
+            Self::WorkspaceSymbols => "Go to Symbol in Workspace…",
             Self::GotoDefinition => "Go to definition",
             Self::GotoReferences => "Go to references…",
             Self::SwitchCounterpart => "Switch header/implementation",
@@ -585,6 +612,9 @@ impl Command {
             Self::NavBack => "Navigate back",
             Self::NavForward => "Navigate forward",
             Self::CompareDisk => "Compare with disk…",
+            Self::SelectForCompare => "Select for Compare",
+            Self::CompareWithSelected => "Compare With Selected",
+            Self::FileHistory => "File History…",
             Self::GitDiff => "Compare file with Git HEAD…",
             Self::FocusEditor => "Focus editor",
             Self::FocusSearch => "Focus Search",
@@ -640,7 +670,11 @@ impl Command {
 
             Self::NextOccurrence => "Select next occurrence",
             Self::Build => "Build",
+            Self::TestAtCursor => "Run Test at Cursor",
+            Self::TestFile => "Run Tests in File",
             Self::BuildWith => "Build with…",
+            Self::RunProjectTask => "Run Project Task…",
+            Self::RerunProjectTask => "Rerun Last Project Task",
             Self::CancelBuild => "Cancel build",
             Self::BuildResults => "Toggle Output",
             Self::Terminal => "Toggle terminal",
@@ -692,6 +726,8 @@ impl Command {
             Self::UnfoldAll => "Unfold all",
             Self::IndentGuides => "Show indentation guides",
             Self::Minimap => "Show minimap",
+            Self::StickyScope => "Show sticky scope",
+            Self::InlayHints => "Show inlay hints",
             Self::New => "New file",
             Self::NewFileFromTemplate => "New File from Template…",
             Self::NewWindow => "New window",
@@ -893,6 +929,7 @@ impl Command {
             Self::NextOccurrence => "Ctrl+D",
             Self::Build => "Ctrl+B",
             Self::BuildWith => "Ctrl+Shift+B",
+            Self::RerunProjectTask => "Ctrl+Alt+Shift+B",
             Self::NextResult => "F4",
             Self::PreviousResult => "Shift+F4",
             Self::SkipOccurrence => "Ctrl+K, Ctrl+D",
@@ -1098,6 +1135,7 @@ pub(super) enum Pick {
     Font(String),
     /// A saved macro, by name.
     Macro(String),
+    ProjectTask(String),
     /// An extension command's stable ID.
     Extension(String),
     Location(definitions::Location),
@@ -1149,6 +1187,32 @@ impl HeditApp {
         {
             return false;
         }
+        if self.showing_pinned_search()
+            && (command.operation().is_some()
+                || matches!(
+                    command,
+                    Command::Undo
+                        | Command::Redo
+                        | Command::Save
+                        | Command::SaveAs
+                        | Command::Cut
+                        | Command::Paste
+                        | Command::PasteHistory
+                        | Command::PasteIndent
+                        | Command::Replace
+                        | Command::ReplaceAll
+                        | Command::RevertChange
+                        | Command::Reindent
+                        | Command::Transpose
+                        | Command::PlayMacro
+                        | Command::RunMacro
+                        | Command::LanguageFormat
+                        | Command::LanguageRename
+                        | Command::LanguageQuickFix
+                ))
+        {
+            return false;
+        }
         if command
             .operation()
             .is_some_and(|op| op != hedit::editing::Operation::SelectLine)
@@ -1157,6 +1221,36 @@ impl HeditApp {
             return false;
         }
         match command {
+            Command::SelectForCompare => self.active().page.info.path.is_some(),
+            Command::CompareWithSelected => {
+                self.active().page.info.path.as_ref().is_some_and(|path| {
+                    self.quality
+                        .compare_source
+                        .as_deref()
+                        .is_some_and(|source| source != std::path::Path::new(path))
+                })
+            }
+            Command::FileHistory => {
+                self.workspace.remote.is_none()
+                    && self.active().page.info.path.is_some()
+                    && !self.active().page.info.paged
+                    && !self.active().follow
+            }
+            Command::WorkspaceSymbols => {
+                self.workspace.remote.is_none() && !self.workspace.folders.is_empty()
+            }
+            Command::RunProjectTask => {
+                self.workspace.remote.is_none()
+                    && self.quality.project_path.is_some()
+                    && !self.quality.project_tasks.is_empty()
+            }
+            Command::RerunProjectTask => {
+                self.workspace.remote.is_none() && self.quality.last_project_task.is_some()
+            }
+            Command::TestAtCursor | Command::TestFile => self.rust_tests_available(),
+            Command::TablePreview => self.table_delimiter().is_some(),
+            Command::PinSearchResults => self.can_pin_search(),
+            Command::Close if self.showing_pinned_search() => true,
             Command::ExplorerNewFile | Command::ExplorerNewFolder | Command::ExplorerRename => {
                 !self.workspace.folders.is_empty()
             }
@@ -1332,6 +1426,8 @@ impl HeditApp {
             Command::SoftTabs => self.settings.smart_backspace,
             Command::IndentGuides => self.settings.draw_indent_guides,
             Command::Minimap => self.settings.show_minimap,
+            Command::StickyScope => self.settings.show_sticky_scope,
+            Command::InlayHints => self.settings.show_inlay_hints,
             Command::SinglePane => self.panes.mode == 0,
             Command::SplitColumns => self.panes.mode == 1,
             Command::SplitRows => self.panes.mode == 2,
@@ -1415,6 +1511,9 @@ impl HeditApp {
         if !self.command_enabled(command) {
             return;
         }
+        if command == Command::Close && self.close_pinned_search() {
+            return;
+        }
         if self.source_control.open {
             if command == Command::Close {
                 self.source_control.review_tab = false;
@@ -1453,6 +1552,7 @@ impl HeditApp {
                     | Command::NextTerminal
                     | Command::PreviousTerminal
                     | Command::FindFiles
+                    | Command::PinSearchResults
                     | Command::GitCommit
                     | Command::GitNextFile
                     | Command::GitPreviousFile
@@ -1500,6 +1600,7 @@ impl HeditApp {
             self.close_transient(ctx);
         }
         match command {
+            Command::TablePreview => self.toggle_table_preview(),
             Command::MarkdownSource => {
                 self.set_markdown_view(ctx, hedit::session::MarkdownView::Source)
             }
@@ -1510,6 +1611,7 @@ impl HeditApp {
                 self.set_markdown_view(ctx, hedit::session::MarkdownView::Preview)
             }
             Command::MarkdownRefresh => self.refresh_markdown(ctx),
+            Command::PinSearchResults => self.pin_search(ctx),
             Command::FindFiles => {
                 self.show_search_sidebar();
             }
@@ -1529,6 +1631,14 @@ impl HeditApp {
                 self.prepare_project_scope();
             }
             Command::Symbols => self.list_symbols(ctx),
+            Command::WorkspaceSymbols => {
+                self.palette = true;
+                self.commands_only = false;
+                self.palette_query = "@@".into();
+                self.palette_focus = true;
+                self.palette_index = 0;
+                self.pick_list = None;
+            }
             Command::GotoDefinition => self.look_up(ctx, false),
             Command::GotoReferences => self.look_up(ctx, true),
             Command::SwitchCounterpart => self.switch_counterpart(ctx),
@@ -1536,6 +1646,18 @@ impl HeditApp {
             Command::NavBack => self.navigate(ctx, false),
             Command::NavForward => self.navigate(ctx, true),
             Command::CompareDisk => self.compare_disk(ctx, false),
+            Command::SelectForCompare | Command::CompareWithSelected => {
+                if self.workspace.remote.is_none() {
+                    if let Some(path) = self.active().page.info.path.as_ref().map(PathBuf::from) {
+                        if command == Command::SelectForCompare {
+                            self.select_for_compare(path);
+                        } else {
+                            self.compare_with_selected(ctx, path);
+                        }
+                    }
+                }
+            }
+            Command::FileHistory => self.open_file_history(ctx),
             Command::GitDiff => self.compare_disk(ctx, true),
             Command::Notifications => self.toggle_notifications(),
             Command::FocusExplorer => self.focus_explorer(ctx),
@@ -1622,6 +1744,15 @@ impl HeditApp {
             Command::Tab9 => self.select_tab_position(8),
             Command::NextOccurrence => self.occurrence(false),
             Command::Build => self.build(ctx),
+            Command::RunProjectTask => self.pick_project_task(ctx),
+            Command::RerunProjectTask => {
+                if let Some(task) = self.quality.last_project_task.clone() {
+                    self.run_project_task(ctx, &task);
+                }
+            }
+            Command::TestAtCursor | Command::TestFile => {
+                self.run_rust_tests(ctx, command == Command::TestFile)
+            }
             Command::BuildWith => {
                 // Choose from "Build with: …" entries in the command palette.
                 self.palette = true;
@@ -1727,6 +1858,10 @@ impl HeditApp {
                 self.settings.draw_indent_guides = !self.settings.draw_indent_guides
             }
             Command::Minimap => self.settings.show_minimap = !self.settings.show_minimap,
+            Command::StickyScope => {
+                self.settings.show_sticky_scope = !self.settings.show_sticky_scope
+            }
+            Command::InlayHints => self.settings.show_inlay_hints = !self.settings.show_inlay_hints,
             Command::DetectIndent => self.detect_indent(),
             Command::Fold => self.fold(false),
             Command::FoldAll => self.fold(true),
@@ -2081,6 +2216,7 @@ impl HeditApp {
     pub(super) fn command_palette(&mut self, ctx: &egui::Context) {
         if !self.palette {
             self.pick_list = None;
+            self.workspace_symbols = Default::default();
             return;
         }
         if self.appearance.preview.is_some() {
@@ -2090,6 +2226,7 @@ impl HeditApp {
         enum Item {
             Buffer(usize),
             File(String),
+            Symbol(PathBuf, usize),
             Command(Command),
             Extension(String),
             Syntax(syntax::Language),
@@ -2130,7 +2267,7 @@ impl HeditApp {
                 } else if commands {
                     "Type a command…"
                 } else {
-                    "File name, then @symbol, :line, or #text; > for commands…"
+                    "File, @symbol, @@workspace symbol, :line, or #text…"
                 })
             });
             if self.palette_focus {
@@ -2150,7 +2287,14 @@ impl HeditApp {
             // Go to Anything: `file@symbol`, `file:line`, `file#text`.
             let literal_open_file = filter.contains(['@', ':', '#'])
                 && self.workspace.open.iter().any(|buffer| buffer.view.name.to_lowercase() == filter);
-            let (file_filter, goto) = if commands || paste || literal_open_file {
+            let workspace_query = if commands || paste || literal_open_file {
+                None
+            } else {
+                filter.strip_prefix("@@")
+            };
+            let (file_filter, goto) = if let Some(query) = workspace_query {
+                (std::borrow::Cow::Borrowed(query.trim()), None)
+            } else if commands || paste || literal_open_file {
                 (std::borrow::Cow::Borrowed(filter.as_str()), None)
             } else {
                 goto_anything::parse_file_query(&filter)
@@ -2158,7 +2302,7 @@ impl HeditApp {
             let filter = file_filter.into_owned();
             let here = goto.is_some() && filter.is_empty();
             target = goto.clone();
-            if !commands && !paste && !here && !self.workspace.folders.is_empty() {
+            if !commands && !paste && !here && workspace_query.is_none() && !self.workspace.folders.is_empty() {
                 let roots: Vec<_> = self.workspace.folders.iter().map(|f| PathBuf::from(&f.path)).collect();
                 self.project.search(ctx, &roots, &filter);
             }
@@ -2229,6 +2373,34 @@ impl HeditApp {
                         }
                     }
                 }
+            } else if workspace_query.is_some() {
+                self.cancel_goto_preview();
+                if self.workspace.remote.is_some() || self.workspace.folders.is_empty() {
+                    ui.weak("Open a local folder to search its symbols.");
+                } else {
+                    self.prepare_workspace_symbols(ctx);
+                    let roots = self.workspace_symbols.roots().to_vec();
+                    match self.workspace_symbols.get() {
+                        None => {
+                            targets_pending = true;
+                            ui.horizontal(|ui| { ui.spinner(); ui.weak("Indexing workspace symbols…"); });
+                        }
+                        Some(Err(error)) => { ui.colored_label(self.theme.warning.color(), error); }
+                        Some(Ok(results)) => {
+                            if results.truncated {
+                                ui.weak("Symbol index limit reached.");
+                            }
+                            let mut matches: Vec<_> = results.symbols.iter().filter_map(|symbol| {
+                                score(&symbol.name).map(|score| (score, symbol))
+                            }).collect();
+                            matches.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
+                            items.extend(matches.into_iter().take(500).map(|(_, symbol)| {
+                                let location = format!("{}:{}", hedit::folder::display_path(&roots, &symbol.path), symbol.line);
+                                (symbol.name.clone(), location, Item::Symbol(symbol.path.clone(), symbol.line))
+                            }));
+                        }
+                    }
+                }
             } else if here {
                 // Targets in the current file, previewed as you move.
                 match goto.clone().unwrap() {
@@ -2273,7 +2445,7 @@ impl HeditApp {
                 scored.sort_by_key(|(found, _)| std::cmp::Reverse(*found));
             }
             items.extend(scored.into_iter().map(|(_, item)| item));
-            if !commands && !paste && !here && !self.workspace.folders.is_empty() {
+            if !commands && !paste && !here && workspace_query.is_none() && !self.workspace.folders.is_empty() {
                 ui.horizontal(|ui| {
                     if self.project.indexing() {
                         targets_pending = true;
@@ -2422,6 +2594,11 @@ impl HeditApp {
                     self.go_to_target(ctx, Some(path), target.unwrap());
                 }
                 Item::File(path) => self.open(ctx, Some(path.into())),
+                Item::Symbol(path, line) => {
+                    self.cancel_goto_preview();
+                    self.navigation_mark();
+                    self.open_existing_location(ctx, path, line as u64, 1);
+                }
                 Item::Command(command) => self.execute(ctx, command),
                 Item::Extension(id) => {
                     self.run_extension_by_id(ctx, &id);
@@ -2451,6 +2628,7 @@ impl HeditApp {
                     self.run_extension_by_id(ctx, &id);
                 }
                 Item::Pick(Pick::Location(location)) => self.open_location(ctx, location),
+                Item::Pick(Pick::ProjectTask(name)) => self.run_project_task(ctx, &name),
                 Item::Syntax(language) => self.set_syntax(Some(language)),
                 Item::BuildWith(name) => {
                     self.settings.build_system = if name == "Automatic" {

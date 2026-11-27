@@ -134,16 +134,45 @@ ordinary `expected` text. Fixture document handles are 32 `a` characters and
 revision `0`, for reproducible expected transactions. Fixtures confer no editor
 grants and never run unconfined.
 
-Declarative API 1 additionally supports `language` and `theme` command actions.
-They require no executable grants. A language `definition` has `name`, 1–16 simple
-lowercase `extensions`, up to 256 ASCII `keywords`, optional punctuation
-`line_comment` (1–8 bytes), and `quoted_strings`. It associates otherwise plain-text
-files automatically, or can be selected from the command palette for a document.
-The scanner is linear, has no regex/backtracking/nesting, and falls back to plain
-text above 64 KiB. Built-in language services are not implicitly enabled for a
-custom syntax. Themes use the existing bounded native theme JSON as `definition`
-and are applied only when selected. Unknown fields and external resources are
-rejected. See the [visual pack](../examples/extensions/demo-visuals.json).
+### Language and theme packs
+
+An API 1 command with `action.kind: "language"` registers the stable ID
+`extension-id.command-id`. Hedit selects a matching pack for extensions that
+would otherwise be plain text. Users can select a pack in the syntax picker or
+run its command. A manual choice is saved with the document's recovery metadata.
+Providers and commands can match the ID in `when.languages`.
+
+| Language definition | Meaning |
+| --- | --- |
+| `name`, `extensions` | Display name and 1–16 lowercase extensions, without dots |
+| `keywords`, `line_comment`, `quoted_strings` | Up to 256 ASCII keywords, an optional line comment delimiter, and ordinary single- and double-quoted strings |
+| `regions` | Up to 16 literal `start` and `end` pairs. Use `kind: "comment"` or `"string"` across lines. Strings can set `escape: true` for backslash escapes. |
+| Embedded regions | Set `kind: "embedded"` and `language` to a built-in syntax ID. The region uses that language's native lexer. The first closing delimiter ends the region. |
+
+At the same position, the longest opening delimiter wins. The scanner uses
+literal matching and falls back to plain text above 64 KiB. Packs do not
+contribute TextMate grammars or LSP semantic tokens. Theme actions use Hedit's
+theme JSON as `definition`. See the [visual pack](../examples/extensions/demo-visuals.json).
+
+#### Optional language server
+
+A language action can also declare a `server` object beside `definition`. The
+preset appears under the pack's ID in **Settings → Language Servers**.
+
+| Server field | Meaning |
+| --- | --- |
+| `language_id` | Optional LSP `languageId` sent on open. The pack ID is used when omitted. |
+| `arguments`, `root_markers` | Initial argument list and project-relative root markers |
+| `settings`, `initialization_options` | Initial LSP configuration and initialization objects |
+
+Install the [JSON language pack example](../examples/extensions/json-language-pack.json)
+and open a `.demojson` file. To enable language features, configure
+`demo-json.language`, choose an installed JSON language-server executable that
+accepts `--stdio`, review the arguments, and save. Hedit uses its regular
+Language Servers manager for that executable. Installing or updating the pack
+does not configure or run it, and existing configurations keep their saved
+settings. Pack server presets apply to local files. SDK 3 scoped servers use the
+separate [broker contract](plugin-broker.md).
 
 SDK 2 grants no workspace, tool, HTTPS, credential, multi-file edit or remote
 document authority. Those operations require separately declared SDK 3

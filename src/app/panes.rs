@@ -418,6 +418,7 @@ impl HeditApp {
         self.source_control.open = self.review_in_group(self.panes.focused);
     }
     pub(super) fn leave_review(&mut self) {
+        self.leave_pinned_search();
         if self.source_control.review_group.is_none()
             || self.source_control.review_group == Some(self.panes.focused_id())
         {
@@ -426,6 +427,7 @@ impl HeditApp {
         self.source_control.open = false;
     }
     pub(super) fn activate_review(&mut self) {
+        self.leave_pinned_search();
         self.source_control.review_selected = true;
         self.source_control.review_group = Some(self.panes.focused_id());
         self.source_control.open = true;
@@ -695,9 +697,13 @@ impl HeditApp {
 
     pub(super) fn pane_layout(&mut self, ui: &mut egui::Ui) {
         self.sync_groups();
+        self.pinned_search
+            .retain_groups(|id| self.panes.views.iter().any(|pane| pane.group_id == id));
         if self.panes.mode == 0 {
-            self.document_breadcrumbs(ui);
-            self.editor_pane(ui, 0);
+            if !self.pinned_search_pane(ui) {
+                self.document_breadcrumbs(ui);
+                self.editor_pane(ui, 0);
+            }
             self.save_group_cursor();
             return;
         }
@@ -742,7 +748,7 @@ impl HeditApp {
                     let before = ui.available_rect_before_wrap();
                     if self.review_in_group(number) {
                         self.source_control_contents(ui);
-                    } else {
+                    } else if !self.pinned_search_pane(ui) {
                         self.document_breadcrumbs(ui);
                         self.editor_pane(ui, number);
                     }

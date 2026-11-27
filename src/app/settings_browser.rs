@@ -133,6 +133,13 @@ fn catalog() -> &'static [Setting] {
         setting!(
             Editor,
             Bool,
+            "show_inlay_hints",
+            "Show inlay hints",
+            "Display type and parameter labels from the active language server."
+        );
+        setting!(
+            Editor,
+            Bool,
             "line_numbers",
             "Show line numbers",
             "Display document line numbers in the gutter."
@@ -164,6 +171,13 @@ fn catalog() -> &'static [Setting] {
             "show_minimap",
             "Show minimap",
             "Display a compact overview of the document."
+        );
+        setting!(
+            Editor,
+            Bool,
+            "show_sticky_scope",
+            "Show sticky scope",
+            "Keep the enclosing declaration visible while scrolling."
         );
         setting!(
             Editor,

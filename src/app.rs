@@ -12,6 +12,7 @@ mod close;
 #[cfg(test)]
 mod close_tests;
 mod commands;
+mod conflict_blocks;
 mod controls;
 mod counterpart;
 #[cfg(test)]
@@ -30,6 +31,7 @@ mod extensions;
 #[cfg(test)]
 mod third_audit;
 pub(crate) use extensions::run_plugin_cli;
+mod file_history;
 mod file_reference;
 #[cfg(test)]
 mod file_reference_tests;
@@ -49,6 +51,7 @@ mod goto_matches;
 #[cfg(test)]
 mod goto_tests;
 mod group_tabs;
+mod inlay_hints;
 #[cfg(test)]
 mod interaction_tests;
 mod jobs;
@@ -84,6 +87,7 @@ mod overlay_tests;
 mod overlays;
 mod panes;
 mod paste_history;
+mod pinned_search;
 mod preferences;
 mod project;
 #[cfg(test)]
@@ -109,6 +113,7 @@ mod render_tests;
 mod row_index;
 #[cfg(test)]
 mod rtl_tests;
+mod rust_tests;
 #[cfg(test)]
 mod save_format_tests;
 #[cfg(test)]
@@ -124,10 +129,12 @@ mod shortcut_preset;
 mod snippet_fields;
 mod source_control;
 mod spell_check;
+mod sticky_scope;
 mod tab_strip;
 mod tab_switch;
 #[cfg(test)]
 mod tab_tests;
+mod table_preview;
 mod terminal_panel;
 #[cfg(test)]
 mod terminal_tests;
@@ -143,6 +150,7 @@ mod wait;
 mod workbench;
 mod workbench_navigation;
 mod workbench_panel;
+mod workspace_symbols;
 mod workspace_watch;
 
 use commands::Command;
@@ -316,7 +324,6 @@ pub struct HeditApp {
     broker_deferred: VecDeque<extensions::DeferredEvent>,
     broker_deferred_running: bool,
     plugin_services: extensions::Services,
-    extension_syntax: std::collections::BTreeMap<u64, String>,
     /// Tab moves through the fields of the snippet inserted last.
     snippet: Option<snippet_fields::SnippetSession>,
     auto: auto_complete::AutoComplete,
@@ -344,9 +351,12 @@ pub struct HeditApp {
     live_find: find_live::LiveFind,
     row_indexes: [row_index::Cache; panes::MAX_GROUPS],
     minimaps: [minimap::Cache; panes::MAX_GROUPS],
+    sticky_scopes: [sticky_scope::Cache; panes::MAX_GROUPS],
     markdown: markdown::Markdown,
+    tables: table_preview::Previews,
     /// Where the cursor was before Go to Anything previewed a result.
     goto_origin: Option<goto_anything::Origin>,
+    workspace_symbols: workspace_symbols::Index,
     goto_preview_epoch: u64,
     goto_preview_running: bool,
     /// The `font_face` in use, or being loaded.
@@ -369,6 +379,7 @@ pub struct HeditApp {
     ime_composing: bool,
     key_filter: String,
     panes: panes::Panes,
+    pinned_search: pinned_search::Tabs,
     document_navigation: document_navigation::State,
     rectangle_start: Option<(usize, usize)>,
     extra_layouts: [editor_layout::LayoutCache; panes::MAX_GROUPS - 1],
@@ -553,7 +564,6 @@ impl HeditApp {
             broker_deferred: VecDeque::new(),
             broker_deferred_running: false,
             plugin_services: extensions::Services::default(),
-            extension_syntax: Default::default(),
             snippet: None,
             auto: Default::default(),
             languages: Default::default(),
@@ -573,9 +583,12 @@ impl HeditApp {
             line_cursor_goal: None,
             live_find: Default::default(),
             row_indexes: Default::default(),
+            sticky_scopes: Default::default(),
             minimaps: Default::default(),
             markdown: Default::default(),
+            tables: Default::default(),
             goto_origin: None,
+            workspace_symbols: Default::default(),
             goto_preview_epoch: 0,
             goto_preview_running: false,
             font_applied: String::new(),
@@ -592,6 +605,7 @@ impl HeditApp {
             ime_composing: false,
             key_filter: String::new(),
             rectangle_start: None,
+            pinned_search: Default::default(),
             panes,
             document_navigation: Default::default(),
             extra_layouts: Default::default(),
@@ -1110,12 +1124,11 @@ impl HeditApp {
         }
         self.notifications.pending_save = Some(retry);
         let editor = Arc::clone(&self.workspace.editor);
+        let history = self.file_history_root();
         self.job(ctx, move || {
-            let info = editor
-                .get(id)?
-                .lock()
-                .map_err(|e| e.to_string())?
-                .save(target)?;
+            let shared = editor.get(id)?;
+            let mut doc = shared.lock().map_err(|error| error.to_string())?;
+            let info = file_history::save(&mut doc, target, history)?;
             Ok(Action::Saved(id, info))
         });
     }
@@ -2042,6 +2055,11 @@ impl HeditApp {
             (shift, Key::P, Command::Palette),
             (cmd, Key::P, Command::Switcher),
             (
+                Modifiers { alt: true, ..shift },
+                Key::B,
+                Command::RerunProjectTask,
+            ),
+            (
                 Modifiers { alt: true, ..cmd },
                 Key::B,
                 Command::FolderSidebar,
@@ -2259,6 +2277,7 @@ impl HeditApp {
             return;
         }
         self.markdown.retain_documents(ctx, &self.workspace.open);
+        self.retain_table_previews();
         let theme = self.theme.clone();
         egui::CentralPanel::default()
             .frame(
@@ -2310,7 +2329,9 @@ impl HeditApp {
         ui.add_space(6.0);
     }
     fn editor_pane(&mut self, ui: &mut egui::Ui, pane_id: usize) {
-        self.markdown_pane(ui, pane_id);
+        if !self.table_pane(ui, pane_id) {
+            self.markdown_pane(ui, pane_id);
+        }
     }
     fn editor_source_pane(&mut self, ui: &mut egui::Ui, pane_id: usize) {
         if self.distraction_free {
@@ -2566,12 +2587,20 @@ impl HeditApp {
             cache.offer_shared(&self.editor_layout);
             cache
         };
-        layout_cache.custom = extensions::syntax_for(
-            &self.extensions,
-            self.extension_syntax.get(&buffer.page.info.id),
-            &buffer.page.info.name,
-            language,
+        layout_cache.custom = extensions::language_pack_for(&self.extensions, buffer)
+            .and_then(extensions::Contribution::language_definition)
+            .cloned();
+        layout_cache.set_semantic(
+            self.languages.semantic_for(buffer),
+            &projection,
+            &buffer.view.folds,
         );
+        let hints = self
+            .settings
+            .show_inlay_hints
+            .then(|| self.languages.inlay.get(buffer))
+            .flatten();
+        let display_inlays = layout_cache.set_inlays(hints, &projection, &buffer.view.folds);
         let row_height = ui.fonts_mut(|f| f.row_height(&typography.id()));
         let line_height = typography.line_height;
         // Like Sublime, the last line can scroll up to the top: the editor is a
@@ -2689,6 +2718,10 @@ impl HeditApp {
         } else {
             Arc::default()
         };
+        let sticky = self.settings.show_sticky_scope
+            && !self.distraction_free
+            && self.sticky_scopes[pane_id].refresh(buffer);
+        let mut sticky_top = None;
         let mut fold_click: Option<(hedit::advanced::Fold, bool)> = None;
         // Move the text out for this frame instead of copying a page of up to
         // 2 MiB; it goes back, possibly edited, right after the editor is drawn.
@@ -2778,6 +2811,26 @@ impl HeditApp {
                         let row_index = self.row_indexes[pane_id].get(&output.galley);
                         let visible_rows =
                             row_index.visible(&output.galley, output.galley_pos, ui.clip_rect());
+                        if sticky {
+                            let first = output
+                                .galley
+                                .cursor_from_pos(egui::vec2(
+                                    0.0,
+                                    ui.clip_rect().top() - output.galley_pos.y,
+                                ))
+                                .index
+                                .0;
+                            sticky_top = Some(
+                                source_index
+                                    .line_column(
+                                        &old,
+                                        projection.source(first),
+                                        usize::from(buffer.view.tab_size.unwrap_or(4)),
+                                    )
+                                    .0
+                                    + 1,
+                            );
+                        }
                         if markdown_split {
                             markdown_layout = Some((
                                 Arc::clone(&output.galley),
@@ -2787,6 +2840,16 @@ impl HeditApp {
                         }
 
                         let bidi_rows: Arc<bidi_view::BidiRows> = latest_bidi.take();
+                        if let Some(inlays) = &display_inlays {
+                            inlays.paint(
+                                ui,
+                                &output,
+                                &bidi_rows,
+                                visible_rows.clone(),
+                                font_size,
+                                &theme,
+                            );
+                        }
                         let completed_drag = editor_interaction::complete_drag(
                             ui,
                             &mut output,
@@ -3663,6 +3726,16 @@ impl HeditApp {
                     ));
                 }
             }
+        }
+        if let Some(line) = sticky_top.and_then(|top| {
+            self.sticky_scopes[pane_id].show(
+                ui,
+                editor_area.intersect(scroll_output.inner_rect),
+                top,
+                &theme,
+            )
+        }) {
+            self.jump_to_line(ctx, line, None);
         }
         if let Some((galley, projection, inset)) = markdown_layout {
             self.markdown.scroll.source(
@@ -5682,7 +5755,7 @@ mod tests {
                 size,
             );
             let generation = app.generation;
-            click_label_sized(&ctx, &mut app, "Plain text ⏷", size);
+            click_label_sized(&ctx, &mut app, "Plain text", size);
             let dismissed = frame_size(
                 &ctx,
                 &mut app,
@@ -5696,7 +5769,7 @@ mod tests {
             .is_some()));
             assert_eq!(app.generation, generation);
             assert!(app.active().view.language_override.is_none());
-            click_label_sized(&ctx, &mut app, "Plain text ⏷", size);
+            click_label_sized(&ctx, &mut app, "Plain text", size);
             let output = frame_size(
                 &ctx,
                 &mut app,
@@ -5747,12 +5820,12 @@ mod tests {
                 size,
             );
             assert_eq!(app.active().page.text, "print('keep λ') # more");
-            click_label_sized(&ctx, &mut app, "Python ⏷", size);
+            click_label_sized(&ctx, &mut app, "Python", size);
             click_label_sized(&ctx, &mut app, "Automatic (Plain text)", size);
             assert_eq!(app.active().language(), syntax::Language::PlainText);
             assert!(app.active().view.language_override.is_none());
             assert_eq!(app.active().page.text, "print('keep λ') # more");
-            click_label_sized(&ctx, &mut app, "Plain text ⏷", size);
+            click_label_sized(&ctx, &mut app, "Plain text", size);
             let output = frame_size(
                 &ctx,
                 &mut app,
@@ -5773,7 +5846,7 @@ mod tests {
                 vec![key(Key::Escape, Modifiers::NONE)],
                 size,
             );
-            click_label_sized(&ctx, &mut app, "Plain text ⏷", size);
+            click_label_sized(&ctx, &mut app, "Plain text", size);
             frame_size(&ctx, &mut app, vec![egui::Event::Text(".hpp".into())], size);
             frame_size(&ctx, &mut app, vec![key(Key::Enter, Modifiers::NONE)], size);
             assert_eq!(app.active().language(), syntax::Language::Cpp);
@@ -5809,7 +5882,7 @@ mod tests {
             .iter()
             .find_map(|shape| editor_galley(&shape.shape, &source))
             .unwrap();
-        click_label_sized(&ctx, &mut app, "CUDA ⏷", size);
+        click_label_sized(&ctx, &mut app, "CUDA", size);
         for _ in 0..3 {
             frame_size(&ctx, &mut app, vec![], size);
         }
@@ -6348,7 +6421,7 @@ mod tests {
         for _ in 0..3 {
             frame(&ctx, &mut app, vec![]);
         }
-        click_label(&ctx, &mut app, "CUDA ⏷");
+        click_label(&ctx, &mut app, "CUDA");
         let start = Instant::now();
         for _ in 0..20 {
             frame(
@@ -6489,7 +6562,7 @@ mod tests {
                     app.open_theme_palette();
                 }
                 if name.ends_with("syntax") {
-                    click_label_sized(&ctx, &mut app, "CUDA ⏷", egui::vec2(size[0], size[1]));
+                    click_label_sized(&ctx, &mut app, "CUDA", egui::vec2(size[0], size[1]));
                 }
                 // Multiple frames let egui settle sizing/scrollbar geometry.
                 let mut last = None;

@@ -23,7 +23,7 @@ struct Snapshot {
 }
 struct Guard {
     view: u64,
-    language: syntax::Language,
+    language: String,
     formatting_options: (u8, bool),
     pane: u64,
     head: usize,
@@ -33,6 +33,15 @@ struct Guard {
     root: PathBuf,
     feature: Feature,
 }
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SemanticKey {
+    view: u64,
+    revision: u64,
+    language: syntax::Language,
+    syntax_override: Option<String>,
+    path: String,
+}
+
 enum Intent {
     List,
     Manage,
@@ -40,7 +49,10 @@ enum Intent {
     Detect(String),
     Sync,
     Feature(Guard),
+    Semantics(SemanticKey),
+    Inlay(inlay::Key),
 }
+mod inlay;
 mod problems;
 pub(super) mod refactor;
 use problems::ProblemRow;
@@ -77,6 +89,9 @@ pub(super) struct LanguageServers {
     blocked: bool,
     pub(super) directory: Option<PathBuf>,
     last_completion: Option<(u64, u64, usize)>,
+    semantic_request: Option<SemanticKey>,
+    semantic: Option<(SemanticKey, Arc<Vec<text::SemanticToken>>)>,
+    pub(super) inlay: inlay::State,
 }
 struct Configuration {
     id: String,
@@ -172,6 +187,28 @@ impl Configuration {
     }
 }
 impl LanguageServers {
+    pub(super) fn semantic_for(
+        &self,
+        buffer: &hedit::workspace::Buffer,
+    ) -> Option<Arc<Vec<text::SemanticToken>>> {
+        let (key, tokens) = self.semantic.as_ref()?;
+        (key.view == buffer.view.id
+            && key.revision == buffer.page.info.revision
+            && key.language == buffer.language()
+            && key.syntax_override == buffer.view.language_override
+            && !buffer.follow
+            && !buffer.page.info.paged
+            && buffer.page.info.path.as_deref() == Some(key.path.as_str()))
+        .then(|| tokens.clone())
+    }
+
+    fn clear_semantics(&mut self) {
+        self.semantic_request = None;
+        self.semantic = None;
+        self.pending
+            .retain(|_, intent| !matches!(intent, Intent::Semantics(_)));
+    }
+
     fn send(&mut self, operation: Operation, intent: Intent) -> Result<(), String> {
         let service = self
             .service
@@ -188,10 +225,12 @@ impl LanguageServers {
         self.next += 1;
         service.submit(self.next, operation)?;
         if changes_servers {
+            self.clear_semantics();
+            self.inlay.clear();
             // Replies already in flight belong to the previous configuration.
             // Invalidate them when the change is queued, before the next poll.
             self.pending
-                .retain(|_, intent| !matches!(intent, Intent::Feature(_)));
+                .retain(|_, intent| !matches!(intent, Intent::Feature(_) | Intent::Inlay(_)));
             self.last_completion = None;
         }
         self.pending.insert(self.next, intent);
@@ -282,6 +321,19 @@ impl HeditApp {
             .or_else(|| path.parent().map(PathBuf::from))
             .unwrap_or_default()
     }
+    fn language_server_id<'a>(&'a self, buffer: &hedit::workspace::Buffer) -> &'a str {
+        let language = if self.workspace.remote.is_some() {
+            buffer.language().id()
+        } else {
+            self.language_id(buffer)
+        };
+        if language == "c++" {
+            "cpp"
+        } else {
+            language
+        }
+    }
+
     fn language_snapshots(&self) -> Vec<Snapshot> {
         // JSON can expand control bytes sixfold. Keep SSH snapshots within
         // the helper's 32 MiB transfer cap even for heavily escaped text.
@@ -315,11 +367,7 @@ impl HeditApp {
                     revision: b.page.info.revision,
                     root: self.language_root(&path),
                     path,
-                    language: match b.language().id() {
-                        "c++" => "cpp",
-                        l => l,
-                    }
-                    .into(),
+                    language: self.language_server_id(b).into(),
                     dirty: b.page.info.dirty,
                 })
             })
@@ -428,15 +476,100 @@ impl HeditApp {
             self.languages.explorer_badges = None;
         }
         let _ = self.sync_language_documents(false);
+        self.schedule_semantics();
+        self.request_inlays();
         if !self.languages.installed.is_empty()
             && self.languages.snapshots != self.language_snapshots()
         {
             ctx.request_repaint_after(Duration::from_millis(160));
         }
     }
+    fn schedule_semantics(&mut self) {
+        if self.workspace.remote.is_some()
+            || self.busy
+            || self.closing
+            || self.languages.pending.values().any(|intent| {
+                matches!(
+                    intent,
+                    Intent::Feature(_) | Intent::Semantics(_) | Intent::Inlay(_) | Intent::Sync
+                )
+            })
+        {
+            return;
+        }
+        let buffer = self.active();
+        let Some(path) = buffer.page.info.path.as_ref() else {
+            return;
+        };
+        let Some(snapshot) = self.languages.snapshots.iter().find(|snapshot| {
+            snapshot.id == buffer.view.id
+                && snapshot.revision == buffer.page.info.revision
+                && snapshot.path == Path::new(path)
+        }) else {
+            return;
+        };
+        if buffer.follow
+            || buffer.page.info.paged
+            || buffer.page.text.len() > lsp::MAX_DOCUMENT
+            || self
+                .languages
+                .observed
+                .as_ref()
+                .is_some_and(|(documents, _)| {
+                    documents.iter().find(|document| document.id == snapshot.id) != Some(snapshot)
+                })
+        {
+            return;
+        }
+        let root = self.language_root(Path::new(path));
+        if !self.languages.installed.iter().any(|entry| {
+            entry.registration.features.semantic_highlighting()
+                && entry.registration.enabled_at(&root)
+                && entry
+                    .registration
+                    .languages
+                    .iter()
+                    .any(|language| language == &snapshot.language)
+                && self.languages.statuses.values().any(|status| {
+                    status.id == entry.id
+                        && status.state == "Running"
+                        && Path::new(path).starts_with(&status.root)
+                })
+        }) {
+            return;
+        }
+        let key = SemanticKey {
+            view: buffer.view.id,
+            revision: buffer.page.info.revision,
+            language: buffer.language(),
+            syntax_override: buffer.view.language_override.clone(),
+            path: path.clone(),
+        };
+        if self.languages.semantic_request.as_ref() == Some(&key) {
+            return;
+        }
+        let operation = Operation::Request {
+            path: PathBuf::from(&key.path),
+            revision: key.revision,
+            scalar: 0,
+            feature: Feature::SemanticTokens,
+            tab_size: 4,
+            spaces: true,
+        };
+        if self
+            .languages
+            .send(operation, Intent::Semantics(key.clone()))
+            .is_ok()
+        {
+            self.languages.semantic_request = Some(key);
+        }
+    }
+
     fn language_event(&mut self, ctx: &egui::Context, event: Event) {
         match event {
             Event::Disconnected(e) => {
+                self.languages.clear_semantics();
+                self.languages.inlay.clear();
                 self.languages.service = None;
                 self.languages.blocked = true;
                 self.languages.pending.clear();
@@ -453,6 +586,11 @@ impl HeditApp {
                     self.languages.snapshots.clear();
                 }
                 if status.state != "Running" {
+                    self.languages.clear_semantics();
+                    self.languages.inlay.clear();
+                    self.languages
+                        .pending
+                        .retain(|_, intent| !matches!(intent, Intent::Inlay(_)));
                     self.languages.problem_rows = None;
                     self.languages.explorer_badges = None;
                     self.languages.diagnostics.retain(|_, sources| {
@@ -564,12 +702,33 @@ impl HeditApp {
                 }
             }
             Event::Response { ticket, result } => {
-                let Some(Intent::Feature(guard)) = self.languages.pending.remove(&ticket) else {
-                    return;
+                let guard = match self.languages.pending.remove(&ticket) {
+                    Some(Intent::Feature(guard)) => guard,
+                    Some(Intent::Semantics(key)) => {
+                        let tokens = result
+                            .ok()
+                            .filter(|reply| {
+                                reply.feature == Feature::SemanticTokens
+                                    && reply.path == Path::new(&key.path)
+                                    && reply.revision == key.revision
+                            })
+                            .and_then(|reply| {
+                                serde_json::from_value::<Vec<text::SemanticToken>>(reply.value).ok()
+                            });
+                        if let Some(tokens) = tokens {
+                            self.languages.semantic = Some((key, Arc::new(tokens)));
+                        }
+                        return;
+                    }
+                    Some(Intent::Inlay(key)) => {
+                        self.receive_inlays(key, result);
+                        return;
+                    }
+                    _ => return,
                 };
                 let b = self.active();
                 if b.view.id != guard.view
-                    || b.language() != guard.language
+                    || self.language_server_id(b) != guard.language
                     || (guard.feature == Feature::Formatting
                         && (
                             b.view.tab_size.unwrap_or(4),
@@ -629,15 +788,12 @@ impl HeditApp {
         let Some(path) = self.active().page.info.path.as_ref().map(PathBuf::from) else {
             return false;
         };
-        let language = self.active().language().id();
+        let language = self.language_server_id(self.active());
         let root = self.language_root(&path);
         if !self.languages.installed.iter().any(|e| {
             e.registration.enabled_at(&root)
                 && e.registration.features.enabled(feature)
-                && e.registration
-                    .languages
-                    .iter()
-                    .any(|l| l == language || (l == "cpp" && language == "c++"))
+                && e.registration.languages.iter().any(|l| l == language)
         }) {
             return false;
         }
@@ -657,7 +813,7 @@ impl HeditApp {
         let b = self.active();
         let guard = Guard {
             view: b.view.id,
-            language: b.language(),
+            language: self.language_server_id(b).into(),
             formatting_options: (
                 b.view.tab_size.unwrap_or(4),
                 b.view.indent.as_deref() != Some("tabs"),
@@ -711,6 +867,8 @@ impl HeditApp {
             return Ok(());
         }
         match reply.feature {
+            Feature::SemanticTokens => {}
+            Feature::InlayHints => {}
             Feature::Completion => self.publish_language_completions(reply.value, reply.encoding),
             Feature::Hover => {
                 fn collect(value: &Value, out: &mut String) {
@@ -929,22 +1087,36 @@ impl HeditApp {
             .into_iter()
             .map(|c| {
                 let managed = !c.repository.is_empty();
-                (c.id, c.languages, c.requirements, managed)
+                (c.id, c.languages, c.requirements, managed, None)
             })
             .collect();
+        if self.workspace.remote.is_none() {
+            entries.extend(self.extensions.iter().filter_map(|pack| {
+                let server = pack.language_server()?;
+                let syntax = pack.language_definition()?;
+                Some((
+                    pack.id.clone(),
+                    server.languages.clone(),
+                    format!("{} language pack. Choose its server executable to enable language features.", syntax.name),
+                    false,
+                    Some(server.clone()),
+                ))
+            }));
+        }
         for entry in &self.languages.installed {
-            if !entries.iter().any(|(id, _, _, _)| id == &entry.id) {
+            if !entries.iter().any(|(id, _, _, _, _)| id == &entry.id) {
                 entries.push((
                     entry.id.clone(),
                     entry.registration.languages.clone(),
                     String::new(),
                     false,
+                    None,
                 ));
             }
         }
         let filter = self.languages.filter.to_lowercase();
-        for (id, languages, requirements, managed) in entries {
-            if !format!("{id} {}", languages.join(" "))
+        for (id, languages, requirements, managed, preset) in entries {
+            if !format!("{id} {} {requirements}", languages.join(" "))
                 .to_lowercase()
                 .contains(&filter)
             {
@@ -1026,6 +1198,7 @@ impl HeditApp {
                         let registration = installed
                             .as_ref()
                             .map(|e| e.registration.clone())
+                            .or_else(|| preset.as_deref().cloned())
                             .unwrap_or_else(|| manager::preset(&id));
                         self.languages.editor =
                             Some(Configuration::new(id.clone(), registration, false));
@@ -1157,17 +1330,30 @@ impl HeditApp {
                     ui.checkbox(&mut features.definition, "Definition"); ui.checkbox(&mut features.references, "References");
                     ui.checkbox(&mut features.rename, "Rename"); ui.checkbox(&mut features.quick_fixes, "Quick fixes");
                     ui.checkbox(&mut features.formatting, "Formatting"); ui.checkbox(&mut features.diagnostics, "Diagnostics");
+                    let mut semantic_highlighting = features.semantic_highlighting();
+                    if ui.checkbox(&mut semantic_highlighting, "Semantic highlighting").changed() {
+                        features.semantic_highlighting = Some(semantic_highlighting);
+                    }
                 });
                 if editor.executable.trim().is_empty() { ui.checkbox(&mut editor.override_arguments, "Override default launch arguments"); }
                 if ui.small_button("Use preset arguments").clicked() {
-                    editor.arguments = serde_json::to_string_pretty(&editor.registration.managed.as_ref().map(|r| r.arguments.clone()).unwrap_or_else(|| manager::default_arguments(&editor.id))).unwrap();
-                    editor.override_arguments = false;
+                    let pack = self.extensions.iter().find(|pack| {
+                        self.workspace.remote.is_none() && pack.id == editor.id
+                    }).and_then(extensions::Contribution::language_server);
+                    let arguments = pack.and_then(|pack| pack.arguments.clone())
+                        .or_else(|| editor.registration.managed.as_ref().map(|r| r.arguments.clone()))
+                        .unwrap_or_else(|| manager::default_arguments(&editor.id));
+                    editor.arguments = serde_json::to_string_pretty(&arguments).unwrap();
+                    editor.override_arguments = pack.is_some();
                 }
                 ui.add_enabled_ui(editor.override_arguments || !editor.executable.trim().is_empty(), |ui| {
                     ui.label("Arguments (JSON array, for example [\"--stdio\"])");
                     ui.add(egui::TextEdit::multiline(&mut editor.arguments).desired_width(f32::INFINITY).desired_rows(2).code_editor());
                 });
                 egui::CollapsingHeader::new("Advanced launch and project settings").id_salt(("advanced-lsp", &editor.id)).show(ui, |ui| {
+                if let Some(id) = &editor.registration.protocol_language_id {
+                    ui.label(format!("LSP language ID · {id}"));
+                }
                 ui.label("Server settings (JSON object)");
                 ui.add(egui::TextEdit::multiline(&mut editor.settings).desired_width(f32::INFINITY).desired_rows(4).code_editor());
                     ui.label("Initialization options (JSON object)");
@@ -1259,6 +1445,8 @@ impl HeditApp {
         self.languages.last_completion = None;
     }
     pub(super) fn cancel_language_work(&mut self) {
+        self.languages.clear_semantics();
+        self.languages.inlay.clear();
         self.languages.service = None;
         self.languages.pending.clear();
         self.languages.progress.clear();
@@ -1287,15 +1475,19 @@ impl HeditApp {
         if b.page.info.paged || b.follow {
             return;
         }
-        let known = manager::catalog()
-            .iter()
-            .any(|e| e.languages.iter().any(|l| l == b.language().id()))
-            || self.languages.installed.iter().any(|e| {
-                e.registration
-                    .languages
-                    .iter()
-                    .any(|l| l == b.language().id())
-            });
+        let language = self.language_server_id(b);
+        let from_pack = self.workspace.remote.is_none()
+            && extensions::language_pack_for(&self.extensions, b)
+                .is_some_and(|pack| pack.language_server().is_some());
+        let known = from_pack
+            || manager::catalog()
+                .iter()
+                .any(|e| e.languages.iter().any(|l| l == language))
+            || self
+                .languages
+                .installed
+                .iter()
+                .any(|e| e.registration.languages.iter().any(|l| l == language));
         if !known {
             return;
         }
@@ -1306,11 +1498,7 @@ impl HeditApp {
             .iter()
             .filter(|entry| {
                 entry.registration.enabled_at(&root)
-                    && entry
-                        .registration
-                        .languages
-                        .iter()
-                        .any(|l| l == b.language().id())
+                    && entry.registration.languages.iter().any(|l| l == language)
                     && (entry.registration.external.is_some()
                         || entry.registration.managed.is_some())
             })
@@ -1352,6 +1540,9 @@ impl HeditApp {
                 .join("\n")
         };
         if ui.small_button(label).on_hover_text(detail).clicked() {
+            if from_pack {
+                self.languages.filter = language.to_owned();
+            }
             self.open_preferences(PreferencesPage::LanguageServers);
         }
     }
@@ -1422,6 +1613,103 @@ mod tests {
             thread::sleep(Duration::from_millis(5));
         }
     }
+    #[test]
+    fn language_pack_routes_the_selected_syntax_to_the_configured_native_server() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let config = root.join("config");
+        std::fs::create_dir_all(config.join("extensions")).unwrap();
+        let manifest = config.join("extensions/demo-json.json");
+        std::fs::write(
+            &manifest,
+            include_str!("../../examples/extensions/json-language-pack.json"),
+        )
+        .unwrap();
+        let path = root.join("project.demojson");
+        std::fs::write(&path, r#"{"enabled": true}"#).unwrap();
+
+        let (workspace, _) = Workspace::restore(root.join("session")).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+        let (contributions, errors) = extensions::load(Some(&config));
+        assert!(errors.is_empty(), "{errors:?}");
+        app.extensions = contributions;
+        app.open(&ctx, Some(path.clone()));
+        finish_app_job(&mut app, &ctx);
+        let id = "demo-json.language";
+        assert_eq!(app.language_server_id(app.active()), id);
+        assert_eq!(app.language_snapshots()[0].language, id);
+        app.set_syntax(Some(syntax::Language::PlainText));
+        assert_eq!(app.language_server_id(app.active()), "plain-text");
+        app.set_syntax(None);
+        assert_eq!(app.language_server_id(app.active()), id);
+        app.set_extension_syntax(id);
+        assert_eq!(app.active().view.language_override.as_deref(), Some(id));
+        assert_eq!(app.active().page.text, r#"{"enabled": true}"#);
+
+        let manager = manager::Manager::new(root.join("servers"));
+        app.languages.directory = Some(manager.root().to_owned());
+        pump(&ctx, &mut app, |app| app.languages.listed);
+        assert!(app.languages.installed.is_empty());
+        assert!(app.languages.statuses.is_empty());
+
+        let pack = extensions::language_pack_for(&app.extensions, app.active()).unwrap();
+        let mut preset = (**pack.language_server().unwrap()).clone();
+        assert_eq!(preset.arguments.as_deref(), Some(&["--stdio".into()][..]));
+        assert_eq!(preset.protocol_language_id.as_deref(), Some("json"));
+        let python = std::process::Command::new(if cfg!(windows) { "python" } else { "python3" })
+            .args(["-c", "import sys; print(sys.executable)"])
+            .output()
+            .unwrap();
+        assert!(python.status.success());
+        let script = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("crates/hedit-core/tests/support/fake_language_server.py");
+        let transcript = root.join("transcript.jsonl");
+        preset.external = Some(manager::Launch {
+            executable: String::from_utf8(python.stdout).unwrap().trim().into(),
+            arguments: vec![],
+        });
+        preset.arguments = Some(vec![
+            script.display().to_string(),
+            "--record".into(),
+            transcript.display().to_string(),
+        ]);
+        app.manage_language_server(Operation::Configure {
+            id: id.into(),
+            registration: Box::new(preset),
+        });
+        pump(&ctx, &mut app, |app| {
+            app.languages
+                .statuses
+                .values()
+                .any(|status| status.id == id && status.state == "Running")
+                && app.languages.diagnostics.contains_key(&path)
+                && app.languages.pending.is_empty()
+        });
+        let log = std::fs::read_to_string(transcript).unwrap();
+        let notification = log
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .find(|message| message["method"] == "textDocument/didOpen")
+            .unwrap();
+        assert_eq!(notification["params"]["textDocument"]["languageId"], "json");
+        assert!(app.request_language_feature(&ctx, Feature::Hover));
+        pump(&ctx, &mut app, |app| {
+            app.languages.info.as_deref().map(str::trim) == Some("Fixture hover information")
+        });
+
+        std::fs::remove_file(manifest).unwrap();
+        app.extensions = extensions::load(Some(&config)).0;
+        assert_eq!(app.language_server_id(app.active()), "plain-text");
+        pump(&ctx, &mut app, |app| {
+            app.languages
+                .statuses
+                .values()
+                .any(|status| status.id == id && status.state == "Stopped")
+                && !app.languages.diagnostics.contains_key(&path)
+        });
+    }
+
     #[test]
     fn cancelling_server_work_clears_stale_diagnostics_and_stays_stopped_until_refresh() {
         let (_dir, ctx, mut app) = app();
@@ -1678,7 +1966,7 @@ mod tests {
             let b = app.active();
             let guard = Guard {
                 view: b.view.id,
-                language: b.language(),
+                language: app.language_server_id(b).into(),
                 formatting_options: (
                     b.view.tab_size.unwrap_or(4),
                     b.view.indent.as_deref() != Some("tabs"),

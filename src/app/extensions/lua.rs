@@ -142,7 +142,7 @@ pub(super) struct Target {
     revision: u64,
     group: u64,
     page_start: u64,
-    language: &'static str,
+    language: String,
     primary: Selection,
     extra: Vec<Selection>,
 }
@@ -152,7 +152,7 @@ impl Target {
         self.document
     }
     pub(super) fn language(&self) -> &str {
-        self.language
+        &self.language
     }
     pub(super) fn revision(&self) -> u64 {
         self.revision
@@ -224,7 +224,7 @@ impl HeditApp {
             revision: info.revision,
             group: self.panes.focused_id(),
             page_start: editor.page.start,
-            language: editor.language().id(),
+            language: self.language_id(editor).to_owned(),
             primary,
             extra: editor.view.selections.clone(),
         })
@@ -291,7 +291,7 @@ impl HeditApp {
             }
             let selections = snapshot_selections(text, &self.selections());
             let mut snapshot = options::sdk_snapshot(
-                target.language,
+                target.language(),
                 text.clone(),
                 selections,
                 self.active().page.info.eol == "CRLF",
@@ -528,7 +528,7 @@ impl HeditApp {
                         let input = options::input(
                             &self.settings.extensions,
                             &proposal.plugin,
-                            proposal.target.language,
+                            proposal.target.language(),
                             selection,
                         );
                         Phase::Running(plugin_runtime::start(input, approval.file, move || {

@@ -34,6 +34,8 @@ pub enum Feature {
     Formatting,
     Rename,
     QuickFixes,
+    SemanticTokens,
+    InlayHints,
 }
 impl Feature {
     fn method(self) -> &'static str {
@@ -45,6 +47,8 @@ impl Feature {
             Self::Formatting => "textDocument/formatting",
             Self::Rename => "textDocument/rename",
             Self::QuickFixes => "textDocument/codeAction",
+            Self::SemanticTokens => "textDocument/semanticTokens/full",
+            Self::InlayHints => "textDocument/inlayHint",
         }
     }
     fn capability(self) -> &'static str {
@@ -56,6 +60,8 @@ impl Feature {
             Self::Formatting => "documentFormattingProvider",
             Self::Rename => "renameProvider",
             Self::QuickFixes => "codeActionProvider",
+            Self::SemanticTokens => "semanticTokensProvider",
+            Self::InlayHints => "inlayHintProvider",
         }
     }
 }
@@ -380,6 +386,7 @@ struct FeatureRequest {
 
 struct Session {
     client: Client,
+    protocol_language_id: Option<String>,
     features: manager::Features,
     priority: i16,
     documents: BTreeMap<PathBuf, Document>,
@@ -435,6 +442,10 @@ impl Worker {
                 s.documents.contains_key(&path)
                     && s.features.enabled(feature)
                     && s.client.supported(feature.capability())
+                    && (feature != Feature::SemanticTokens || {
+                        let full = &s.client.capabilities["semanticTokensProvider"]["full"];
+                        full == true || full.is_object()
+                    })
             })
             .min_by(|(ka, a), (kb, b)| b.priority.cmp(&a.priority).then_with(|| ka.cmp(kb)))
             .map(|(key, _)| key.clone());
@@ -447,6 +458,9 @@ impl Worker {
         }
         let position = session.client.encoding.position(&document.text, scalar)?;
         let mut params = json!({"textDocument":{"uri":text::uri(&path)?},"position":position});
+        if feature == Feature::SemanticTokens {
+            params = json!({"textDocument":{"uri":text::uri(&path)?}});
+        }
         if feature == Feature::References {
             params["context"] = json!({"includeDeclaration":true});
         }
@@ -462,12 +476,43 @@ impl Worker {
         if feature == Feature::QuickFixes {
             params = json!({"textDocument":{"uri":text::uri(&path)?},"range":{"start":position,"end":position},"context":{"diagnostics":session.diagnostics.get(&path).filter(|(r,_)|*r==revision).map(|(_,v)|v.iter().filter(|d|serde_json::from_value::<text::Range>(d["range"].clone()).is_ok_and(|r|(r.start.line,r.start.character)<=(position.line,position.character)&&(position.line,position.character)<=(r.end.line,r.end.character))).cloned().collect::<Vec<_>>()).unwrap_or_default(),"only":["quickfix"],"triggerKind":1}});
         }
-        let root = document.root.clone();
-        let result =
-            session
+        let passive = feature == Feature::InlayHints;
+        let timeout = if passive {
+            if document.text.len() > text::INLAY_DOCUMENT_LIMIT {
+                return Err("Inlay hints are unavailable for this large document.".into());
+            }
+            let end = session
                 .client
-                .request(feature.method(), params, cancel, Duration::from_secs(15));
-        let mut value = result?;
+                .encoding
+                .position(&document.text, document.text.chars().count())?;
+            params = json!({"textDocument":{"uri":text::uri(&path)?},"range":{"start":position,"end":end}});
+            Duration::from_millis(750)
+        } else if feature == Feature::SemanticTokens {
+            Duration::from_millis(800)
+        } else {
+            Duration::from_secs(15)
+        };
+        let root = document.root.clone();
+        let mut value = session
+            .client
+            .request(feature.method(), params, cancel, timeout)?;
+        if feature == Feature::SemanticTokens {
+            value = serde_json::to_value(text::semantic_tokens(
+                &document.text,
+                session.client.encoding,
+                &session.client.capabilities["semanticTokensProvider"],
+                &value,
+            )?)
+            .map_err(super::error)?;
+        }
+        if passive {
+            value = serde_json::to_value(text::inlay_hints(
+                &document.text,
+                session.client.encoding,
+                &value,
+            ))
+            .map_err(super::error)?;
+        }
         if matches!(feature, Feature::Definition | Feature::References) {
             normalize_locations(&mut value, session.client.encoding, &session.documents)?;
         }
@@ -723,6 +768,7 @@ impl Worker {
                             key.clone(),
                             Session {
                                 client,
+                                protocol_language_id: registration.protocol_language_id.clone(),
                                 features: registration.features.clone(),
                                 priority: registration.priority,
                                 documents: BTreeMap::new(),
@@ -947,7 +993,7 @@ fn sync_session(
             }
         }
         match session.documents.get(&document.path) {
-            None=>session.client.notify("textDocument/didOpen",json!({"textDocument":{"uri":uri,"languageId":language_id(&document),"version":document.revision,"text":document.text}}))?,
+            None=>session.client.notify("textDocument/didOpen",json!({"textDocument":{"uri":uri,"languageId":session.protocol_language_id.as_deref().unwrap_or_else(|| language_id(&document)),"version":document.revision,"text":document.text}}))?,
             Some(old)=>{
                 if old.revision!=document.revision {
                     let sync=&session.client.capabilities["textDocumentSync"];

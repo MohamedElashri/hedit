@@ -1124,9 +1124,19 @@
             },
             "quoted_strings": {
               "type": "boolean"
+            },
+            "regions": {
+              "type": "array",
+              "maxItems": 16,
+              "items": {
+                "$ref": "#/$defs/syntaxRegion"
+              }
             }
           },
           "additionalProperties": false
+        },
+        "server": {
+          "$ref": "#/$defs/languageServerPreset"
         }
       },
       "additionalProperties": false
@@ -1450,6 +1460,119 @@
           }
         }
       ]
+    },
+    "syntaxRegion": {
+      "type": "object",
+      "required": [
+        "start",
+        "end",
+        "kind"
+      ],
+      "properties": {
+        "start": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "x-maxUtf8Bytes": 32
+        },
+        "end": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "x-maxUtf8Bytes": 32
+        },
+        "kind": {
+          "enum": [
+            "comment",
+            "string",
+            "embedded"
+          ]
+        },
+        "language": {
+          "type": "string"
+        },
+        "escape": {
+          "type": "boolean"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "embedded"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "language"
+            ],
+            "properties": {
+              "escape": {
+                "const": false
+              }
+            }
+          },
+          "else": {
+            "not": {
+              "required": [
+                "language"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "comment"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "escape": {
+                "const": false
+              }
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "languageServerPreset": {
+      "type": "object",
+      "properties": {
+        "language_id": {
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9_+\\-]{1,80}|[a-z][a-z0-9-]{0,47}\\.[a-z][a-z0-9-]{0,47})$"
+        },
+        "arguments": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "type": "string",
+            "maxLength": 8192
+          }
+        },
+        "root_markers": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "settings": {
+          "type": "object"
+        },
+        "initialization_options": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
     }
   }
 }

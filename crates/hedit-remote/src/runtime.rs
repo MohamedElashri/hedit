@@ -416,6 +416,7 @@ impl Runtime {
                                 || matches!(
                                     operation,
                                     hedit_core::git::Operation::Stage(_)
+                                        | hedit_core::git::Operation::StageCommit { .. }
                                         | hedit_core::git::Operation::Hunk { .. }
                                         | hedit_core::git::Operation::Lines { .. }
                                 )

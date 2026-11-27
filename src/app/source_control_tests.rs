@@ -1,4 +1,6 @@
-use super::super::tests::{click_label, finish_app_job, frame, frame_size, key, text_rect};
+use super::super::tests::{
+    click_at, click_label, finish_app_job, frame, frame_size, key, text_rect,
+};
 use super::*;
 
 fn fixture() -> (tempfile::TempDir, egui::Context, HeditApp, Git) {
@@ -116,6 +118,71 @@ fn visible(output: &egui::FullOutput, label: &str) -> bool {
         .shapes
         .iter()
         .any(|s| text_rect(&s.shape, label).is_some_and(|r| s.clip_rect.contains_rect(r)))
+}
+
+fn sidebar_bounds(ctx: &egui::Context) -> egui::Rect {
+    egui::containers::panel::PanelState::load(
+        ctx,
+        ctx.viewport_id().root_ui_id().with("source-control"),
+    )
+    .expect("Source Control sidebar")
+    .outer_rect
+}
+
+fn open_git_menu(ctx: &egui::Context, app: &mut HeditApp, items: &[&str]) {
+    let output = frame(ctx, app, vec![]);
+    let pos = output
+        .shapes
+        .iter()
+        .filter_map(|shape| match &shape.shape {
+            egui::Shape::Mesh(mesh)
+                if hedit::icons::Icon::More.matches_texture(ctx, mesh.texture_id) =>
+            {
+                Some(mesh.calc_bounds().center())
+            }
+            _ => None,
+        })
+        .filter(|pos| sidebar_bounds(ctx).contains(*pos))
+        .min_by(|a, b| a.y.total_cmp(&b.y))
+        .expect("Source Control More Actions");
+    click_at(ctx, app, pos, egui::vec2(1280.0, 820.0));
+    for item in items {
+        let output = frame(ctx, app, vec![]);
+        let pos = output
+            .shapes
+            .iter()
+            .rev()
+            .find_map(|shape| {
+                text_rect(&shape.shape, item).filter(|rect| shape.clip_rect.contains_rect(*rect))
+            })
+            .unwrap_or_else(|| panic!("Missing Git menu item {item}"))
+            .center();
+        click_at(ctx, app, pos, egui::vec2(1280.0, 820.0));
+    }
+}
+
+fn click_group_action(ctx: &egui::Context, app: &mut HeditApp, group: &str, glyph: &str) {
+    let output = frame(ctx, app, vec![]);
+    let header = output
+        .shapes
+        .iter()
+        .find_map(|shape| {
+            text_rect(&shape.shape, group)
+                .filter(|rect| sidebar_bounds(ctx).contains(rect.center()))
+        })
+        .expect("Git changes group");
+    let output = frame(ctx, app, vec![egui::Event::PointerMoved(header.center())]);
+    let action = output
+        .shapes
+        .iter()
+        .find_map(|shape| {
+            text_rect(&shape.shape, glyph).filter(|rect| {
+                sidebar_bounds(ctx).contains(rect.center())
+                    && (header.center().y - rect.center().y).abs() < 8.0
+            })
+        })
+        .expect("Git changes group action");
+    click_at(ctx, app, action.center(), egui::vec2(1280.0, 820.0));
 }
 
 #[cfg(target_os = "macos")]
@@ -236,7 +303,12 @@ fn horizontal_diff_scrolling_keeps_line_numbers_fixed_in_both_layouts() {
             .shapes
             .iter()
             .find_map(|shape| match &shape.shape {
-                egui::Shape::Text(text) if text.galley.job.text == value => Some(text.pos.x),
+                egui::Shape::Text(text)
+                    if text.galley.job.text == value
+                        && shape.clip_rect.left() >= sidebar_bounds(&ctx).right() =>
+                {
+                    Some(text.pos.x)
+                }
                 _ => None,
             })
             .unwrap_or_else(|| panic!("Missing painted text {value}"))
@@ -246,6 +318,7 @@ fn horizontal_diff_scrolling_keeps_line_numbers_fixed_in_both_layouts() {
         app.source_control.last_refresh = Instant::now();
         let before = frame(&ctx, &mut app, vec![]);
         let number = x(&before, "1");
+        let before_sidebar_width = sidebar_bounds(&ctx).width();
         let code = x(&before, &source);
         frame(
             &ctx,
@@ -268,7 +341,8 @@ fn horizontal_diff_scrolling_keeps_line_numbers_fixed_in_both_layouts() {
         );
         assert!(
             (x(&after, "1") - number).abs() < 0.1,
-            "Line numbers must remain fixed, split={split}"
+            "Line numbers must remain fixed, split={split}, old x={number}, new x={}, sidebar width {before_sidebar_width} -> {}",
+            x(&after, "1"), sidebar_bounds(&ctx).width()
         );
     }
 }
@@ -437,10 +511,10 @@ fn review_controls_remain_visible_across_themes_fonts_gutters_and_window_sizes()
                         ] {
                             assert!(visible(&output, label), "Hidden {label}: theme={theme}, font={size}, padding={padding}, numbers={numbers}, width={width}, split={split}");
                         }
-                        let has_numbers = output
-                            .shapes
-                            .iter()
-                            .any(|shape| text_rect(&shape.shape, "1").is_some());
+                        let has_numbers = output.shapes.iter().any(|shape| {
+                            shape.clip_rect.left() >= sidebar_bounds(&ctx).right()
+                                && text_rect(&shape.shape, "1").is_some()
+                        });
                         assert_eq!(
                             has_numbers, numbers,
                             "Line-number setting must apply in both layouts"
@@ -953,6 +1027,7 @@ fn line_selection_clears_after_a_changed_diff_and_unsaved_text_blocks_staging() 
 #[test]
 fn file_tree_collapses_filters_and_keeps_duplicate_names_distinct() {
     let (_directory, ctx, mut app, _git) = fixture();
+    app.source_control.tree_view = true;
     let root = app.source_control.root.clone().unwrap();
     for (folder, text) in [("src/nested", "source\n"), ("tests/nested", "test\n")] {
         std::fs::create_dir_all(root.join(folder)).unwrap();
@@ -966,12 +1041,13 @@ fn file_tree_collapses_filters_and_keeps_duplicate_names_distinct() {
     app.source_control.filter = "src/nested".into();
     let output = frame(&ctx, &mut app, vec![]);
     assert!(!visible(&output, "tests/nested  (1)"));
-    click_label(&ctx, &mut app, "List");
+    open_git_menu(&ctx, &mut app, &["View & Sort", "View as List"]);
     app.source_control.filter.clear();
     let output = frame(&ctx, &mut app, vec![]);
-    assert!(visible(&output, "src/nested/same.rs"));
-    assert!(visible(&output, "tests/nested/same.rs"));
-    click_label(&ctx, &mut app, "src/nested/same.rs");
+    assert!(visible(&output, "same.rs"));
+    assert!(visible(&output, "src/nested"));
+    assert!(visible(&output, "tests/nested"));
+    click_label(&ctx, &mut app, "src/nested");
     finish_git(&ctx, &mut app);
     assert_eq!(
         app.source_control.selection.as_ref().unwrap().path,
@@ -982,6 +1058,7 @@ fn file_tree_collapses_filters_and_keeps_duplicate_names_distinct() {
 #[test]
 fn large_changed_file_trees_only_paint_visible_rows_and_filter_hidden_files() {
     let (_directory, ctx, mut app, _git) = fixture();
+    app.source_control.tree_view = true;
     let mut snapshot = (**app.source_control.snapshot.as_ref().unwrap()).clone();
     snapshot.files = (0..10_000)
         .map(|i| FileStatus {
@@ -1015,6 +1092,7 @@ fn large_changed_file_trees_only_paint_visible_rows_and_filter_hidden_files() {
 #[test]
 fn changes_groups_share_the_sidebar_scroll_and_keep_navigation_visible() {
     let (_directory, ctx, mut app, _git) = fixture();
+    app.source_control.tree_view = true;
     let mut snapshot = (**app.source_control.snapshot.as_ref().unwrap()).clone();
     snapshot.files.extend((0..100).map(|index| FileStatus {
         path: format!("staged/{index:03}.rs").into(),
@@ -1026,8 +1104,8 @@ fn changes_groups_share_the_sidebar_scroll_and_keep_navigation_visible() {
     app.source_control.snapshot = Some(Arc::new(snapshot));
     let size = egui::vec2(800.0, 600.0);
     let initial = frame_size(&ctx, &mut app, vec![], size);
-    assert!(visible(&initial, "Staged changes (100)"));
-    assert!(!visible(&initial, "Unstaged changes (1)"));
+    assert!(visible(&initial, "Staged Changes"));
+    assert!(!visible(&initial, "main.rs"));
     let pos = initial
         .shapes
         .iter()
@@ -1056,22 +1134,22 @@ fn changes_groups_share_the_sidebar_scroll_and_keep_navigation_visible() {
             break;
         }
     }
-    assert!(visible(&scrolled, "Unstaged changes (1)"));
+    assert!(visible(&scrolled, "Changes"));
     assert!(visible(&scrolled, "main.rs"));
     assert!(visible(&scrolled, "Source Control"));
-    assert!(visible(&scrolled, "History"));
+    assert!(visible(&scrolled, "Source Control Graph"));
 }
 
 #[test]
 fn collapsed_changes_reveal_filter_matches_and_restore_the_group_state() {
     let (_directory, ctx, mut app, _git) = fixture();
-    click_label(&ctx, &mut app, "Unstaged changes (1)");
+    click_label(&ctx, &mut app, "Changes");
     assert!(!visible(&frame(&ctx, &mut app, vec![]), "main.rs"));
     app.source_control.filter = "main".into();
     assert!(visible(&frame(&ctx, &mut app, vec![]), "main.rs"));
     app.source_control.filter.clear();
     assert!(!visible(&frame(&ctx, &mut app, vec![]), "main.rs"));
-    click_label(&ctx, &mut app, "Expand all");
+    open_git_menu(&ctx, &mut app, &["View & Sort", "Expand All"]);
     assert!(visible(&frame(&ctx, &mut app, vec![]), "main.rs"));
 }
 
@@ -1152,7 +1230,7 @@ fn sidebar_stages_and_commits_saved_files_and_preserves_the_editor() {
     assert!(git.snapshot(&root, 200).unwrap().files[0].staged());
     // The commit form stays available after leaving the diff tab.
     app.select_tab(app.workspace.active);
-    click_label(&ctx, &mut app, "Commit message");
+    click_label(&ctx, &mut app, "Message");
     frame(
         &ctx,
         &mut app,
@@ -1163,7 +1241,7 @@ fn sidebar_stages_and_commits_saved_files_and_preserves_the_editor() {
     let commit_pos = output
         .shapes
         .iter()
-        .find_map(|shape| text_rect(&shape.shape, "Commit staged (1)"))
+        .find_map(|shape| text_rect(&shape.shape, "Commit"))
         .unwrap()
         .center();
     let pointer_button = |pressed| egui::Event::PointerButton {
@@ -1214,10 +1292,10 @@ fn sidebar_separates_staged_edits_and_stages_only_filter_matches() {
     app.source_control.request(&ctx, None);
     finish_git(&ctx, &mut app);
     let output = frame(&ctx, &mut app, vec![]);
-    assert!(visible(&output, "Staged changes (1)"));
-    assert!(visible(&output, "Unstaged changes (2)"));
+    assert!(visible(&output, "Staged Changes"));
+    assert!(visible(&output, "Changes"));
 
-    click_label(&ctx, &mut app, "Commit message");
+    click_label(&ctx, &mut app, "Message");
     frame(
         &ctx,
         &mut app,
@@ -1238,7 +1316,7 @@ fn sidebar_separates_staged_edits_and_stages_only_filter_matches() {
     assert!(!app.source_control.open);
 
     app.source_control.filter = "draft.txt".into();
-    click_label(&ctx, &mut app, "Stage matches");
+    click_group_action(&ctx, &mut app, "Changes", "+");
     finish_git(&ctx, &mut app);
     let status = git.status_files(&root).unwrap();
     assert!(status
@@ -1250,6 +1328,42 @@ fn sidebar_separates_staged_edits_and_stages_only_filter_matches() {
 }
 
 #[test]
+fn committing_without_staged_files_asks_before_staging_the_displayed_changes() {
+    let (_directory, ctx, mut app, git) = fixture();
+    let root = app.source_control.root.clone().unwrap();
+    let before = git.resolve_commit(&root, "HEAD").unwrap();
+    app.source_control.draft = "Commit the reviewed files".into();
+
+    click_label(&ctx, &mut app, "Commit");
+    assert!(matches!(
+        app.source_control.prompt,
+        Some(Prompt::Confirm { .. })
+    ));
+    click_label(&ctx, &mut app, "Cancel");
+    assert_eq!(git.resolve_commit(&root, "HEAD").unwrap(), before);
+    assert!(git
+        .status_files(&root)
+        .unwrap()
+        .iter()
+        .all(|file| !file.staged()));
+    assert_eq!(app.source_control.draft, "Commit the reviewed files");
+
+    click_label(&ctx, &mut app, "Commit");
+    std::fs::write(root.join("new.txt"), "Outside the reviewed changes").unwrap();
+    click_label(&ctx, &mut app, "Stage and Commit");
+    finish_git(&ctx, &mut app);
+    let files = git.status_files(&root).unwrap();
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].path, Path::new("new.txt"));
+    assert!(files[0].untracked());
+    assert_eq!(
+        git.history(&root, 1).unwrap()[0].subject,
+        "Commit the reviewed files"
+    );
+    assert!(app.source_control.draft.is_empty());
+}
+
+#[test]
 fn staging_edits_to_a_renamed_file_keeps_both_sides_of_the_index_rename() {
     let (_directory, ctx, mut app, git) = fixture();
     let root = app.source_control.root.clone().unwrap();
@@ -1257,13 +1371,13 @@ fn staging_edits_to_a_renamed_file_keeps_both_sides_of_the_index_rename() {
         .unwrap();
     app.source_control.request(&ctx, None);
     finish_git(&ctx, &mut app);
-    click_label(&ctx, &mut app, "Stage all");
+    click_group_action(&ctx, &mut app, "Changes", "+");
     finish_git(&ctx, &mut app);
     let files = git.status_files(&root).unwrap();
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].index, 'R');
     assert_eq!(files[0].worktree, '.');
-    click_label(&ctx, &mut app, "Unstage all");
+    click_group_action(&ctx, &mut app, "Staged Changes", "−");
     finish_git(&ctx, &mut app);
     assert!(git
         .status_files(&root)
@@ -1416,12 +1530,12 @@ fn a_failed_commit_is_visible_in_the_sidebar_and_keeps_the_draft_and_index() {
     .unwrap();
     let before = git.resolve_commit(&root, "HEAD").unwrap();
     app.leave_review();
-    click_label(&ctx, &mut app, "Stage all");
+    click_group_action(&ctx, &mut app, "Changes", "+");
     finish_git(&ctx, &mut app);
-    click_label(&ctx, &mut app, "Commit message");
+    click_label(&ctx, &mut app, "Message");
     let message = "Keep this message after failure";
     frame(&ctx, &mut app, vec![egui::Event::Text(message.into())]);
-    click_label(&ctx, &mut app, "Commit staged (1)");
+    click_label(&ctx, &mut app, "Commit");
     finish_git(&ctx, &mut app);
 
     let output = frame(&ctx, &mut app, vec![]);
@@ -1494,7 +1608,7 @@ fn source_control_history_and_compact_layout_keep_actions_visible() {
         app.set_theme(&ctx, hedit::theme::builtin(name).unwrap());
         for size in [egui::vec2(1280.0, 820.0), egui::vec2(800.0, 600.0)] {
             let output = frame_size(&ctx, &mut app, vec![], size);
-            assert!(visible(&output, "Commit staged (0)"));
+            assert!(visible(&output, "Commit"));
             assert!(visible(&output, "Source Control"));
         }
     }
@@ -2018,15 +2132,12 @@ fn recovery_branch_and_soft_undo_preserve_unsaved_editor_text_but_rebase_is_bloc
 #[test]
 fn more_menu_opens_tags_and_recovery_without_crowding_primary_views() {
     let (_directory, ctx, mut app, _git) = fixture();
-    click_label(&ctx, &mut app, "More");
-    click_label(&ctx, &mut app, "Tags");
+    open_git_menu(&ctx, &mut app, &["History", "Tags"]);
     finish_git(&ctx, &mut app);
     assert_eq!(app.source_control.view, View::Tags);
     let output = frame_size(&ctx, &mut app, vec![], egui::vec2(800.0, 600.0));
     assert!(visible(&output, "Tag HEAD…"));
-    // A view-specific menu title keeps the selected tool discoverable.
-    click_label(&ctx, &mut app, "Tags");
-    click_label(&ctx, &mut app, "Recovery");
+    open_git_menu(&ctx, &mut app, &["History", "Reflog"]);
     finish_git(&ctx, &mut app);
     assert_eq!(app.source_control.view, View::Recovery);
     assert!(
@@ -2220,17 +2331,13 @@ fn commit_readiness_shortcut_feedback_and_amend_confirmation_are_consistent() {
     ctx.enable_accesskit();
     let root = app.source_control.root.clone().unwrap();
     let output = frame(&ctx, &mut app, vec![]);
-    assert!(accessible_node(&output, "Commit staged (0)").is_disabled());
-    assert!(visible(
-        &output,
-        "Stage files or selected lines to include them."
-    ));
+    assert!(accessible_node(&output, "Commit").is_disabled());
     let editor_text = app.active().page.text.clone();
     app.git_action(&ctx, Operation::Stage(vec!["main.rs".into()]));
     finish_git(&ctx, &mut app);
     let output = frame(&ctx, &mut app, vec![]);
     assert!(visible(&output, "Files staged"));
-    assert!(accessible_node(&output, "Commit staged (1)").is_disabled());
+    assert!(accessible_node(&output, "Commit").is_disabled());
     app.source_control.draft = "Commit with a shortcut".into();
     frame(&ctx, &mut app, vec![key(Key::Enter, Modifiers::COMMAND)]);
     finish_git(&ctx, &mut app);
@@ -2267,8 +2374,8 @@ fn background_refresh_keeps_navigation_live_and_repository_actions_disabled() {
     assert!(!visible(&output, "Git is working…"));
     assert!(!visible(&output, "Cancel"));
     assert!(!accessible_node(&output, "main.rs").is_disabled());
-    assert!(accessible_node(&output, "Stage all").is_disabled());
-    click_label(&ctx, &mut app, "History");
+    assert!(accessible_node(&output, "Commit").is_disabled());
+    open_git_menu(&ctx, &mut app, &["History", "Source Control Graph"]);
     assert_eq!(app.source_control.view, View::History);
     assert!(app.source_control.pending);
 }
@@ -2289,8 +2396,7 @@ fn compact_branch_picker_switches_branches_and_keeps_common_actions_discoverable
     app.source_control.request(&ctx, None);
     finish_git(&ctx, &mut app);
     let output = frame_size(&ctx, &mut app, vec![], egui::vec2(800.0, 600.0));
-    assert!(visible(&output, "Local repository"));
-    assert!(visible(&output, "Add remote…"));
+    assert!(!visible(&output, "Add Remote…"));
     assert!(!visible(&output, "Pull"));
     assert!(!visible(&output, "Push"));
     click_label(&ctx, &mut app, "main");
@@ -2329,18 +2435,32 @@ fn sync_controls_distinguish_a_custom_tracking_ref_from_a_missing_upstream() {
     app.source_control.request(&ctx, None);
     finish_git(&ctx, &mut app);
     let output = frame(&ctx, &mut app, vec![]);
-    assert!(visible(&output, "Up to date"));
-    assert!(visible(&output, "Fetch"));
+    let has_sync_icon = |output: &egui::FullOutput| {
+        output.shapes.iter().any(|shape| {
+            matches!(&shape.shape, egui::Shape::Rect(rect)
+                if rect.rect.top() > 780.0
+                    && shape.clip_rect.contains_rect(rect.rect)
+                    && rect.brush.as_ref().is_some_and(|brush|
+                        hedit::icons::Icon::Refresh.matches_texture(&ctx, brush.fill_texture_id)))
+        })
+    };
+    assert!(has_sync_icon(&output));
+    assert!(!visible(&output, "Fetch"));
 
     git.command(&root, &["update-ref", "-d", tracking_ref])
         .unwrap();
     app.source_control.request(&ctx, None);
     finish_git(&ctx, &mut app);
     let output = frame(&ctx, &mut app, vec![]);
-    assert!(visible(&output, "Upstream branch missing"));
-    assert!(visible(&output, "Publish branch"));
-    assert!(visible(&output, "Fetch"));
-    assert!(!visible(&output, "Up to date"));
+    assert!(
+        app.source_control
+            .snapshot
+            .as_ref()
+            .unwrap()
+            .upstream_missing
+    );
+    assert!(visible(&output, "Publish Branch"));
+    assert!(!has_sync_icon(&output));
 }
 
 #[test]
@@ -2397,7 +2517,7 @@ fn resolved_merge_accepts_a_custom_message_with_an_unchanged_index() {
     finish_git(&ctx, &mut app);
     app.source_control.draft = "Keep this merge message".into();
     assert!(app.command_enabled(Command::GitCommit));
-    click_label(&ctx, &mut app, "Commit merge");
+    click_label(&ctx, &mut app, "Continue");
     finish_git(&ctx, &mut app);
     assert_eq!(
         git.command(&root, &["show", "-s", "--format=%s%n%P"])
@@ -2512,16 +2632,16 @@ fn diverged_branches_and_operation_banners_offer_actions_that_can_succeed() {
     snapshot.operation = Some("Merge in progress".into());
     snapshot.files[0].conflict = true;
     app.source_control.snapshot = Some(Arc::new(snapshot));
-    app.source_control.view = View::Branches;
     let output = frame_size(&ctx, &mut app, vec![], egui::vec2(800.0, 600.0));
-    assert!(visible(&output, "Branches have diverged"));
-    assert!(!visible(&output, "Pull 3"));
-    assert!(!visible(&output, "Push 2"));
-    assert!(!accessible_node(&output, "Compare").is_disabled());
     assert!(visible(&output, "Merge in progress"));
-    assert!(visible(&output, "Resolve in Changes"));
+    assert!(visible(&output, "Merge Changes"));
     assert!(accessible_node(&output, "Continue").is_disabled());
-    assert!(!accessible_node(&output, "Abort…").is_disabled());
+    let snapshot = Arc::make_mut(app.source_control.snapshot.as_mut().unwrap());
+    snapshot.operation = None;
+    snapshot.files.clear();
+    let output = frame(&ctx, &mut app, vec![]);
+    assert!(visible(&output, "Compare Changes 3↓ 2↑"));
+    assert!(!accessible_node(&output, "Compare Changes 3↓ 2↑").is_disabled());
 }
 
 #[test]

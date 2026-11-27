@@ -713,3 +713,35 @@ fn modified_shortcuts_do_not_trigger_commands_with_fewer_modifiers() {
         assert_eq!(app.active().page.text, "keep this unsaved note");
     }
 }
+
+#[test]
+fn file_comparison_uses_unsaved_editor_text() {
+    let directory = tempfile::tempdir().unwrap();
+    let left = directory.path().join("left.txt");
+    let right = directory.path().join("right.txt");
+    std::fs::write(&left, "old on disk\n").unwrap();
+    std::fs::write(&right, "other file\n").unwrap();
+    let (workspace, _) = Workspace::restore(directory.path().join("session")).unwrap();
+    let ctx = egui::Context::default();
+    let mut app = HeditApp::from_context(&ctx, None, workspace, vec![], vec![]);
+    app.open(&ctx, Some(left.clone()));
+    finish_app_job(&mut app, &ctx);
+    let active = app.workspace.active;
+    app.workspace.open[active].page.text = "unsaved edit\n".into();
+    app.workspace.edit(active, "old on disk\n").unwrap();
+    #[cfg(unix)]
+    let selected = {
+        let link = directory.path().join("alias.txt");
+        std::os::unix::fs::symlink(&left, &link).unwrap();
+        link
+    };
+    #[cfg(not(unix))]
+    let selected = left.clone();
+    app.select_for_compare(selected.clone());
+    app.compare_with_selected(&ctx, right.clone());
+    finish_app_job(&mut app, &ctx);
+    assert_eq!(app.quality.comparison_paths, Some((selected, right)));
+    assert!(app.quality.diff.contains("-unsaved edit"));
+    assert!(app.quality.diff.contains("+other file"));
+    assert_eq!(std::fs::read_to_string(left).unwrap(), "old on disk\n");
+}

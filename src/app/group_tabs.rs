@@ -92,6 +92,7 @@ impl HeditApp {
                                 let buffer = &self.workspace.open[index];
                                 let id = buffer.view.id;
                                 let selected = index == self.workspace.active
+                                    && !self.showing_pinned_search()
                                     && !(review_here && self.source_control.review_selected);
                                 let label = self.tab_strip.label(index).to_owned();
                                 let button = self.tab_strip.button(
@@ -114,16 +115,40 @@ impl HeditApp {
                                     Command::CloseOthers,
                                     Command::CloseRight,
                                     Command::CopyFileLocation,
+                                    Command::FileHistory,
+                                    Command::SelectForCompare,
+                                    Command::CompareWithSelected,
                                     Command::MovePane,
                                 ]
                                 .into_iter()
                                 .map(|command| {
                                     (
                                         command,
-                                        if command == Command::CopyFileLocation {
-                                            path.is_some() && buffer.page.start == 0
-                                        } else {
-                                            self.command_enabled(command)
+                                        match command {
+                                            Command::CopyFileLocation => {
+                                                path.is_some() && buffer.page.start == 0
+                                            }
+                                            Command::FileHistory => {
+                                                self.workspace.remote.is_none()
+                                                    && path.is_some()
+                                                    && !buffer.follow
+                                                    && !buffer.page.info.paged
+                                            }
+                                            Command::SelectForCompare => {
+                                                path.is_some() && self.workspace.remote.is_none()
+                                            }
+                                            Command::CompareWithSelected => {
+                                                self.workspace.remote.is_none()
+                                                    && path.as_deref().is_some_and(|path| {
+                                                        self.quality
+                                                            .compare_source
+                                                            .as_deref()
+                                                            .is_some_and(|first| {
+                                                                first != std::path::Path::new(path)
+                                                            })
+                                                    })
+                                            }
+                                            _ => self.command_enabled(command),
                                         },
                                         self.shortcut_text(command),
                                     )
@@ -214,6 +239,7 @@ impl HeditApp {
                                 }
                             }
                             ui.add_space(total - offsets[end]);
+                            focus |= self.pinned_search_tab_strip(ui);
                             if review_here {
                                 ui.horizontal(|ui| {
                                     let tab = ui.selectable_label(

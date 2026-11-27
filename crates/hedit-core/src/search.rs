@@ -668,15 +668,21 @@ pub fn apply(plan: &FilePlan) -> Result<(), String> {
     Ok(())
 }
 pub fn diff(before: &str, after: &str, name: &Path) -> String {
+    diff_with_labels(
+        before,
+        after,
+        &format!("{} (before)", name.display()),
+        &format!("{} (after)", name.display()),
+    )
+}
+
+pub fn diff_with_labels(before: &str, after: &str, left: &str, right: &str) -> String {
     similar::TextDiff::configure()
         .timeout(std::time::Duration::from_millis(250))
         .diff_lines(before, after)
         .unified_diff()
         .context_radius(3)
-        .header(
-            &format!("{} (before)", name.display()),
-            &format!("{} (after)", name.display()),
-        )
+        .header(left, right)
         .to_string()
 }
 

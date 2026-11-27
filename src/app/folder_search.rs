@@ -16,6 +16,9 @@ pub(super) enum State {
     Applied(String),
 }
 
+mod saved;
+pub(super) use saved::Saved;
+
 fn field(
     ui: &mut egui::Ui,
     label: &str,
@@ -187,6 +190,7 @@ impl HeditApp {
         ui.horizontal(|ui| {
             ui.strong("Search");
             ui.menu_button("More…", |ui| {
+                run |= self.saved_search_menu(ui);
                 if ui.button("Files").clicked() {
                     self.sidebar = workbench_navigation::Sidebar::Files;
                     ui.close();
@@ -206,6 +210,16 @@ impl HeditApp {
                     .changed()
                 {
                     self.quality.result_shown = None;
+                }
+                if ui
+                    .add_enabled(
+                        self.command_enabled(Command::PinSearchResults),
+                        egui::Button::new("Pin search results"),
+                    )
+                    .clicked()
+                {
+                    self.pin_search(ctx);
+                    ui.close();
                 }
                 if ui.button("Open search window").clicked() {
                     self.sidebar = workbench_navigation::Sidebar::Files;
@@ -264,7 +278,7 @@ impl HeditApp {
                             .store(true, Ordering::Relaxed);
                     }
                 } else {
-                    run = controls::primary_button(
+                    run |= controls::primary_button(
                         ui,
                         &self.theme,
                         if self.quality.folder_replace {
@@ -416,6 +430,7 @@ impl HeditApp {
     }
 
     pub(super) fn folder_search_window(&mut self, ctx: &egui::Context) {
+        let mut pinned = false;
         let mut open = true;
         let mut run = false;
         let mut apply = false;
@@ -436,6 +451,7 @@ impl HeditApp {
             .default_pos(ctx.viewport_rect().center() - size * 0.5)
             .frame(egui::Frame::window(&ctx.global_style()).inner_margin(12.0).corner_radius(8))
             .show(ctx, |ui| {
+                run |= self.saved_search_menu(ui);
                 self.folder_search_scope(ui);
                 ui.horizontal(|ui| {
                     ui.add_sized([48.0, 26.0], egui::Label::new("Find").halign(egui::Align::LEFT));
@@ -451,7 +467,7 @@ impl HeditApp {
                             if let Some(task) = &self.quality.folder_task { task.cancel.store(true, Ordering::Relaxed); }
                         }
                     } else {
-                        run = controls::primary_button(ui, &self.theme,
+                        run |= controls::primary_button(ui, &self.theme,
                             if self.quality.folder_replace { "Preview" } else { "Find all" },
                             !self.busy && !self.closing && !self.quality.folder_query.is_empty() && !roots.is_empty()).clicked();
                     }
@@ -486,6 +502,10 @@ impl HeditApp {
                         ui.strong("Results");
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.add_enabled(self.command_enabled(Command::PinSearchResults), egui::Button::new("Pin results")).clicked() {
+                            self.pin_search(ctx);
+                            pinned = true;
+                        }
                         let has_hits = !self.quality.results.hits.is_empty() && !self.busy;
                         if ui.add_enabled(has_hits, egui::Button::new("Next")).on_hover_text("F4").clicked() {
                             navigate = Some(true);
@@ -558,7 +578,7 @@ impl HeditApp {
                     });
                 });
             });
-        self.quality.folders_open = open;
+        self.quality.folders_open = open && !pinned;
         if !open {
             self.focus_editor = true;
         }

@@ -115,6 +115,7 @@ Choose **Restart hedit** after installation or **Later** to keep working.
 | Switch files | **Ctrl+P** searches; **Ctrl+Tab** visits recent tabs; **Ctrl+PageUp/PageDown** steps through tabs |
 | Organize tabs | Drag to reorder; right-click to pin, copy a path, reveal, or close other tabs |
 | Preview a file | Single-click in the sidebar; double-click, pin, or edit to keep it |
+| Compare two files | Choose **Select for Compare** on a tab or Explorer file, then **Compare With Selected** on another. Local comparisons include unsaved edits in open tabs. |
 | Reopen a closed tab | **Ctrl+Shift+T** or **File → Browse closed files…** |
 | Add folders | **Ctrl+Shift+O**; right-click entries to create, rename, move, duplicate, trash, or reveal |
 | Refresh or hide folders | **File → Refresh folders**; **Ctrl+K, Ctrl+B** toggles the sidebar |
@@ -306,9 +307,11 @@ Install script fonts if glyphs are missing.
 | Find/replace | **Ctrl+F / Ctrl+H**; Enter/Shift+Enter navigates. Options: regex, case, whole words, selection only. Replacements support `${1}` groups; Replace all is one undo step |
 | Select matches | **Alt+Enter**; Find highlights up to 20,000 matches but navigates beyond. Replacement/select-all requires at most 20,000; narrow larger queries |
 | Find in folders | **Ctrl+Shift+F** searches open folders and unsaved buffers, honoring Git ignores. Filter with `*.rs, *.cu`; Context shows surrounding lines; **F4/Shift+F4** navigates |
+| Saved searches | In the local Search sidebar, open **More… → Saved Searches**. Name and save a query with its filters and scope, then select its name to run it again. |
 | Search one folder | Right-click an Explorer folder and choose **Find in This Folder**. Use **Clear scope** in Search to return to all open folders |
 | Replace in folders | Enable Replace, enter text, then **Preview**. Review/select files and **Apply**. Open files remain unsaved/undoable; unopened files are written only if unchanged since preview, with **Undo replacements** available |
 | Go to anything | **Ctrl+P** finds by letters in order (`srcprj` → `src/project.rs`). Append `@symbol`, `:42:7`, or `#text`; alone these search the current file. Esc cancels previews |
+| Workspace symbols | Open **Go to Symbol in Workspace…** or type `@@name` in **Ctrl+P** to search functions and types in local project folders. Results include the file and line. |
 | Share a file location | **Copy File Location** in the Command Palette or tab menu copies `path:line:column` at the cursor. Paste it into Go to Anything to jump back |
 | Commands/symbols/lines | **Ctrl+Shift+P / Ctrl+R / Ctrl+G**; **Alt+Left/Right** navigates history |
 | Definitions/references | **F12 / Shift+F12** uses the configured language server. Local files fall back to source indexing when a server cannot answer; pointer hover also shows indexed definitions |
@@ -329,6 +332,11 @@ or refresh to update paths outside coverage. Use explicit refresh over SSH.
 
 External changes reload a clean active file. A conflict banner protects
 unsaved text and guards the next save.
+
+After a folder search, choose **More… → Pin search results**. Each tab keeps
+the matches from that run for the current session. Select a match to open its
+source. To see two result sets side by side, split the editor and select a
+different search tab in each group.
 
 ### Breadcrumbs and Outline
 
@@ -372,6 +380,27 @@ A custom `build_systems` entry accepts `name`, `shell_cmd`, `selector`, and
 Commands expand `$file`, `$file_path`, `$file_name`, `$file_base_name`,
 `$file_extension`, and `$folder`. A matching name overrides a built-in.
 
+### Project tasks
+
+Add a `tasks` array to a local `.hedit-project` and reopen it.
+
+```json
+"tasks": [
+  {"name": "Build", "shell_cmd": "cargo build"},
+  {"name": "Test", "shell_cmd": "cargo test", "working_dir": "."},
+  {"name": "Lint", "shell_cmd": "cargo clippy"}
+]
+```
+
+Choose **Tools → Run Project Task…**. Output and diagnostics use the existing
+Output and Problems panels. **Ctrl+Alt+Shift+B** (**Cmd+Option+Shift+B** on macOS) reruns the
+last task. The default working directory is the directory containing the project
+file. A `working_dir` must stay inside it. Tasks use the files saved on disk and
+accept the same variables and optional `file_regex` as custom build systems.
+In a saved local Rust file, choose **Tools → Run Test at Cursor** or
+**Run Tests in File**. Hedit runs matching tests from conventional Cargo
+library, binary, or integration-test targets and streams the result to Output.
+
 ### Language servers
 
 Open **Settings → Language Servers**, **Preferences → Language servers: manage…**,
@@ -412,8 +441,10 @@ up to 32 documents totaling up to 32 MiB and runs up to eight server sessions. S
 servers. Active files have priority. For each action, the highest-priority
 eligible server wins. Server ID breaks ties. Diagnostics are combined and
 labeled. Python defaults use ty for intelligence and Ruff for linting/formatting.
-Semantic highlighting, server snippets or commands, and unsolicited workspace
-edits are unsupported.
+Local servers that support semantic tokens can color parameters, fields, types,
+and functions with the active theme. Turn this off for a server under **Configure
+→ Features → Semantic highlighting**. Server snippets, server commands, and
+unsolicited workspace edits are unsupported.
 
 In SSH workspaces, install the matching helper. The manager targets the host
 and requires execution trust. Revocation or disconnect stops its workers.
@@ -453,12 +484,18 @@ paths outside the root, file operations, and server commands. Local batches
 apply only after every file passes preflight. SSH also preflights all files.
 If a later host edit fails, completed files and their Undo remain visible.
 
+**View → Editor → Show inlay hints** shows inferred types and parameter labels
+from supported local language servers. Hints follow the active file's edits in
+fully loaded documents up to 512 KiB.
+
 ### Syntax highlighting
 
 Click the status-bar language to choose a syntax or return to **Automatic**.
 The 58 formats include common languages, CUDA, configuration files, Markdown,
 LaTeX, CSV, and logs. Definitions support embedded languages and multiline
-strings. Large files show quick colors before full highlighting.
+strings. Large files show quick colors before full highlighting. Installed language
+packs appear in the same picker. If a pack declares a server, its preset appears
+in **Settings → Language Servers**. Choose its executable and save to enable it.
 
 ## Bottom panel
 
@@ -561,32 +598,30 @@ Leave the keys out or use `null` to follow the app appearance.
 
 ## Source Control
 
-**Ctrl+Shift+G** opens Source Control beside the editor. Select a changed file
-to open a **Git review** tab.
-Install Git 2.30+. Select an open repository, **Open repository…**, **Clone
-repository…** into a new directory, or Initialize a folder. A failed clone may
-leave files for inspection. Credentials use your Git helpers/SSH agent; terminal
-prompts are disabled. Signing and hooks follow Git configuration.
+**Ctrl+Shift+G** opens Source Control beside the editor. Select a file to see
+its diff in **Git review**. Hedit uses Git 2.30+ and honors your Git credential
+helpers, SSH agent, signing, and hooks.
 
 | Task | Usage |
 | --- | --- |
-| Review | **Staged changes** shows what will be committed. **Unstaged changes** shows edits outside the index. Collapse either section to focus the list. For a file in both, switch between **Staged** and **Unstaged** in its diff. |
-| Stage | Use **+ / −** on a file, or stage and unstage hunks and selected lines from a diff. With a filter active, **Stage matches** and **Unstage matches** act on the matching files. |
-| Discard | **Discard…** confirms and backs up the working version; unsaved editor text is retained. Review before saving over the result |
-| Commit | Enter a message and click **Commit staged**, or press **Ctrl+Enter** in the message field (**Cmd+Enter** on macOS). Use **Commit merge** to supply a message after resolving a merge. Amend asks for confirmation. If Git rejects a commit, the sidebar keeps the draft and staging. |
-| History | Select commits to review files/diffs; History scope filters revision/path, All history clears. File history does not follow renames |
-| Branches | Open the branch picker and type to filter. Press Enter when one branch matches. Use the branch menu to rename, merge, rebase, set upstream, or delete. |
-| Compare | **More → Compare** accepts branches, tags, IDs, or `HEAD~3`. Apply inputs with Compare, reverse with Swap; choose common-ancestor or direct comparison. Read-only reviews pin exact commits; refresh moving references |
-| Line history | **More → Line history** shows committed UTF-8 source with authors/IDs; excludes unsaved/worktree edits. Filter source, authors, IDs, summaries |
-| Stashes | **More → Stashes** includes tracked/untracked changes. Apply keeps the stash and restores index/worktree; Drop confirms. Resolve/stage conflicts before continuing |
-| Tags | **More → Tags** lists local tags; Tag HEAD or commit menu creates annotated tags. Inspect, compare, branch, copy, delete from menus; publish tags in a terminal |
-| Recovery | **More → Recovery** lists HEAD reflog. Recover branch names an older commit without switching or changing files; Git may expire reflog entries |
-| Undo/revert | Undo last commit confirms the reviewed HEAD, moves to its first parent, and leaves changes staged. Unavailable for initial commits/operations in progress. Revert shared commits; Branch here creates without switching |
-| Remotes | **Fetch** updates remote references. The branch status offers **Pull**, **Push**, **Publish branch**, or **Compare** based on its upstream. Use **Sync…** for a manual pull or push when the status is up to date. |
+| Review | **Staged Changes** shows what will be committed. **Changes** shows edits outside the index. Conflicts appear under **Merge Changes**. |
+| Stage | Hover a file or group and click **+** to stage or **−** to unstage. In a diff, stage individual hunks or lines. Bulk actions apply to matching files when the list is filtered. |
+| Commit | Enter a message and click **Commit** or press **Ctrl+Enter** (**Cmd+Enter** on macOS). If nothing is staged, Hedit asks before staging the files. After resolving conflicts, click **Continue**. |
+| Commit options | Use the arrow beside **Commit** to amend, commit and push, or commit and sync. A rejected commit keeps the message and staging. |
+| Branches | Select the branch name in the status bar to switch or create a branch. Use **More Actions → Branch** to manage branches. |
+| Remotes | Use the status bar to publish a branch, sync, or compare diverged branches. Sync pulls with fast-forward only, then pushes. **More Actions** has separate Fetch, Pull, Push, and Add Remote commands. |
+| History | Open **Source Control Graph** and select a commit to review its files. **More Actions → History** also has Compare Revisions, Tags, Reflog, and Line History. |
+| Stashes | **More Actions → Stash** creates and manages stashes. Applying a stash keeps it available. |
+| Discard and undo | In a diff, **Discard…** backs up the working version before discarding it. **More Actions → Commit → Undo Last Commit…** leaves the changes staged. |
+| Repositories | Use **More Actions** to open or clone a repository. When several repositories are open, switch between them at the top of Source Control. |
 
 <!-- docs-screenshot docs/images/git.png | Source Control with a syntax-colored file diff -->
 
 Conflicts show **Current · ours**, **Incoming · theirs**, and the ancestor.
+**Resolve conflict blocks…** opens a local text conflict and lets you take either
+side or both for each block. Edit the result, then choose **Apply to Editor**.
+Save and stage when ready. Undo restores the original markers.
+
 **Use Current/Incoming…** confirms and backs up; **Open to resolve** combines in
 the editor. Review and stage afterwards, including deletions. During rebase,
 Current is the destination and Incoming the replayed commit. Binary, symlink,
@@ -629,6 +664,12 @@ Go to line, and search results show source.
 Equations and diagrams render locally. Unsupported input stays as source with
 a hover error and **Copy source**.
 
+## CSV and TSV preview
+
+Open a CSV or TSV file up to 2 MiB, then choose **Table Preview** above the
+editor. Click a column header to sort its text. Click a row's line number to
+jump to the source. Edits in the source update the table.
+
 ## Views and layout
 
 | Feature | Usage |
@@ -651,6 +692,10 @@ a hover error and **Copy source**.
 The status bar shows position, selected characters and lines, indentation, line
 endings, encoding, syntax, and recovery. Hover for details or click the recovery
 dot for settings.
+
+**View → Editor → Show sticky scope** keeps the enclosing declaration or
+Markdown heading above the visible source while you scroll. Click it to jump
+to its line. Code scopes use the file's indentation.
 
 ### Tabs in editor groups
 
@@ -889,6 +934,11 @@ With the terminal focused, some keys have different actions:
 | Send Escape to the shell | Esc | Esc |
 
 ## Recovery
+
+Use **File → File History…** or the tab menu to compare a local saved version
+with the editor. **Restore into Editor** replaces the buffer as one undoable
+edit and leaves saving to you. History holds up to 20 versions per file, with a
+64 MiB total budget and a 1 MiB limit per version. Snapshots stay on this computer.
 
 Recovery checkpoints keep tabs, unsaved notes, and fully loaded undo history.
 They run every few seconds. A power loss can interrupt the latest checkpoint.

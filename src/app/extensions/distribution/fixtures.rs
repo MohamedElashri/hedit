@@ -58,7 +58,9 @@ pub(super) fn test_traced(path: &Path, fixtures: &Path, timings: bool) -> Result
             let source = manifest
                 .lua_source(&case.command)
                 .ok_or("Unknown Lua command.")?;
-            if hedit::syntax::Language::from_id(&case.language).is_none() {
+            if hedit::syntax::Language::from_id(&case.language).is_none()
+                && !hedit::plugin_options::valid_command_id(&case.language)
+            {
                 return Err("Unknown fixture language.".into());
             }
             let settings = manifest.fixture_settings(&case.settings)?;
