@@ -674,6 +674,29 @@ impl Git {
                 }
                 a
             }
+            Operation::StageCommit { paths, message } => {
+                if message.trim().is_empty() {
+                    return Err("Enter a commit message first.".into());
+                }
+                if self.operation_in_progress(root)?.is_some()
+                    || self
+                        .status_files(root)?
+                        .iter()
+                        .any(|file| file.conflict || file.staged())
+                {
+                    return Err(
+                        "The index changed. Review the staged changes before committing.".into(),
+                    );
+                }
+                self.path_operation(root, &["add", "--all"], paths)?;
+                return self.execute(
+                    root,
+                    &Operation::Commit {
+                        message: message.clone(),
+                        amend: false,
+                    },
+                );
+            }
             Operation::Switch(branch) => {
                 valid_ref(branch)?;
                 args(&["switch", "--no-guess", "--", branch])
@@ -837,6 +860,13 @@ impl Git {
             Operation::Push => {
                 remote = true;
                 args(&["push"])
+            }
+            Operation::Sync => {
+                let pull = self.execute(root, &Operation::Pull)?;
+                let push = self
+                    .execute(root, &Operation::Push)
+                    .map_err(|error| format!("Pull completed. Push failed.\n{error}"))?;
+                return Ok(format!("{pull}\n{push}"));
             }
             Operation::Publish {
                 remote: name,
@@ -1265,6 +1295,11 @@ pub enum Operation {
         message: String,
         expected_head: String,
     },
+    StageCommit {
+        #[serde(with = "crate::wire_path::vec")]
+        paths: Vec<PathBuf>,
+        message: String,
+    },
     Switch(String),
     CreateBranch(String),
     TrackBranch {
@@ -1316,6 +1351,7 @@ pub enum Operation {
     RemoveRemote(String),
     Pull,
     Push,
+    Sync,
     Publish {
         remote: String,
         branch: String,
@@ -1351,6 +1387,7 @@ impl Operation {
                 | Self::Stash(_)
                 | Self::ApplyStash(_)
                 | Self::Pull
+                | Self::Sync
                 | Self::Discard { .. }
                 | Self::Resolve { .. }
         )

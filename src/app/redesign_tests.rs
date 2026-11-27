@@ -65,7 +65,7 @@ fn sidebar_button_hides_and_restores_each_workspace_without_changing_files() {
                     text_rect(
                         &s.shape,
                         if source_control {
-                            "Choose repository"
+                            "Source Control"
                         } else {
                             "Files"
                         },
@@ -81,7 +81,7 @@ fn sidebar_button_hides_and_restores_each_workspace_without_changing_files() {
                     text_rect(
                         &s.shape,
                         if source_control {
-                            "Choose repository"
+                            "Source Control"
                         } else {
                             "Files"
                         },

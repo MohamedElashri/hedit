@@ -561,28 +561,22 @@ Leave the keys out or use `null` to follow the app appearance.
 
 ## Source Control
 
-**Ctrl+Shift+G** opens Source Control beside the editor. Select a changed file
-to open a **Git review** tab.
-Install Git 2.30+. Select an open repository, **Open repository…**, **Clone
-repository…** into a new directory, or Initialize a folder. A failed clone may
-leave files for inspection. Credentials use your Git helpers/SSH agent; terminal
-prompts are disabled. Signing and hooks follow Git configuration.
+**Ctrl+Shift+G** opens Source Control beside the editor. Select a file to see
+its diff in **Git review**. Hedit uses Git 2.30+ and honors your Git credential
+helpers, SSH agent, signing, and hooks.
 
 | Task | Usage |
 | --- | --- |
-| Review | **Staged changes** shows what will be committed. **Unstaged changes** shows edits outside the index. Collapse either section to focus the list. For a file in both, switch between **Staged** and **Unstaged** in its diff. |
-| Stage | Use **+ / −** on a file, or stage and unstage hunks and selected lines from a diff. With a filter active, **Stage matches** and **Unstage matches** act on the matching files. |
-| Discard | **Discard…** confirms and backs up the working version; unsaved editor text is retained. Review before saving over the result |
-| Commit | Enter a message and click **Commit staged**, or press **Ctrl+Enter** in the message field (**Cmd+Enter** on macOS). Use **Commit merge** to supply a message after resolving a merge. Amend asks for confirmation. If Git rejects a commit, the sidebar keeps the draft and staging. |
-| History | Select commits to review files/diffs; History scope filters revision/path, All history clears. File history does not follow renames |
-| Branches | Open the branch picker and type to filter. Press Enter when one branch matches. Use the branch menu to rename, merge, rebase, set upstream, or delete. |
-| Compare | **More → Compare** accepts branches, tags, IDs, or `HEAD~3`. Apply inputs with Compare, reverse with Swap; choose common-ancestor or direct comparison. Read-only reviews pin exact commits; refresh moving references |
-| Line history | **More → Line history** shows committed UTF-8 source with authors/IDs; excludes unsaved/worktree edits. Filter source, authors, IDs, summaries |
-| Stashes | **More → Stashes** includes tracked/untracked changes. Apply keeps the stash and restores index/worktree; Drop confirms. Resolve/stage conflicts before continuing |
-| Tags | **More → Tags** lists local tags; Tag HEAD or commit menu creates annotated tags. Inspect, compare, branch, copy, delete from menus; publish tags in a terminal |
-| Recovery | **More → Recovery** lists HEAD reflog. Recover branch names an older commit without switching or changing files; Git may expire reflog entries |
-| Undo/revert | Undo last commit confirms the reviewed HEAD, moves to its first parent, and leaves changes staged. Unavailable for initial commits/operations in progress. Revert shared commits; Branch here creates without switching |
-| Remotes | **Fetch** updates remote references. The branch status offers **Pull**, **Push**, **Publish branch**, or **Compare** based on its upstream. Use **Sync…** for a manual pull or push when the status is up to date. |
+| Review | **Staged Changes** shows what will be committed. **Changes** shows edits outside the index. Conflicts appear under **Merge Changes**. |
+| Stage | Hover a file or group and click **+** to stage or **−** to unstage. In a diff, stage individual hunks or lines. Bulk actions apply to matching files when the list is filtered. |
+| Commit | Enter a message and click **Commit** or press **Ctrl+Enter** (**Cmd+Enter** on macOS). If nothing is staged, Hedit asks before staging the files. After resolving conflicts, click **Continue**. |
+| Commit options | Use the arrow beside **Commit** to amend, commit and push, or commit and sync. A rejected commit keeps the message and staging. |
+| Branches | Select the branch name in the status bar to switch or create a branch. Use **More Actions → Branch** to manage branches. |
+| Remotes | Use the status bar to publish a branch, sync, or compare diverged branches. Sync pulls with fast-forward only, then pushes. **More Actions** has separate Fetch, Pull, Push, and Add Remote commands. |
+| History | Open **Source Control Graph** and select a commit to review its files. **More Actions → History** also has Compare Revisions, Tags, Reflog, and Line History. |
+| Stashes | **More Actions → Stash** creates and manages stashes. Applying a stash keeps it available. |
+| Discard and undo | In a diff, **Discard…** backs up the working version before discarding it. **More Actions → Commit → Undo Last Commit…** leaves the changes staged. |
+| Repositories | Use **More Actions** to open or clone a repository. When several repositories are open, switch between them at the top of Source Control. |
 
 <!-- docs-screenshot docs/images/git.png | Source Control with a syntax-colored file diff -->
 

@@ -68,7 +68,7 @@ impl HeditApp {
                     {
                         action = Some(Action::Files);
                     }
-                    if ui
+                    let git = ui
                         .add_enabled_ui(self.command_enabled(Command::SourceControl), |ui| {
                             icons::navigation(
                                 ui,
@@ -78,9 +78,30 @@ impl HeditApp {
                                     && self.settings.show_sidebar,
                             )
                         })
-                        .inner
-                        .clicked()
-                    {
+                        .inner;
+                    let count = self.source_control.change_count();
+                    if count > 0 {
+                        let label = if count > 99 {
+                            "99+".into()
+                        } else {
+                            count.to_string()
+                        };
+                        let painter = ui.painter();
+                        let text = painter.layout_no_wrap(
+                            label,
+                            egui::FontId::proportional(10.0),
+                            ui.visuals().selection.stroke.color,
+                        );
+                        let size = text.size() + egui::vec2(7.0, 2.0);
+                        let badge = egui::Rect::from_min_size(git.rect.right_bottom() - size, size);
+                        painter.rect_filled(badge, 7.0, self.theme.accent.color());
+                        painter.galley(
+                            badge.center() - text.size() / 2.0,
+                            text,
+                            egui::Color32::WHITE,
+                        );
+                    }
+                    if git.clicked() {
                         action = Some(Action::Git);
                     }
                     if ui

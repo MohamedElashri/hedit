@@ -622,7 +622,7 @@ impl HeditApp {
                             }
                         });
                         ui.add_sized(
-                            [140.0, row_height],
+                            [132.0, row_height],
                             egui::Label::new(
                                 RichText::new(&line.author)
                                     .small()

@@ -635,6 +635,7 @@ impl HeditApp {
                         egui::vec2(left, 0.0),
                         egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true),
                         |ui| {
+                            self.git_status_controls(ui, ctx);
                             let buffer = &self.workspace.open[self.workspace.active];
                             let source_index = self.projections[self.panes.focused]
                                 .source_index(&buffer.page.text);

@@ -1,6 +1,31 @@
 //! Shared Git navigation, compact repository controls, and task feedback.
 use super::*;
 
+const SCM_ICON_SIZE: f32 = 14.0;
+
+pub(super) fn scm_icon(
+    ui: &egui::Ui,
+    icon: hedit::icons::Icon,
+    color: egui::Color32,
+) -> egui::Image<'static> {
+    let size = egui::Vec2::splat(SCM_ICON_SIZE);
+    let texture = icon.texture(ui.ctx(), size.x);
+    egui::Image::new((texture.id(), size)).tint(color)
+}
+
+pub(super) fn git_icon_button(
+    ui: &mut egui::Ui,
+    glyph: &str,
+    label: &str,
+    enabled: bool,
+) -> egui::Response {
+    let button = ui.add_enabled(enabled, egui::Button::new(glyph).small().frame(false));
+    button.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled() && enabled, label)
+    });
+    button.on_hover_text(label).on_disabled_hover_text(label)
+}
+
 #[derive(Default)]
 pub(super) struct State {
     locations: BTreeMap<View, Location>,
@@ -9,6 +34,9 @@ pub(super) struct State {
     pub(super) branch_menu_open: bool,
     pub(super) collapsed_changes: BTreeSet<&'static str>,
     pub(super) reveal_output: bool,
+    pub(super) graph_open: bool,
+    pub(super) show_filter: bool,
+    pub(super) focus_filter: bool,
     queue: ReviewQueue,
     commit_after_input: Option<u64>,
     commit_field_pass: Option<u64>,
@@ -59,6 +87,11 @@ pub(super) fn action_text(op: &Operation) -> ActionText {
         }
         Operation::Commit { .. } => ("Creating commit…", "Commit created", "Commit staged"),
         Operation::CommitMerge { .. } => ("Committing merge…", "Merge committed", "Commit merge"),
+        Operation::StageCommit { .. } => (
+            "Staging and committing…",
+            "Commit created",
+            "Stage and Commit",
+        ),
         Operation::Switch(_) | Operation::TrackBranch { .. } => {
             ("Switching branch…", "Branch switched", "Switch branch")
         }
@@ -99,6 +132,11 @@ pub(super) fn action_text(op: &Operation) -> ActionText {
         Operation::Fetch => ("Fetching remotes…", "Remote references updated", "Fetch"),
         Operation::Pull => ("Pulling changes…", "Branch updated", "Pull"),
         Operation::Push => ("Pushing commits…", "Push completed", "Push"),
+        Operation::Sync => (
+            "Synchronizing changes…",
+            "Changes synchronized",
+            "Sync Changes",
+        ),
         Operation::Publish { .. } => ("Publishing branch…", "Branch published", "Publish branch"),
         Operation::AddRemote { .. } => ("Adding remote…", "Remote added", "Add remote"),
         Operation::RemoveRemote(_) => ("Removing remote…", "Remote removed", "Remove remote"),
@@ -311,9 +349,12 @@ impl SourceControl {
             Some("Create the first commit before amending.")
         } else if !snapshot.merging()
             && !self.amend
-            && !snapshot.files.iter().any(FileStatus::staged)
+            && !snapshot
+                .files
+                .iter()
+                .any(|file| file.staged() || file.working())
         {
-            Some("Stage files or selected lines to include them.")
+            Some("There are no changes to commit.")
         } else if self.draft.trim().is_empty() {
             Some("Enter a commit message.")
         } else {
@@ -385,110 +426,283 @@ impl HeditApp {
 
         let pending = self.source_control.pending || self.busy || self.closing;
         let snapshot = self.source_control.snapshot.clone();
-        let mut chosen = None;
         ui.horizontal(|ui| {
-            let control = hedit::ui_style::Metrics::for_ui(ui).control;
-            let width =
-                (ui.available_width() - 38.0 - control - ui.spacing().item_spacing.x).max(60.0);
+            if self.settings.show_activity_bar {
+                ui.small(RichText::new("Source Control").strong());
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let menu = icons::button(ui, Icon::More, "More Actions");
+                egui::Popup::menu(&menu)
+                    .show(|ui| self.git_repository_actions(ui, ctx, snapshot.as_deref(), pending));
+                if ui
+                    .add_enabled_ui(!pending, |ui| icons::button(ui, Icon::Refresh, "Refresh"))
+                    .inner
+                    .clicked()
+                {
+                    self.source_control.error = None;
+                    self.prepare_source_control(ctx);
+                }
+            });
+        });
+        if self.source_control.repos.len() > 1
+            || (snapshot.is_none() && !self.source_control.repos.is_empty())
+        {
+            let mut selected = None;
             ui.add_enabled_ui(!pending, |ui| {
-                let label = |root: &Path| {
-                    let name = repo_name(root);
-                    if self
-                        .source_control
-                        .repos
-                        .iter()
-                        .any(|other| other != root && repo_name(other) == name)
-                    {
-                        root.display().to_string()
-                    } else {
-                        name
-                    }
-                };
                 egui::ComboBox::from_id_salt("git-repository")
-                    .width(width)
+                    .width(ui.available_width())
                     .truncate()
                     .selected_text(
                         self.source_control
                             .root
                             .as_deref()
-                            .map(label)
-                            .unwrap_or_else(|| "Choose repository".into()),
+                            .map(repo_name)
+                            .unwrap_or_else(|| "Select Repository".into()),
                     )
                     .show_ui(ui, |ui| {
                         for root in &self.source_control.repos {
+                            let name = repo_name(root);
+                            let label = if self
+                                .source_control
+                                .repos
+                                .iter()
+                                .any(|other| other != root && repo_name(other) == name)
+                            {
+                                root.display().to_string()
+                            } else {
+                                name
+                            };
                             if ui
                                 .selectable_label(
                                     self.source_control.root.as_ref() == Some(root),
-                                    label(root),
+                                    label,
                                 )
                                 .on_hover_text(root.display().to_string())
                                 .clicked()
                             {
-                                chosen = Some(root.clone());
+                                selected = Some(root.clone());
                             }
                         }
                     });
             });
-            if ui
-                .add_enabled_ui(!pending, |ui| {
-                    icons::button(ui, Icon::Refresh, "Refresh Git status")
-                })
-                .inner
-                .clicked()
-            {
-                self.source_control.error = None;
-                self.prepare_source_control(ctx);
+            if let Some(root) = selected {
+                self.source_control.change_root(ctx, root);
             }
-            ui.menu_button("…", |ui| {
+        }
+    }
+
+    fn git_repository_actions(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        snapshot: Option<&Snapshot>,
+        pending: bool,
+    ) {
+        if let Some(snapshot) = snapshot {
+            ui.add_enabled_ui(!pending && self.source_control.prompt.is_none(), |ui| {
+                let tracking =
+                    !snapshot.upstream.is_empty() && !snapshot.upstream_missing && !snapshot.unborn;
+                let available = snapshot.operation.is_none();
                 if ui
-                    .toggle_value(&mut self.source_control.output_open, "Git output")
+                    .add_enabled(!snapshot.remotes.is_empty(), egui::Button::new("Fetch"))
                     .clicked()
                 {
-                    self.source_control.ux.reveal_output = self.source_control.output_open;
+                    self.git_action(ctx, Operation::Fetch);
                     ui.close();
                 }
-                ui.add_enabled_ui(!pending, |ui| {
-                    if ui.button("Open repository…").clicked() {
-                        self.browse_git_repository(ctx);
-                        ui.close();
+                if ui
+                    .add_enabled(
+                        tracking && available && snapshot.ahead == 0,
+                        egui::Button::new("Pull"),
+                    )
+                    .clicked()
+                {
+                    self.git_action(ctx, Operation::Pull);
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(
+                        tracking && available && snapshot.behind == 0,
+                        egui::Button::new("Push"),
+                    )
+                    .clicked()
+                {
+                    self.git_action(ctx, Operation::Push);
+                    ui.close();
+                }
+                ui.separator();
+                ui.menu_button("Commit", |ui| {
+                    let staged = snapshot.files.iter().any(FileStatus::staged);
+                    for (label, amend) in [("Commit Staged", false), ("Commit (Amend)", true)] {
+                        if ui
+                            .add_enabled(
+                                available && if amend { !snapshot.unborn } else { staged },
+                                egui::Button::new(label),
+                            )
+                            .clicked()
+                        {
+                            self.git_show_changes(ctx);
+                            self.source_control.amend = amend;
+                            self.git_submit_current_message(ctx);
+                            ui.close();
+                        }
                     }
-                    if ui.button("Clone repository…").clicked() {
-                        self.source_control.prompt = Some(Prompt::Clone {
-                            url: String::new(),
-                            destination: String::new(),
-                        });
+                    if ui
+                        .add_enabled(
+                            available
+                                && snapshot
+                                    .commits
+                                    .first()
+                                    .is_some_and(|commit| !commit.parents.is_empty()),
+                            egui::Button::new("Undo Last Commit…"),
+                        )
+                        .clicked()
+                    {
+                        self.git_confirm(
+                            "Undo Last Commit",
+                            "Undo the last commit and keep its changes staged?".into(),
+                            Operation::UndoCommit {
+                                expected: snapshot.oid.clone(),
+                            },
+                        );
                         ui.close();
                     }
                 });
-            })
-            .response
-            .on_hover_text("Repository actions");
-        });
-        if let Some(root) = chosen {
-            self.source_control.change_root(ctx, root);
-            return;
+                ui.menu_button("Branch", |ui| {
+                    if ui.button("Create Branch…").clicked() {
+                        self.source_control.prompt = Some(Prompt::Branch(String::new()));
+                        ui.close();
+                    }
+                    if ui.button("Manage Branches").clicked() {
+                        self.source_control.visit(ctx, View::Branches, false);
+                        ui.close();
+                    }
+                });
+                ui.menu_button("Stash", |ui| {
+                    if ui
+                        .add_enabled(
+                            available && !snapshot.unborn && !snapshot.files.is_empty(),
+                            egui::Button::new("Stash Changes…"),
+                        )
+                        .clicked()
+                    {
+                        self.source_control.prompt = Some(Prompt::Stash(String::new()));
+                        ui.close();
+                    }
+                    if ui.button("Manage Stashes").clicked() {
+                        self.source_control.visit(ctx, View::Stashes, false);
+                        ui.close();
+                    }
+                });
+                if ui.button("Add Remote…").clicked() {
+                    self.source_control.prompt = Some(Prompt::Remote {
+                        name: "origin".into(),
+                        url: String::new(),
+                    });
+                    ui.close();
+                }
+            });
+            ui.separator();
+            ui.add_enabled_ui(self.source_control.prompt.is_none(), |ui| {
+                ui.menu_button("View & Sort", |ui| {
+                    for (tree, label) in [(false, "View as List"), (true, "View as Tree")] {
+                        if ui
+                            .selectable_value(&mut self.source_control.tree_view, tree, label)
+                            .clicked()
+                        {
+                            ui.close();
+                        }
+                    }
+                    if ui.button("Expand All").clicked() {
+                        self.expand_git_trees();
+                        ui.close();
+                    }
+                    if ui.button("Filter…").clicked() {
+                        self.source_control.ux.show_filter = true;
+                        self.source_control.ux.focus_filter = true;
+                        ui.close();
+                    }
+                });
+                ui.menu_button("History", |ui| {
+                    for (view, label) in [
+                        (View::History, "Source Control Graph"),
+                        (View::Compare, "Compare Revisions"),
+                        (View::Tags, "Tags"),
+                        (View::Recovery, "Reflog"),
+                        (View::Blame, "Line History"),
+                    ] {
+                        if ui.button(label).clicked() {
+                            if view != View::History {
+                                self.source_control.show_review();
+                            }
+                            self.source_control.visit(ctx, view, false);
+                            ui.close();
+                        }
+                    }
+                });
+            });
+            ui.separator();
         }
-        let Some(snapshot) = snapshot else {
-            return;
-        };
-        ui.horizontal(|ui| {
-            branch_icon(ui, self.theme.accent.color());
-            let name = if snapshot.branch == "(detached)" {
-                format!("Detached · {}", &snapshot.oid[..snapshot.oid.len().min(8)])
-            } else {
-                snapshot.branch.clone()
-            };
-            let short = if name.chars().count() > 28 {
-                format!("{}…", name.chars().take(27).collect::<String>())
-            } else {
-                name.clone()
-            };
-            self.git_branch_picker(ui, ctx, &snapshot, short, &name, pending);
-            if self.source_control.pending && self.source_control.ux.activity.is_none() {
-                ui.spinner().on_hover_text("Refreshing repository");
+
+        if ui
+            .toggle_value(&mut self.source_control.output_open, "Show Git Output")
+            .clicked()
+        {
+            self.source_control.ux.reveal_output = self.source_control.output_open;
+            ui.close();
+        }
+        ui.add_enabled_ui(!pending, |ui| {
+            if ui.button("Open Repository…").clicked() {
+                self.browse_git_repository(ctx);
+                ui.close();
+            }
+            if ui.button("Clone Repository…").clicked() {
+                self.source_control.prompt = Some(Prompt::Clone {
+                    url: String::new(),
+                    destination: String::new(),
+                });
+                ui.close();
             }
         });
-        self.git_sync_controls(ui, ctx, &snapshot, pending);
+    }
+
+    pub(in crate::app) fn git_status_controls(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let Some(snapshot) = self.source_control.snapshot.clone() else {
+            return;
+        };
+        let pending = self.source_control.pending
+            || self.busy
+            || self.closing
+            || self.source_control.prompt.is_some();
+        let branch = if snapshot.branch == "(detached)" {
+            snapshot.oid.chars().take(8).collect()
+        } else {
+            snapshot.branch.clone()
+        };
+        let branch_label = if branch.chars().count() > 24 {
+            format!("{}…", branch.chars().take(23).collect::<String>())
+        } else {
+            branch.clone()
+        };
+        branch_icon(ui, self.theme.muted.color());
+        self.git_branch_picker(ui, ctx, &snapshot, branch_label, &branch, pending);
+        if self.source_control.pending {
+            ui.spinner().on_hover_text(
+                self.source_control
+                    .ux
+                    .activity
+                    .unwrap_or("Refreshing repository"),
+            );
+        } else {
+            self.git_remote_action(ui, ctx, &snapshot, pending, false);
+        }
+    }
+
+    fn git_show_changes(&mut self, ctx: &egui::Context) {
+        if self.source_control.view != View::Changes {
+            self.source_control.navigate(View::Changes, false);
+            ctx.request_repaint();
+        }
     }
 
     fn git_branch_picker(
@@ -600,144 +814,119 @@ impl HeditApp {
         }
     }
 
-    fn git_sync_controls(
+    fn git_remote_action(
         &mut self,
         ui: &mut egui::Ui,
         ctx: &egui::Context,
         snapshot: &Snapshot,
         pending: bool,
+        primary: bool,
     ) {
-        let muted = self.theme.muted.color();
-        ui.horizontal_wrapped(|ui| {
-            if snapshot.remotes.is_empty() {
-                ui.label(RichText::new("Local repository").small().color(muted));
-                if ui
-                    .add_enabled(!pending, egui::Button::new("Add remote…").small())
-                    .clicked()
-                {
-                    self.source_control.prompt = Some(Prompt::Remote {
-                        name: "origin".into(),
-                        url: String::new(),
-                    });
-                }
-                return;
-            }
-            let can_sync = !pending && snapshot.operation.is_none();
-            if snapshot.upstream_missing {
-                ui.label(
-                    RichText::new("Upstream branch missing")
-                        .small()
-                        .color(self.theme.warning.color()),
-                )
-                .on_hover_text(&snapshot.upstream);
-            }
-            if snapshot.upstream.is_empty() || snapshot.upstream_missing || snapshot.unborn {
-                if !snapshot.unborn && snapshot.branch != "(detached)" {
-                    ui.add_enabled_ui(can_sync, |ui| {
-                        ui.menu_button("Publish branch", |ui| {
-                            for remote in &snapshot.remotes {
-                                if ui.button(remote).clicked() {
-                                    self.git_action(
-                                        ctx,
-                                        Operation::Publish {
-                                            remote: remote.clone(),
-                                            branch: snapshot.branch.clone(),
-                                        },
-                                    );
-                                    ui.close();
-                                }
-                            }
-                        });
-                    });
-                } else if snapshot.unborn {
-                    ui.label(
-                        RichText::new("Make the first commit to publish")
-                            .small()
-                            .color(muted),
-                    );
-                } else {
-                    ui.label(
-                        RichText::new("Switch to a branch to publish")
-                            .small()
-                            .color(muted),
-                    );
-                }
+        if snapshot.unborn
+            || snapshot.branch == "(detached)"
+            || snapshot.remotes.is_empty()
+            || snapshot.operation.is_some()
+        {
+            return;
+        }
+        use hedit::icons::Icon;
+
+        let publish = snapshot.upstream.is_empty() || snapshot.upstream_missing;
+        let diverged = snapshot.ahead > 0 && snapshot.behind > 0;
+        let action = if publish {
+            "Publish Branch"
+        } else if diverged {
+            "Compare Changes"
+        } else {
+            "Sync Changes"
+        };
+        let counts = format!("{}↓ {}↑", snapshot.behind, snapshot.ahead);
+        let title = if primary {
+            format!("{action} {counts}")
+        } else if snapshot.ahead == 0 && snapshot.behind == 0 {
+            String::new()
+        } else {
+            counts.clone()
+        };
+        let button = if publish {
+            egui::Button::new(action)
+        } else {
+            let icon = if diverged { Icon::Split } else { Icon::Refresh };
+            let foreground = if primary {
+                ui.visuals().selection.stroke.color
             } else {
-                match (snapshot.ahead, snapshot.behind) {
-                    (0, 0) => {
-                        ui.label(RichText::new("Up to date").small().color(muted))
-                            .on_hover_text(format!(
-                                "{}\nBased on the last fetch",
-                                snapshot.upstream
-                            ));
-                        ui.add_enabled_ui(can_sync, |ui| {
-                            ui.menu_button("Sync…", |ui| {
-                                if ui.button("Pull").clicked() {
-                                    self.git_action(ctx, Operation::Pull);
-                                    ui.close();
-                                }
-                                if ui.button("Push").clicked() {
-                                    self.git_action(ctx, Operation::Push);
-                                    ui.close();
-                                }
-                            });
-                        });
-                    }
-                    (ahead, 0) => {
-                        if ui
-                            .add_enabled(
-                                can_sync,
-                                egui::Button::new(format!("Push {ahead}")).small(),
-                            )
-                            .on_hover_text("Push to the configured destination")
-                            .clicked()
-                        {
-                            self.git_action(ctx, Operation::Push);
-                        }
-                    }
-                    (0, behind) => {
-                        if ui
-                            .add_enabled(
-                                can_sync,
-                                egui::Button::new(format!("Pull {behind}")).small(),
-                            )
-                            .on_hover_text(format!("Fast-forward from {}", snapshot.upstream))
-                            .clicked()
-                        {
-                            self.git_action(ctx, Operation::Pull);
-                        }
-                    }
-                    (ahead, behind) => {
-                        ui.label(
-                            RichText::new("Branches have diverged")
-                                .small()
-                                .color(self.theme.warning.color()),
-                        )
-                        .on_hover_text(format!(
-                            "{ahead} ahead, {behind} behind {}",
-                            snapshot.upstream
-                        ));
-                        if ui
-                            .add_enabled(!pending, egui::Button::new("Compare").small())
-                            .clicked()
-                        {
-                            self.git_start_comparison(
-                                ctx,
-                                snapshot.upstream.clone(),
-                                "HEAD".into(),
-                            );
-                        }
+                ui.visuals().text_color()
+            };
+            let image = scm_icon(ui, icon, foreground);
+            if title.is_empty() {
+                egui::Button::image(image)
+            } else {
+                egui::Button::image_and_text(image, title)
+            }
+        };
+        let tooltip = if snapshot.upstream_missing {
+            format!("Upstream branch missing. Publish {}", snapshot.branch)
+        } else if publish {
+            format!("Publish {}", snapshot.branch)
+        } else if diverged {
+            format!(
+                "Branches have diverged. Compare {} with HEAD",
+                snapshot.upstream
+            )
+        } else {
+            format!("Sync Changes with {}. {counts}", snapshot.upstream)
+        };
+        let button = button.frame(primary).fill(if primary {
+            self.theme.accent.color()
+        } else {
+            egui::Color32::TRANSPARENT
+        });
+        let response = ui
+            .add_enabled_ui(!pending, |ui| {
+                if primary {
+                    ui.add_sized([ui.available_width(), 26.0], button)
+                } else {
+                    ui.add(button.small())
+                }
+            })
+            .inner;
+        if !primary {
+            response
+                .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, !pending, action));
+        }
+        let response = response.on_hover_text(tooltip);
+        if publish {
+            egui::Popup::menu(&response).show(|ui| {
+                for remote in &snapshot.remotes {
+                    if ui.button(remote).clicked() {
+                        self.git_action(
+                            ctx,
+                            Operation::Publish {
+                                remote: remote.clone(),
+                                branch: snapshot.branch.clone(),
+                            },
+                        );
+                        ui.close();
                     }
                 }
+            });
+        } else if response.clicked() {
+            if diverged {
+                if !self.git_sidebar_visible() {
+                    self.show_git_sidebar(ctx);
+                }
+                self.git_start_comparison(ctx, snapshot.upstream.clone(), "HEAD".into());
+            } else {
+                self.git_confirm(
+                    "Sync Changes",
+                    format!(
+                        "Pull from {} and push to the configured destination?",
+                        snapshot.upstream
+                    ),
+                    Operation::Sync,
+                );
             }
-            if ui
-                .add_enabled(!pending, egui::Button::new("Fetch").small())
-                .on_hover_text("Update remote references")
-                .clicked()
-            {
-                self.git_action(ctx, Operation::Fetch);
-            }
-        });
+        }
     }
 
     pub(super) fn git_filter(&mut self, ui: &mut egui::Ui) {
@@ -751,12 +940,25 @@ impl HeditApp {
         };
         ui.horizontal(|ui| {
             let clear = !self.source_control.filter.is_empty();
-            let width = (ui.available_width() - if clear { 30.0 } else { 0.0 }).max(50.0);
-            ui.add_sized(
+            let width = (ui.available_width() - 36.0).max(50.0);
+            let field = ui.add_sized(
                 [width, ui.spacing().interact_size.y],
                 egui::TextEdit::singleline(&mut self.source_control.filter).hint_text(hint),
             );
-            if clear && controls::close_button(ui, "Clear filter").clicked() {
+            if std::mem::take(&mut self.source_control.ux.focus_filter) {
+                field.request_focus();
+            }
+            if controls::close_button(
+                ui,
+                if clear {
+                    "Clear filter"
+                } else {
+                    "Close filter"
+                },
+            )
+            .clicked()
+            {
+                self.source_control.ux.show_filter = clear;
                 self.source_control.filter.clear();
             }
         });
@@ -784,6 +986,9 @@ impl HeditApp {
         self.git_submit_current_message(ctx);
     }
     fn git_submit_current_message(&mut self, ctx: &egui::Context) {
+        self.git_submit_message(ctx, None);
+    }
+    fn git_submit_message(&mut self, ctx: &egui::Context, after: Option<Operation>) {
         if !self.git_commit_context()
             || self.busy
             || self.closing
@@ -806,6 +1011,40 @@ impl HeditApp {
             );
             return;
         }
+        if !self.source_control.amend {
+            let Some(snapshot) = self.source_control.snapshot.clone() else {
+                return;
+            };
+            if !snapshot.files.iter().any(FileStatus::staged) {
+                let paths: BTreeSet<_> = snapshot
+                    .files
+                    .iter()
+                    .filter(|file| file.working())
+                    .flat_map(|file| staging_paths(file, &DiffKind::Working))
+                    .collect();
+                let detail = if after.is_some() {
+                    format!(
+                        "Stage and commit {} changed files, then run the selected remote action?",
+                        paths.len()
+                    )
+                } else {
+                    format!(
+                        "There are no staged changes. Stage and commit {} changed files?",
+                        paths.len()
+                    )
+                };
+                self.git_confirm_then(
+                    "No Staged Changes",
+                    detail,
+                    Operation::StageCommit {
+                        paths: paths.into_iter().collect(),
+                        message: self.source_control.draft.clone(),
+                    },
+                    after,
+                );
+                return;
+            }
+        }
         let op = Operation::Commit {
             message: self.source_control.draft.clone(),
             amend: self.source_control.amend,
@@ -813,7 +1052,7 @@ impl HeditApp {
         if self.source_control.amend {
             self.git_confirm("Amend last commit", "Replace HEAD with the staged changes and this message. This rewrites its commit ID.".into(), op);
         } else {
-            self.git_action(ctx, op);
+            self.git_action_then(ctx, op, after);
         }
     }
     pub(super) fn git_commit_box(
@@ -822,96 +1061,168 @@ impl HeditApp {
         ctx: &egui::Context,
         snapshot: &Snapshot,
     ) {
-        let staged = snapshot.files.iter().filter(|f| f.staged()).count();
+        use hedit::icons::Icon;
+
+        let message = if self.source_control.amend && snapshot.operation.is_none() {
+            "Message for amended commit"
+        } else {
+            "Message"
+        };
         ui.add(
             egui::TextEdit::multiline(&mut self.source_control.draft)
                 .id(egui::Id::unique("git-commit-message"))
-                .hint_text("Commit message")
+                .hint_text(message)
                 .desired_rows(2)
                 .desired_width(f32::INFINITY),
-        );
+        )
+        .on_hover_text(format!(
+            "{} to commit",
+            self.shortcut_text(Command::GitCommit)
+        ));
         self.source_control.ux.commit_field_pass = Some(ctx.cumulative_pass_nr());
         if self.source_control.ux.commit_after_input.take() == Some(ctx.cumulative_pass_nr()) {
             self.git_submit_current_message(ctx);
         }
+
+        let ready = !self.source_control.pending
+            && !self.busy
+            && !self.closing
+            && self.source_control.prompt.is_none();
+        let has_changes = snapshot
+            .files
+            .iter()
+            .any(|file| file.staged() || file.working() || file.conflict);
+        let remote =
+            !snapshot.remotes.is_empty() && !snapshot.unborn && snapshot.branch != "(detached)";
+        if !has_changes
+            && !self.source_control.amend
+            && self.source_control.draft.trim().is_empty()
+            && snapshot.operation.is_none()
+            && remote
+            && (snapshot.upstream.is_empty()
+                || snapshot.upstream_missing
+                || snapshot.ahead > 0
+                || snapshot.behind > 0)
+        {
+            self.git_remote_action(ui, ctx, snapshot, !ready, true);
+            return;
+        }
+
+        let accent = self.theme.accent.color();
+        let foreground = ui.visuals().selection.stroke.color;
+        let height = hedit::ui_style::Metrics::for_ui(ui).control;
+        let label = if snapshot.operation.is_some() {
+            "Continue"
+        } else if self.source_control.amend {
+            "Commit (Amend)"
+        } else {
+            "Commit"
+        };
         ui.horizontal(|ui| {
-            let ready = self.command_enabled(Command::GitCommit);
-            let label = if snapshot.merging() {
-                "Commit merge".into()
-            } else if self.source_control.amend {
-                "Amend last commit".into()
-            } else {
-                format!("Commit staged ({staged})")
-            };
-            let width = (ui.available_width() - 38.0).max(80.0);
-            let commit = ui
-                .add_enabled_ui(ready, |ui| {
-                    ui.add_sized(
-                        [width, 28.0],
-                        egui::Button::new(label)
-                            .fill(self.theme.accent.color().gamma_multiply(0.18)),
-                    )
-                })
-                .inner;
+            ui.spacing_mut().item_spacing.x = 1.0;
+            let menu_width = height.max(SCM_ICON_SIZE + 2.0 * ui.spacing().button_padding.x);
+            let width = (ui.available_width() - menu_width - ui.spacing().item_spacing.x).max(0.0);
+            let can_continue =
+                snapshot.operation.is_some() && !snapshot.files.iter().any(|file| file.conflict);
+            let commit = ui.add_enabled(
+                ready && (self.source_control.can_commit() || can_continue),
+                egui::Button::image_and_text(
+                    scm_icon(ui, Icon::Check, foreground),
+                    RichText::new(label).color(foreground),
+                )
+                .fill(accent)
+                .min_size(egui::vec2(width, height)),
+            );
             if commit
-                .on_hover_text(format!(
-                    "{} · {}",
-                    if snapshot.merging() {
-                        "Commit the merge"
-                    } else {
-                        "Commit staged changes"
-                    },
-                    self.shortcut_text(Command::GitCommit)
-                ))
+                .on_disabled_hover_text(
+                    self.source_control
+                        .commit_blocker()
+                        .unwrap_or("Wait for Git"),
+                )
                 .clicked()
             {
-                self.git_submit_current_message(ctx);
+                if let Some(operation) = snapshot
+                    .operation
+                    .as_ref()
+                    .filter(|_| !snapshot.merging() || self.source_control.draft.trim().is_empty())
+                {
+                    self.git_action(ctx, Operation::Continue(operation.clone()));
+                } else {
+                    self.git_submit_current_message(ctx);
+                }
             }
-            ui.add_enabled_ui(!self.source_control.pending, |ui| {
-                ui.menu_button("…", |ui| {
-                    ui.add_enabled(
-                        !snapshot.unborn && snapshot.operation.is_none(),
-                        egui::Checkbox::new(&mut self.source_control.amend, "Amend last commit"),
-                    );
-                });
+            let choices = ui.add_enabled(
+                ready,
+                egui::Button::image(scm_icon(ui, Icon::ChevronDown, foreground))
+                    .fill(accent)
+                    .min_size(egui::vec2(menu_width, height)),
+            );
+            choices.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::Role::Button, ready, "Commit Actions")
+            });
+            let choices = choices.on_hover_text("Commit Actions");
+            egui::Popup::menu(&choices).show(|ui| {
+                if let Some(operation) = &snapshot.operation {
+                    if ui.button("Abort Operation…").clicked() {
+                        self.git_confirm(
+                            "Abort Git Operation",
+                            "Restore the state Git recorded before the operation?".into(),
+                            Operation::Abort(operation.clone()),
+                        );
+                        ui.close();
+                    }
+                    return;
+                }
+                if ui
+                    .selectable_label(!self.source_control.amend, "Commit")
+                    .clicked()
+                {
+                    self.source_control.amend = false;
+                    self.git_submit_current_message(ctx);
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(
+                        !snapshot.unborn,
+                        egui::Button::new("Commit (Amend)").selected(self.source_control.amend),
+                    )
+                    .clicked()
+                {
+                    self.source_control.amend = true;
+                    self.git_submit_current_message(ctx);
+                    ui.close();
+                }
+                let can_push = remote
+                    && !snapshot.upstream.is_empty()
+                    && !snapshot.upstream_missing
+                    && snapshot.behind == 0;
+                let has_message = !self.source_control.draft.trim().is_empty();
+                for (label, after) in [
+                    ("Commit & Push", Operation::Push),
+                    ("Commit & Sync", Operation::Sync),
+                ] {
+                    if ui
+                        .add_enabled(
+                            can_push && has_message && has_changes,
+                            egui::Button::new(label),
+                        )
+                        .clicked()
+                    {
+                        self.source_control.amend = false;
+                        self.git_submit_message(ctx, Some(after));
+                        ui.close();
+                    }
+                }
             });
         });
-        let hint = if self.busy || self.closing {
-            "Wait for the current editor task."
-        } else {
-            self.source_control
-                .commit_blocker()
-                .unwrap_or(if snapshot.merging() {
-                    "Finish the merge with this message."
-                } else if self.source_control.amend {
-                    "Replaces the last commit after confirmation."
-                } else {
-                    "Only staged changes will be committed."
-                })
-        };
-        ui.add(
-            egui::Label::new(
-                RichText::new(hint)
-                    .size(11.0)
-                    .color(self.theme.muted.color()),
-            )
-            .wrap(),
-        );
         let unsaved = self.git_unsaved(None);
         if !unsaved.is_empty() {
-            ui.add(
-                egui::Label::new(
-                    RichText::new(format!(
-                        "{} unsaved file(s) · Git uses saved text",
-                        unsaved.len()
-                    ))
+            ui.label(
+                RichText::new(format!("{} unsaved · Git uses saved files", unsaved.len()))
                     .small()
                     .color(self.theme.warning.color()),
-                )
-                .wrap(),
             );
         }
-        ui.add_space(8.0);
     }
     pub(in crate::app) fn git_review_shortcuts(&mut self, ctx: &egui::Context) -> bool {
         let sidebar = self.git_sidebar_visible();
@@ -1047,21 +1358,25 @@ impl HeditApp {
                         {
                             self.source_control.visit(ctx, View::Changes, false);
                         }
-                        if ui
-                            .add_enabled(
-                                !conflicts && !self.source_control.pending,
-                                egui::Button::new("Continue").small(),
-                            )
-                            .clicked()
+                        if !(self.git_sidebar_visible()
+                            && self.source_control.view == View::Changes)
+                            && ui
+                                .add_enabled(
+                                    !conflicts && !self.source_control.pending,
+                                    egui::Button::new("Continue").small(),
+                                )
+                                .clicked()
                         {
                             self.git_action(ctx, Operation::Continue(operation.clone()));
                         }
-                        if ui
-                            .add_enabled(
-                                !self.source_control.pending,
-                                egui::Button::new("Abort…").small(),
-                            )
-                            .clicked()
+                        if !(self.git_sidebar_visible()
+                            && self.source_control.view == View::Changes)
+                            && ui
+                                .add_enabled(
+                                    !self.source_control.pending,
+                                    egui::Button::new("Abort…").small(),
+                                )
+                                .clicked()
                         {
                             self.git_confirm(
                                 "Abort Git operation",
