@@ -5,6 +5,7 @@ pub(super) struct Key {
     id: u64,
     revision: u64,
     language: syntax::Language,
+    syntax_override: Option<String>,
     path: PathBuf,
 }
 
@@ -30,6 +31,7 @@ impl Key {
         buffer.view.id == self.id
             && buffer.page.info.revision == self.revision
             && buffer.language() == self.language
+            && buffer.view.language_override == self.syntax_override
             && !buffer.follow
             && !buffer.page.info.paged
             && buffer
@@ -66,15 +68,23 @@ impl HeditApp {
         let Some(path) = buffer.page.info.path.as_deref().map(Path::new) else {
             return;
         };
+        let Some(snapshot) = self.languages.snapshots.iter().find(|snapshot| {
+            snapshot.id == buffer.view.id
+                && snapshot.revision == buffer.page.info.revision
+                && snapshot.path == path
+        }) else {
+            return;
+        };
         if buffer.follow
             || buffer.page.info.paged
             || buffer.page.text.len() > 512 * 1024
-            || !self.languages.snapshots.iter().any(|s| {
-                s.id == buffer.view.id
-                    && s.revision == buffer.page.info.revision
-                    && s.path == path
-                    && s.language == buffer.language().id()
-            })
+            || self
+                .languages
+                .observed
+                .as_ref()
+                .is_some_and(|(documents, _)| {
+                    documents.iter().find(|document| document.id == snapshot.id) != Some(snapshot)
+                })
             || !self
                 .languages
                 .statuses
@@ -87,6 +97,7 @@ impl HeditApp {
             id: buffer.view.id,
             revision: buffer.page.info.revision,
             language: buffer.language(),
+            syntax_override: buffer.view.language_override.clone(),
             path: path.to_owned(),
         };
         let op = Operation::Request {
