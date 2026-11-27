@@ -251,6 +251,9 @@ impl HeditApp {
         }
     }
     pub(super) fn quality_windows(&mut self, ctx: &egui::Context) {
+        if self.quality.file_history.is_some() {
+            self.file_history_window(ctx);
+        }
         if self.quality.folders_open {
             self.folder_search_window(ctx);
         }
@@ -344,6 +347,7 @@ impl HeditApp {
         if disk || mine {
             if let Some((id, revision, expected)) = self.quality.diff_target.clone() {
                 let editor = Arc::clone(&self.workspace.editor);
+                let history = self.file_history_root();
                 self.quality.diff_open = false;
                 self.job(ctx, move || {
                     let shared = editor.get(id)?;
@@ -356,7 +360,10 @@ impl HeditApp {
                         Ok(Action::Page(id, page, None))
                     } else {
                         doc.accept_disk_version(&expected)?;
-                        Ok(Action::Saved(id, doc.save(None)?))
+                        Ok(Action::Saved(
+                            id,
+                            file_history::save(&mut doc, None, history)?,
+                        ))
                     }
                 });
             }

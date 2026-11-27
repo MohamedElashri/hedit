@@ -890,6 +890,11 @@ With the terminal focused, some keys have different actions:
 
 ## Recovery
 
+Use **File → File History…** or the tab menu to compare a local saved version
+with the editor. **Restore into Editor** replaces the buffer as one undoable
+edit and leaves saving to you. History holds up to 20 versions per file, with a
+64 MiB total budget and a 1 MiB limit per version. Snapshots stay on this computer.
+
 Recovery checkpoints keep tabs, unsaved notes, and fully loaded undo history.
 They run every few seconds. A power loss can interrupt the latest checkpoint.
 Save important work to write the source file. Closing waits for a final

@@ -79,6 +79,7 @@ impl HeditApp {
                                 vec![
                                     Command::Save,
                                     Command::SaveAs,
+                                    Command::FileHistory,
                                     Command::Rename,
                                     Command::Encoding,
                                 ],
@@ -462,6 +463,7 @@ impl HeditApp {
                                                             Command::CloseRight,
                                                             Command::CopyPath,
                                                             Command::CopyFileLocation,
+                                                            Command::FileHistory,
                                                             Command::RevealInSidebar,
                                                         ] {
                                                             if matches!(
@@ -470,6 +472,18 @@ impl HeditApp {
                                                                     | Command::CopyFileLocation
                                                                     | Command::RevealInSidebar
                                                             ) && buffer.page.info.path.is_none()
+                                                            {
+                                                                continue;
+                                                            }
+                                                            if command == Command::FileHistory
+                                                                && (self.workspace.remote.is_some()
+                                                                    || buffer
+                                                                        .page
+                                                                        .info
+                                                                        .path
+                                                                        .is_none()
+                                                                    || buffer.page.info.paged
+                                                                    || buffer.follow)
                                                             {
                                                                 continue;
                                                             }

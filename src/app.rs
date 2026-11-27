@@ -30,6 +30,7 @@ mod extensions;
 #[cfg(test)]
 mod third_audit;
 pub(crate) use extensions::run_plugin_cli;
+mod file_history;
 mod file_reference;
 #[cfg(test)]
 mod file_reference_tests;
@@ -1110,12 +1111,11 @@ impl HeditApp {
         }
         self.notifications.pending_save = Some(retry);
         let editor = Arc::clone(&self.workspace.editor);
+        let history = self.file_history_root();
         self.job(ctx, move || {
-            let info = editor
-                .get(id)?
-                .lock()
-                .map_err(|e| e.to_string())?
-                .save(target)?;
+            let shared = editor.get(id)?;
+            let mut doc = shared.lock().map_err(|error| error.to_string())?;
+            let info = file_history::save(&mut doc, target, history)?;
             Ok(Action::Saved(id, info))
         });
     }

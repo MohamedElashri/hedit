@@ -117,6 +117,7 @@ pub(super) struct Quality {
     pub symbol_query: String,
     pub symbols_project: bool,
     pub diff_open: bool,
+    pub file_history: Option<file_history::Review>,
     pub diff: String,
     pub diff_target: Option<(u64, u64, String)>,
     pub git_diff: bool,
@@ -218,6 +219,8 @@ pub(super) enum Event {
         Vec<hedit::advanced::Selection>,
     ),
     Diff(u64, u64, String, String, bool),
+    FileHistory(file_history::Review),
+    FileHistoryDiff(u64, u64, String, String),
     FileChanged(PathBuf, Option<PathBuf>),
     FileRemovalFailed(String, Vec<(u64, hedit::document::RemovalState)>),
     ProjectLoaded(
@@ -386,6 +389,10 @@ impl HeditApp {
             Event::Symbols(symbols) => self.quality.symbols = symbols,
             Event::Locations(references, name, found) => {
                 self.show_locations(ctx, references, name, found)
+            }
+            Event::FileHistory(review) => self.quality.file_history = Some(review),
+            Event::FileHistoryDiff(id, revision, text, diff) => {
+                self.finish_file_history_diff(id, revision, text, diff)
             }
             Event::Diff(id, revision, disk, diff, git) => {
                 self.quality.diff = diff;

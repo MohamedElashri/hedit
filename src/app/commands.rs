@@ -40,6 +40,7 @@ pub(super) enum Command {
     NavBack,
     NavForward,
     CompareDisk,
+    FileHistory,
     GitDiff,
     SourceControl,
     GitCommit,
@@ -309,6 +310,7 @@ impl Command {
         Self::NavBack,
         Self::NavForward,
         Self::CompareDisk,
+        Self::FileHistory,
         Self::GitDiff,
         Self::SourceControl,
         Self::GitCommit,
@@ -585,6 +587,7 @@ impl Command {
             Self::NavBack => "Navigate back",
             Self::NavForward => "Navigate forward",
             Self::CompareDisk => "Compare with disk…",
+            Self::FileHistory => "File History…",
             Self::GitDiff => "Compare file with Git HEAD…",
             Self::FocusEditor => "Focus editor",
             Self::FocusSearch => "Focus Search",
@@ -1157,6 +1160,12 @@ impl HeditApp {
             return false;
         }
         match command {
+            Command::FileHistory => {
+                self.workspace.remote.is_none()
+                    && self.active().page.info.path.is_some()
+                    && !self.active().page.info.paged
+                    && !self.active().follow
+            }
             Command::ExplorerNewFile | Command::ExplorerNewFolder | Command::ExplorerRename => {
                 !self.workspace.folders.is_empty()
             }
@@ -1536,6 +1545,7 @@ impl HeditApp {
             Command::NavBack => self.navigate(ctx, false),
             Command::NavForward => self.navigate(ctx, true),
             Command::CompareDisk => self.compare_disk(ctx, false),
+            Command::FileHistory => self.open_file_history(ctx),
             Command::GitDiff => self.compare_disk(ctx, true),
             Command::Notifications => self.toggle_notifications(),
             Command::FocusExplorer => self.focus_explorer(ctx),
