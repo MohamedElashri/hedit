@@ -143,6 +143,7 @@ mod wait;
 mod workbench;
 mod workbench_navigation;
 mod workbench_panel;
+mod workspace_symbols;
 mod workspace_watch;
 
 use commands::Command;
@@ -347,6 +348,7 @@ pub struct HeditApp {
     markdown: markdown::Markdown,
     /// Where the cursor was before Go to Anything previewed a result.
     goto_origin: Option<goto_anything::Origin>,
+    workspace_symbols: workspace_symbols::Index,
     goto_preview_epoch: u64,
     goto_preview_running: bool,
     /// The `font_face` in use, or being loaded.
@@ -576,6 +578,7 @@ impl HeditApp {
             minimaps: Default::default(),
             markdown: Default::default(),
             goto_origin: None,
+            workspace_symbols: Default::default(),
             goto_preview_epoch: 0,
             goto_preview_running: false,
             font_applied: String::new(),

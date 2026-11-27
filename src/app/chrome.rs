@@ -124,6 +124,7 @@ impl HeditApp {
                                     Command::Switcher,
                                     Command::Goto,
                                     Command::Symbols,
+                                    Command::WorkspaceSymbols,
                                     Command::GotoDefinition,
                                     Command::GotoReferences,
                                     Command::SwitchCounterpart,

@@ -309,6 +309,7 @@ Install script fonts if glyphs are missing.
 | Search one folder | Right-click an Explorer folder and choose **Find in This Folder**. Use **Clear scope** in Search to return to all open folders |
 | Replace in folders | Enable Replace, enter text, then **Preview**. Review/select files and **Apply**. Open files remain unsaved/undoable; unopened files are written only if unchanged since preview, with **Undo replacements** available |
 | Go to anything | **Ctrl+P** finds by letters in order (`srcprj` → `src/project.rs`). Append `@symbol`, `:42:7`, or `#text`; alone these search the current file. Esc cancels previews |
+| Workspace symbols | Open **Go to Symbol in Workspace…** or type `@@name` in **Ctrl+P** to search functions and types in local project folders. Results include the file and line. |
 | Share a file location | **Copy File Location** in the Command Palette or tab menu copies `path:line:column` at the cursor. Paste it into Go to Anything to jump back |
 | Commands/symbols/lines | **Ctrl+Shift+P / Ctrl+R / Ctrl+G**; **Alt+Left/Right** navigates history |
 | Definitions/references | **F12 / Shift+F12** uses the configured language server. Local files fall back to source indexing when a server cannot answer; pointer hover also shows indexed definitions |

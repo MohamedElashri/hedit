@@ -33,6 +33,7 @@ pub(super) enum Command {
     RecentProjects,
     ProjectSettings,
     Symbols,
+    WorkspaceSymbols,
     GotoDefinition,
     GotoReferences,
     SwitchCounterpart,
@@ -302,6 +303,7 @@ impl Command {
         Self::RecentProjects,
         Self::ProjectSettings,
         Self::Symbols,
+        Self::WorkspaceSymbols,
         Self::GotoDefinition,
         Self::GotoReferences,
         Self::SwitchCounterpart,
@@ -578,6 +580,7 @@ impl Command {
             Self::RecentProjects => "Recent projects…",
             Self::ProjectSettings => "Project settings…",
             Self::Symbols => "Go to symbol…",
+            Self::WorkspaceSymbols => "Go to Symbol in Workspace…",
             Self::GotoDefinition => "Go to definition",
             Self::GotoReferences => "Go to references…",
             Self::SwitchCounterpart => "Switch header/implementation",
@@ -1157,6 +1160,9 @@ impl HeditApp {
             return false;
         }
         match command {
+            Command::WorkspaceSymbols => {
+                self.workspace.remote.is_none() && !self.workspace.folders.is_empty()
+            }
             Command::ExplorerNewFile | Command::ExplorerNewFolder | Command::ExplorerRename => {
                 !self.workspace.folders.is_empty()
             }
@@ -1529,6 +1535,14 @@ impl HeditApp {
                 self.prepare_project_scope();
             }
             Command::Symbols => self.list_symbols(ctx),
+            Command::WorkspaceSymbols => {
+                self.palette = true;
+                self.commands_only = false;
+                self.palette_query = "@@".into();
+                self.palette_focus = true;
+                self.palette_index = 0;
+                self.pick_list = None;
+            }
             Command::GotoDefinition => self.look_up(ctx, false),
             Command::GotoReferences => self.look_up(ctx, true),
             Command::SwitchCounterpart => self.switch_counterpart(ctx),
@@ -2081,6 +2095,7 @@ impl HeditApp {
     pub(super) fn command_palette(&mut self, ctx: &egui::Context) {
         if !self.palette {
             self.pick_list = None;
+            self.workspace_symbols = Default::default();
             return;
         }
         if self.appearance.preview.is_some() {
@@ -2090,6 +2105,7 @@ impl HeditApp {
         enum Item {
             Buffer(usize),
             File(String),
+            Symbol(PathBuf, usize),
             Command(Command),
             Extension(String),
             Syntax(syntax::Language),
@@ -2130,7 +2146,7 @@ impl HeditApp {
                 } else if commands {
                     "Type a command…"
                 } else {
-                    "File name, then @symbol, :line, or #text; > for commands…"
+                    "File, @symbol, @@workspace symbol, :line, or #text…"
                 })
             });
             if self.palette_focus {
@@ -2150,7 +2166,14 @@ impl HeditApp {
             // Go to Anything: `file@symbol`, `file:line`, `file#text`.
             let literal_open_file = filter.contains(['@', ':', '#'])
                 && self.workspace.open.iter().any(|buffer| buffer.view.name.to_lowercase() == filter);
-            let (file_filter, goto) = if commands || paste || literal_open_file {
+            let workspace_query = if commands || paste || literal_open_file {
+                None
+            } else {
+                filter.strip_prefix("@@")
+            };
+            let (file_filter, goto) = if let Some(query) = workspace_query {
+                (std::borrow::Cow::Borrowed(query.trim()), None)
+            } else if commands || paste || literal_open_file {
                 (std::borrow::Cow::Borrowed(filter.as_str()), None)
             } else {
                 goto_anything::parse_file_query(&filter)
@@ -2158,7 +2181,7 @@ impl HeditApp {
             let filter = file_filter.into_owned();
             let here = goto.is_some() && filter.is_empty();
             target = goto.clone();
-            if !commands && !paste && !here && !self.workspace.folders.is_empty() {
+            if !commands && !paste && !here && workspace_query.is_none() && !self.workspace.folders.is_empty() {
                 let roots: Vec<_> = self.workspace.folders.iter().map(|f| PathBuf::from(&f.path)).collect();
                 self.project.search(ctx, &roots, &filter);
             }
@@ -2226,6 +2249,34 @@ impl HeditApp {
                         let label = format!("Set syntax: {}", language.label());
                         if let Some(found) = score(&label) {
                             scored.push((found, (label, String::new(), Item::Syntax(language))));
+                        }
+                    }
+                }
+            } else if workspace_query.is_some() {
+                self.cancel_goto_preview();
+                if self.workspace.remote.is_some() || self.workspace.folders.is_empty() {
+                    ui.weak("Open a local folder to search its symbols.");
+                } else {
+                    self.prepare_workspace_symbols(ctx);
+                    let roots = self.workspace_symbols.roots().to_vec();
+                    match self.workspace_symbols.get() {
+                        None => {
+                            targets_pending = true;
+                            ui.horizontal(|ui| { ui.spinner(); ui.weak("Indexing workspace symbols…"); });
+                        }
+                        Some(Err(error)) => { ui.colored_label(self.theme.warning.color(), error); }
+                        Some(Ok(results)) => {
+                            if results.truncated {
+                                ui.weak("Symbol index limit reached.");
+                            }
+                            let mut matches: Vec<_> = results.symbols.iter().filter_map(|symbol| {
+                                score(&symbol.name).map(|score| (score, symbol))
+                            }).collect();
+                            matches.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
+                            items.extend(matches.into_iter().take(500).map(|(_, symbol)| {
+                                let location = format!("{}:{}", hedit::folder::display_path(&roots, &symbol.path), symbol.line);
+                                (symbol.name.clone(), location, Item::Symbol(symbol.path.clone(), symbol.line))
+                            }));
                         }
                     }
                 }
@@ -2422,6 +2473,11 @@ impl HeditApp {
                     self.go_to_target(ctx, Some(path), target.unwrap());
                 }
                 Item::File(path) => self.open(ctx, Some(path.into())),
+                Item::Symbol(path, line) => {
+                    self.cancel_goto_preview();
+                    self.navigation_mark();
+                    self.open_existing_location(ctx, path, line as u64, 1);
+                }
                 Item::Command(command) => self.execute(ctx, command),
                 Item::Extension(id) => {
                     self.run_extension_by_id(ctx, &id);
