@@ -674,6 +674,83 @@ fn merge_conflicts_are_reported_and_can_be_resolved_or_aborted() {
 }
 
 #[test]
+fn continuing_an_ended_merge_cannot_commit_other_staged_changes() {
+    let (directory, git) = repo();
+    let root = directory.path();
+    write(root, "file", "base\n");
+    stage(&git, root, "file");
+    commit(&git, root, "Base");
+    let before = git.resolve_commit(root, "HEAD").unwrap();
+    write(root, "file", "different change\n");
+    stage(&git, root, "file");
+
+    let error = git
+        .execute(root, &Operation::Continue("Merge in progress".into()))
+        .unwrap_err();
+    assert!(error.contains("operation changed"), "{error}");
+    let error = git
+        .execute(
+            root,
+            &Operation::CommitMerge {
+                message: "Custom merge message".into(),
+                expected_head: before.clone(),
+            },
+        )
+        .unwrap_err();
+    assert!(error.contains("merge changed"), "{error}");
+    assert_eq!(git.resolve_commit(root, "HEAD").unwrap(), before);
+    assert!(git.status_files(root).unwrap()[0].staged());
+}
+
+#[test]
+fn applying_a_patch_reports_its_own_operation_and_can_continue_or_abort() {
+    let (directory, git) = repo();
+    let root = directory.path();
+    write(root, "file", "base\n");
+    stage(&git, root, "file");
+    commit(&git, root, "Base");
+    git.execute(root, &Operation::CreateBranch("patch".into()))
+        .unwrap();
+    write(root, "file", "incoming\n");
+    stage(&git, root, "file");
+    commit(&git, root, "Change from a patch");
+    let patch = git
+        .command(root, &["format-patch", "-1", "--stdout"])
+        .unwrap();
+    let patch_file = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(patch_file.path(), patch).unwrap();
+    git.execute(root, &Operation::Switch("main".into()))
+        .unwrap();
+    write(root, "file", "local\n");
+    stage(&git, root, "file");
+    commit(&git, root, "Local change");
+
+    for abort in [true, false] {
+        assert!(git
+            .command(root, &["am", patch_file.path().to_str().unwrap()])
+            .is_err());
+        let operation = git.snapshot(root, 10).unwrap().operation.unwrap();
+        assert_eq!(operation, "Apply patch in progress");
+        if abort {
+            git.execute(root, &Operation::Abort(operation)).unwrap();
+            assert_eq!(
+                std::fs::read_to_string(root.join("file")).unwrap(),
+                "local\n"
+            );
+        } else {
+            write(root, "file", "resolved\n");
+            stage(&git, root, "file");
+            git.execute(root, &Operation::Continue(operation)).unwrap();
+            assert_eq!(
+                git.history(root, 10).unwrap()[0].subject,
+                "Change from a patch"
+            );
+        }
+        assert!(git.snapshot(root, 10).unwrap().operation.is_none());
+    }
+}
+
+#[test]
 fn worktrees_and_detached_head_are_discovered_without_rewriting_files() {
     let (directory, git) = repo();
     let root = directory.path();
