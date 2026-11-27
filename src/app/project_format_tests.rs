@@ -35,6 +35,8 @@ fn unsuccessful_project_save_does_not_replace_existing_companion_data() {
     fs::write(&path, "{}\n").unwrap();
     fs::write(&companion, "{}\n").unwrap();
     let (ctx, mut app) = app_at(d.path());
+    // Keep background project checkpoints out of the explicit save failure.
+    app.checkpoint_at = Instant::now() + Duration::from_secs(60);
     app.load_project(&ctx, Some(path.clone()));
     finish_app_job(&mut app, &ctx);
     fs::remove_file(&path).unwrap();

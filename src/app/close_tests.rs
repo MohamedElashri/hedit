@@ -435,11 +435,10 @@ fn quitting_waits_for_inflight_buffers_and_checkpoints_them() {
 fn failed_quit_checkpoint_keeps_the_window_and_unsaved_edits_then_retries() {
     let (directory, ctx, mut app, path, _) = disk_app();
     // Finish any earlier checkpoint before blocking replacement of the manifest.
-    let started = Instant::now();
-    while app.checkpoint_pending {
-        assert!(started.elapsed() < Duration::from_secs(5));
+    app.checkpoint_at = Instant::now() + Duration::from_secs(60);
+    if let Some(worker) = app.checkpoint_worker.take() {
+        worker.join().unwrap();
         app.receive(&ctx);
-        thread::sleep(Duration::from_millis(5));
     }
     let manifest = directory.path().join("session/session.json");
     if manifest.exists() {
@@ -450,11 +449,8 @@ fn failed_quit_checkpoint_keeps_the_window_and_unsaved_edits_then_retries() {
     app.request_quit();
     app.receive(&ctx);
     assert!(app.checkpoint_pending);
-    while app.checkpoint_pending {
-        assert!(started.elapsed() < Duration::from_secs(5));
-        app.receive(&ctx);
-        thread::sleep(Duration::from_millis(5));
-    }
+    app.checkpoint_worker.take().unwrap().join().unwrap();
+    app.receive(&ctx);
     assert!(!app.exit_ready);
     assert!(!app.closing);
     assert!(app.error.as_ref().unwrap().starts_with(CHECKPOINT_FAILED));
