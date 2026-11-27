@@ -38,6 +38,7 @@ struct SemanticKey {
     view: u64,
     revision: u64,
     language: syntax::Language,
+    syntax_override: Option<String>,
     path: String,
 }
 
@@ -191,6 +192,7 @@ impl LanguageServers {
         (key.view == buffer.view.id
             && key.revision == buffer.page.info.revision
             && key.language == buffer.language()
+            && key.syntax_override == buffer.view.language_override
             && !buffer.follow
             && !buffer.page.info.paged
             && buffer.page.info.path.as_deref() == Some(key.path.as_str()))
@@ -485,15 +487,23 @@ impl HeditApp {
         let Some(path) = buffer.page.info.path.as_ref() else {
             return;
         };
+        let Some(snapshot) = self.languages.snapshots.iter().find(|snapshot| {
+            snapshot.id == buffer.view.id
+                && snapshot.revision == buffer.page.info.revision
+                && snapshot.path == Path::new(path)
+        }) else {
+            return;
+        };
         if buffer.follow
             || buffer.page.info.paged
             || buffer.page.text.len() > lsp::MAX_DOCUMENT
-            || !self.languages.snapshots.iter().any(|snapshot| {
-                snapshot.id == buffer.view.id
-                    && snapshot.revision == buffer.page.info.revision
-                    && snapshot.language == buffer.language().id()
-                    && snapshot.path == Path::new(path)
-            })
+            || self
+                .languages
+                .observed
+                .as_ref()
+                .is_some_and(|(documents, _)| {
+                    documents.iter().find(|document| document.id == snapshot.id) != Some(snapshot)
+                })
         {
             return;
         }
@@ -505,7 +515,7 @@ impl HeditApp {
                     .registration
                     .languages
                     .iter()
-                    .any(|language| language == buffer.language().id())
+                    .any(|language| language == &snapshot.language)
                 && self.languages.statuses.values().any(|status| {
                     status.id == entry.id
                         && status.state == "Running"
@@ -518,6 +528,7 @@ impl HeditApp {
             view: buffer.view.id,
             revision: buffer.page.info.revision,
             language: buffer.language(),
+            syntax_override: buffer.view.language_override.clone(),
             path: path.clone(),
         };
         if self.languages.semantic_request.as_ref() == Some(&key) {
