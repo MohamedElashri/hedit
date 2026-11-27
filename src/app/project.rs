@@ -621,6 +621,23 @@ impl HeditApp {
                 ui.close();
             }
         }
+        if !directory && self.workspace.remote.is_none() {
+            let path = std::path::Path::new(path);
+            if ui.button("Select for Compare").clicked() {
+                self.select_for_compare(path.to_owned());
+                ui.close();
+            }
+            if self
+                .quality
+                .compare_source
+                .as_deref()
+                .is_some_and(|first| first != path)
+                && ui.button("Compare With Selected").clicked()
+            {
+                self.compare_with_selected(ui.ctx(), path.to_owned());
+                ui.close();
+            }
+        }
         for (label, operation) in [
             ("Rename…", quality::FileOperation::Rename),
             ("Move…", quality::FileOperation::Move),

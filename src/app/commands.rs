@@ -40,6 +40,8 @@ pub(super) enum Command {
     NavBack,
     NavForward,
     CompareDisk,
+    SelectForCompare,
+    CompareWithSelected,
     GitDiff,
     SourceControl,
     GitCommit,
@@ -309,6 +311,8 @@ impl Command {
         Self::NavBack,
         Self::NavForward,
         Self::CompareDisk,
+        Self::SelectForCompare,
+        Self::CompareWithSelected,
         Self::GitDiff,
         Self::SourceControl,
         Self::GitCommit,
@@ -585,6 +589,8 @@ impl Command {
             Self::NavBack => "Navigate back",
             Self::NavForward => "Navigate forward",
             Self::CompareDisk => "Compare with disk…",
+            Self::SelectForCompare => "Select for Compare",
+            Self::CompareWithSelected => "Compare With Selected",
             Self::GitDiff => "Compare file with Git HEAD…",
             Self::FocusEditor => "Focus editor",
             Self::FocusSearch => "Focus Search",
@@ -1157,6 +1163,15 @@ impl HeditApp {
             return false;
         }
         match command {
+            Command::SelectForCompare => self.active().page.info.path.is_some(),
+            Command::CompareWithSelected => {
+                self.active().page.info.path.as_ref().is_some_and(|path| {
+                    self.quality
+                        .compare_source
+                        .as_deref()
+                        .is_some_and(|source| source != std::path::Path::new(path))
+                })
+            }
             Command::ExplorerNewFile | Command::ExplorerNewFolder | Command::ExplorerRename => {
                 !self.workspace.folders.is_empty()
             }
@@ -1536,6 +1551,17 @@ impl HeditApp {
             Command::NavBack => self.navigate(ctx, false),
             Command::NavForward => self.navigate(ctx, true),
             Command::CompareDisk => self.compare_disk(ctx, false),
+            Command::SelectForCompare | Command::CompareWithSelected => {
+                if self.workspace.remote.is_none() {
+                    if let Some(path) = self.active().page.info.path.as_ref().map(PathBuf::from) {
+                        if command == Command::SelectForCompare {
+                            self.select_for_compare(path);
+                        } else {
+                            self.compare_with_selected(ctx, path);
+                        }
+                    }
+                }
+            }
             Command::GitDiff => self.compare_disk(ctx, true),
             Command::Notifications => self.toggle_notifications(),
             Command::FocusExplorer => self.focus_explorer(ctx),

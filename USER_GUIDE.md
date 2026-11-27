@@ -115,6 +115,7 @@ Choose **Restart hedit** after installation or **Later** to keep working.
 | Switch files | **Ctrl+P** searches; **Ctrl+Tab** visits recent tabs; **Ctrl+PageUp/PageDown** steps through tabs |
 | Organize tabs | Drag to reorder; right-click to pin, copy a path, reveal, or close other tabs |
 | Preview a file | Single-click in the sidebar; double-click, pin, or edit to keep it |
+| Compare two files | Choose **Select for Compare** on a tab or Explorer file, then **Compare With Selected** on another. Local comparisons include unsaved edits in open tabs. |
 | Reopen a closed tab | **Ctrl+Shift+T** or **File → Browse closed files…** |
 | Add folders | **Ctrl+Shift+O**; right-click entries to create, rename, move, duplicate, trash, or reveal |
 | Refresh or hide folders | **File → Refresh folders**; **Ctrl+K, Ctrl+B** toggles the sidebar |

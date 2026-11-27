@@ -331,10 +331,21 @@ impl HeditApp {
         let mut open = true;
         let mut disk = false;
         let mut mine = false;
-        egui::Window::new(if self.quality.git_diff{"Git changes compared with HEAD"}else{"Disk and editor comparison"}).open(&mut open).max_width((ctx.viewport_rect().width()-32.0).max(300.0)).max_height((ctx.viewport_rect().height()-32.0).max(220.0)).vscroll(true).collapsible(false).default_width(760.0).show(ctx,|ui|{
+        let files = self.quality.comparison_paths.as_ref();
+        let title = if files.is_some() {
+            "Compare files"
+        } else if self.quality.git_diff {
+            "Git changes compared with HEAD"
+        } else {
+            "Disk and editor comparison"
+        };
+        egui::Window::new(title).open(&mut open).max_width((ctx.viewport_rect().width()-32.0).max(300.0)).max_height((ctx.viewport_rect().height()-32.0).max(220.0)).vscroll(true).collapsible(false).default_width(760.0).show(ctx,|ui|{
+            if let Some((left, right)) = files {
+                ui.label(format!("{} → {}", left.display(), right.display()));
+            }
             if self.quality.diff.is_empty(){ui.label("No changes.");}
             egui::ScrollArea::both().max_height(460.0).show(ui,|ui|{let mut text=self.quality.diff.as_str();ui.add(egui::TextEdit::multiline(&mut text).code_editor().desired_width(f32::INFINITY));});
-            if !self.quality.git_diff {
+            if !self.quality.git_diff && files.is_none() {
                 let valid=!self.busy&&self.quality.diff_target.as_ref().is_some_and(|(id,revision,_)|*id==self.active().view.id&&*revision==self.active().page.info.revision)&&!self.active().page.info.paged;
                 ui.label("Taking the disk version keeps your previous text in Undo. Keeping the editor version overwrites the compared disk version.");
                 ui.horizontal(|ui|{disk=ui.add_enabled(valid,egui::Button::new("Take disk version")).clicked();mine=ui.add_enabled(valid,egui::Button::new("Keep editor version and save")).clicked();});

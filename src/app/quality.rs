@@ -117,6 +117,8 @@ pub(super) struct Quality {
     pub symbol_query: String,
     pub symbols_project: bool,
     pub diff_open: bool,
+    pub compare_source: Option<PathBuf>,
+    pub comparison_paths: Option<(PathBuf, PathBuf)>,
     pub diff: String,
     pub diff_target: Option<(u64, u64, String)>,
     pub git_diff: bool,
@@ -218,6 +220,7 @@ pub(super) enum Event {
         Vec<hedit::advanced::Selection>,
     ),
     Diff(u64, u64, String, String, bool),
+    ComparedFiles(PathBuf, PathBuf, String),
     FileChanged(PathBuf, Option<PathBuf>),
     FileRemovalFailed(String, Vec<(u64, hedit::document::RemovalState)>),
     ProjectLoaded(
@@ -387,7 +390,15 @@ impl HeditApp {
             Event::Locations(references, name, found) => {
                 self.show_locations(ctx, references, name, found)
             }
+            Event::ComparedFiles(left, right, diff) => {
+                self.quality.diff = diff;
+                self.quality.diff_target = None;
+                self.quality.git_diff = false;
+                self.quality.comparison_paths = Some((left, right));
+                self.quality.diff_open = true;
+            }
             Event::Diff(id, revision, disk, diff, git) => {
+                self.quality.comparison_paths = None;
                 self.quality.diff = diff;
                 self.quality.diff_target = Some((id, revision, disk));
                 self.quality.diff_open = true;
@@ -399,6 +410,14 @@ impl HeditApp {
                 }
             }
             Event::FileChanged(from, to) => {
+                if let Some(relative) = self
+                    .quality
+                    .compare_source
+                    .as_ref()
+                    .and_then(|path| path.strip_prefix(&from).ok())
+                {
+                    self.quality.compare_source = to.as_ref().map(|path| path.join(relative));
+                }
                 if let Some(relative) = self
                     .quality
                     .folder_scope
@@ -1146,6 +1165,57 @@ impl HeditApp {
             ))))
         });
     }
+    pub(super) fn select_for_compare(&mut self, path: PathBuf) {
+        self.notice = format!("Selected {} for comparison.", path.display());
+        self.quality.compare_source = Some(path);
+    }
+
+    pub(super) fn compare_with_selected(&mut self, ctx: &egui::Context, right: PathBuf) {
+        let Some(left) = self.quality.compare_source.clone() else {
+            return;
+        };
+        if self.workspace.remote.is_some() || self.busy || self.closing || left == right {
+            return;
+        }
+        let open_id = |path: &Path| {
+            self.workspace
+                .open
+                .iter()
+                .find(|buffer| {
+                    buffer
+                        .page
+                        .info
+                        .path
+                        .as_deref()
+                        .is_some_and(|name| Path::new(name) == path)
+                })
+                .map(|buffer| buffer.view.id)
+        };
+        let left_id = open_id(&left);
+        let right_id = open_id(&right);
+        let editor = Arc::clone(&self.workspace.editor);
+        self.job(ctx, move || {
+            let read = |path: &Path, id| -> Result<String, String> {
+                const LIMIT: u64 = 16 * 1024 * 1024;
+                if let Some(id) = id {
+                    return editor
+                        .get(id)?
+                        .lock()
+                        .map_err(|error| error.to_string())?
+                        .text(LIMIT);
+                }
+                Document::open(0, path)?.text(LIMIT)
+            };
+            let before = read(&left, left_id)?;
+            let after = read(&right, right_id)?;
+            let label = |path: &Path| path.display().to_string().replace(['\r', '\n'], " ");
+            let diff = search::diff_with_labels(&before, &after, &label(&left), &label(&right));
+            Ok(Action::Quality(Box::new(Event::ComparedFiles(
+                left, right, diff,
+            ))))
+        });
+    }
+
     pub(super) fn compare_disk(&mut self, ctx: &egui::Context, git: bool) {
         let b = self.active();
         let Some(path) = b.page.info.path.clone() else {

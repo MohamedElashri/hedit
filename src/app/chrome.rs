@@ -485,6 +485,36 @@ impl HeditApp {
                                                                 ui.close();
                                                             }
                                                         }
+                                                        if let Some(path) =
+                                                            buffer.page.info.path.as_deref().filter(
+                                                                |_| self.workspace.remote.is_none(),
+                                                            )
+                                                        {
+                                                            let first = self
+                                                                .quality
+                                                                .compare_source
+                                                                .as_deref();
+                                                            for command in [
+                                                                Command::SelectForCompare,
+                                                                Command::CompareWithSelected,
+                                                            ] {
+                                                                if (command
+                                                                    == Command::SelectForCompare
+                                                                    || first.is_some_and(|p| {
+                                                                        p != std::path::Path::new(
+                                                                            path,
+                                                                        )
+                                                                    }))
+                                                                    && ui
+                                                                        .button(command.label())
+                                                                        .clicked()
+                                                                {
+                                                                    select = Some(index);
+                                                                    action = Some(command);
+                                                                    ui.close();
+                                                                }
+                                                            }
+                                                        }
                                                         if ui
                                                             .add_enabled(
                                                                 can_close,
